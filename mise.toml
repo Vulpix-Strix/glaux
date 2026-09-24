@@ -1,0 +1,15 @@
+[tools]
+rust = { version = "stable", components = "rustfmt,clippy" }
+"aqua:nextest-rs/nextest/cargo-nextest" = "latest"
+
+[tasks.check]
+run = "cargo check --workspace"
+
+[tasks.test]
+run = "cargo nextest run --workspace --no-tests=warn"
+
+[tasks.fmt]
+run = "cargo fmt --all -- --check"
+
+[tasks.clippy]
+run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"

@@ -1,0 +1,14 @@
+[package]
+name = "glaux"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+glaux-machine.workspace = true
+glaux-video.workspace = true
+glaux-host-raylib.workspace = true
