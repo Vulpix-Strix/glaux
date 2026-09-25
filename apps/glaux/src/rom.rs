@@ -3,32 +3,36 @@
 use anyhow::{Context, bail, ensure};
 use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
 use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
-use glaux_machine::system_rom::{SystemRom, SystemRomVersion};
+use glaux_machine::system_rom::SystemRom;
+use semver::Version;
 
-const VERSION_TXT: &str = include_str!("../../../rom/version.txt");
+const VERSION: &str = include_str!("../../../rom/version");
 const PALETTE_HEX: &str = include_str!("../../../rom/palette/system.hex");
 const FONT_BDF: &str = include_str!("../../../rom/font/Tamzen5x9r.bdf");
 
 /// Decodes the embedded System ROM assets.
 pub fn load() -> anyhow::Result<SystemRom> {
-    let version = parse_version(VERSION_TXT).context("invalid rom/version.txt")?;
-    let palette = parse_palette(PALETTE_HEX).context("invalid rom/palette/system.hex")?;
-    let font =
-        parse_bdf(FONT_BDF, FontMetrics::SYSTEM).context("invalid rom/font/Tamzen5x9r.bdf")?;
-    Ok(SystemRom::new(version, palette, font))
+    let rom = build(VERSION, PALETTE_HEX, FONT_BDF)?;
+    let metrics = rom.font().metrics();
+    tracing::info!(rom_version = %rom.version(), "System ROM loaded");
+    tracing::debug!(
+        glyph_width = metrics.glyph_width(),
+        glyph_height = metrics.glyph_height(),
+        cell_width = metrics.cell_width(),
+        cell_height = metrics.cell_height(),
+        "system font metrics"
+    );
+    Ok(rom)
 }
 
-/// Parses a `major.minor` version, each part a `u8`.
-fn parse_version(text: &str) -> anyhow::Result<SystemRomVersion> {
-    let text = text.trim();
-    let parse = || {
-        let (major, minor) = text.split_once('.')?;
-        Some(SystemRomVersion::new(
-            major.parse().ok()?,
-            minor.parse().ok()?,
-        ))
-    };
-    parse().with_context(|| format!("expected `major.minor` with values 0..=255, got {text:?}"))
+/// Builds a System ROM from the text of its assets. Errors name the asset
+/// that failed to decode.
+fn build(version: &str, palette: &str, font: &str) -> anyhow::Result<SystemRom> {
+    let version = Version::parse(version.trim())
+        .with_context(|| format!("invalid rom/version: {:?}", version.trim()))?;
+    let palette = parse_palette(palette).context("invalid rom/palette/system.hex")?;
+    let font = parse_bdf(font, FontMetrics::SYSTEM).context("invalid rom/font/Tamzen5x9r.bdf")?;
+    Ok(SystemRom::new(version, palette, font))
 }
 
 /// Parses one `rrggbb` color per non-empty line. Exactly 256 colors are
@@ -174,15 +178,11 @@ mod tests {
     const BLANK: [&str; 9] = ["00"; 9];
 
     #[test]
-    fn version_parses_major_dot_minor() {
-        assert_eq!(parse_version("0.1\n").unwrap(), SystemRomVersion::new(0, 1));
-        assert_eq!(
-            parse_version(" 12.34 ").unwrap(),
-            SystemRomVersion::new(12, 34)
-        );
-        for bad in ["", "1", "1.2.3", "a.b", "256.0", "1.-1"] {
-            assert!(parse_version(bad).is_err(), "{bad:?}");
-        }
+    fn invalid_version_names_the_asset() {
+        let err = build("zero.one", PALETTE_HEX, FONT_BDF).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("rom/version"), "{message}");
+        assert!(message.contains("zero.one"), "{message}");
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
     fn embedded_rom_loads() {
         let rom = load().unwrap();
 
-        assert_eq!(rom.version(), SystemRomVersion::new(0, 1));
+        assert_eq!(rom.version(), &Version::new(0, 1, 0));
 
         assert_eq!(rom.palette(), &Palette::provisional());
 

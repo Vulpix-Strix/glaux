@@ -16,6 +16,16 @@ pub enum HostError {
     UploadFrame(#[source] UpdateTextureError),
 }
 
+/// Where the window is placed when it opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowPlacement {
+    /// Center the window on the monitor it opens on.
+    CenterOnMonitor,
+    /// Leave the position to the platform, e.g. a Wayland compositor, which
+    /// does not let clients position their windows.
+    PlatformDefault,
+}
+
 /// A desktop window that presents [`IndexedFrame`]s.
 ///
 /// The frame is drawn at the largest 4:3 size that fits the window, centered
@@ -31,18 +41,39 @@ pub struct RaylibHost {
 
 impl RaylibHost {
     /// Opens a resizable window whose initial size is the logical resolution
-    /// multiplied by `scale` (clamped to at least 1).
-    pub fn new(title: &str, scale: i32) -> Result<Self, HostError> {
+    /// multiplied by `scale` (clamped to at least 1), placed according to
+    /// `placement`.
+    pub fn new(title: &str, scale: i32, placement: WindowPlacement) -> Result<Self, HostError> {
         let scale = scale.max(1);
         let (width, height) = (WIDTH as i32, HEIGHT as i32);
+        let (window_width, window_height) = (width * scale, height * scale);
 
         let (mut rl, thread) = init()
-            .size(width * scale, height * scale)
+            .size(window_width, window_height)
             .title(title)
             .resizable()
             .vsync()
             .build();
         rl.set_window_min_size(width, height);
+
+        tracing::info!(
+            width = window_width,
+            height = window_height,
+            "window created"
+        );
+        tracing::debug!(
+            logical_width = width,
+            logical_height = height,
+            scale,
+            raylib_version = %format_args!(
+                "{}.{}.{}",
+                raylib::ffi::RAYLIB_VERSION_MAJOR,
+                raylib::ffi::RAYLIB_VERSION_MINOR,
+                raylib::ffi::RAYLIB_VERSION_PATCH
+            ),
+            "host configuration"
+        );
+        place_window(&mut rl, placement, window_width, window_height);
 
         // A generated image defaults to uncompressed R8G8B8A8, which is the
         // layout `resolve_rgba` produces.
@@ -87,6 +118,66 @@ impl RaylibHost {
         );
         Ok(())
     }
+}
+
+/// Applies `placement` to a freshly opened window.
+fn place_window(
+    rl: &mut RaylibHandle,
+    placement: WindowPlacement,
+    window_width: i32,
+    window_height: i32,
+) {
+    if placement == WindowPlacement::PlatformDefault {
+        tracing::debug!("initial window placement left to the platform");
+        return;
+    }
+
+    let monitor = get_current_monitor();
+    let origin = get_monitor_position(monitor);
+    let (monitor_width, monitor_height) = (get_monitor_width(monitor), get_monitor_height(monitor));
+    if monitor_width <= 0 || monitor_height <= 0 {
+        tracing::debug!(
+            monitor,
+            "monitor geometry unavailable, keeping platform placement"
+        );
+        return;
+    }
+
+    let (x, y) = center_on_monitor(
+        origin.x as i32,
+        origin.y as i32,
+        monitor_width,
+        monitor_height,
+        window_width,
+        window_height,
+    );
+    rl.set_window_position(x, y);
+    tracing::debug!(
+        monitor,
+        monitor_x = origin.x as i32,
+        monitor_y = origin.y as i32,
+        monitor_width,
+        monitor_height,
+        x,
+        y,
+        "window centered on monitor"
+    );
+}
+
+/// Top-left position that centers a `window_width`×`window_height` window
+/// on a monitor at (`monitor_x`, `monitor_y`) in the global desktop space.
+fn center_on_monitor(
+    monitor_x: i32,
+    monitor_y: i32,
+    monitor_width: i32,
+    monitor_height: i32,
+    window_width: i32,
+    window_height: i32,
+) -> (i32, i32) {
+    (
+        monitor_x + (monitor_width - window_width) / 2,
+        monitor_y + (monitor_height - window_height) / 2,
+    )
 }
 
 /// Writes each pixel of `frame` as opaque RGBA bytes into `out`.
@@ -155,6 +246,32 @@ mod tests {
     #[test]
     fn fit_tall_window_is_letterboxed_and_centered() {
         assert_eq!(rect(fit_4_3(640, 800)), (0.0, 160.0, 640.0, 480.0));
+    }
+
+    #[test]
+    fn centers_on_primary_monitor() {
+        assert_eq!(center_on_monitor(0, 0, 1920, 1080, 960, 720), (480, 180));
+    }
+
+    #[test]
+    fn centers_on_monitor_to_the_right() {
+        assert_eq!(
+            center_on_monitor(1920, 0, 2560, 1440, 960, 720),
+            (2720, 360)
+        );
+    }
+
+    #[test]
+    fn centers_on_monitor_at_negative_offset() {
+        assert_eq!(
+            center_on_monitor(-1280, -200, 1280, 1024, 960, 720),
+            (-1120, -48)
+        );
+    }
+
+    #[test]
+    fn window_larger_than_monitor_overhangs_evenly() {
+        assert_eq!(center_on_monitor(0, 0, 800, 600, 960, 720), (-80, -60));
     }
 
     #[test]

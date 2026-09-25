@@ -1,7 +1,7 @@
 //! Boot sequence, it reveals the boot screen one line group at a time.
 
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
-use glaux_machine::system_rom::SystemRomVersion;
+use semver::Version;
 
 use super::{ACCENT, DIM, Line, OK, TEXT};
 
@@ -79,7 +79,7 @@ impl Default for Boot {
 }
 
 /// Boot screen text for `stage`.
-pub(super) fn lines(stage: BootStage, version: SystemRomVersion) -> Vec<Line> {
+pub(super) fn lines(stage: BootStage, version: &Version) -> Vec<Line> {
     let mut lines = vec![
         Line::new(0, 0, format!("GLAUX G1  SYSTEM ROM {version}"), TEXT),
         Line::new(0, 1, "(C) 2026 CUERVOLU", DIM),
@@ -120,7 +120,9 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    const V0_1: SystemRomVersion = SystemRomVersion::new(0, 1);
+    fn v0_1_0() -> Version {
+        Version::new(0, 1, 0)
+    }
 
     fn texts(lines: &[Line]) -> Vec<&str> {
         lines.iter().map(|line| line.text.as_str()).collect()
@@ -141,22 +143,22 @@ mod tests {
 
     #[test]
     fn header_stage_shows_version_and_copyright_only() {
-        let lines = lines(BootStage::Header, V0_1);
+        let lines = lines(BootStage::Header, &v0_1_0());
         assert_eq!(
             texts(&lines),
-            ["GLAUX G1  SYSTEM ROM 0.1", "(C) 2026 CUERVOLU"]
+            ["GLAUX G1  SYSTEM ROM 0.1.0", "(C) 2026 CUERVOLU"]
         );
     }
 
     #[test]
     fn header_uses_rom_version() {
-        let lines = lines(BootStage::Header, SystemRomVersion::new(3, 7));
-        assert_eq!(lines[0].text, "GLAUX G1  SYSTEM ROM 3.7");
+        let lines = lines(BootStage::Header, &Version::new(3, 7, 0));
+        assert_eq!(lines[0].text, "GLAUX G1  SYSTEM ROM 3.7.0");
     }
 
     #[test]
     fn ready_stage_shows_all_checks_in_order() {
-        let lines = lines(BootStage::Ready, V0_1);
+        let lines = lines(BootStage::Ready, &v0_1_0());
         assert_eq!(row_text(&lines, 3), status_line("VIDEO", "320x240 INDEXED"));
         assert_eq!(row_text(&lines, 4), status_line("OBJ", "128 ENTRIES"));
         assert_eq!(row_text(&lines, 5), status_line("AUDIO", "4CH PSG"));
@@ -168,7 +170,7 @@ mod tests {
 
     #[test]
     fn each_stage_adds_its_line() {
-        let count = |stage| lines(stage, V0_1).len();
+        let count = |stage| lines(stage, &v0_1_0()).len();
         assert!(count(BootStage::Header) < count(BootStage::Video));
         assert!(count(BootStage::Video) < count(BootStage::Obj));
         assert!(count(BootStage::Obj) < count(BootStage::Audio));

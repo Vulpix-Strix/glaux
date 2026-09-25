@@ -9,7 +9,14 @@ repository.workspace = true
 # Needed for `Image::gen_image_color`, used to allocate the frame texture.
 raylib = { workspace = true, features = ["SUPPORT_IMAGE_GENERATION"] }
 thiserror.workspace = true
+tracing.workspace = true
 glaux-video.workspace = true
+
+# Builds the bundled GLFW with Wayland support next to the default X11 backend;
+# GLFW picks one at runtime. The `wayland` feature is not used because it links
+# a system libglfw instead of enabling Wayland in the bundled one.
+[target.'cfg(target_os = "linux")'.dependencies]
+raylib = { workspace = true, features = ["GLFW_BUILD_WAYLAND"] }
 
 [dev-dependencies]
 pretty_assertions.workspace = true

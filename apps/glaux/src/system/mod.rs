@@ -52,6 +52,7 @@ impl System {
             SystemState::Boot(boot) => {
                 boot.tick();
                 if boot.is_finished() {
+                    tracing::info!("boot finished, entering shell");
                     self.state = SystemState::Shell(Shell);
                 }
             }
@@ -120,8 +121,8 @@ mod tests {
     use super::*;
     use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
     use glaux_machine::palette::Palette;
-    use glaux_machine::system_rom::SystemRomVersion;
     use pretty_assertions::assert_eq;
+    use semver::Version;
 
     const CELL_W: i32 = 4;
     const CELL_H: i32 = 5;
@@ -133,7 +134,7 @@ mod tests {
         for ch in FIRST_CHAR..=LAST_CHAR {
             font.insert(ch, &[0b111; 3]).unwrap();
         }
-        SystemRom::new(SystemRomVersion::new(0, 1), Palette::provisional(), font)
+        SystemRom::new(Version::new(0, 1, 0), Palette::provisional(), font)
     }
 
     fn render(system: &System) -> Framebuffer {
@@ -253,7 +254,7 @@ mod tests {
 
     #[test]
     fn video_line_appears_at_video_stage() {
-        let video_row = boot::lines(BootStage::Video, SystemRomVersion::new(0, 1))
+        let video_row = boot::lines(BootStage::Video, &Version::new(0, 1, 0))
             .into_iter()
             .find(|line| line.text.starts_with("VIDEO"))
             .unwrap()
