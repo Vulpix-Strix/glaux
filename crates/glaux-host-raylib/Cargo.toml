@@ -6,5 +6,11 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-raylib.workspace = true
+# Needed for `Image::gen_image_color`, used to allocate the frame texture.
+raylib = { workspace = true, features = ["SUPPORT_IMAGE_GENERATION"] }
+thiserror.workspace = true
 glaux-video.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+glaux-machine.workspace = true
