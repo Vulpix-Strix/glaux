@@ -156,6 +156,7 @@ name = "glaux-video"
 version = "0.1.0"
 dependencies = [
  "glaux-machine",
+ "pretty_assertions",
 ]
 
 [[package]]

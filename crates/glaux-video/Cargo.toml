@@ -7,3 +7,6 @@ repository.workspace = true
 
 [dependencies]
 glaux-machine.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true

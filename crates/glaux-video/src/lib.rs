@@ -1,5 +1,7 @@
 //! Video subsystem for Glaux.
 
+pub mod draw;
+
 use glaux_machine::framebuffer::{Framebuffer, LEN};
 use glaux_machine::palette::{PALETTE_LEN, Palette};
 

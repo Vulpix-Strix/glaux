@@ -1,5 +1,5 @@
+mod demo;
 mod rom;
-mod test_pattern;
 
 use glaux_host_raylib::RaylibHost;
 use glaux_machine::machine::Machine;
@@ -11,7 +11,8 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let mut machine = Machine::new(rom::load()?);
-    test_pattern::draw(machine.framebuffer_mut());
+    let font = machine.system_rom().font().clone();
+    demo::draw(machine.framebuffer_mut(), &font);
 
     let mut host = RaylibHost::new("Glaux", WINDOW_SCALE)?;
     tracing::info!("window open");
