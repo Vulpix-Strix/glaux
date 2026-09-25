@@ -3,17 +3,32 @@
 use anyhow::{Context, bail, ensure};
 use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
 use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
-use glaux_machine::system_rom::SystemRom;
+use glaux_machine::system_rom::{SystemRom, SystemRomVersion};
 
+const VERSION_TXT: &str = include_str!("../../../rom/version.txt");
 const PALETTE_HEX: &str = include_str!("../../../rom/palette/system.hex");
 const FONT_BDF: &str = include_str!("../../../rom/font/Tamzen5x9r.bdf");
 
 /// Decodes the embedded System ROM assets.
 pub fn load() -> anyhow::Result<SystemRom> {
+    let version = parse_version(VERSION_TXT).context("invalid rom/version.txt")?;
     let palette = parse_palette(PALETTE_HEX).context("invalid rom/palette/system.hex")?;
     let font =
         parse_bdf(FONT_BDF, FontMetrics::SYSTEM).context("invalid rom/font/Tamzen5x9r.bdf")?;
-    Ok(SystemRom::new(palette, font))
+    Ok(SystemRom::new(version, palette, font))
+}
+
+/// Parses a `major.minor` version, each part a `u8`.
+fn parse_version(text: &str) -> anyhow::Result<SystemRomVersion> {
+    let text = text.trim();
+    let parse = || {
+        let (major, minor) = text.split_once('.')?;
+        Some(SystemRomVersion::new(
+            major.parse().ok()?,
+            minor.parse().ok()?,
+        ))
+    };
+    parse().with_context(|| format!("expected `major.minor` with values 0..=255, got {text:?}"))
 }
 
 /// Parses one `rrggbb` color per non-empty line. Exactly 256 colors are
@@ -159,6 +174,18 @@ mod tests {
     const BLANK: [&str; 9] = ["00"; 9];
 
     #[test]
+    fn version_parses_major_dot_minor() {
+        assert_eq!(parse_version("0.1\n").unwrap(), SystemRomVersion::new(0, 1));
+        assert_eq!(
+            parse_version(" 12.34 ").unwrap(),
+            SystemRomVersion::new(12, 34)
+        );
+        for bad in ["", "1", "1.2.3", "a.b", "256.0", "1.-1"] {
+            assert!(parse_version(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
     fn palette_requires_exactly_256_colors() {
         let full = "ff00ff\n".repeat(256);
         assert!(parse_palette(&full).is_ok());
@@ -223,6 +250,8 @@ mod tests {
     #[test]
     fn embedded_rom_loads() {
         let rom = load().unwrap();
+
+        assert_eq!(rom.version(), SystemRomVersion::new(0, 1));
 
         assert_eq!(rom.palette(), &Palette::provisional());
 

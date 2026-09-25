@@ -38,12 +38,17 @@ mod tests {
     use super::*;
     use crate::font::{BitmapFont, FontMetrics};
     use crate::palette::{PALETTE_LEN, Palette, Rgb};
+    use crate::system_rom::SystemRomVersion;
     use pretty_assertions::assert_eq;
 
     fn fake_rom(color: u32, glyph: char) -> SystemRom {
         let mut font = BitmapFont::new(FontMetrics::SYSTEM);
         font.insert(glyph, &[0b10101; 9]).unwrap();
-        SystemRom::new(Palette::new([Rgb::from_hex(color); PALETTE_LEN]), font)
+        SystemRom::new(
+            SystemRomVersion::new(0, 1),
+            Palette::new([Rgb::from_hex(color); PALETTE_LEN]),
+            font,
+        )
     }
 
     #[test]
