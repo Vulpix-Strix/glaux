@@ -69,12 +69,17 @@ pub struct Palette {
 }
 
 impl Palette {
+    /// Creates a palette from explicit entries in index order.
+    pub const fn new(entries: [Rgb; PALETTE_LEN]) -> Self {
+        Self { entries }
+    }
+
     /// Zughy 32 in entries `0..32`; the unused entries `32..256` are
     /// [`DEBUG_MAGENTA`] so that stray indices are easy to spot.
     pub fn provisional() -> Self {
         let mut entries = [DEBUG_MAGENTA; PALETTE_LEN];
         entries[..ZUGHY_32.len()].copy_from_slice(&ZUGHY_32);
-        Self { entries }
+        Self::new(entries)
     }
 
     /// Returns the color for a palette index.
@@ -92,6 +97,17 @@ impl Palette {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn new_keeps_explicit_entries() {
+        let mut entries = [Rgb::from_hex(0); PALETTE_LEN];
+        for (i, entry) in entries.iter_mut().enumerate() {
+            *entry = Rgb::from_hex(i as u32 * 0x010203);
+        }
+        let palette = Palette::new(entries);
+        assert_eq!(palette.entries(), &entries);
+        assert_eq!(palette.get(7), Rgb::from_hex(0x070e15));
+    }
 
     #[test]
     fn has_256_entries() {

@@ -14,5 +14,5 @@ run = "cargo fmt --all -- --check"
 [tasks.clippy]
 run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
 
-[tasks.run]
+[tasks.glaux]
 run = "cargo run -p glaux"

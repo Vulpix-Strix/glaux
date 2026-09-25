@@ -12,3 +12,6 @@ tracing-subscriber.workspace = true
 glaux-machine.workspace = true
 glaux-video.workspace = true
 glaux-host-raylib.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true

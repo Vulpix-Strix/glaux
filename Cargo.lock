@@ -127,6 +127,7 @@ dependencies = [
  "glaux-host-raylib",
  "glaux-machine",
  "glaux-video",
+ "pretty_assertions",
  "tracing",
  "tracing-subscriber",
 ]
@@ -147,6 +148,7 @@ name = "glaux-machine"
 version = "0.1.0"
 dependencies = [
  "pretty_assertions",
+ "thiserror",
 ]
 
 [[package]]
