@@ -15,6 +15,7 @@ semver.workspace = true
 glaux-machine.workspace = true
 glaux-video.workspace = true
 glaux-host-raylib.workspace = true
+glaux-input.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

@@ -1,7 +1,14 @@
 //! Raylib-based host for Glaux.
 
+mod keyboard;
+
+use std::time::Duration;
+
+use glaux_input::InputEvent;
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
+use keyboard::{EditKeys, KeyState, TextKeys};
 use raylib::core::error::{LoadTextureError, UpdateTextureError};
+use raylib::core::input::key_from_i32;
 use raylib::prelude::*;
 
 /// Bytes in the host-side RGBA copy of a frame.
@@ -35,6 +42,8 @@ pub struct RaylibHost {
     // (and its GL context) is closed.
     texture: Texture2D,
     rgba: Vec<u8>,
+    edit_keys: EditKeys,
+    text_keys: TextKeys,
     rl: RaylibHandle,
     thread: RaylibThread,
 }
@@ -67,9 +76,9 @@ impl RaylibHost {
             scale,
             raylib_version = %format_args!(
                 "{}.{}.{}",
-                raylib::ffi::RAYLIB_VERSION_MAJOR,
-                raylib::ffi::RAYLIB_VERSION_MINOR,
-                raylib::ffi::RAYLIB_VERSION_PATCH
+                ffi::RAYLIB_VERSION_MAJOR,
+                ffi::RAYLIB_VERSION_MINOR,
+                ffi::RAYLIB_VERSION_PATCH
             ),
             "host configuration"
         );
@@ -86,6 +95,8 @@ impl RaylibHost {
         Ok(Self {
             texture,
             rgba: vec![0; RGBA_LEN],
+            edit_keys: EditKeys::default(),
+            text_keys: TextKeys::default(),
             rl,
             thread,
         })
@@ -117,6 +128,46 @@ impl RaylibHost {
             Color::WHITE,
         );
         Ok(())
+    }
+
+    /// Returns the input received since the previous call.
+    ///
+    /// Raylib polls the platform when a frame ends, so calling this right
+    /// after [`present`](Self::present) yields the input for that frame.
+    /// Typed characters and editing keys come from separate raylib queues,
+    /// so their relative order within one frame is lost; text is reported
+    /// before editing keys. Held keys auto-repeat, except Enter.
+    pub fn poll_input(&mut self) -> Vec<InputEvent> {
+        let chars: Vec<char> = std::iter::from_fn(|| self.rl.get_char_pressed()).collect();
+        // Codes raylib-rs has no `KeyboardKey` for are skipped rather than
+        // ending the drain, so they don't hide keys queued after them.
+        let pressed: Vec<KeyboardKey> = std::iter::from_fn(|| self.rl.get_key_pressed_number())
+            .filter_map(|code| i32::try_from(code).ok().and_then(key_from_i32))
+            .collect();
+
+        let rl = &self.rl;
+        let elapsed = Duration::try_from_secs_f32(rl.get_frame_time()).unwrap_or_default();
+        let mut events = Vec::new();
+        self.text_keys.events(
+            &chars,
+            &pressed,
+            |key| rl.is_key_down(key),
+            elapsed,
+            &mut events,
+        );
+
+        let shift = rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+            || rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
+        self.edit_keys.events(
+            |key| KeyState {
+                pressed: rl.is_key_pressed(key),
+                down: rl.is_key_down(key),
+            },
+            shift,
+            elapsed,
+            &mut events,
+        );
+        events
     }
 }
 

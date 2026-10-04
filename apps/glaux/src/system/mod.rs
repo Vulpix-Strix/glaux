@@ -4,14 +4,16 @@
 //! framebuffer from its current state on every frame.
 
 mod boot;
+mod line_editor;
 mod shell;
 
 pub use boot::Boot;
 pub use shell::Shell;
 
-use glaux_machine::framebuffer::Framebuffer;
+use glaux_input::InputEvent;
+use glaux_machine::framebuffer::{Framebuffer, WIDTH};
 use glaux_machine::system_rom::SystemRom;
-use glaux_video::draw::{clear, draw_text};
+use glaux_video::draw::{clear, draw_text, fill_rect};
 
 // System UI colors, as indices into the system palette (Zughy 32).
 const BACKGROUND: u8 = 11;
@@ -46,28 +48,32 @@ impl System {
         &self.state
     }
 
-    /// Advances the system by one frame.
-    pub fn update(&mut self) {
+    /// Advances the system by one frame, applying the frame's `input`.
+    ///
+    /// Input is ignored during the boot sequence.
+    pub fn update(&mut self, input: &[InputEvent]) {
         match &mut self.state {
             SystemState::Boot(boot) => {
                 boot.tick();
                 if boot.is_finished() {
                     tracing::info!("boot finished, entering shell");
-                    self.state = SystemState::Shell(Shell);
+                    self.state = SystemState::Shell(Shell::new());
                 }
             }
-            SystemState::Shell(_) => {}
+            SystemState::Shell(shell) => {
+                for &event in input {
+                    // Submitted lines are dropped until commands exist. They
+                    // are deliberately not logged: user input stays out of
+                    // application logs.
+                    let _submitted = shell.handle_input(event);
+                }
+            }
         }
     }
 
     /// Redraws the whole framebuffer for the current state using the ROM's
     /// font.
     pub fn render(&self, framebuffer: &mut Framebuffer, rom: &SystemRom) {
-        let lines = match &self.state {
-            SystemState::Boot(boot) => boot::lines(boot.stage(), rom.version()),
-            SystemState::Shell(_) => shell::lines(),
-        };
-
         let font = rom.font();
         let metrics = font.metrics();
         let (cell_w, cell_h) = (
@@ -75,9 +81,25 @@ impl System {
             i32::from(metrics.cell_height()),
         );
 
+        let lines = match &self.state {
+            SystemState::Boot(boot) => boot::lines(boot.stage(), rom.version()),
+            SystemState::Shell(shell) => shell.lines(text_columns(cell_w)),
+        };
+
         clear(framebuffer, BACKGROUND);
         for line in &lines {
             let (x, y) = line.origin(cell_w, cell_h);
+            if let Some(background) = line.background {
+                let cells = i32::try_from(line.text.chars().count()).unwrap_or(i32::MAX);
+                fill_rect(
+                    framebuffer,
+                    x,
+                    y,
+                    cells.saturating_mul(cell_w),
+                    cell_h,
+                    background,
+                );
+            }
             draw_text(framebuffer, font, &line.text, x, y, line.color);
         }
     }
@@ -89,6 +111,13 @@ impl Default for System {
     }
 }
 
+/// Character cells that fit across the screen inside the margin left by
+/// [`Line::origin`].
+fn text_columns(cell_w: i32) -> usize {
+    let cells = WIDTH as i32 / cell_w.max(1);
+    usize::try_from(cells - 2).unwrap_or(0)
+}
+
 /// One line of system text, positioned in character cells.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Line {
@@ -96,6 +125,8 @@ struct Line {
     row: i32,
     text: String,
     color: u8,
+    /// Fills the cells covered by the text before drawing it.
+    background: Option<u8>,
 }
 
 impl Line {
@@ -105,7 +136,13 @@ impl Line {
             row,
             text: text.into(),
             color,
+            background: None,
         }
+    }
+
+    fn with_background(mut self, color: u8) -> Self {
+        self.background = Some(color);
+        self
     }
 
     /// Top-left pixel of the line, leaving a one-cell margin around the
@@ -146,7 +183,7 @@ mod tests {
     fn boot_at(stage: BootStage) -> System {
         let mut system = System::new();
         while !matches!(system.state(), SystemState::Boot(b) if b.stage() == stage) {
-            system.update();
+            system.update(&[]);
         }
         system
     }
@@ -154,7 +191,7 @@ mod tests {
     fn shell() -> System {
         let mut system = System::new();
         while matches!(system.state(), SystemState::Boot(_)) {
-            system.update();
+            system.update(&[]);
         }
         system
     }
@@ -181,7 +218,7 @@ mod tests {
     fn frame_n_is_reached_after_n_updates() {
         let mut system = System::new();
         for n in 1..=10 {
-            system.update();
+            system.update(&[]);
             assert_eq!(system.state(), &SystemState::Boot(Boot::at_frame(n)));
         }
     }
@@ -197,7 +234,7 @@ mod tests {
             if seen.last().map(|&(_, s)| s) != Some(stage) {
                 seen.push((frame, stage));
             }
-            system.update();
+            system.update(&[]);
             frame += 1;
         }
 
@@ -218,17 +255,17 @@ mod tests {
     fn switches_to_shell_exactly_at_finish_frame() {
         let mut system = System::new();
         for _ in 0..boot::FINISH_FRAME - 1 {
-            system.update();
+            system.update(&[]);
         }
         assert!(matches!(system.state(), SystemState::Boot(_)));
 
-        system.update();
-        assert_eq!(system.state(), &SystemState::Shell(Shell));
+        system.update(&[]);
+        assert_eq!(system.state(), &SystemState::Shell(Shell::new()));
 
         for _ in 0..100 {
-            system.update();
+            system.update(&[]);
         }
-        assert_eq!(system.state(), &SystemState::Shell(Shell));
+        assert_eq!(system.state(), &SystemState::Shell(Shell::new()));
     }
 
     #[test]
@@ -269,12 +306,111 @@ mod tests {
 
     #[test]
     fn shell_renders_prompt() {
-        let prompt_row = shell::lines()
+        let prompt_row = Shell::new()
+            .lines(text_columns(CELL_W))
             .into_iter()
-            .find(|line| line.text == "> _")
+            .find(|line| line.text == "> ")
             .unwrap()
             .row;
         assert!(row_has_ink(&render(&shell()), prompt_row));
+    }
+
+    #[test]
+    fn input_during_boot_is_ignored() {
+        let mut system = System::new();
+        for n in 1..=10 {
+            system.update(&[InputEvent::Text('A'), InputEvent::Enter]);
+            assert_eq!(system.state(), &SystemState::Boot(Boot::at_frame(n)));
+        }
+    }
+
+    #[test]
+    fn typed_text_reaches_shell() {
+        let mut system = shell();
+        system.update(&[InputEvent::Text('H'), InputEvent::Text('I')]);
+        system.update(&[InputEvent::Left { select: false }]);
+
+        let mut expected = Shell::new();
+        for event in [
+            InputEvent::Text('H'),
+            InputEvent::Text('I'),
+            InputEvent::Left { select: false },
+        ] {
+            expected.handle_input(event);
+        }
+        assert_eq!(system.state(), &SystemState::Shell(expected));
+    }
+
+    #[test]
+    fn typed_text_renders_after_prompt() {
+        let mut system = shell();
+        let empty = render(&system);
+        system.update(&[InputEvent::Text('A')]);
+        let typed = render(&system);
+
+        // Cell columns 2 and 3 follow the two-char prompt. The cursor starts
+        // in column 2; typing puts 'A' there and moves the cursor to 3.
+        let ink = |fb: &Framebuffer, col: i32| fb.pixel((col + 1) * CELL_W, 2 * CELL_H);
+        assert_eq!(
+            (ink(&empty, 2), ink(&empty, 3)),
+            (Some(TEXT), Some(BACKGROUND))
+        );
+        assert_eq!((ink(&typed, 2), ink(&typed, 3)), (Some(TEXT), Some(TEXT)));
+    }
+
+    #[test]
+    fn enter_clears_command_line() {
+        let mut system = shell();
+        system.update(&[InputEvent::Text('A'), InputEvent::Enter]);
+        assert_eq!(system.state(), &SystemState::Shell(Shell::new()));
+        assert_eq!(render(&system), render(&shell()));
+    }
+
+    #[test]
+    fn selected_cells_render_inverse() {
+        let mut system = shell();
+        system.update(&[
+            InputEvent::Text('A'),
+            InputEvent::Text('B'),
+            InputEvent::Left { select: false },
+            InputEvent::Right { select: true },
+        ]);
+        let fb = render(&system);
+
+        // Fake glyphs leave column 3 of each 4-pixel cell empty.
+        let y = 2 * CELL_H;
+        let gap = |cell: i32| fb.pixel((cell + 1) * CELL_W + 3, y);
+        assert_eq!(gap(2), Some(BACKGROUND), "unselected 'A'");
+        assert_eq!(gap(3), Some(TEXT), "selected 'B'");
+        assert_eq!(fb.pixel(4 * CELL_W, y), Some(BACKGROUND), "glyph of 'B'");
+    }
+
+    #[test]
+    fn text_columns_leave_a_cell_of_margin_on_each_side() {
+        assert_eq!(text_columns(CELL_W), 320 / 4 - 2);
+        assert_eq!(text_columns(5), 62);
+        assert_eq!(text_columns(400), 0);
+    }
+
+    #[test]
+    fn long_command_line_wraps_onto_next_row() {
+        let mut system = shell();
+        let fits = text_columns(CELL_W) - 2;
+        let mut input = vec![InputEvent::Text('o'); fits];
+        system.update(&input);
+        // The cursor sits in the first cell of row 2 once row 1 is full.
+        assert!(row_has_ink(&render(&system), 2));
+
+        // Glyph pixels of the first cell on row 2 (margin + row offset).
+        let first_cell_of_row_2 = |fb: &Framebuffer| fb.pixel(CELL_W, 3 * CELL_H);
+        input.truncate(1);
+        system.update(&input);
+        let fb = render(&system);
+        assert_eq!(first_cell_of_row_2(&fb), Some(TEXT));
+        assert!(row_has_ink(&fb, 2));
+        // Nothing is drawn past the right margin.
+        let right_margin = 320 - CELL_W;
+        assert!((0..240).all(|y| (right_margin..320).all(|x| fb.pixel(x, y) == Some(BACKGROUND))));
     }
 
     #[test]

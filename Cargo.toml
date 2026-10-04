@@ -33,4 +33,5 @@ pretty_assertions = "1"
 
 glaux-machine = { path = "crates/glaux-machine" }
 glaux-video = { path = "crates/glaux-video" }
+glaux-input = { path = "crates/glaux-input" }
 glaux-host-raylib = { path = "crates/glaux-host-raylib" }

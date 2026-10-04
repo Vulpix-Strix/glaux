@@ -50,7 +50,8 @@ fn run(placement: WindowPlacement) -> anyhow::Result<()> {
     while !host.should_close() {
         system.render(machine.framebuffer_mut(), &rom);
         host.present(&IndexedFrame::new(machine.framebuffer(), rom.palette()))?;
-        system.update();
+        let input = host.poll_input();
+        system.update(&input);
     }
 
     Ok(())

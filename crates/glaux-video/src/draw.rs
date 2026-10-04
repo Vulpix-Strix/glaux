@@ -4,7 +4,7 @@
 //! falls outside the framebuffer is silently dropped.
 
 use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
+use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 
 /// Fills the whole framebuffer with a palette index.
 pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
@@ -14,6 +14,30 @@ pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
 /// Writes one pixel; positions outside the framebuffer are ignored.
 pub fn pixel(framebuffer: &mut Framebuffer, x: i32, y: i32, color: u8) {
     framebuffer.set_pixel(x, y, color);
+}
+
+/// Fills the `width`×`height` rectangle whose top-left corner is `(x, y)`.
+///
+/// Non-positive sizes draw nothing; the parts outside the framebuffer are
+/// clipped.
+pub fn fill_rect(
+    framebuffer: &mut Framebuffer,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    color: u8,
+) {
+    // Clamp to the i32 range in i64 so that `x + width` cannot overflow.
+    let clamp = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+    let (x0, y0) = (x.max(0), y.max(0));
+    let x1 = clamp(i64::from(x) + i64::from(width)).min(WIDTH as i32);
+    let y1 = clamp(i64::from(y) + i64::from(height)).min(HEIGHT as i32);
+    for py in y0..y1 {
+        for px in x0..x1 {
+            framebuffer.set_pixel(px, py, color);
+        }
+    }
 }
 
 /// Draws `text` with `font`, with `(x, y)` as the top-left corner of the
@@ -70,7 +94,6 @@ pub fn draw_text(
 mod tests {
     use super::*;
     use glaux_machine::font::FontMetrics;
-    use glaux_machine::framebuffer::{HEIGHT, WIDTH};
     use pretty_assertions::assert_eq;
 
     const INK: u8 = 7;
@@ -136,6 +159,42 @@ mod tests {
             pixel(&mut fb, x, y, INK);
         }
         assert_eq!(fb, Framebuffer::new());
+    }
+
+    #[test]
+    fn fill_rect_covers_exact_region() {
+        let mut fb = Framebuffer::new();
+        fill_rect(&mut fb, 10, 20, 3, 2, INK);
+        let expected = with_ink((20..22).flat_map(|y| (10..13).map(move |x| (x, y))));
+        assert_eq!(fb, expected);
+    }
+
+    #[test]
+    fn fill_rect_clips_at_edges() {
+        let mut fb = Framebuffer::new();
+        fill_rect(&mut fb, -1, -1, 2, 2, INK);
+        fill_rect(&mut fb, 319, 239, 5, 5, INK);
+        assert_eq!(fb, with_ink([(0, 0), (319, 239)]));
+    }
+
+    #[test]
+    fn fill_rect_with_empty_size_draws_nothing() {
+        let mut fb = Framebuffer::new();
+        for (w, h) in [(0, 5), (5, 0), (-3, 5), (5, -3)] {
+            fill_rect(&mut fb, 10, 10, w, h, INK);
+        }
+        assert_eq!(fb, Framebuffer::new());
+    }
+
+    #[test]
+    fn fill_rect_extreme_values_do_not_panic() {
+        let mut fb = Framebuffer::new();
+        fill_rect(&mut fb, i32::MAX, i32::MAX, i32::MAX, i32::MAX, INK);
+        fill_rect(&mut fb, i32::MIN, i32::MIN, i32::MAX, i32::MAX, INK);
+        assert_eq!(fb, Framebuffer::new());
+
+        fill_rect(&mut fb, -10, -10, i32::MAX, i32::MAX, INK);
+        assert!(fb.as_bytes().iter().all(|&b| b == INK));
     }
 
     #[test]

@@ -11,6 +11,7 @@ raylib = { workspace = true, features = ["SUPPORT_IMAGE_GENERATION"] }
 thiserror.workspace = true
 tracing.workspace = true
 glaux-video.workspace = true
+glaux-input.workspace = true
 
 # Builds the bundled GLFW with Wayland support next to the default X11 backend;
 # GLFW picks one at runtime. The `wayland` feature is not used because it links
