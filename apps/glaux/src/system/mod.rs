@@ -289,6 +289,9 @@ fn start(mut shell: Box<Shell>, cartridge: LoadedCartridge) -> SystemState {
             let FailedStart { cartridge, error } = *failed;
             match error {
                 StartError::Cartridge(err) => shell.report_error(err.to_string()),
+                StartError::ObjTiles(err) => {
+                    shell.report_error(format!("INVALID SPRITES.BIN: {err}"));
+                }
                 StartError::Script(failure) => {
                     tracing::info!(
                         cartridge = %identity,
@@ -1177,6 +1180,29 @@ mod tests {
     }
 
     #[test]
+    fn malformed_object_tiles_prevent_startup() {
+        let cases = [
+            (vec![0; 31], "length must be a multiple of 32 bytes, got 31"),
+            (
+                vec![0; glaux_machine::sprite::OBJ_TILE_BANK_BYTES + 32],
+                "got 32800 bytes, maximum is 32768",
+            ),
+        ];
+        for (n, (bytes, expected)) in cases.into_iter().enumerate() {
+            let fixture = Fixture::new(&format!("sys-run-bad-sprites-{n}"));
+            let system = shell_with_cartridge(&fixture, "");
+            std::fs::write(fixture.root().join("pong/sprites.bin"), bytes).unwrap();
+            let system = enter(enter(system, "load pong"), "run");
+            let lines = after(&system, "> run");
+            assert!(
+                matches!(lines.as_slice(), [only] if only.starts_with("! INVALID SPRITES.BIN:") && only.contains(expected)),
+                "{lines:?}"
+            );
+            assert_eq!(loaded_name(&system), Some("Pong"));
+        }
+    }
+
+    #[test]
     fn script_errors_do_not_reveal_host_paths() {
         let fixture = Fixture::new("sys-run-paths");
         let host_paths = [
@@ -1228,6 +1254,17 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_sprite_asset_starts_with_an_empty_bank() {
+        let fixture = Fixture::new("sys-draw-no-sprites");
+        let system = ticks(
+            started(&fixture, "function draw() cls(6) spr(0, 10, 10) end"),
+            1,
+        );
+        assert!(is_running(&system));
+        assert_eq!(render(&system), filled(6));
+    }
+
+    #[test]
     fn later_commands_draw_over_earlier_ones() {
         let fixture = Fixture::new("sys-draw-order");
         let system = ticks(
@@ -1237,6 +1274,41 @@ mod tests {
         let mut expected = filled(1);
         expected.set_pixel(5, 5, 2);
         assert_eq!(render(&system), expected);
+    }
+
+    #[test]
+    fn sprites_render_in_draw_command_order() {
+        let fixture = Fixture::new("sys-draw-sprite-order");
+        let dir = fixture.root().join("pong");
+        let system = shell_with_cartridge(
+            &fixture,
+            r#"function draw() cls(9) spr(0, 0, 0) pset(0, 0, 7) print("A", 4, 0, 8) end"#,
+        );
+        std::fs::write(dir.join("sprites.bin"), [0x22; 32]).unwrap();
+        let system = ticks(enter(enter(system, "load pong"), "run"), 1);
+        let fb = render(&system);
+
+        assert_eq!(fb.pixel(0, 0), Some(7), "pset follows sprite");
+        assert_eq!(fb.pixel(4, 0), Some(8), "print follows sprite");
+        assert_eq!(fb.pixel(2, 2), Some(2));
+        assert_eq!(fb.pixel(3, 0), Some(2), "sprite follows cls");
+        assert_eq!(fb.pixel(7, 7), Some(2));
+        assert_eq!(fb.pixel(8, 0), Some(9));
+    }
+
+    #[test]
+    fn a_fresh_run_reloads_object_tiles() {
+        let fixture = Fixture::new("sys-draw-sprite-reload");
+        let dir = fixture.root().join("pong");
+        let system = shell_with_cartridge(&fixture, "function draw() cls(0) spr(0, 10, 10) end");
+        std::fs::write(dir.join("sprites.bin"), [0x11; 32]).unwrap();
+        let system = ticks(enter(enter(system, "load pong"), "run"), 1);
+        assert_eq!(render(&system).pixel(10, 10), Some(1));
+
+        let system = stop_cartridge(system);
+        std::fs::write(dir.join("sprites.bin"), [0x22; 32]).unwrap();
+        let system = ticks(enter(system, "run"), 1);
+        assert_eq!(render(&system).pixel(10, 10), Some(2));
     }
 
     #[test]

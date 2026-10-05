@@ -6,6 +6,7 @@
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::palette::PALETTE_LEN;
+use glaux_machine::sprite::{OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjTileBank};
 
 /// Fills the whole framebuffer with a palette index.
 pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
@@ -15,6 +16,35 @@ pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
 /// Writes one pixel; positions outside the framebuffer are ignored.
 pub fn pixel(framebuffer: &mut Framebuffer, x: i32, y: i32, color: u8) {
     framebuffer.set_pixel(x, y, color);
+}
+
+/// Draws one native 8x8 object tile at `(x, y)`.
+///
+/// Tile-local index 0 is transparent. Indices 1 through 15 are unresolved
+/// object-local values; without an active OBJ palette bank, this renderer
+/// writes them directly as framebuffer palette indices.
+pub fn draw_obj_tile(
+    framebuffer: &mut Framebuffer,
+    tiles: &ObjTileBank,
+    tile: usize,
+    x: i32,
+    y: i32,
+) {
+    for local_y in 0..OBJ_TILE_HEIGHT {
+        for local_x in 0..OBJ_TILE_WIDTH {
+            let Some(index) = tiles.pixel(tile, local_x, local_y) else {
+                return;
+            };
+            if index == 0 {
+                continue;
+            }
+            let px = i64::from(x) + local_x as i64;
+            let py = i64::from(y) + local_y as i64;
+            if let (Ok(px), Ok(py)) = (i32::try_from(px), i32::try_from(py)) {
+                framebuffer.set_pixel(px, py, index);
+            }
+        }
+    }
 }
 
 /// Replaces every pixel's palette index `i` with `table[i]`.
@@ -136,6 +166,7 @@ fn glyph_visible(pen_x: i64, pen_y: i64, glyph_width: u8, glyph_height: u8, scal
 mod tests {
     use super::*;
     use glaux_machine::font::FontMetrics;
+    use glaux_machine::sprite::{OBJ_TILE_BYTES, OBJ_TILE_CAPACITY};
     use pretty_assertions::assert_eq;
 
     const INK: u8 = 7;
@@ -157,6 +188,12 @@ mod tests {
                 "expected pixel ({x}, {y}) is on screen"
             );
         }
+        fb
+    }
+
+    fn filled(color: u8) -> Framebuffer {
+        let mut fb = Framebuffer::new();
+        fb.clear(color);
         fb
     }
 
@@ -199,6 +236,68 @@ mod tests {
             (i32::MAX, i32::MAX),
         ] {
             pixel(&mut fb, x, y, INK);
+        }
+        assert_eq!(fb, Framebuffer::new());
+    }
+
+    #[test]
+    fn object_tile_draws_exact_indices_and_keeps_zero_transparent() {
+        let row = [0x01, 0x23, 0x40, 0x56];
+        let bytes = row
+            .into_iter()
+            .cycle()
+            .take(OBJ_TILE_BYTES)
+            .collect::<Vec<_>>();
+        let tiles = ObjTileBank::from_bytes(&bytes).unwrap();
+        let mut fb = filled(9);
+
+        draw_obj_tile(&mut fb, &tiles, 0, 10, 20);
+
+        let expected_row = [9, 1, 2, 3, 4, 9, 5, 6];
+        for y in 20..28 {
+            for (offset, expected) in expected_row.into_iter().enumerate() {
+                assert_eq!(fb.pixel(10 + offset as i32, y), Some(expected));
+            }
+        }
+        assert_eq!(fb.pixel(9, 20), Some(9));
+        assert_eq!(fb.pixel(18, 20), Some(9));
+    }
+
+    #[test]
+    fn object_tile_clips_at_every_edge() {
+        let tiles = ObjTileBank::from_bytes(&[0x77; OBJ_TILE_BYTES]).unwrap();
+        let cases = [
+            ((-7, -7), Some((0, 0))),
+            ((319, 239), Some((319, 239))),
+            ((-8, 10), None),
+            ((10, -8), None),
+            ((WIDTH as i32, 10), None),
+            ((10, HEIGHT as i32), None),
+        ];
+        for ((x, y), expected) in cases {
+            let mut fb = Framebuffer::new();
+            draw_obj_tile(&mut fb, &tiles, 0, x, y);
+            assert_eq!(
+                fb.as_bytes().iter().filter(|&&index| index == 7).count(),
+                usize::from(expected.is_some()),
+                "sprite at ({x}, {y})"
+            );
+            if let Some((px, py)) = expected {
+                assert_eq!(fb.pixel(px, py), Some(7));
+            }
+        }
+    }
+
+    #[test]
+    fn object_tile_handles_extreme_coordinates_and_invalid_tiles() {
+        let tiles = ObjTileBank::from_bytes(&[0x77; OBJ_TILE_BYTES]).unwrap();
+        let mut fb = Framebuffer::new();
+        for (tile, x, y) in [
+            (0, i32::MIN, i32::MIN),
+            (0, i32::MAX, i32::MAX),
+            (OBJ_TILE_CAPACITY, 0, 0),
+        ] {
+            draw_obj_tile(&mut fb, &tiles, tile, x, y);
         }
         assert_eq!(fb, Framebuffer::new());
     }

@@ -12,6 +12,9 @@ use crate::cartridge_fs::{CartridgeFs, CartridgeStorage, FsError};
 /// Path of the manifest from the cartridge root.
 const MANIFEST: &str = "/cart.json";
 
+/// Optional native object-tile data from the cartridge root.
+const OBJ_TILES: &str = "/sprites.bin";
+
 /// Suffix an entry script's file name must have.
 const ENTRY_EXTENSION: &str = ".luau";
 
@@ -50,6 +53,10 @@ pub enum CartridgeError {
     EntryNotAFile(String),
     #[error("CANNOT READ ENTRY: {0}")]
     EntryUnreadable(String),
+    #[error("SPRITES.BIN IS NOT A FILE")]
+    ObjTilesNotAFile,
+    #[error("CANNOT READ SPRITES.BIN")]
+    ObjTilesUnreadable,
 }
 
 /// The validated contents of `cart.json`.
@@ -185,6 +192,22 @@ impl LoadedCartridge {
         self.files
             .read_file(&format!("/{entry}"))
             .map_err(|err| entry_error(err, entry))
+    }
+
+    /// Current native object-tile bytes, if the optional `sprites.bin` exists.
+    ///
+    /// The file is read on every call so a fresh cartridge run observes edits
+    /// made since the cartridge was loaded. Format validation belongs to the
+    /// machine representation constructed by the caller.
+    pub fn read_obj_tiles(&self) -> Result<Option<Vec<u8>>, CartridgeError> {
+        match self.files.read_file(OBJ_TILES) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => Ok(None),
+            Err(FsError::NotAFile(_)) => Err(CartridgeError::ObjTilesNotAFile),
+            Err(FsError::Unreadable(_) | FsError::Unavailable) => {
+                Err(CartridgeError::ObjTilesUnreadable)
+            }
+        }
     }
 }
 
@@ -444,6 +467,38 @@ mod tests {
         assert_eq!(
             cartridge.entry_source(),
             Err(CartridgeError::EntryNotFound("main.luau".into()))
+        );
+    }
+
+    #[test]
+    fn object_tiles_are_optional_and_read_fresh() {
+        let fixture = Fixture::new("load-obj-tiles");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+        assert_eq!(cartridge.read_obj_tiles(), Ok(None));
+
+        fs::write(dir.join("sprites.bin"), [0x12; 32]).unwrap();
+        assert_eq!(cartridge.read_obj_tiles(), Ok(Some(vec![0x12; 32])));
+        fs::write(dir.join("sprites.bin"), [0x34; 64]).unwrap();
+        assert_eq!(cartridge.read_obj_tiles(), Ok(Some(vec![0x34; 64])));
+    }
+
+    #[test]
+    fn object_tiles_must_be_a_regular_readable_file() {
+        let fixture = Fixture::new("load-obj-tiles-file");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        fs::create_dir(dir.join("sprites.bin")).unwrap();
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+
+        assert_eq!(
+            cartridge.read_obj_tiles(),
+            Err(CartridgeError::ObjTilesNotAFile)
+        );
+        assert_eq!(
+            CartridgeError::ObjTilesNotAFile.to_string(),
+            "SPRITES.BIN IS NOT A FILE"
         );
     }
 

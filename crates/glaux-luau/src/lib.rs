@@ -9,8 +9,11 @@
 //!
 //! - `log.trace(...)`, `log.debug(...)`, `log.info(...)` and `log.warn(...)`,
 //!   which record [`LogEntry`]s in any phase;
-//! - `cls(color)`, `pset(x, y, color)` and `print(text, x, y, color)`, which
-//!   record [`DrawCommand`]s and may only be called during `draw()`;
+//! - `cls(color)`, `pset(x, y, color)`, `print(text, x, y, color)` and
+//!   `spr(tile, x, y)`, which record [`DrawCommand`]s and may only be called
+//!   during `draw()`. `spr` draws one 8x8 object tile; transparent index 0 is
+//!   skipped and indices 1 through 15 currently map directly to framebuffer
+//!   indices;
 //! - `btn(button)` and `btnp(button)`, which report whether a game button
 //!   is held, or was just pressed, on the current tick. `button` is one of
 //!   `"up"`, `"down"`, `"left"`, `"right"`, `"a"` or `"b"`; any other value
@@ -37,7 +40,8 @@ use mlua::{Function, Lua, MultiValue, Value, VmState};
 pub const DEFAULT_INTERRUPT_BUDGET: u64 = 5_000_000;
 
 /// Draw cost one `draw()` call may spend: each `cls` or `pset` costs one,
-/// and each `print` costs [`TEXT_CHAR_COST`] per character.
+/// each `spr` costs the 64 pixels it may draw, and each `print` costs
+/// [`TEXT_CHAR_COST`] per character.
 ///
 /// The completed frame is replayed on every host presentation frame, which
 /// may run faster than the 60 Hz tick, so this bounds per-frame host work as
@@ -78,6 +82,8 @@ pub enum DrawCommand {
     Clear(u8),
     /// `pset(x, y, color)`: write one pixel.
     Pixel { x: i32, y: i32, color: u8 },
+    /// `spr(tile, x, y)`: draw one 8x8 object tile at its top-left corner.
+    Sprite { tile: u16, x: i32, y: i32 },
     /// `print(text, x, y, color)`: draw text with `(x, y)` as the top-left
     /// corner of its first character cell.
     Text {
@@ -369,7 +375,7 @@ impl Runtime {
         self.lua.globals().raw_set("log", log)
     }
 
-    /// Installs `cls`, `pset` and `print`.
+    /// Installs `cls`, `pset`, `spr` and `print`.
     fn install_draw(&self, tostring: &Function) -> mlua::Result<()> {
         let globals = self.lua.globals();
 
@@ -394,6 +400,20 @@ impl Runtime {
                 record(lua, &pending, "pset", command)
             })?;
         globals.raw_set("pset", pset)?;
+
+        let pending = Rc::clone(&self.pending);
+        let spr = self
+            .lua
+            .create_function(move |lua, (tile, x, y): (Value, Value, Value)| {
+                expect_draw(lua, &pending, "spr")?;
+                let command = DrawCommand::Sprite {
+                    tile: tile_arg(lua, "spr", 1, &tile)?,
+                    x: coordinate_arg(lua, "spr", 2, &x)?,
+                    y: coordinate_arg(lua, "spr", 3, &y)?,
+                };
+                record(lua, &pending, "spr", command)
+            })?;
+        globals.raw_set("spr", spr)?;
 
         let pending = Rc::clone(&self.pending);
         let tostring = tostring.clone();
@@ -528,6 +548,7 @@ fn record(
         DrawCommand::Text { text, .. } => {
             text.chars().count().max(1).saturating_mul(TEXT_CHAR_COST)
         }
+        DrawCommand::Sprite { .. } => 64,
         DrawCommand::Clear(_) | DrawCommand::Pixel { .. } => 1,
     };
     recording.cost = recording.cost.saturating_add(cost);
@@ -588,6 +609,21 @@ fn color_arg(lua: &Lua, function: &str, position: usize, value: &Value) -> mlua:
             function,
             position,
             &format!("palette index 0-255 expected, got {n}"),
+        ))
+    }
+}
+
+/// An object-tile index: an integer in `0..=1023`.
+fn tile_arg(lua: &Lua, function: &str, position: usize, value: &Value) -> mlua::Result<u16> {
+    let n = number_arg(lua, function, position, value)?;
+    if n.fract() == 0.0 && (0.0..=1023.0).contains(&n) {
+        Ok(n as u16)
+    } else {
+        Err(bad_argument(
+            lua,
+            function,
+            position,
+            &format!("object tile index 0-1023 expected, got {n}"),
         ))
     }
 }
@@ -1083,6 +1119,10 @@ mod tests {
         DrawCommand::Pixel { x, y, color }
     }
 
+    fn sprite(tile: u16, x: i32, y: i32) -> DrawCommand {
+        DrawCommand::Sprite { tile, x, y }
+    }
+
     /// The frame published by one tick of a script whose `draw()` body is
     /// `body`.
     fn drawn(body: &str) -> Vec<DrawCommand> {
@@ -1112,9 +1152,10 @@ mod tests {
     fn draw_functions_record_commands_in_call_order() {
         assert_eq!(drawn("cls(3)"), [DrawCommand::Clear(3)]);
         assert_eq!(
-            drawn(r#"cls(1) pset(5, 5, 2) print("HI", 10, 20, 16) cls(0)"#),
+            drawn(r#"cls(1) spr(3, 7, 8) pset(5, 5, 2) print("HI", 10, 20, 16) cls(0)"#),
             [
                 DrawCommand::Clear(1),
+                sprite(3, 7, 8),
                 pixel(5, 5, 2),
                 DrawCommand::Text {
                     text: "HI".into(),
@@ -1185,6 +1226,23 @@ mod tests {
     }
 
     #[test]
+    fn a_failing_draw_does_not_publish_sprite_commands() {
+        let mut runtime = started(
+            r#"
+            local n = 0
+            function draw()
+                n += 1
+                cls(n)
+                if n == 2 then spr(7, 10, 20) error("boom") end
+            end
+            "#,
+        );
+        runtime.tick(NO_BUTTONS).unwrap();
+        assert!(runtime.tick(NO_BUTTONS).is_err());
+        assert_eq!(runtime.frame(), [DrawCommand::Clear(1)]);
+    }
+
+    #[test]
     fn a_failing_tick_keeps_the_previous_frame() {
         let mut runtime = started(
             r#"
@@ -1208,7 +1266,12 @@ mod tests {
 
     #[test]
     fn draw_functions_fail_outside_draw() {
-        for call in ["cls(1)", "pset(0, 0, 1)", r#"print("x", 0, 0, 1)"#] {
+        for call in [
+            "cls(1)",
+            "pset(0, 0, 1)",
+            "spr(0, 0, 0)",
+            r#"print("x", 0, 0, 1)"#,
+        ] {
             let name = &call[..call.find('(').unwrap()];
             let expected = format!("'{name}' can only be called during draw()");
 
@@ -1299,6 +1362,10 @@ mod tests {
                 r#"print("x", 0, {}, 1)"#,
                 "#3 to 'print' (number expected, got table)",
             ),
+            (
+                r#"spr(0, "1", 0)"#,
+                "#2 to 'spr' (number expected, got string)",
+            ),
         ] {
             assert_eq!(
                 draw_error(call),
@@ -1311,9 +1378,42 @@ mod tests {
     #[test]
     fn fractional_coordinates_are_floored() {
         assert_eq!(
-            drawn("pset(1.9, 2.5, 1) pset(-0.5, -1.5, 1)"),
-            [pixel(1, 2, 1), pixel(-1, -2, 1)]
+            drawn("pset(1.9, 2.5, 1) pset(-0.5, -1.5, 1) spr(2, 3.9, -0.5)"),
+            [pixel(1, 2, 1), pixel(-1, -2, 1), sprite(2, 3, -1)]
         );
+    }
+
+    #[test]
+    fn sprite_tile_indices_must_be_integers_in_range() {
+        assert_eq!(
+            drawn("spr(0, 1, 2) spr(1023, 3, 4)"),
+            [sprite(0, 1, 2), sprite(1023, 3, 4)]
+        );
+        for (call, detail) in [
+            (
+                "spr(-1, 0, 0)",
+                "#1 to 'spr' (object tile index 0-1023 expected, got -1)",
+            ),
+            (
+                "spr(1024, 0, 0)",
+                "#1 to 'spr' (object tile index 0-1023 expected, got 1024)",
+            ),
+            (
+                "spr(1.5, 0, 0)",
+                "#1 to 'spr' (object tile index 0-1023 expected, got 1.5)",
+            ),
+            (
+                r#"spr("1", 0, 0)"#,
+                "#1 to 'spr' (number expected, got string)",
+            ),
+            ("spr()", "#1 to 'spr' (number expected, got nil)"),
+        ] {
+            assert_eq!(
+                draw_error(call),
+                format!("main.luau:1: bad argument {detail}"),
+                "{call}"
+            );
+        }
     }
 
     #[test]
@@ -1369,6 +1469,69 @@ mod tests {
         // Empty text still costs one character.
         let empty = format!(r#"for i = 1, {CHARS} + 1 do print("", 0, 0, 1) end"#);
         assert!(draw_error(&empty).contains("too many draw commands"));
+    }
+
+    #[test]
+    fn sprites_cost_sixty_four_draw_units() {
+        const SPRITES: usize = MAX_DRAW_COMMANDS / 64;
+        let budget = Budget {
+            interrupts: 4 * MAX_DRAW_COMMANDS as u64,
+        };
+        let fits = format!("function draw() for i = 1, {SPRITES} do spr(0, 0, 0) end end");
+        let mut runtime = Runtime::start("main.luau", fits.as_bytes(), budget).unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
+        assert_eq!(runtime.frame().len(), SPRITES);
+
+        let over = format!(
+            "function draw() for i = 1, {} do spr(0, 0, 0) end end",
+            SPRITES + 1
+        );
+        let mut runtime = Runtime::start("main.luau", over.as_bytes(), budget).unwrap();
+        let err = runtime.tick(NO_BUTTONS).unwrap_err();
+        assert!(matches!(
+            err.error,
+            ScriptError::Runtime(message) if message.contains("too many draw commands")
+        ));
+    }
+
+    #[test]
+    fn tile_viewer_example_draws_and_navigates_its_visible_range() {
+        let source = include_str!("../../../examples/tile-viewer/main.luau");
+        let mut runtime = started(source);
+        let sprite_tiles = |runtime: &Runtime| {
+            runtime
+                .frame()
+                .iter()
+                .filter_map(|command| match command {
+                    DrawCommand::Sprite { tile, .. } => Some(*tile),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        runtime.tick(NO_BUTTONS).unwrap();
+        assert_eq!(sprite_tiles(&runtime), (0..40).collect::<Vec<_>>());
+
+        runtime.tick(buttons(&[], &[GameButton::Right])).unwrap();
+        assert_eq!(sprite_tiles(&runtime), (1..41).collect::<Vec<_>>());
+
+        runtime.tick(buttons(&[], &[GameButton::Down])).unwrap();
+        assert_eq!(sprite_tiles(&runtime), (9..49).collect::<Vec<_>>());
+
+        for _ in 0..130 {
+            runtime.tick(buttons(&[], &[GameButton::Down])).unwrap();
+        }
+        assert_eq!(sprite_tiles(&runtime), vec![1023]);
+        assert!(runtime.frame().iter().any(|command| matches!(
+            command,
+            DrawCommand::Text { text, .. } if text == "SELECTED TILE 1023"
+        )));
+        assert!(
+            runtime
+                .frame()
+                .iter()
+                .any(|command| matches!(command, DrawCommand::Pixel { .. }))
+        );
     }
 
     // Input.

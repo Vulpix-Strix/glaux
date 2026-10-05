@@ -8,6 +8,82 @@ pub const OBJ_TILE_HEIGHT: usize = 8;
 pub const OBJ_TILE_BYTES: usize = 32;
 /// Maximum number of object tiles addressable by G1.
 pub const OBJ_TILE_CAPACITY: usize = 1024;
+/// Size of the complete native object-tile bank in bytes.
+pub const OBJ_TILE_BANK_BYTES: usize = OBJ_TILE_CAPACITY * OBJ_TILE_BYTES;
+
+/// A failure to construct an object-tile bank from native G1 bytes.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ObjTileBankError {
+    #[error("object tile data length must be a multiple of {OBJ_TILE_BYTES} bytes, got {length}")]
+    Misaligned { length: usize },
+    #[error("object tile data is too large: got {length} bytes, maximum is {OBJ_TILE_BANK_BYTES}")]
+    TooLarge { length: usize },
+}
+
+/// The native G1 object-tile bank.
+///
+/// The bank stores 1,024 consecutive 8x8, 4 bpp tiles in their encoded
+/// byte representation. Bytes beyond loaded tile data remain zeroed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjTileBank {
+    bytes: Box<[u8; OBJ_TILE_BANK_BYTES]>,
+}
+
+impl ObjTileBank {
+    /// Creates an object-tile bank containing only transparent pixels.
+    pub fn new() -> Self {
+        Self {
+            bytes: Box::new([0; OBJ_TILE_BANK_BYTES]),
+        }
+    }
+
+    /// Loads consecutive native object tiles at the beginning of a new bank.
+    ///
+    /// `bytes` must contain whole tiles and fit within the 32 KiB bank.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ObjTileBankError> {
+        if bytes.len() > OBJ_TILE_BANK_BYTES {
+            return Err(ObjTileBankError::TooLarge {
+                length: bytes.len(),
+            });
+        }
+        if !bytes.len().is_multiple_of(OBJ_TILE_BYTES) {
+            return Err(ObjTileBankError::Misaligned {
+                length: bytes.len(),
+            });
+        }
+
+        let mut bank = Self::new();
+        bank.bytes[..bytes.len()].copy_from_slice(bytes);
+        Ok(bank)
+    }
+
+    /// Returns one tile-local palette index.
+    ///
+    /// `None` means the tile index or local coordinate is invalid. A valid
+    /// transparent pixel is returned as `Some(0)`.
+    pub fn pixel(&self, tile_index: usize, x: usize, y: usize) -> Option<u8> {
+        if tile_index >= OBJ_TILE_CAPACITY || x >= OBJ_TILE_WIDTH || y >= OBJ_TILE_HEIGHT {
+            return None;
+        }
+        let byte = self.bytes[tile_index * OBJ_TILE_BYTES + y * (OBJ_TILE_WIDTH / 2) + x / 2];
+        Some(if x.is_multiple_of(2) {
+            byte >> 4
+        } else {
+            byte & 0x0f
+        })
+    }
+
+    /// Returns the complete native byte representation of the bank.
+    pub fn as_bytes(&self) -> &[u8; OBJ_TILE_BANK_BYTES] {
+        &self.bytes
+    }
+}
+
+impl Default for ObjTileBank {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// A failure to encode indexed pixels as native G1 object tiles.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -109,6 +185,75 @@ pub fn encode_obj_tiles(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn an_empty_bank_is_all_zero() {
+        let bank = ObjTileBank::new();
+        assert!(bank.as_bytes().iter().all(|&byte| byte == 0));
+        assert_eq!(bank.pixel(0, 0, 0), Some(0));
+        assert_eq!(bank.pixel(OBJ_TILE_CAPACITY - 1, 7, 7), Some(0));
+    }
+
+    #[test]
+    fn loading_tiles_preserves_bytes_and_zeroes_unused_capacity() {
+        let bytes = [0x01, 0x23, 0x45, 0x67]
+            .into_iter()
+            .cycle()
+            .take(OBJ_TILE_BYTES * 2)
+            .collect::<Vec<_>>();
+        let bank = ObjTileBank::from_bytes(&bytes).unwrap();
+
+        assert_eq!(&bank.as_bytes()[..bytes.len()], bytes);
+        assert!(bank.as_bytes()[bytes.len()..].iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn decodes_left_high_and_right_low_nibbles() {
+        let mut bytes = [0; OBJ_TILE_BYTES];
+        bytes[0] = 0x3c;
+        bytes[OBJ_TILE_BYTES - 1] = 0xe7;
+        let bank = ObjTileBank::from_bytes(&bytes).unwrap();
+
+        assert_eq!(bank.pixel(0, 0, 0), Some(3));
+        assert_eq!(bank.pixel(0, 1, 0), Some(12));
+        assert_eq!(bank.pixel(0, 6, 7), Some(14));
+        assert_eq!(bank.pixel(0, 7, 7), Some(7));
+    }
+
+    #[test]
+    fn reads_first_and_last_tiles() {
+        let mut bytes = vec![0; OBJ_TILE_BANK_BYTES];
+        bytes[0] = 0x10;
+        bytes[OBJ_TILE_BANK_BYTES - 1] = 0x0f;
+        let bank = ObjTileBank::from_bytes(&bytes).unwrap();
+
+        assert_eq!(bank.pixel(0, 0, 0), Some(1));
+        assert_eq!(bank.pixel(OBJ_TILE_CAPACITY - 1, 7, 7), Some(15));
+    }
+
+    #[test]
+    fn invalid_tile_coordinates_return_none() {
+        let bank = ObjTileBank::new();
+        assert_eq!(bank.pixel(OBJ_TILE_CAPACITY, 0, 0), None);
+        assert_eq!(bank.pixel(0, OBJ_TILE_WIDTH, 0), None);
+        assert_eq!(bank.pixel(0, 0, OBJ_TILE_HEIGHT), None);
+    }
+
+    #[test]
+    fn rejects_misaligned_and_oversized_data() {
+        assert_eq!(
+            ObjTileBank::from_bytes(&[0; OBJ_TILE_BYTES - 1]),
+            Err(ObjTileBankError::Misaligned {
+                length: OBJ_TILE_BYTES - 1
+            })
+        );
+        assert_eq!(
+            ObjTileBank::from_bytes(&vec![0; OBJ_TILE_BANK_BYTES + 1]),
+            Err(ObjTileBankError::TooLarge {
+                length: OBJ_TILE_BANK_BYTES + 1
+            })
+        );
+    }
 
     #[test]
     fn packs_an_exact_tile_with_left_pixel_in_the_high_nibble() {

@@ -186,6 +186,31 @@ mod tests {
     }
 
     #[test]
+    fn checked_in_example_native_data_matches_its_source_png() {
+        let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sprites");
+        let decoder = png::Decoder::new(BufReader::new(
+            File::open(example.join("sprites.png")).unwrap(),
+        ));
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
+        assert_eq!(info.color_type, ColorType::Indexed);
+        let (width, height) = (info.width as usize, info.height as usize);
+        let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+        let frame = reader.next_frame(&mut decoded).unwrap();
+        let pixels = unpack_indices(
+            &decoded[..frame.buffer_size()],
+            width,
+            height,
+            frame.line_size,
+            frame.bit_depth,
+        )
+        .unwrap();
+
+        let encoded = encode_obj_tiles(width, height, &pixels).unwrap();
+        assert_eq!(encoded, fs::read(example.join("sprites.bin")).unwrap());
+    }
+
+    #[test]
     fn explicit_output_path_is_honored() {
         let fixture = Fixture::new("explicit");
         let input = fixture.root.join("sheet.png");

@@ -4,7 +4,8 @@ use glaux_input::{ButtonLatch, InputEvent};
 use glaux_luau::{Budget, DrawCommand, LogEntry, Runtime, RuntimeError, StartFailure};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
-use glaux_video::draw::{clear, draw_text, pixel};
+use glaux_machine::sprite::{ObjTileBank, ObjTileBankError};
+use glaux_video::draw::{clear, draw_obj_tile, draw_text, pixel};
 
 use crate::cartridge::{CartridgeError, LoadedCartridge};
 
@@ -13,6 +14,8 @@ use crate::cartridge::{CartridgeError, LoadedCartridge};
 pub enum StartError {
     /// The entry script could not be read.
     Cartridge(CartridgeError),
+    /// `sprites.bin` was not valid native object-tile data.
+    ObjTiles(ObjTileBankError),
     /// The entry chunk or `boot()` failed.
     Script(StartFailure),
 }
@@ -29,6 +32,7 @@ pub struct FailedStart {
 pub struct RunningCartridge {
     cartridge: LoadedCartridge,
     runtime: Runtime,
+    obj_tiles: ObjTileBank,
     /// Starts with every button released, so nothing held during a previous
     /// run reaches this one, and is reset whenever the system resumes the
     /// cartridge from a pause.
@@ -43,11 +47,23 @@ impl RunningCartridge {
             Ok(source) => source,
             Err(err) => return Err(failed(cartridge, StartError::Cartridge(err))),
         };
+        let obj_bytes = match cartridge.read_obj_tiles() {
+            Ok(bytes) => bytes,
+            Err(err) => return Err(failed(cartridge, StartError::Cartridge(err))),
+        };
+        let obj_tiles = match obj_bytes {
+            Some(bytes) => match ObjTileBank::from_bytes(&bytes) {
+                Ok(tiles) => tiles,
+                Err(err) => return Err(failed(cartridge, StartError::ObjTiles(err))),
+            },
+            None => ObjTileBank::new(),
+        };
         let entry = &cartridge.manifest().entry;
         match Runtime::start(entry, &source, Budget::default()) {
             Ok(runtime) => Ok(Self {
                 cartridge,
                 runtime,
+                obj_tiles,
                 buttons: ButtonLatch::new(),
             }),
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
@@ -84,6 +100,9 @@ impl RunningCartridge {
             match *command {
                 DrawCommand::Clear(color) => clear(framebuffer, color),
                 DrawCommand::Pixel { x, y, color } => pixel(framebuffer, x, y, color),
+                DrawCommand::Sprite { tile, x, y } => {
+                    draw_obj_tile(framebuffer, &self.obj_tiles, usize::from(tile), x, y)
+                }
                 DrawCommand::Text {
                     ref text,
                     x,
