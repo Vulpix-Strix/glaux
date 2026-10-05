@@ -6,6 +6,7 @@
 
 mod boot;
 mod line_editor;
+mod pause;
 mod running;
 mod shell;
 
@@ -18,9 +19,10 @@ use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::system_rom::SystemRom;
 use glaux_video::draw::{clear, draw_text, fill_rect};
+use pause::PauseOverlay;
 use running::{FailedStart, RunningCartridge, StartError};
 use semver::Version;
-use shell::{ShellRequest, cartridge_identity};
+use shell::{CartridgeSlot, ShellRequest, cartridge_identity};
 
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge_fs::CartridgeStorage;
@@ -29,6 +31,7 @@ use crate::cartridge_fs::CartridgeStorage;
 const BACKGROUND: u8 = 11;
 const TEXT: u8 = 16;
 const DIM: u8 = 14;
+const PALE: u8 = 15;
 const OK: u8 = 8;
 const ACCENT: u8 = 18;
 const ERROR: u8 = 28;
@@ -51,11 +54,29 @@ pub enum SystemState {
         loaded: Option<LoadedCartridge>,
     },
     /// A cartridge runs and receives the logical ticks. The shell keeps its
-    /// state, collecting logged output, but takes no input.
+    /// state, collecting logged output, but takes no input. The break key
+    /// pauses the cartridge.
     Running {
         shell: Box<Shell>,
         running: RunningCartridge,
     },
+    /// A cartridge whose VM is kept alive but receives no ticks, so its
+    /// state, last frame and logical time stay as they were.
+    Paused {
+        shell: Box<Shell>,
+        running: RunningCartridge,
+        view: PausedView,
+    },
+}
+
+/// What the system shows while a cartridge is paused.
+#[derive(Debug)]
+pub enum PausedView {
+    /// The cartridge's last frame under the system's pause overlay. Break
+    /// resumes the cartridge and Enter opens the shell.
+    Game(PauseOverlay),
+    /// The shell, which can resume or stop the cartridge.
+    Shell,
 }
 
 /// Facts about the running system that the shell reports.
@@ -70,10 +91,10 @@ fn identity_line(rom_version: &Version) -> String {
     format!("{NAME} {GENERATION}  SYSTEM ROM {rom_version}")
 }
 
-/// Why a running cartridge stopped.
+/// Why a cartridge's VM was disposed of.
 enum StopReason {
-    /// The user pressed the break key.
-    Break,
+    /// The user stopped the paused cartridge.
+    Stopped,
     Failed(RuntimeError),
 }
 
@@ -103,19 +124,22 @@ impl System {
     }
 
     /// The kind of input the current state consumes: game buttons while a
-    /// cartridge runs, text everywhere else.
+    /// cartridge runs, text everywhere else, including while one is paused.
     pub fn input_mode(&self) -> InputMode {
         match self.state {
             SystemState::Running { .. } => InputMode::Game,
-            SystemState::Boot { .. } | SystemState::Shell { .. } => InputMode::Text,
+            SystemState::Boot { .. } | SystemState::Shell { .. } | SystemState::Paused { .. } => {
+                InputMode::Text
+            }
         }
     }
 
     /// Advances the system by one logical tick, applying the tick's `input`.
     ///
     /// Input is ignored during the boot sequence. While a cartridge runs,
-    /// [`InputEvent::Break`] stops it and button events reach its `btn` and
-    /// `btnp`; anything else is ignored.
+    /// [`InputEvent::Break`] pauses it and button events reach its `btn` and
+    /// `btnp`; anything else is ignored. On the pause screen, Break resumes
+    /// the cartridge and Enter opens the shell with it still paused.
     pub fn update(self, input: &[InputEvent]) -> Self {
         let Self { state, info } = self;
         let state = match state {
@@ -136,6 +160,16 @@ impl System {
             }
             SystemState::Shell { shell, loaded } => shell_tick(shell, loaded, input),
             SystemState::Running { shell, running } => running_tick(shell, running, input),
+            SystemState::Paused {
+                shell,
+                running,
+                view: PausedView::Game(overlay),
+            } => paused_game_tick(shell, running, overlay, input),
+            SystemState::Paused {
+                shell,
+                running,
+                view: PausedView::Shell,
+            } => paused_shell_tick(shell, running, input),
         };
         Self { state, info }
     }
@@ -156,11 +190,23 @@ impl System {
                 return;
             }
             SystemState::Boot { boot, .. } => boot::lines(boot.stage(), rom),
-            SystemState::Shell { shell, .. } => {
-                shell.lines(text_columns(cell_w), text_rows(cell_h))
-            }
+            SystemState::Shell { shell, .. }
+            | SystemState::Paused {
+                shell,
+                view: PausedView::Shell,
+                ..
+            } => shell.lines(text_columns(cell_w), text_rows(cell_h)),
             SystemState::Running { running, .. } => {
                 running.render(framebuffer, font);
+                return;
+            }
+            SystemState::Paused {
+                running,
+                view: PausedView::Game(overlay),
+                ..
+            } => {
+                running.render(framebuffer, font);
+                overlay.render(framebuffer, rom.palette());
                 return;
             }
         };
@@ -197,7 +243,7 @@ fn shell_tick(
     // Input is deliberately not logged: user input stays out of
     // application logs.
     for (index, &event) in input.iter().enumerate() {
-        match shell.handle_input(event, loaded.as_ref()) {
+        match shell.handle_input(event, CartridgeSlot::loaded(loaded.as_ref())) {
             None => {}
             Some(ShellRequest::Load(cartridge)) => loaded = Some(cartridge),
             Some(ShellRequest::Run) => {
@@ -211,6 +257,9 @@ fn shell_tick(
                     }
                     state => state,
                 };
+            }
+            Some(_request @ (ShellRequest::Resume | ShellRequest::Stop)) => {
+                unreachable!("{_request:?} was requested without a paused cartridge")
             }
         }
     }
@@ -250,15 +299,15 @@ fn start(mut shell: Box<Shell>, cartridge: LoadedCartridge) -> SystemState {
     }
 }
 
-/// Advances the running cartridge by one tick, or stops it on a break. A
-/// break wins over any button events in the same tick.
+/// Advances the running cartridge by one tick, or pauses it on a break. A
+/// break wins over any button events in the same tick, which are dropped.
 fn running_tick(
     mut shell: Box<Shell>,
     mut running: RunningCartridge,
     input: &[InputEvent],
 ) -> SystemState {
     if input.contains(&InputEvent::Break) {
-        return stop(shell, running, StopReason::Break);
+        return pause(shell, running);
     }
     match running.tick(input) {
         Ok(()) => {
@@ -269,14 +318,93 @@ fn running_tick(
     }
 }
 
-/// Disposes of the running cartridge's VM and returns to the shell with the
-/// cartridge still loaded. Every way a cartridge stops goes through here.
+/// Keeps the cartridge's VM without ticking it and shows the pause screen.
+fn pause(mut shell: Box<Shell>, mut running: RunningCartridge) -> SystemState {
+    shell.log(running.take_output());
+    let identity = cartridge_identity(running.cartridge().manifest());
+    tracing::info!(cartridge = %identity, "cartridge paused");
+    shell.report(format!("PAUSED {identity}"));
+    SystemState::Paused {
+        shell,
+        running,
+        view: PausedView::Game(PauseOverlay::new()),
+    }
+}
+
+/// Handles the pause screen: Break resumes the cartridge and Enter opens the
+/// shell, which takes the events after it. Other events are ignored, and
+/// only the overlay's own animation advances.
+fn paused_game_tick(
+    mut shell: Box<Shell>,
+    running: RunningCartridge,
+    mut overlay: PauseOverlay,
+    input: &[InputEvent],
+) -> SystemState {
+    for (index, &event) in input.iter().enumerate() {
+        match event {
+            InputEvent::Break => return resume(shell, running),
+            InputEvent::Enter => {
+                let identity = cartridge_identity(running.cartridge().manifest());
+                tracing::info!(cartridge = %identity, "shell opened with the cartridge paused");
+                shell.report("TYPE RESUME TO CONTINUE OR STOP TO END");
+                return paused_shell_tick(shell, running, &input[index + 1..]);
+            }
+            _ => {}
+        }
+    }
+    overlay.tick();
+    SystemState::Paused {
+        shell,
+        running,
+        view: PausedView::Game(overlay),
+    }
+}
+
+/// Feeds `input` to the shell while the cartridge stays paused, and carries
+/// out a `resume` or `stop`. Events after either in the same tick are
+/// dropped.
+fn paused_shell_tick(
+    mut shell: Box<Shell>,
+    running: RunningCartridge,
+    input: &[InputEvent],
+) -> SystemState {
+    for &event in input {
+        match shell.handle_input(event, CartridgeSlot::Paused(running.cartridge())) {
+            None => {}
+            Some(ShellRequest::Resume) => return resume(shell, running),
+            Some(ShellRequest::Stop) => return stop(shell, running, StopReason::Stopped),
+            // `load` and `run` refuse to replace a paused cartridge.
+            Some(_request @ (ShellRequest::Load(_) | ShellRequest::Run)) => {
+                unreachable!("{_request:?} was requested while a cartridge is paused")
+            }
+        }
+    }
+    SystemState::Paused {
+        shell,
+        running,
+        view: PausedView::Shell,
+    }
+}
+
+/// Continues the paused cartridge with its VM as it was. Its buttons start
+/// released, so nothing pressed or held around the pause reaches it as a
+/// press; it is first ticked on the next update.
+fn resume(mut shell: Box<Shell>, mut running: RunningCartridge) -> SystemState {
+    running.reset_input();
+    let identity = cartridge_identity(running.cartridge().manifest());
+    tracing::info!(cartridge = %identity, "cartridge resumed");
+    shell.report(format!("RESUMED {identity}"));
+    SystemState::Running { shell, running }
+}
+
+/// Disposes of the cartridge's VM and returns to the shell with the
+/// cartridge still loaded. Every way a VM ends goes through here.
 fn stop(mut shell: Box<Shell>, mut running: RunningCartridge, reason: StopReason) -> SystemState {
     shell.log(running.take_output());
     let identity = cartridge_identity(running.cartridge().manifest());
     let cartridge = running.stop();
     match reason {
-        StopReason::Break => {
+        StopReason::Stopped => {
             tracing::info!(cartridge = %identity, "cartridge stopped");
             shell.report(format!("STOPPED {identity}"));
         }
@@ -603,7 +731,7 @@ mod tests {
             InputEvent::Text('I'),
             InputEvent::Left { select: false },
         ] {
-            expected.handle_input(event, None);
+            expected.handle_input(event, CartridgeSlot::Empty);
         }
         assert_eq!(shell_of(&system), &expected);
     }
@@ -751,8 +879,38 @@ mod tests {
         system.update(&[InputEvent::Break])
     }
 
+    /// Opens the shell from the pause screen.
+    fn open_shell(system: System) -> System {
+        system.update(&[InputEvent::Enter])
+    }
+
+    /// Pauses the running cartridge and stops it from the shell.
+    fn stop_cartridge(system: System) -> System {
+        enter(open_shell(press_break(system)), "stop")
+    }
+
     fn is_running(system: &System) -> bool {
         matches!(system.state(), SystemState::Running { .. })
+    }
+
+    fn is_paused_game(system: &System) -> bool {
+        matches!(
+            system.state(),
+            SystemState::Paused {
+                view: PausedView::Game(_),
+                ..
+            }
+        )
+    }
+
+    fn is_paused_shell(system: &System) -> bool {
+        matches!(
+            system.state(),
+            SystemState::Paused {
+                view: PausedView::Shell,
+                ..
+            }
+        )
     }
 
     fn loaded_name(system: &System) -> Option<&str> {
@@ -766,9 +924,9 @@ mod tests {
 
     fn transcript(system: &System) -> Vec<String> {
         match system.state() {
-            SystemState::Shell { shell, .. } | SystemState::Running { shell, .. } => {
-                shell.transcript()
-            }
+            SystemState::Shell { shell, .. }
+            | SystemState::Running { shell, .. }
+            | SystemState::Paused { shell, .. } => shell.transcript(),
             other => panic!("expected a shell, got {other:?}"),
         }
     }
@@ -798,7 +956,7 @@ mod tests {
             ["RUNNING Pong 0.1.0", "entry", "boot"]
         );
 
-        let system = press_break(ticks(system, 3));
+        let system = stop_cartridge(ticks(system, 3));
         assert_eq!(
             after(&system, "> run"),
             [
@@ -811,6 +969,9 @@ mod tests {
                 "draw    2",
                 "tick    3",
                 "draw    3",
+                "PAUSED Pong 0.1.0",
+                "TYPE RESUME TO CONTINUE OR STOP TO END",
+                "> stop",
                 "STOPPED Pong 0.1.0",
             ]
         );
@@ -822,14 +983,21 @@ mod tests {
         let fixture = Fixture::new("sys-run-input");
         let system = enter(started(&fixture, ""), "help");
         assert!(is_running(&system));
-        let system = press_break(system);
+        let system = open_shell(press_break(system));
         assert_eq!(
             after(&system, "> run"),
-            ["RUNNING Pong 0.1.0", "STOPPED Pong 0.1.0"]
+            [
+                "RUNNING Pong 0.1.0",
+                "PAUSED Pong 0.1.0",
+                "TYPE RESUME TO CONTINUE OR STOP TO END"
+            ]
         );
         // Nothing typed while running reached the command line.
         let system = system.update(&[InputEvent::Enter]);
-        assert_eq!(transcript(&system).last().unwrap(), "STOPPED Pong 0.1.0");
+        assert_eq!(
+            transcript(&system).last().unwrap(),
+            "TYPE RESUME TO CONTINUE OR STOP TO END"
+        );
     }
 
     #[test]
@@ -846,11 +1014,18 @@ mod tests {
     fn running_again_starts_a_fresh_vm() {
         let fixture = Fixture::new("sys-rerun");
         let script = "function tick() count = (count or 0) + 1 log.info(count) end";
-        let system = press_break(ticks(started(&fixture, script), 2));
-        let system = press_break(ticks(enter(system, "run"), 1));
+        let system = stop_cartridge(ticks(started(&fixture, script), 2));
+        let system = stop_cartridge(ticks(enter(system, "run"), 1));
         assert_eq!(
             after(&system, "> run"),
-            ["RUNNING Pong 0.1.0", "1", "STOPPED Pong 0.1.0"]
+            [
+                "RUNNING Pong 0.1.0",
+                "1",
+                "PAUSED Pong 0.1.0",
+                "TYPE RESUME TO CONTINUE OR STOP TO END",
+                "> stop",
+                "STOPPED Pong 0.1.0"
+            ]
         );
         assert!(transcript(&system).contains(&"2".to_owned()));
     }
@@ -931,7 +1106,10 @@ mod tests {
         assert_eq!(line, "STATE       IDLE");
         let (system, line) = state(enter(system, "load pong"));
         assert_eq!(line, "STATE       LOADED");
-        let (system, line) = state(press_break(enter(system, "run")));
+        let (system, line) = state(open_shell(press_break(enter(system, "run"))));
+        assert_eq!(line, "STATE       PAUSED");
+        assert!(is_paused_shell(&system));
+        let (system, line) = state(enter(system, "stop"));
         assert_eq!(line, "STATE       LOADED");
         assert!(transcript(&system).contains(&"CARTRIDGE   Pong 0.1.0".to_owned()));
     }
@@ -1057,7 +1235,7 @@ mod tests {
         let fixture = Fixture::new("sys-draw-stop");
         let draws = "function draw() cls(1) end";
         let stopped = [
-            press_break(ticks(started(&fixture, draws), 1)),
+            stop_cartridge(ticks(started(&fixture, draws), 1)),
             ticks(
                 started(
                     &fixture,
@@ -1111,7 +1289,7 @@ mod tests {
         let system = press_break(ticks(started(&fixture, script), 1));
         assert_eq!(
             after(&system, "> run"),
-            ["RUNNING Pong 0.1.0", "t", "w", "STOPPED Pong 0.1.0"]
+            ["RUNNING Pong 0.1.0", "t", "w", "PAUSED Pong 0.1.0"]
         );
     }
 
@@ -1201,12 +1379,13 @@ mod tests {
     }
 
     #[test]
-    fn break_stops_the_cartridge_despite_buttons() {
+    fn break_pauses_the_cartridge_despite_buttons() {
         let fixture = Fixture::new("sys-btn-break");
         let system = started(&fixture, UP_STATE).update(&[down(), InputEvent::Break]);
+        assert!(is_paused_game(&system));
         assert_eq!(
             after(&system, "> run"),
-            ["RUNNING Pong 0.1.0", "STOPPED Pong 0.1.0"]
+            ["RUNNING Pong 0.1.0", "PAUSED Pong 0.1.0"]
         );
     }
 
@@ -1214,7 +1393,7 @@ mod tests {
     fn a_new_run_starts_with_buttons_released() {
         let fixture = Fixture::new("sys-btn-rerun");
         let system = started(&fixture, UP_STATE).update(&[down()]);
-        let system = enter(press_break(system), "run");
+        let system = enter(stop_cartridge(system), "run");
         // Up stays physically held, so the host sends nothing new.
         let (system, lines) = logged_per_tick(system, &[&[]]);
         assert_eq!(lines, ["false   false"]);
@@ -1231,5 +1410,241 @@ mod tests {
         assert_eq!(system.input_mode(), InputMode::Game);
         let system = press_break(system);
         assert_eq!(system.input_mode(), InputMode::Text);
+        let system = open_shell(system);
+        assert_eq!(system.input_mode(), InputMode::Text);
+        let system = enter(system, "resume");
+        assert_eq!(system.input_mode(), InputMode::Game);
+        let system = stop_cartridge(system);
+        assert_eq!(system.input_mode(), InputMode::Text);
+    }
+
+    // Pause and resume.
+
+    /// Logs a tick counter kept in the VM, and its entry and `boot()` runs.
+    const COUNTER: &str = r#"
+        log.info("entry")
+        function boot() log.info("boot") end
+        local n = 0
+        function tick() n += 1 log.info("tick", n) end
+    "#;
+
+    /// What the cartridge logged during `n` more ticks of `system`.
+    fn logged_ticks(system: System, n: usize) -> (System, Vec<String>) {
+        let empty: Vec<&[InputEvent]> = vec![&[]; n];
+        logged_per_tick(system, &empty)
+    }
+
+    #[test]
+    fn break_pauses_without_disposing_of_the_vm() {
+        let fixture = Fixture::new("sys-pause");
+        let system = press_break(ticks(started(&fixture, COUNTER), 3));
+        assert!(is_paused_game(&system));
+        assert_eq!(transcript(&system).last().unwrap(), "PAUSED Pong 0.1.0");
+        let (system, lines) = logged_ticks(system, 5);
+        assert_eq!(
+            lines,
+            Vec::<String>::new(),
+            "a paused cartridge is not ticked"
+        );
+        assert!(is_paused_game(&system));
+    }
+
+    #[test]
+    fn break_on_the_pause_screen_resumes_the_same_vm() {
+        let fixture = Fixture::new("sys-pause-resume");
+        let system = press_break(press_break(ticks(started(&fixture, COUNTER), 3)));
+        assert!(is_running(&system));
+        assert_eq!(transcript(&system).last().unwrap(), "RESUMED Pong 0.1.0");
+        let (system, lines) = logged_ticks(system, 1);
+        assert_eq!(lines, ["tick    4"]);
+        assert_eq!(
+            transcript(&system)
+                .iter()
+                .filter(|line| *line == "entry" || *line == "boot")
+                .count(),
+            2,
+            "entry and boot ran only once"
+        );
+    }
+
+    #[test]
+    fn paused_cartridges_keep_their_logical_time() {
+        let fixture = Fixture::new("sys-pause-time");
+        let script = "function tick() log.info(frame(), t() * 60) end";
+        let system = press_break(ticks(started(&fixture, script), 2));
+        let system = press_break(ticks(system, 10));
+        let (_, lines) = logged_ticks(system, 1);
+        assert_eq!(lines, ["2   2"]);
+    }
+
+    #[test]
+    fn the_pause_screen_shows_the_frozen_frame_under_the_overlay() {
+        let fixture = Fixture::new("sys-pause-render");
+        let script = "local n = 0 function tick() n += 1 end function draw() cls(n) end";
+        let system = press_break(ticks(started(&fixture, script), 1));
+        let rom = fake_rom();
+        let SystemState::Paused { running, .. } = system.state() else {
+            panic!("expected a paused cartridge");
+        };
+        let frozen = |running: &RunningCartridge| {
+            let mut fb = Framebuffer::new();
+            running.render(&mut fb, rom.font());
+            fb
+        };
+        assert_eq!(frozen(running), filled(1));
+
+        let fb = render(&system);
+        assert_ne!(fb, filled(1));
+        let shaded = glaux_video::shade::shade_table(rom.palette(), 65);
+        assert_eq!(fb.pixel(0, 0), Some(shaded[1]));
+        let (x, y) = pause::PLATE_ORIGIN;
+        assert_eq!(fb.pixel(x + 1, y + 1), Some(BACKGROUND));
+        assert_eq!(fb.pixel(x + 5, y + 5), Some(TEXT));
+
+        // Neither rendering nor time on the pause screen touches the frame
+        // the cartridge drew.
+        let system = ticks(system, pause::PULSE_TICKS as usize);
+        let SystemState::Paused { running, .. } = system.state() else {
+            panic!("expected a paused cartridge");
+        };
+        assert_eq!(frozen(running), filled(1));
+        let pulsed = render(&system);
+        assert_ne!(pulsed, fb, "the indicator animates");
+        assert_eq!(pulsed.pixel(0, 0), Some(shaded[1]));
+    }
+
+    #[test]
+    fn enter_opens_the_shell_with_the_cartridge_paused() {
+        let fixture = Fixture::new("sys-pause-shell");
+        let system = open_shell(press_break(ticks(started(&fixture, COUNTER), 2)));
+        assert!(is_paused_shell(&system));
+        assert_eq!(system.input_mode(), InputMode::Text);
+        assert_eq!(
+            transcript(&system).last().unwrap(),
+            "TYPE RESUME TO CONTINUE OR STOP TO END"
+        );
+        assert!(row_has_ink(&render(&system), 0), "the shell is drawn");
+
+        // Break in the shell leaves the cartridge paused.
+        let system = press_break(enter(system, "info"));
+        assert!(is_paused_shell(&system));
+        assert_eq!(transcript(&system).last().unwrap(), "STATE       PAUSED");
+    }
+
+    #[test]
+    fn events_after_enter_reach_the_shell() {
+        let fixture = Fixture::new("sys-pause-shell-events");
+        let mut events = vec![InputEvent::Enter];
+        events.extend("info".chars().map(InputEvent::Text));
+        events.push(InputEvent::Enter);
+        let system = press_break(started(&fixture, "")).update(&events);
+        assert_eq!(transcript(&system).last().unwrap(), "STATE       PAUSED");
+    }
+
+    #[test]
+    fn resume_from_the_shell_continues_the_same_vm() {
+        let fixture = Fixture::new("sys-pause-shell-resume");
+        let system = open_shell(press_break(ticks(started(&fixture, COUNTER), 2)));
+        let system = enter(system, "resume");
+        assert!(is_running(&system));
+        assert_eq!(after(&system, "> resume"), ["RESUMED Pong 0.1.0"]);
+        let (_, lines) = logged_ticks(system, 1);
+        assert_eq!(lines, ["tick    3"]);
+    }
+
+    #[test]
+    fn stop_disposes_of_the_paused_vm() {
+        let fixture = Fixture::new("sys-pause-stop");
+        let system = stop_cartridge(ticks(started(&fixture, COUNTER), 2));
+        assert_eq!(loaded_name(&system), Some("Pong"));
+        assert_eq!(after(&system, "> stop"), ["STOPPED Pong 0.1.0"]);
+
+        let system = enter(system, "run");
+        assert_eq!(
+            after(&system, "> run"),
+            ["RUNNING Pong 0.1.0", "entry", "boot"]
+        );
+        let (_, lines) = logged_ticks(system, 1);
+        assert_eq!(lines, ["tick    1"]);
+    }
+
+    #[test]
+    fn load_and_run_cannot_replace_a_paused_cartridge() {
+        let fixture = Fixture::new("sys-pause-refuse");
+        let system = open_shell(press_break(ticks(started(&fixture, COUNTER), 2)));
+        let system = enter(enter(system, "load pong"), "run");
+        assert!(is_paused_shell(&system));
+        assert_eq!(
+            after(&system, "> load pong"),
+            [
+                "! CARTRIDGE PAUSED: RESUME OR STOP IT FIRST",
+                "> run",
+                "! CARTRIDGE PAUSED: RESUME OR STOP IT FIRST",
+            ]
+        );
+        let (_, lines) = logged_ticks(enter(system, "resume"), 1);
+        assert_eq!(lines, ["tick    3"]);
+    }
+
+    #[test]
+    fn a_runtime_failure_after_resuming_is_not_resumable() {
+        let fixture = Fixture::new("sys-pause-fail");
+        let script = r#"local n = 0 function tick() n += 1 if n == 2 then error("boom") end end"#;
+        let system = press_break(press_break(ticks(started(&fixture, script), 1)));
+        let system = ticks(system, 1);
+        assert_eq!(loaded_name(&system), Some("Pong"));
+        assert_eq!(
+            transcript(&system).last().unwrap(),
+            "! RUNTIME ERROR IN TICK: main.luau:1: boom"
+        );
+        let system = enter(system, "resume");
+        assert_eq!(after(&system, "> resume"), ["! NO PAUSED CARTRIDGE"]);
+        assert_eq!(loaded_name(&system), Some("Pong"));
+    }
+
+    #[test]
+    fn scrollback_and_history_survive_a_pause() {
+        let fixture = Fixture::new("sys-pause-history");
+        let system = enter(shell_with_cartridge(&fixture, COUNTER), "load pong");
+        let system = ticks(enter(system, "run"), 1);
+        let system = open_shell(press_break(system));
+        let system = system.update(&[InputEvent::Up]);
+        let SystemState::Paused { shell, .. } = system.state() else {
+            panic!("expected a paused cartridge");
+        };
+        let lines = shell.transcript();
+        assert!(lines.contains(&"> load pong".to_owned()));
+        assert!(lines.contains(&"tick    1".to_owned()));
+        // Up recalled the last command, typed before the cartridge ran.
+        let editor = shell.lines(text_columns(CELL_W), text_rows(CELL_H));
+        assert!(
+            editor
+                .iter()
+                .any(|line| line.text == "run" && line.col == 2)
+        );
+    }
+
+    #[test]
+    fn resumed_input_starts_released() {
+        let fixture = Fixture::new("sys-pause-input");
+        let resumes: [fn(System) -> System; 2] =
+            [press_break, |system| enter(open_shell(system), "resume")];
+        for resume in resumes {
+            // Up goes down before the pause and stays physically held, so the
+            // host sends nothing more for it.
+            let (system, lines) = logged_per_tick(started(&fixture, UP_STATE), &[&[down()]]);
+            assert_eq!(lines, ["true    true"]);
+            let system = resume(press_break(system));
+            let (_, lines) = logged_per_tick(system, &[&[], &[]]);
+            assert_eq!(lines, ["false   false", "false   false"]);
+        }
+    }
+
+    #[test]
+    fn a_press_in_the_pausing_tick_is_dropped() {
+        let fixture = Fixture::new("sys-pause-input-same-tick");
+        let system = started(&fixture, UP_STATE).update(&[down(), InputEvent::Break]);
+        let (_, lines) = logged_per_tick(press_break(system), &[&[], &[up()], &[down()]]);
+        assert_eq!(lines, ["false   false", "false   false", "true    true"]);
     }
 }

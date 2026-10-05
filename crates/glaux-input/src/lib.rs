@@ -34,7 +34,8 @@ pub enum InputEvent {
     Down,
     /// Request completion of the word being typed.
     Tab,
-    /// Interrupt the running program and return to the system.
+    /// Pause the running program and return to the system, or leave the
+    /// pause screen.
     Break,
     /// A game button went from released to pressed. Never repeated while
     /// the button stays held.

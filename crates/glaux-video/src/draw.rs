@@ -5,6 +5,7 @@
 
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
+use glaux_machine::palette::PALETTE_LEN;
 
 /// Fills the whole framebuffer with a palette index.
 pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
@@ -14,6 +15,13 @@ pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
 /// Writes one pixel; positions outside the framebuffer are ignored.
 pub fn pixel(framebuffer: &mut Framebuffer, x: i32, y: i32, color: u8) {
     framebuffer.set_pixel(x, y, color);
+}
+
+/// Replaces every pixel's palette index `i` with `table[i]`.
+pub fn remap(framebuffer: &mut Framebuffer, table: &[u8; PALETTE_LEN]) {
+    for index in framebuffer.as_bytes_mut() {
+        *index = table[usize::from(*index)];
+    }
 }
 
 /// Fills the `width`×`height` rectangle whose top-left corner is `(x, y)`.
@@ -193,6 +201,22 @@ mod tests {
             pixel(&mut fb, x, y, INK);
         }
         assert_eq!(fb, Framebuffer::new());
+    }
+
+    #[test]
+    fn remap_rewrites_every_pixel_through_the_table() {
+        let mut table = [0; PALETTE_LEN];
+        for (i, entry) in table.iter_mut().enumerate() {
+            *entry = (i as u8).wrapping_add(10);
+        }
+        let mut fb = Framebuffer::new();
+        pixel(&mut fb, 3, 4, 250);
+        remap(&mut fb, &table);
+
+        let mut expected = Framebuffer::new();
+        clear(&mut expected, 10);
+        pixel(&mut expected, 3, 4, 4);
+        assert_eq!(fb, expected);
     }
 
     #[test]

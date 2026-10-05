@@ -32,6 +32,27 @@ pub enum ShellRequest {
     Load(LoadedCartridge),
     /// Start the loaded cartridge.
     Run,
+    /// Continue the paused cartridge with the VM it had.
+    Resume,
+    /// Dispose of the paused cartridge's VM, keeping the cartridge loaded.
+    Stop,
+}
+
+/// The cartridge the system holds, as the shell sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CartridgeSlot<'a> {
+    Empty,
+    /// Loaded, with no VM.
+    Loaded(&'a LoadedCartridge),
+    /// Its VM is alive but paused while the shell is active.
+    Paused(&'a LoadedCartridge),
+}
+
+impl<'a> CartridgeSlot<'a> {
+    /// A slot that is empty or holds a loaded cartridge.
+    pub fn loaded(cartridge: Option<&'a LoadedCartridge>) -> Self {
+        cartridge.map_or(Self::Empty, Self::Loaded)
+    }
 }
 
 /// The command line being edited, the command history, the
@@ -63,13 +84,13 @@ impl Shell {
     /// Applies `event`: edits the command line, navigates history,
     /// completes the command name, or runs the line on Enter.
     ///
-    /// `loaded` is the cartridge the system currently has loaded. A command
-    /// that changes the cartridge lifecycle returns the change for the
-    /// system to carry out.
+    /// `slot` is the cartridge the system currently holds. A command that
+    /// changes the cartridge lifecycle returns the change for the system to
+    /// carry out.
     pub fn handle_input(
         &mut self,
         event: InputEvent,
-        loaded: Option<&LoadedCartridge>,
+        slot: CartridgeSlot<'_>,
     ) -> Option<ShellRequest> {
         match event {
             InputEvent::Up => {
@@ -86,7 +107,7 @@ impl Shell {
             InputEvent::Tab => self.complete_command(),
             InputEvent::Enter => {
                 if let Some(line) = self.editor.apply(event) {
-                    return self.submit(&line, loaded);
+                    return self.submit(&line, slot);
                 }
             }
             // Changing the text ends history navigation, so the edited line
@@ -101,8 +122,9 @@ impl Shell {
             | InputEvent::End { .. } => {
                 self.editor.apply(event);
             }
-            // Nothing runs while the shell is active, so there is nothing to
-            // interrupt.
+            // No cartridge runs while the shell is active, so there is
+            // nothing to interrupt. A paused cartridge is left with the
+            // RESUME and STOP commands.
             InputEvent::Break => {}
             // Game buttons belong to a running cartridge.
             InputEvent::ButtonDown(_) | InputEvent::ButtonUp(_) => {}
@@ -145,7 +167,7 @@ impl Shell {
     }
 
     /// Echoes and runs a submitted line. Blank lines leave no trace.
-    fn submit(&mut self, line: &str, loaded: Option<&LoadedCartridge>) -> Option<ShellRequest> {
+    fn submit(&mut self, line: &str, slot: CartridgeSlot<'_>) -> Option<ShellRequest> {
         self.history.reset();
         if line.trim().is_empty() {
             return None;
@@ -159,7 +181,7 @@ impl Shell {
                     scrollback: &mut self.scrollback,
                     info: &self.info,
                     cartridges: &mut self.cartridges,
-                    loaded,
+                    slot,
                     request: &mut request,
                 };
                 commands::execute(&invocation, &mut ctx);
@@ -406,13 +428,13 @@ mod tests {
 
     fn send(shell: &mut Shell, events: &[InputEvent]) {
         for &event in events {
-            shell.handle_input(event, None);
+            shell.handle_input(event, CartridgeSlot::Empty);
         }
     }
 
     fn run(shell: &mut Shell, line: &str) {
         send(shell, &typed(line));
-        shell.handle_input(Enter, None);
+        shell.handle_input(Enter, CartridgeSlot::Empty);
     }
 
     fn entries(shell: &Shell) -> Vec<Entry> {
@@ -586,6 +608,8 @@ mod tests {
                 output("CD       CHANGE THE CURRENT DIRECTORY"),
                 output("LOAD     LOAD A CARTRIDGE"),
                 output("RUN      RUN THE LOADED CARTRIDGE"),
+                output("RESUME   RESUME THE PAUSED CARTRIDGE"),
+                output("STOP     STOP THE PAUSED CARTRIDGE"),
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());
@@ -595,7 +619,7 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 11, "> ", TEXT), Line::new(2, 11, "_", TEXT)]
+            [Line::new(0, 13, "> ", TEXT), Line::new(2, 13, "_", TEXT)]
         );
     }
 
@@ -833,7 +857,10 @@ mod tests {
     fn break_is_ignored() {
         let mut shell = shell_with(&typed("ab"));
         let before = shell.clone();
-        assert_eq!(shell.handle_input(InputEvent::Break, None), None);
+        assert_eq!(
+            shell.handle_input(InputEvent::Break, CartridgeSlot::Empty),
+            None
+        );
         assert_eq!(shell, before);
     }
 
@@ -895,18 +922,19 @@ mod tests {
             fixture.storage(),
         );
         send(&mut shell, &typed("load pong"));
-        let Some(ShellRequest::Load(cartridge)) = shell.handle_input(Enter, None) else {
+        let Some(ShellRequest::Load(cartridge)) = shell.handle_input(Enter, CartridgeSlot::Empty)
+        else {
             panic!("expected a load request");
         };
         assert_eq!(cartridge.manifest().name, "Pong");
 
         send(&mut shell, &typed("run"));
         assert_eq!(
-            shell.handle_input(Enter, Some(&cartridge)),
+            shell.handle_input(Enter, CartridgeSlot::Loaded(&cartridge)),
             Some(ShellRequest::Run)
         );
         send(&mut shell, &typed("run"));
-        assert_eq!(shell.handle_input(Enter, None), None);
+        assert_eq!(shell.handle_input(Enter, CartridgeSlot::Empty), None);
         assert_eq!(entries(&shell).last(), Some(&error("NO CARTRIDGE LOADED")));
     }
 
@@ -1002,7 +1030,7 @@ mod tests {
             [
                 banner(),
                 command(""),
-                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  RUN")
+                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  RUN  RESUME  STOP")
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());

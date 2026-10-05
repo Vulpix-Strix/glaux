@@ -59,6 +59,11 @@ impl Framebuffer {
         &self.pixels
     }
 
+    /// Returns the raw row-major pixel indices for in-place rewriting.
+    pub fn as_bytes_mut(&mut self) -> &mut [u8; LEN] {
+        &mut self.pixels
+    }
+
     fn offset(x: i32, y: i32) -> Option<usize> {
         let x = usize::try_from(x).ok().filter(|&x| x < WIDTH)?;
         let y = usize::try_from(y).ok().filter(|&y| y < HEIGHT)?;
@@ -156,6 +161,13 @@ mod tests {
             }
         }
         assert_eq!(fb.as_bytes().iter().filter(|&&b| b != 0).count(), 1);
+    }
+
+    #[test]
+    fn mutable_bytes_are_the_pixels() {
+        let mut fb = Framebuffer::new();
+        fb.as_bytes_mut()[17 * WIDTH + 42] = 9;
+        assert_eq!(fb.pixel(42, 17), Some(9));
     }
 
     #[test]

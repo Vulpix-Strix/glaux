@@ -5,9 +5,9 @@ use glaux_machine::machine::{GENERATION, NAME, TICK_RATE};
 use glaux_machine::palette::PALETTE_LEN;
 
 use super::super::{SystemInfo, identity_line};
-use super::ShellRequest;
 use super::parser::Invocation;
 use super::scrollback::{Entry, Scrollback};
+use super::{CartridgeSlot, ShellRequest};
 use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::{CartridgeStorage, EntryKind};
 
@@ -16,7 +16,7 @@ pub(super) struct Context<'a> {
     pub(super) scrollback: &'a mut Scrollback,
     pub(super) info: &'a SystemInfo,
     pub(super) cartridges: &'a mut CartridgeStorage,
-    pub(super) loaded: Option<&'a LoadedCartridge>,
+    pub(super) slot: CartridgeSlot<'a>,
     /// Set by a command that needs the system to change the cartridge
     /// lifecycle.
     pub(super) request: &'a mut Option<ShellRequest>,
@@ -133,7 +133,31 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 0,
         handler: run,
     },
+    Command {
+        name: "resume",
+        aliases: &[],
+        usage: "RESUME",
+        description: "RESUME THE PAUSED CARTRIDGE",
+        min_args: 0,
+        max_args: 0,
+        handler: resume,
+    },
+    Command {
+        name: "stop",
+        aliases: &[],
+        usage: "STOP",
+        description: "STOP THE PAUSED CARTRIDGE",
+        min_args: 0,
+        max_args: 0,
+        handler: stop,
+    },
 ];
+
+/// Reported by commands that would replace or restart a paused cartridge.
+const PAUSED_ERROR: &str = "CARTRIDGE PAUSED: RESUME OR STOP IT FIRST";
+
+/// Reported by commands that act on a paused cartridge when there is none.
+const NOT_PAUSED_ERROR: &str = "NO PAUSED CARTRIDGE";
 
 /// The command called `name` or one of its aliases, ignoring ASCII case.
 pub(super) fn find(name: &str) -> Option<&'static Command> {
@@ -192,13 +216,14 @@ fn clear(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     ctx.scrollback.clear();
 }
 
-/// The shell is only active while no cartridge runs, so it reports either
-/// no cartridge or a loaded one. RUNTIME names the runtime the cartridge is
-/// written for.
+/// The shell is only active while no cartridge runs, so it reports no
+/// cartridge, a loaded one or a paused one. RUNTIME names the runtime the
+/// cartridge is written for.
 fn info(_: &Invocation<'_>, ctx: &mut Context<'_>) {
-    let (runtime, cartridge, state) = match ctx.loaded {
-        Some(loaded) => ("LUAU", cartridge_identity(loaded.manifest()), "LOADED"),
-        None => ("NONE", "NONE".into(), "IDLE"),
+    let (runtime, cartridge, state) = match ctx.slot {
+        CartridgeSlot::Empty => ("NONE", "NONE".into(), "IDLE"),
+        CartridgeSlot::Loaded(loaded) => ("LUAU", cartridge_identity(loaded.manifest()), "LOADED"),
+        CartridgeSlot::Paused(paused) => ("LUAU", cartridge_identity(paused.manifest()), "PAUSED"),
     };
     let rows = [
         ("MACHINE", format!("{NAME} {GENERATION}")),
@@ -263,8 +288,12 @@ fn cd(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
 
 /// Validates the cartridge in the directory at `PATH` and asks for it to
 /// become the loaded cartridge. A failed load keeps the cartridge loaded
-/// before it.
+/// before it. Refused without looking at `PATH` while a cartridge is paused.
 fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
+    if matches!(ctx.slot, CartridgeSlot::Paused(_)) {
+        ctx.error(PAUSED_ERROR);
+        return;
+    }
     let path = &invocation.args[0];
     match LoadedCartridge::load(ctx.cartridges, path) {
         Ok(cartridge) => {
@@ -276,13 +305,30 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     }
 }
 
-/// Asks the system to start the loaded cartridge.
+/// Asks the system to start the loaded cartridge. A paused cartridge is
+/// never restarted.
 fn run(_: &Invocation<'_>, ctx: &mut Context<'_>) {
-    if ctx.loaded.is_none() {
-        ctx.error("NO CARTRIDGE LOADED");
-        return;
+    match ctx.slot {
+        CartridgeSlot::Empty => ctx.error("NO CARTRIDGE LOADED"),
+        CartridgeSlot::Loaded(_) => *ctx.request = Some(ShellRequest::Run),
+        CartridgeSlot::Paused(_) => ctx.error(PAUSED_ERROR),
     }
-    *ctx.request = Some(ShellRequest::Run);
+}
+
+/// Asks the system to continue the paused cartridge.
+fn resume(_: &Invocation<'_>, ctx: &mut Context<'_>) {
+    match ctx.slot {
+        CartridgeSlot::Paused(_) => *ctx.request = Some(ShellRequest::Resume),
+        CartridgeSlot::Empty | CartridgeSlot::Loaded(_) => ctx.error(NOT_PAUSED_ERROR),
+    }
+}
+
+/// Asks the system to dispose of the paused cartridge's VM.
+fn stop(_: &Invocation<'_>, ctx: &mut Context<'_>) {
+    match ctx.slot {
+        CartridgeSlot::Paused(_) => *ctx.request = Some(ShellRequest::Stop),
+        CartridgeSlot::Empty | CartridgeSlot::Loaded(_) => ctx.error(NOT_PAUSED_ERROR),
+    }
 }
 
 #[cfg(test)]
@@ -305,7 +351,7 @@ mod tests {
         line: &str,
         rom_version: Version,
         cartridges: &mut CartridgeStorage,
-        loaded: Option<&LoadedCartridge>,
+        slot: CartridgeSlot<'_>,
     ) -> (Vec<Entry>, Option<ShellRequest>) {
         let mut scrollback = Scrollback::default();
         let info = SystemInfo { rom_version };
@@ -314,7 +360,7 @@ mod tests {
             scrollback: &mut scrollback,
             info: &info,
             cartridges,
-            loaded,
+            slot,
             request: &mut request,
         };
         execute(&parse(line).unwrap().unwrap(), &mut ctx);
@@ -329,7 +375,12 @@ mod tests {
         cartridges: &mut CartridgeStorage,
         loaded: &mut Option<LoadedCartridge>,
     ) -> Vec<Entry> {
-        let (entries, request) = execute_line(line, rom_version, cartridges, loaded.as_ref());
+        let (entries, request) = execute_line(
+            line,
+            rom_version,
+            cartridges,
+            CartridgeSlot::loaded(loaded.as_ref()),
+        );
         if let Some(ShellRequest::Load(cartridge)) = request {
             *loaded = Some(cartridge);
         }
@@ -400,6 +451,8 @@ mod tests {
                 "CD       CHANGE THE CURRENT DIRECTORY",
                 "LOAD     LOAD A CARTRIDGE",
                 "RUN      RUN THE LOADED CARTRIDGE",
+                "RESUME   RESUME THE PAUSED CARTRIDGE",
+                "STOP     STOP THE PAUSED CARTRIDGE",
             ])
         );
     }
@@ -465,7 +518,7 @@ mod tests {
             scrollback: &mut scrollback,
             info: &info,
             cartridges: &mut cartridges,
-            loaded: None,
+            slot: CartridgeSlot::Empty,
             request: &mut None,
         };
         execute(&parse("clear").unwrap().unwrap(), &mut ctx);
@@ -489,6 +542,8 @@ mod tests {
         assert_eq!(run("cd a b"), error("USAGE: CD [PATH]"));
         assert_eq!(run("load a b"), error("USAGE: LOAD PATH"));
         assert_eq!(run("run x"), error("USAGE: RUN"));
+        assert_eq!(run("resume x"), error("USAGE: RESUME"));
+        assert_eq!(run("stop x"), error("USAGE: STOP"));
     }
 
     #[test]
@@ -659,8 +714,12 @@ mod tests {
     fn run_needs_a_loaded_cartridge() {
         assert_eq!(run("run"), error("NO CARTRIDGE LOADED"));
         let fixture = Fixture::new("cmd-run-none");
-        let (entries, request) =
-            execute_line("RUN", Version::new(0, 3, 1), &mut fixture.storage(), None);
+        let (entries, request) = execute_line(
+            "RUN",
+            Version::new(0, 3, 1),
+            &mut fixture.storage(),
+            CartridgeSlot::Empty,
+        );
         assert_eq!((entries, request), (error("NO CARTRIDGE LOADED"), None));
     }
 
@@ -671,8 +730,12 @@ mod tests {
         let mut fs = fixture.storage();
         let mut loaded = None;
         run_load("load pong", &mut fs, &mut loaded);
-        let (entries, request) =
-            execute_line("run", Version::new(0, 3, 1), &mut fs, loaded.as_ref());
+        let (entries, request) = execute_line(
+            "run",
+            Version::new(0, 3, 1),
+            &mut fs,
+            CartridgeSlot::loaded(loaded.as_ref()),
+        );
         assert_eq!((entries, request), (vec![], Some(ShellRequest::Run)));
     }
 
@@ -684,12 +747,84 @@ mod tests {
             "load pong",
             Version::new(0, 3, 1),
             &mut fixture.storage(),
-            None,
+            CartridgeSlot::Empty,
         );
         assert_eq!(entries, output(&["LOADED Pong 0.1.0"]));
         assert!(
             matches!(&request, Some(ShellRequest::Load(c)) if c.manifest().name == "Pong"),
             "{request:?}"
         );
+    }
+
+    /// The `Pong` cartridge, loaded from a fresh fixture named `name`.
+    fn pong(name: &str) -> (Fixture, LoadedCartridge) {
+        let fixture = Fixture::new(name);
+        write_cartridge(&fixture.root().join("pong"), "Pong");
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+        (fixture, cartridge)
+    }
+
+    fn execute_paused(
+        line: &str,
+        fixture: &Fixture,
+        paused: &LoadedCartridge,
+    ) -> (Vec<Entry>, Option<ShellRequest>) {
+        execute_line(
+            line,
+            Version::new(0, 3, 1),
+            &mut fixture.storage(),
+            CartridgeSlot::Paused(paused),
+        )
+    }
+
+    #[test]
+    fn info_reports_a_paused_cartridge() {
+        let (fixture, pong) = pong("cmd-info-paused");
+        let (entries, _) = execute_paused("info", &fixture, &pong);
+        assert_eq!(
+            info_state(&entries),
+            output(&[
+                "RUNTIME     LUAU",
+                "CARTRIDGE   Pong 0.1.0",
+                "STATE       PAUSED"
+            ])
+        );
+    }
+
+    #[test]
+    fn resume_and_stop_request_the_paused_cartridge() {
+        let (fixture, pong) = pong("cmd-resume-stop");
+        assert_eq!(
+            execute_paused("resume", &fixture, &pong),
+            (vec![], Some(ShellRequest::Resume))
+        );
+        assert_eq!(
+            execute_paused("STOP", &fixture, &pong),
+            (vec![], Some(ShellRequest::Stop))
+        );
+    }
+
+    #[test]
+    fn resume_and_stop_need_a_paused_cartridge() {
+        let (fixture, pong) = pong("cmd-resume-stop-none");
+        for slot in [CartridgeSlot::Empty, CartridgeSlot::Loaded(&pong)] {
+            for line in ["resume", "stop"] {
+                let result =
+                    execute_line(line, Version::new(0, 3, 1), &mut fixture.storage(), slot);
+                assert_eq!(result, (error("NO PAUSED CARTRIDGE"), None), "{line}");
+            }
+        }
+    }
+
+    #[test]
+    fn load_and_run_refuse_to_replace_a_paused_cartridge() {
+        let (fixture, pong) = pong("cmd-paused-refuse");
+        for line in ["run", "load pong", "load /does/not/exist"] {
+            assert_eq!(
+                execute_paused(line, &fixture, &pong),
+                (error("CARTRIDGE PAUSED: RESUME OR STOP IT FIRST"), None),
+                "{line}"
+            );
+        }
     }
 }

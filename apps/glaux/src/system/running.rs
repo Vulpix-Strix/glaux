@@ -30,7 +30,8 @@ pub struct RunningCartridge {
     cartridge: LoadedCartridge,
     runtime: Runtime,
     /// Starts with every button released, so nothing held during a previous
-    /// run reaches this one.
+    /// run reaches this one, and is reset whenever the system resumes the
+    /// cartridge from a pause.
     buttons: ButtonLatch,
 }
 
@@ -62,6 +63,12 @@ impl RunningCartridge {
     pub fn tick(&mut self, input: &[InputEvent]) -> Result<(), RuntimeError> {
         let buttons = self.buttons.advance(input);
         self.runtime.tick(buttons)
+    }
+
+    /// Releases every game button as seen by the cartridge, so its next tick
+    /// sees no held buttons and no presses from before this call.
+    pub fn reset_input(&mut self) {
+        self.buttons = ButtonLatch::new();
     }
 
     /// Entries the cartridge logged since the last call.
