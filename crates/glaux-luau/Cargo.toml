@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 glaux-input.workspace = true
+glaux-machine.workspace = true
 mlua.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

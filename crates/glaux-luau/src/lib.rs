@@ -15,12 +15,19 @@
 //!   is held, or was just pressed, on the current tick. `button` is one of
 //!   `"up"`, `"down"`, `"left"`, `"right"`, `"a"` or `"b"`; any other value
 //!   is a runtime error. Both return `false` before the first tick.
+//! - `frame()` and `t()`, which report logical time in any phase: `frame()`
+//!   is the number of ticks completed before the current one, and `t()` is
+//!   that count in seconds, `frame() / TICK_RATE`. Both are `0` during the
+//!   entry chunk, `boot()` and the first `tick()`/`draw()` pair, and advance
+//!   only after a tick whose `tick()` and `draw()` both succeed. They never
+//!   depend on host wall-clock time or presentation frames.
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
 use glaux_input::{ButtonState, GameButton};
+use glaux_machine::machine::TICK_RATE;
 use mlua::{Function, Lua, MultiValue, Value, VmState};
 
 /// Interrupt checks one call may pass with [`Budget::default`].
@@ -218,6 +225,8 @@ pub struct Runtime {
     frame: Vec<DrawCommand>,
     /// The game buttons of the tick in progress.
     buttons: Rc<Cell<ButtonState>>,
+    /// Logical ticks completed so far, as read by `frame()` and `t()`.
+    ticks: Rc<Cell<u64>>,
     meter: Rc<Meter>,
 }
 
@@ -248,6 +257,7 @@ impl Runtime {
             pending: Rc::default(),
             frame: Vec::new(),
             buttons: Rc::default(),
+            ticks: Rc::default(),
             meter,
         };
 
@@ -277,6 +287,9 @@ impl Runtime {
     ///
     /// A `draw()` that returns normally replaces [`frame`](Self::frame) with
     /// the commands it recorded; one that fails leaves the previous frame.
+    ///
+    /// A successful call advances the logical time read by `frame()` and
+    /// `t()`; a failed one does not.
     pub fn tick(&mut self, buttons: ButtonState) -> Result<(), RuntimeError> {
         self.buttons.set(buttons);
         self.callback(Phase::Tick)?;
@@ -287,6 +300,7 @@ impl Runtime {
         if drawn? && let Some(recording) = recording {
             self.frame = recording.commands;
         }
+        self.ticks.set(self.ticks.get() + 1);
         Ok(())
     }
 
@@ -327,7 +341,8 @@ impl Runtime {
         let tostring: Function = globals.get("tostring")?;
         self.install_log(&tostring)?;
         self.install_draw(&tostring)?;
-        self.install_input()
+        self.install_input()?;
+        self.install_time()
     }
 
     /// Installs the `log` table.
@@ -416,6 +431,25 @@ impl Runtime {
             Ok(buttons.get().pressed.contains(button))
         })?;
         globals.raw_set("btnp", btnp)
+    }
+
+    /// Installs `frame` and `t`.
+    fn install_time(&self) -> mlua::Result<()> {
+        let globals = self.lua.globals();
+
+        // Returned as doubles because Luau numbers are doubles; tick counts
+        // stay exact far beyond any realistic run length.
+        let ticks = Rc::clone(&self.ticks);
+        let frame = self
+            .lua
+            .create_function(move |_, ()| Ok(ticks.get() as f64))?;
+        globals.raw_set("frame", frame)?;
+
+        let ticks = Rc::clone(&self.ticks);
+        let t = self
+            .lua
+            .create_function(move |_, ()| Ok(ticks.get() as f64 / f64::from(TICK_RATE)))?;
+        globals.raw_set("t", t)
     }
 
     /// Calls the global callback for `phase`, if the script defines one.
@@ -1443,5 +1477,81 @@ mod tests {
                 "{call}"
             );
         }
+    }
+
+    // Time.
+
+    #[test]
+    fn time_is_zero_during_entry_and_boot() {
+        assert_eq!(
+            start_output(r#"log.info(frame(), t()) function boot() log.info(frame(), t()) end"#),
+            ["0\t0", "0\t0"]
+        );
+    }
+
+    #[test]
+    fn tick_and_draw_see_the_same_frame() {
+        let mut runtime = started(
+            r#"
+            function tick() log.info(frame()) end
+            function draw() log.info(frame()) end
+            "#,
+        );
+        for _ in 0..3 {
+            runtime.tick(NO_BUTTONS).unwrap();
+        }
+        assert_eq!(texts(runtime.take_output()), ["0", "0", "1", "1", "2", "2"]);
+    }
+
+    #[test]
+    fn t_is_frame_over_the_tick_rate() {
+        let mut runtime = started(&format!(
+            r#"
+            function tick()
+                log.info(t() == frame() / {TICK_RATE}, frame() == {TICK_RATE} and t() == 1)
+            end
+            "#
+        ));
+        // A callback sees the ticks completed before it, so the first tick
+        // to see one second is the one after `TICK_RATE` completed ticks.
+        for _ in 0..=TICK_RATE {
+            runtime.tick(NO_BUTTONS).unwrap();
+        }
+        let mut expected = vec!["true\tfalse"; TICK_RATE as usize];
+        expected.push("true\ttrue");
+        assert_eq!(texts(runtime.take_output()), expected);
+    }
+
+    #[test]
+    fn completed_ticks_advance_the_counter() {
+        let mut runtime = started("function tick() end function draw() end");
+        assert_eq!(runtime.ticks.get(), 0);
+        for _ in 0..TICK_RATE {
+            runtime.tick(NO_BUTTONS).unwrap();
+        }
+        assert_eq!(runtime.ticks.get(), u64::from(TICK_RATE));
+    }
+
+    #[test]
+    fn failed_tick_does_not_advance_time() {
+        let mut runtime = started(r#"function tick() if frame() == 1 then error("x") end end"#);
+        runtime.tick(NO_BUTTONS).unwrap();
+        assert_eq!(runtime.ticks.get(), 1);
+        assert_eq!(runtime.tick(NO_BUTTONS).unwrap_err().phase, Phase::Tick);
+        assert_eq!(runtime.ticks.get(), 1);
+    }
+
+    #[test]
+    fn failed_draw_does_not_advance_time() {
+        let mut runtime = started(
+            r#"
+            function tick() end
+            function draw() if frame() == 1 then error("x") end end
+            "#,
+        );
+        runtime.tick(NO_BUTTONS).unwrap();
+        assert_eq!(runtime.ticks.get(), 1);
+        assert_eq!(runtime.tick(NO_BUTTONS).unwrap_err().phase, Phase::Draw);
+        assert_eq!(runtime.ticks.get(), 1);
     }
 }
