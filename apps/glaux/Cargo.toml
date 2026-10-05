@@ -18,6 +18,7 @@ glaux-machine.workspace = true
 glaux-video.workspace = true
 glaux-host-raylib.workspace = true
 glaux-input.workspace = true
+glaux-luau.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

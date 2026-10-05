@@ -1,7 +1,8 @@
-//! Development cartridges: a directory holding a `cart.json` manifest and
+//! Development cartridges. A directory holding a `cart.json` manifest and
 //! the entry script it names.
 //!
-//! Loading only validates the cartridge; nothing in it runs.
+//! Loading only validates the cartridge; its entry script runs only when
+//! asked to, through [`LoadedCartridge::entry_source`].
 
 use semver::Version;
 use serde_json::{Map, Value};
@@ -160,16 +161,9 @@ impl LoadedCartridge {
         };
 
         let entry = &manifest.entry;
-        match files.ensure_file(&format!("/{entry}")) {
-            Ok(()) => {}
-            Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => {
-                return Err(CartridgeError::EntryNotFound(entry.clone()));
-            }
-            Err(FsError::NotAFile(_)) => return Err(CartridgeError::EntryNotAFile(entry.clone())),
-            Err(FsError::Unreadable(_) | FsError::Unavailable) => {
-                return Err(CartridgeError::EntryUnreadable(entry.clone()));
-            }
-        }
+        files
+            .ensure_file(&format!("/{entry}"))
+            .map_err(|err| entry_error(err, entry))?;
 
         tracing::info!(
             cartridge = %location,
@@ -182,6 +176,28 @@ impl LoadedCartridge {
 
     pub fn manifest(&self) -> &CartridgeManifest {
         &self.manifest
+    }
+
+    /// Current contents of the entry script. The file is read on every call,
+    /// so edits made after loading are picked up.
+    pub fn entry_source(&self) -> Result<Vec<u8>, CartridgeError> {
+        let entry = &self.manifest.entry;
+        self.files
+            .read_file(&format!("/{entry}"))
+            .map_err(|err| entry_error(err, entry))
+    }
+}
+
+/// The entry-script error for a failed lookup of `entry`.
+fn entry_error(err: FsError, entry: &str) -> CartridgeError {
+    match err {
+        FsError::NotFound(_) | FsError::NotADirectory(_) => {
+            CartridgeError::EntryNotFound(entry.to_owned())
+        }
+        FsError::NotAFile(_) => CartridgeError::EntryNotAFile(entry.to_owned()),
+        FsError::Unreadable(_) | FsError::Unavailable => {
+            CartridgeError::EntryUnreadable(entry.to_owned())
+        }
     }
 }
 
@@ -410,6 +426,25 @@ mod tests {
         fs::create_dir_all(dir.join("src")).unwrap();
         fs::write(dir.join("src/main.luau"), "").unwrap();
         assert!(load(&fixture.storage(), "games/pong").is_ok());
+    }
+
+    #[test]
+    fn entry_source_reads_the_current_entry() {
+        let fixture = Fixture::new("load-entry-source");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        fs::write(dir.join("main.luau"), "print(1)").unwrap();
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+        assert_eq!(cartridge.entry_source(), Ok(b"print(1)".to_vec()));
+
+        fs::write(dir.join("main.luau"), "print(2)").unwrap();
+        assert_eq!(cartridge.entry_source(), Ok(b"print(2)".to_vec()));
+
+        fs::remove_file(dir.join("main.luau")).unwrap();
+        assert_eq!(
+            cartridge.entry_source(),
+            Err(CartridgeError::EntryNotFound("main.luau".into()))
+        );
     }
 
     #[test]

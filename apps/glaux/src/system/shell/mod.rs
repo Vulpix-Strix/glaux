@@ -21,7 +21,7 @@ const BANNER: &str = "READY. TYPE HELP FOR HELP";
 const PROMPT: &str = "> ";
 const CURSOR: char = '_';
 
-/// Shell state: the command line being edited, the command history, the
+/// The command line being edited, the command history, the
 /// output shown above the prompt, the current cartridge directory and the
 /// loaded cartridge.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -485,6 +485,7 @@ mod tests {
                 output("LS       LIST A DIRECTORY"),
                 output("CD       CHANGE THE CURRENT DIRECTORY"),
                 output("LOAD     LOAD A CARTRIDGE"),
+                output("RUN      RUN THE LOADED CARTRIDGE"),
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());
@@ -494,7 +495,7 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 10, "> ", TEXT), Line::new(2, 10, "_", TEXT)]
+            [Line::new(0, 11, "> ", TEXT), Line::new(2, 11, "_", TEXT)]
         );
     }
 
@@ -820,7 +821,7 @@ mod tests {
             [
                 banner(),
                 command(""),
-                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD")
+                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  RUN")
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());

@@ -1,5 +1,6 @@
 //! Built-in shell commands.
 
+use glaux_luau::Budget;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME, TICK_RATE};
 use glaux_machine::palette::PALETTE_LEN;
@@ -119,6 +120,15 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 1,
         max_args: 1,
         handler: load,
+    },
+    Command {
+        name: "run",
+        aliases: &[],
+        usage: "RUN",
+        description: "RUN THE LOADED CARTRIDGE",
+        min_args: 0,
+        max_args: 0,
+        handler: run,
     },
 ];
 
@@ -264,6 +274,57 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     }
 }
 
+/// Runs the loaded cartridge's entry script once, showing what it prints.
+fn run(_: &Invocation<'_>, ctx: &mut Context<'_>) {
+    let Some(cartridge) = ctx.loaded.as_ref() else {
+        ctx.error("NO CARTRIDGE LOADED");
+        return;
+    };
+    let manifest = cartridge.manifest();
+    let finished = format!("FINISHED {} {}", manifest.name, manifest.version);
+    let entry = manifest.entry.clone();
+    let source = match cartridge.entry_source() {
+        Ok(source) => source,
+        Err(err) => {
+            ctx.error(err.to_string());
+            return;
+        }
+    };
+    let scrollback = &mut *ctx.scrollback;
+    let result = glaux_luau::run(&entry, &source, Budget::default(), &mut |text| {
+        for line in print_lines(&text) {
+            scrollback.push(Entry::Output(line));
+        }
+    });
+    match result {
+        Ok(()) => ctx.output(finished),
+        Err(err) => ctx.error(err.to_string()),
+    }
+}
+
+/// Columns between tab stops in printed text.
+const TAB_WIDTH: usize = 4;
+
+/// Scrollback lines for one `print`: split at newlines, with tabs expanded
+/// to spaces because the shell wraps by character and has no tab glyph.
+fn print_lines(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split('\n').map(|line| {
+        let mut expanded = String::with_capacity(line.len());
+        let mut column = 0;
+        for ch in line.chars() {
+            if ch == '\t' {
+                let spaces = TAB_WIDTH - column % TAB_WIDTH;
+                expanded.extend(std::iter::repeat_n(' ', spaces));
+                column += spaces;
+            } else {
+                expanded.push(ch);
+                column += 1;
+            }
+        }
+        expanded
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::parser::parse;
@@ -360,6 +421,7 @@ mod tests {
                 "LS       LIST A DIRECTORY",
                 "CD       CHANGE THE CURRENT DIRECTORY",
                 "LOAD     LOAD A CARTRIDGE",
+                "RUN      RUN THE LOADED CARTRIDGE",
             ])
         );
     }
@@ -447,6 +509,7 @@ mod tests {
         assert_eq!(run("ls a b"), error("USAGE: LS [PATH]"));
         assert_eq!(run("cd a b"), error("USAGE: CD [PATH]"));
         assert_eq!(run("load a b"), error("USAGE: LOAD PATH"));
+        assert_eq!(run("run x"), error("USAGE: RUN"));
     }
 
     #[test]
@@ -611,5 +674,120 @@ mod tests {
             loaded.map(|c| c.manifest().name.clone()),
             Some("Owl".into())
         );
+    }
+
+    /// Loads a `Pong` cartridge whose entry script is `script` and runs it.
+    fn run_script(fixture: &Fixture, script: &str) -> Vec<Entry> {
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        std::fs::write(dir.join("main.luau"), script).unwrap();
+        let mut fs = fixture.storage();
+        let mut loaded = None;
+        run_load("load pong", &mut fs, &mut loaded);
+        run_load("run", &mut fs, &mut loaded)
+    }
+
+    fn single_error(entries: &[Entry]) -> &str {
+        match entries {
+            [Entry::Error(message)] => message,
+            other => panic!("expected one error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_needs_a_loaded_cartridge() {
+        assert_eq!(run("run"), error("NO CARTRIDGE LOADED"));
+        let fixture = Fixture::new("cmd-run-none");
+        assert_eq!(
+            run_fs("RUN", &mut fixture.storage()),
+            error("NO CARTRIDGE LOADED")
+        );
+    }
+
+    #[test]
+    fn run_reports_completion() {
+        let fixture = Fixture::new("cmd-run-ok");
+        assert_eq!(
+            run_script(&fixture, "local x = 1"),
+            output(&["FINISHED Pong 0.1.0"])
+        );
+    }
+
+    #[test]
+    fn print_reaches_the_scrollback() {
+        let fixture = Fixture::new("cmd-run-print");
+        let script = r#"
+            print("hello")
+            print("a", 1, true, nil)
+            print("ab\tc\nnext")
+        "#;
+        assert_eq!(
+            run_script(&fixture, script),
+            output(&[
+                "hello",
+                "a   1   true    nil",
+                "ab  c",
+                "next",
+                "FINISHED Pong 0.1.0",
+            ])
+        );
+    }
+
+    #[test]
+    fn script_errors_are_shell_errors() {
+        let fixture = Fixture::new("cmd-run-errors");
+        assert_eq!(
+            run_script(&fixture, r#"print("x") error("boom")"#),
+            vec![
+                Entry::Output("x".into()),
+                Entry::Error("RUNTIME ERROR: main.luau:1: boom".into()),
+            ]
+        );
+        let syntax = run_script(&fixture, "local = 1");
+        assert!(
+            single_error(&syntax).starts_with("SYNTAX ERROR: main.luau:1:"),
+            "{syntax:?}"
+        );
+    }
+
+    #[test]
+    fn missing_entry_is_reported_at_run() {
+        let fixture = Fixture::new("cmd-run-missing");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        let mut fs = fixture.storage();
+        let mut loaded = None;
+        run_load("load pong", &mut fs, &mut loaded);
+        std::fs::remove_file(dir.join("main.luau")).unwrap();
+        assert_eq!(
+            run_load("run", &mut fs, &mut loaded),
+            error("ENTRY NOT FOUND: main.luau")
+        );
+    }
+
+    #[test]
+    fn script_errors_do_not_reveal_host_paths() {
+        let fixture = Fixture::new("cmd-run-paths");
+        let host_paths = [
+            fixture.base().display().to_string(),
+            fixture.root().display().to_string(),
+            fixture.outside().display().to_string(),
+        ];
+        for script in [
+            "local = 1",
+            r#"error("boom")"#,
+            "local t = nil\nprint(t.x)",
+            r#"require("../../outside/secret")"#,
+            r#"print(debug.info(1, "s"))"#,
+        ] {
+            for entry in run_script(&fixture, script) {
+                let (Entry::Output(text) | Entry::Error(text)) = &entry else {
+                    panic!("unexpected entry {entry:?}");
+                };
+                for path in &host_paths {
+                    assert!(!text.contains(path.as_str()), "{script}: {text}");
+                }
+            }
+        }
     }
 }
