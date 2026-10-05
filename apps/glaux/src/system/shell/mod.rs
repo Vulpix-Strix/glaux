@@ -32,6 +32,8 @@ pub enum ShellRequest {
     Load(LoadedCartridge),
     /// Start the loaded cartridge.
     Run,
+    /// Remove the loaded cartridge from the shell.
+    Unload,
     /// Continue the paused cartridge with the VM it had.
     Resume,
     /// Dispose of the paused cartridge's VM, keeping the cartridge loaded.
@@ -607,6 +609,7 @@ mod tests {
                 output("LS       LIST A DIRECTORY"),
                 output("CD       CHANGE THE CURRENT DIRECTORY"),
                 output("LOAD     LOAD A CARTRIDGE"),
+                output("UNLOAD   UNLOAD THE LOADED CARTRIDGE"),
                 output("RUN      RUN THE LOADED CARTRIDGE"),
                 output("RESUME   RESUME THE PAUSED CARTRIDGE"),
                 output("STOP     STOP THE PAUSED CARTRIDGE"),
@@ -619,7 +622,7 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 13, "> ", TEXT), Line::new(2, 13, "_", TEXT)]
+            [Line::new(0, 14, "> ", TEXT), Line::new(2, 14, "_", TEXT)]
         );
     }
 
@@ -1001,6 +1004,13 @@ mod tests {
     }
 
     #[test]
+    fn tab_completes_unload() {
+        let mut shell = shell_with(&typed("unl"));
+        send(&mut shell, &[Tab]);
+        assert_eq!(shell.editor.text(), "unload ");
+    }
+
+    #[test]
     fn tab_replaces_only_the_name_under_the_cursor() {
         let mut events = typed("hexx foo");
         events.extend([InputEvent::Home { select: false }]);
@@ -1030,7 +1040,7 @@ mod tests {
             [
                 banner(),
                 command(""),
-                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  RUN  RESUME  STOP")
+                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  UNLOAD  RUN  RESUME  STOP")
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());

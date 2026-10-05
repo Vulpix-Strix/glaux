@@ -7,6 +7,7 @@ mod logging;
 mod platform;
 mod rom;
 mod system;
+mod tooling;
 
 use std::env::consts::{ARCH, OS};
 use std::path::Path;
@@ -30,6 +31,11 @@ const WINDOW_SCALE: i32 = 3;
 const PRESENTATION: Presentation = Presentation::Crt;
 
 fn main() -> anyhow::Result<()> {
+    if let Some(command) = tooling::Cli::parse_env().command {
+        tooling::run(command)?;
+        return Ok(());
+    }
+
     // Decided before logging starts so a forwarded launch does not create a
     // session log of its own and rotate out the primary's logs.
     let startup = single_instance::start(&SecondaryLaunch::current());

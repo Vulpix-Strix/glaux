@@ -246,6 +246,14 @@ fn shell_tick(
         match shell.handle_input(event, CartridgeSlot::loaded(loaded.as_ref())) {
             None => {}
             Some(ShellRequest::Load(cartridge)) => loaded = Some(cartridge),
+            Some(ShellRequest::Unload) => {
+                let Some(cartridge) = loaded.take() else {
+                    unreachable!("UNLOAD was requested without a loaded cartridge");
+                };
+                let identity = cartridge_identity(cartridge.manifest());
+                tracing::info!(cartridge = %identity, "cartridge unloaded");
+                shell.report(format!("UNLOADED {identity}"));
+            }
             Some(ShellRequest::Run) => {
                 // `run` only asks to start when a cartridge is loaded.
                 let Some(cartridge) = loaded else {
@@ -373,8 +381,8 @@ fn paused_shell_tick(
             None => {}
             Some(ShellRequest::Resume) => return resume(shell, running),
             Some(ShellRequest::Stop) => return stop(shell, running, StopReason::Stopped),
-            // `load` and `run` refuse to replace a paused cartridge.
-            Some(_request @ (ShellRequest::Load(_) | ShellRequest::Run)) => {
+            // `load`, `unload` and `run` refuse to replace a paused cartridge.
+            Some(_request @ (ShellRequest::Load(_) | ShellRequest::Unload | ShellRequest::Run)) => {
                 unreachable!("{_request:?} was requested while a cartridge is paused")
             }
         }
@@ -1115,6 +1123,50 @@ mod tests {
     }
 
     #[test]
+    fn unload_returns_a_loaded_cartridge_to_idle() {
+        let fixture = Fixture::new("sys-unload");
+        let system = enter(shell_with_cartridge(&fixture, ""), "load pong");
+        let system = enter(system, "unload");
+        assert_eq!(loaded_name(&system), None);
+        assert_eq!(after(&system, "> unload"), ["UNLOADED Pong 0.1.0"]);
+
+        let system = enter(system, "info");
+        let lines = after(&system, "> info");
+        assert_eq!(
+            &lines[4..],
+            ["RUNTIME     NONE", "CARTRIDGE   NONE", "STATE       IDLE"]
+        );
+    }
+
+    #[test]
+    fn unload_preserves_cartridge_files_and_the_shell_directory() {
+        let fixture = Fixture::new("sys-unload-storage");
+        let dir = fixture.root().join("games/pong");
+        write_cartridge(&dir, "Pong");
+        std::fs::write(dir.join("save.dat"), b"kept").unwrap();
+        let manifest = std::fs::read(dir.join("cart.json")).unwrap();
+
+        let mut system = System::new(info(), fixture.storage());
+        while matches!(system.state(), SystemState::Boot { .. }) {
+            system = system.update(&[]);
+        }
+        let system = enter(enter(enter(system, "cd games"), "load pong"), "unload");
+        let system = enter(system, "pwd");
+
+        assert_eq!(transcript(&system).last().unwrap(), "/games");
+        assert_eq!(std::fs::read(dir.join("cart.json")).unwrap(), manifest);
+        assert_eq!(std::fs::read(dir.join("save.dat")).unwrap(), b"kept");
+    }
+
+    #[test]
+    fn unload_without_a_cartridge_reports_an_error() {
+        let fixture = Fixture::new("sys-unload-empty");
+        let system = enter(shell_with_cartridge(&fixture, ""), "unload");
+        assert_eq!(after(&system, "> unload"), ["! NO CARTRIDGE LOADED"]);
+        assert_eq!(loaded_name(&system), None);
+    }
+
+    #[test]
     fn missing_entry_is_reported_at_run() {
         let fixture = Fixture::new("sys-run-missing");
         let system = enter(shell_with_cartridge(&fixture, ""), "load pong");
@@ -1582,6 +1634,21 @@ mod tests {
                 "! CARTRIDGE PAUSED: RESUME OR STOP IT FIRST",
             ]
         );
+        let (_, lines) = logged_ticks(enter(system, "resume"), 1);
+        assert_eq!(lines, ["tick    3"]);
+    }
+
+    #[test]
+    fn unload_cannot_dispose_of_a_paused_cartridge() {
+        let fixture = Fixture::new("sys-pause-unload");
+        let system = open_shell(press_break(ticks(started(&fixture, COUNTER), 2)));
+        let system = enter(system, "unload");
+        assert!(is_paused_shell(&system));
+        assert_eq!(
+            after(&system, "> unload"),
+            ["! CARTRIDGE PAUSED: RESUME OR STOP IT FIRST"]
+        );
+
         let (_, lines) = logged_ticks(enter(system, "resume"), 1);
         assert_eq!(lines, ["tick    3"]);
     }

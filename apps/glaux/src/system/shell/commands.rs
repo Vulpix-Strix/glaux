@@ -125,6 +125,15 @@ pub(super) static COMMANDS: &[Command] = &[
         handler: load,
     },
     Command {
+        name: "unload",
+        aliases: &[],
+        usage: "UNLOAD",
+        description: "UNLOAD THE LOADED CARTRIDGE",
+        min_args: 0,
+        max_args: 0,
+        handler: unload,
+    },
+    Command {
         name: "run",
         aliases: &[],
         usage: "RUN",
@@ -305,6 +314,15 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     }
 }
 
+/// Asks the system to remove the normally loaded cartridge.
+fn unload(_: &Invocation<'_>, ctx: &mut Context<'_>) {
+    match ctx.slot {
+        CartridgeSlot::Empty => ctx.error("NO CARTRIDGE LOADED"),
+        CartridgeSlot::Loaded(_) => *ctx.request = Some(ShellRequest::Unload),
+        CartridgeSlot::Paused(_) => ctx.error(PAUSED_ERROR),
+    }
+}
+
 /// Asks the system to start the loaded cartridge. A paused cartridge is
 /// never restarted.
 fn run(_: &Invocation<'_>, ctx: &mut Context<'_>) {
@@ -450,6 +468,7 @@ mod tests {
                 "LS       LIST A DIRECTORY",
                 "CD       CHANGE THE CURRENT DIRECTORY",
                 "LOAD     LOAD A CARTRIDGE",
+                "UNLOAD   UNLOAD THE LOADED CARTRIDGE",
                 "RUN      RUN THE LOADED CARTRIDGE",
                 "RESUME   RESUME THE PAUSED CARTRIDGE",
                 "STOP     STOP THE PAUSED CARTRIDGE",
@@ -541,6 +560,7 @@ mod tests {
         assert_eq!(run("ls a b"), error("USAGE: LS [PATH]"));
         assert_eq!(run("cd a b"), error("USAGE: CD [PATH]"));
         assert_eq!(run("load a b"), error("USAGE: LOAD PATH"));
+        assert_eq!(run("unload x"), error("USAGE: UNLOAD"));
         assert_eq!(run("run x"), error("USAGE: RUN"));
         assert_eq!(run("resume x"), error("USAGE: RESUME"));
         assert_eq!(run("stop x"), error("USAGE: STOP"));
@@ -724,6 +744,30 @@ mod tests {
     }
 
     #[test]
+    fn unload_needs_and_requests_a_loaded_cartridge() {
+        let fixture = Fixture::new("cmd-unload");
+        let (_, pong) = pong("cmd-unload-loaded");
+        assert_eq!(
+            execute_line(
+                "unload",
+                Version::new(0, 3, 1),
+                &mut fixture.storage(),
+                CartridgeSlot::Empty,
+            ),
+            (error("NO CARTRIDGE LOADED"), None)
+        );
+        assert_eq!(
+            execute_line(
+                "UNLOAD",
+                Version::new(0, 3, 1),
+                &mut fixture.storage(),
+                CartridgeSlot::Loaded(&pong),
+            ),
+            (vec![], Some(ShellRequest::Unload))
+        );
+    }
+
+    #[test]
     fn run_requests_the_loaded_cartridge_to_start() {
         let fixture = Fixture::new("cmd-run-request");
         write_cartridge(&fixture.root().join("pong"), "Pong");
@@ -819,7 +863,7 @@ mod tests {
     #[test]
     fn load_and_run_refuse_to_replace_a_paused_cartridge() {
         let (fixture, pong) = pong("cmd-paused-refuse");
-        for line in ["run", "load pong", "load /does/not/exist"] {
+        for line in ["run", "unload", "load pong", "load /does/not/exist"] {
             assert_eq!(
                 execute_paused(line, &fixture, &pong),
                 (error("CARTRIDGE PAUSED: RESUME OR STOP IT FIRST"), None),

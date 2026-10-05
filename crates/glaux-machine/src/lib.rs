@@ -4,4 +4,5 @@ pub mod font;
 pub mod framebuffer;
 pub mod machine;
 pub mod palette;
+pub mod sprite;
 pub mod system_rom;
