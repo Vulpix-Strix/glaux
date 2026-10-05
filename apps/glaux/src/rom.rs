@@ -7,12 +7,13 @@ use glaux_machine::system_rom::SystemRom;
 use semver::Version;
 
 const VERSION: &str = include_str!("../../../rom/version");
+const COPYRIGHT: &str = include_str!("../../../rom/copyright");
 const PALETTE_HEX: &str = include_str!("../../../rom/palette/system.hex");
 const FONT_BDF: &str = include_str!("../../../rom/font/Tamzen5x9r.bdf");
 
 /// Decodes the embedded System ROM assets.
 pub fn load() -> anyhow::Result<SystemRom> {
-    let rom = build(VERSION, PALETTE_HEX, FONT_BDF)?;
+    let rom = build(VERSION, COPYRIGHT, PALETTE_HEX, FONT_BDF)?;
     let metrics = rom.font().metrics();
     tracing::info!(rom_version = %rom.version(), "System ROM loaded");
     tracing::debug!(
@@ -27,12 +28,27 @@ pub fn load() -> anyhow::Result<SystemRom> {
 
 /// Builds a System ROM from the text of its assets. Errors name the asset
 /// that failed to decode.
-fn build(version: &str, palette: &str, font: &str) -> anyhow::Result<SystemRom> {
+fn build(version: &str, copyright: &str, palette: &str, font: &str) -> anyhow::Result<SystemRom> {
     let version = Version::parse(version.trim())
         .with_context(|| format!("invalid rom/version: {:?}", version.trim()))?;
+    let copyright = parse_copyright(copyright).context("invalid rom/copyright")?;
     let palette = parse_palette(palette).context("invalid rom/palette/system.hex")?;
     let font = parse_bdf(font, FontMetrics::SYSTEM).context("invalid rom/font/Tamzen5x9r.bdf")?;
-    Ok(SystemRom::new(version, palette, font))
+    Ok(SystemRom::new(version, copyright, palette, font))
+}
+
+/// Parses the copyright notice: one non-empty line of printable ASCII, so
+/// the system font can draw every character of it.
+fn parse_copyright(text: &str) -> anyhow::Result<String> {
+    let notice = text.trim();
+    ensure!(!notice.is_empty(), "the copyright notice is empty");
+    if let Some(ch) = notice
+        .chars()
+        .find(|ch| !(FIRST_CHAR..=LAST_CHAR).contains(ch))
+    {
+        bail!("{ch:?} in {notice:?} is not printable ASCII");
+    }
+    Ok(notice.to_owned())
 }
 
 /// Parses one `rrggbb` color per non-empty line. Exactly 256 colors are
@@ -178,8 +194,30 @@ mod tests {
     const BLANK: [&str; 9] = ["00"; 9];
 
     #[test]
+    fn copyright_is_trimmed() {
+        assert_eq!(
+            parse_copyright("  (C) 2026 CUERVOLU \n").unwrap(),
+            "(C) 2026 CUERVOLU"
+        );
+    }
+
+    #[test]
+    fn invalid_copyright_names_the_asset() {
+        for (text, detail) in [
+            (" \n", "empty"),
+            ("(C) 2026 BÚHO", "'Ú'"),
+            ("A\nB", "'\\n'"),
+        ] {
+            let err = build("0.1.0", text, PALETTE_HEX, FONT_BDF).unwrap_err();
+            let message = format!("{err:#}");
+            assert!(message.contains("rom/copyright"), "{message}");
+            assert!(message.contains(detail), "{message}");
+        }
+    }
+
+    #[test]
     fn invalid_version_names_the_asset() {
-        let err = build("zero.one", PALETTE_HEX, FONT_BDF).unwrap_err();
+        let err = build("zero.one", COPYRIGHT, PALETTE_HEX, FONT_BDF).unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains("rom/version"), "{message}");
         assert!(message.contains("zero.one"), "{message}");
@@ -252,6 +290,7 @@ mod tests {
         let rom = load().unwrap();
 
         assert_eq!(rom.version(), &Version::new(0, 1, 0));
+        assert_eq!(rom.copyright(), "(C) 2026 CUERVOLU");
 
         assert_eq!(rom.palette(), &Palette::provisional());
 

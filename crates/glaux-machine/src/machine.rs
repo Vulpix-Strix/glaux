@@ -3,6 +3,16 @@
 use crate::framebuffer::Framebuffer;
 use crate::system_rom::SystemRom;
 
+/// Machine family name.
+pub const NAME: &str = "GLAUX";
+
+/// Hardware generation within the family.
+pub const GENERATION: &str = "G1";
+
+/// Logical ticks per second. The system and, later, cartridges advance
+/// exactly once per tick regardless of how often the host presents frames.
+pub const TICK_RATE: u32 = 60;
+
 /// its framebuffer and the System ROM it was built with.
 #[derive(Debug, Clone)]
 pub struct Machine {
@@ -46,6 +56,7 @@ mod tests {
         font.insert(glyph, &[0b10101; 9]).unwrap();
         SystemRom::new(
             Version::new(0, 1, 0),
+            "(C) 2026 TEST".into(),
             Palette::new([Rgb::from_hex(color); PALETTE_LEN]),
             font,
         )

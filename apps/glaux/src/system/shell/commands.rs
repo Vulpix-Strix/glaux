@@ -1,15 +1,17 @@
 //! Built-in shell commands.
 
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
-use semver::Version;
+use glaux_machine::machine::{GENERATION, NAME, TICK_RATE};
+use glaux_machine::palette::PALETTE_LEN;
 
+use super::super::{SystemInfo, identity_line};
 use super::parser::Invocation;
 use super::scrollback::{Entry, Scrollback};
 
 /// What a command can see and change while it runs.
 pub(super) struct Context<'a> {
     pub(super) scrollback: &'a mut Scrollback,
-    pub(super) rom_version: &'a Version,
+    pub(super) info: &'a SystemInfo,
 }
 
 impl Context<'_> {
@@ -63,6 +65,14 @@ pub(super) static COMMANDS: &[Command] = &[
         description: "SHOW SYSTEM INFORMATION",
         max_args: 0,
         handler: info,
+    },
+    Command {
+        name: "version",
+        aliases: &["ver"],
+        usage: "VERSION",
+        description: "SHOW THE SYSTEM ROM VERSION",
+        max_args: 0,
+        handler: version,
     },
 ];
 
@@ -124,9 +134,29 @@ fn clear(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 }
 
 fn info(_: &Invocation<'_>, ctx: &mut Context<'_>) {
-    ctx.output("GLAUX G1");
-    ctx.output(format!("SYSTEM ROM {}", ctx.rom_version));
-    ctx.output(format!("DISPLAY {WIDTH}x{HEIGHT} INDEXED"));
+    // No runtime or cartridge subsystem exists yet, so while the shell runs
+    // nothing else can be loaded or executing.
+    let rows = [
+        ("MACHINE", format!("{NAME} {GENERATION}")),
+        ("SYSTEM ROM", ctx.info.rom_version.to_string()),
+        (
+            "DISPLAY",
+            format!("{WIDTH}x{HEIGHT} INDEXED, {PALETTE_LEN} COLORS"),
+        ),
+        ("TICK RATE", format!("{TICK_RATE} HZ")),
+        ("RUNTIME", "NONE".into()),
+        ("CARTRIDGE", "NONE".into()),
+        ("STATE", "IDLE".into()),
+    ];
+    let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0) + 2;
+    for (label, value) in rows {
+        ctx.output(format!("{label:<width$}{value}"));
+    }
+}
+
+fn version(_: &Invocation<'_>, ctx: &mut Context<'_>) {
+    let line = identity_line(&ctx.info.rom_version);
+    ctx.output(line);
 }
 
 #[cfg(test)]
@@ -134,17 +164,23 @@ mod tests {
     use super::super::parser::parse;
     use super::*;
     use pretty_assertions::assert_eq;
+    use semver::Version;
 
-    /// Runs `line` on an empty scrollback and returns what it printed.
-    fn run(line: &str) -> Vec<Entry> {
+    /// Runs `line` on an empty scrollback with `rom_version` and returns
+    /// what it printed.
+    fn run_with_rom(line: &str, rom_version: Version) -> Vec<Entry> {
         let mut scrollback = Scrollback::default();
-        let version = Version::new(0, 3, 1);
+        let info = SystemInfo { rom_version };
         let mut ctx = Context {
             scrollback: &mut scrollback,
-            rom_version: &version,
+            info: &info,
         };
         execute(&parse(line).unwrap().unwrap(), &mut ctx);
         scrollback.iter().cloned().collect()
+    }
+
+    fn run(line: &str) -> Vec<Entry> {
+        run_with_rom(line, Version::new(0, 3, 1))
     }
 
     fn output(lines: &[&str]) -> Vec<Entry> {
@@ -186,9 +222,10 @@ mod tests {
         assert_eq!(
             run("help"),
             output(&[
-                "HELP   SHOW AVAILABLE COMMANDS",
-                "CLEAR  CLEAR THE CONSOLE",
-                "INFO   SHOW SYSTEM INFORMATION",
+                "HELP     SHOW AVAILABLE COMMANDS",
+                "CLEAR    CLEAR THE CONSOLE",
+                "INFO     SHOW SYSTEM INFORMATION",
+                "VERSION  SHOW THE SYSTEM ROM VERSION",
             ])
         );
     }
@@ -211,10 +248,34 @@ mod tests {
     }
 
     #[test]
-    fn info_reports_known_system_facts() {
+    fn info_reports_system_state() {
         assert_eq!(
             run("info"),
-            output(&["GLAUX G1", "SYSTEM ROM 0.3.1", "DISPLAY 320x240 INDEXED"])
+            output(&[
+                "MACHINE     GLAUX G1",
+                "SYSTEM ROM  0.3.1",
+                "DISPLAY     320x240 INDEXED, 256 COLORS",
+                "TICK RATE   60 HZ",
+                "RUNTIME     NONE",
+                "CARTRIDGE   NONE",
+                "STATE       IDLE",
+            ])
+        );
+    }
+
+    #[test]
+    fn version_reports_identity() {
+        assert_eq!(run("version"), output(&["GLAUX G1  SYSTEM ROM 0.3.1"]));
+        assert_eq!(run("VER"), output(&["GLAUX G1  SYSTEM ROM 0.3.1"]));
+    }
+
+    #[test]
+    fn info_and_version_use_the_injected_rom_version() {
+        let rom = || Version::new(3, 7, 0);
+        assert!(run_with_rom("info", rom()).contains(&Entry::Output("SYSTEM ROM  3.7.0".into())));
+        assert_eq!(
+            run_with_rom("version", rom()),
+            output(&["GLAUX G1  SYSTEM ROM 3.7.0"])
         );
     }
 
@@ -222,10 +283,12 @@ mod tests {
     fn clear_empties_the_scrollback() {
         let mut scrollback = Scrollback::default();
         scrollback.push(Entry::Output("old".into()));
-        let version = Version::new(0, 1, 0);
+        let info = SystemInfo {
+            rom_version: Version::new(0, 1, 0),
+        };
         let mut ctx = Context {
             scrollback: &mut scrollback,
-            rom_version: &version,
+            info: &info,
         };
         execute(&parse("clear").unwrap().unwrap(), &mut ctx);
         assert_eq!(scrollback.iter().len(), 0);
@@ -241,6 +304,7 @@ mod tests {
     fn extra_arguments_are_usage_errors() {
         assert_eq!(run("clear now"), error("USAGE: CLEAR"));
         assert_eq!(run("info x"), error("USAGE: INFO"));
+        assert_eq!(run("version x"), error("USAGE: VERSION"));
         assert_eq!(run("help a b"), error("USAGE: HELP [COMMAND]"));
     }
 }

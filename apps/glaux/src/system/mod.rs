@@ -12,6 +12,7 @@ pub use shell::Shell;
 
 use glaux_input::InputEvent;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
+use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::system_rom::SystemRom;
 use glaux_video::draw::{clear, draw_text, fill_rect};
 use semver::Version;
@@ -31,21 +32,31 @@ pub enum SystemState {
     Shell(Shell),
 }
 
+/// Facts about the running system that the shell reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemInfo {
+    /// Version of the System ROM the system runs from.
+    pub rom_version: Version,
+}
+
+/// `GLAUX G1  SYSTEM ROM x.y.z`, shared by the boot header and `VERSION`.
+fn identity_line(rom_version: &Version) -> String {
+    format!("{NAME} {GENERATION}  SYSTEM ROM {rom_version}")
+}
+
 /// The system UI state machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct System {
     state: SystemState,
-    /// Version of the System ROM the system runs from, as reported by the
-    /// shell.
-    rom_version: Version,
+    info: SystemInfo,
 }
 
 impl System {
     /// Starts at frame 0 of the boot sequence.
-    pub fn new(rom_version: Version) -> Self {
+    pub fn new(info: SystemInfo) -> Self {
         Self {
             state: SystemState::Boot(Boot::new()),
-            rom_version,
+            info,
         }
     }
 
@@ -63,7 +74,7 @@ impl System {
                 boot.tick();
                 if boot.is_finished() {
                     tracing::info!("boot finished, entering shell");
-                    self.state = SystemState::Shell(Shell::new(self.rom_version.clone()));
+                    self.state = SystemState::Shell(Shell::new(self.info.clone()));
                 }
             }
             SystemState::Shell(shell) => {
@@ -87,7 +98,11 @@ impl System {
         );
 
         let lines = match &self.state {
-            SystemState::Boot(boot) => boot::lines(boot.stage(), rom.version()),
+            SystemState::Boot(boot) if boot.stage() == boot::BootStage::Intro => {
+                boot::render_intro(framebuffer, font, rom.version(), boot.frame());
+                return;
+            }
+            SystemState::Boot(boot) => boot::lines(boot.stage(), rom),
             SystemState::Shell(shell) => shell.lines(text_columns(cell_w), text_rows(cell_h)),
         };
 
@@ -177,15 +192,22 @@ mod tests {
         for ch in FIRST_CHAR..=LAST_CHAR {
             font.insert(ch, &[0b111; 3]).unwrap();
         }
-        SystemRom::new(Version::new(0, 1, 0), Palette::provisional(), font)
+        SystemRom::new(
+            Version::new(0, 1, 0),
+            "(C) 2026 TEST".into(),
+            Palette::provisional(),
+            font,
+        )
     }
 
-    fn version() -> Version {
-        Version::new(0, 1, 0)
+    fn info() -> SystemInfo {
+        SystemInfo {
+            rom_version: Version::new(0, 1, 0),
+        }
     }
 
     fn new_system() -> System {
-        System::new(version())
+        System::new(info())
     }
 
     fn render(system: &System) -> Framebuffer {
@@ -222,7 +244,7 @@ mod tests {
         match new_system().state() {
             SystemState::Boot(boot) => {
                 assert_eq!(boot.frame(), 0);
-                assert_eq!(boot.stage(), BootStage::Header);
+                assert_eq!(boot.stage(), BootStage::Intro);
             }
             other => panic!("expected boot, got {other:?}"),
         }
@@ -240,7 +262,7 @@ mod tests {
     #[test]
     fn boot_stages_advance_in_order_at_their_frames() {
         let mut system = new_system();
-        let mut seen = vec![(0, BootStage::Header)];
+        let mut seen = vec![(0, BootStage::Intro)];
         let mut frame = 0;
 
         while let SystemState::Boot(boot) = system.state() {
@@ -255,7 +277,8 @@ mod tests {
         assert_eq!(
             seen,
             [
-                (0, BootStage::Header),
+                (0, BootStage::Intro),
+                (boot::HEADER_FRAME, BootStage::Header),
                 (boot::VIDEO_FRAME, BootStage::Video),
                 (boot::OBJ_FRAME, BootStage::Obj),
                 (boot::AUDIO_FRAME, BootStage::Audio),
@@ -274,22 +297,22 @@ mod tests {
         assert!(matches!(system.state(), SystemState::Boot(_)));
 
         system.update(&[]);
-        assert_eq!(system.state(), &SystemState::Shell(Shell::new(version())));
+        assert_eq!(system.state(), &SystemState::Shell(Shell::new(info())));
 
         for _ in 0..100 {
             system.update(&[]);
         }
-        assert_eq!(system.state(), &SystemState::Shell(Shell::new(version())));
+        assert_eq!(system.state(), &SystemState::Shell(Shell::new(info())));
     }
 
     #[test]
     fn boot_header_renders_at_its_position() {
         let rom = fake_rom();
-        let fb = render(&new_system());
+        let fb = render(&boot_at(BootStage::Header));
 
         let mut expected = Framebuffer::new();
         clear(&mut expected, BACKGROUND);
-        for line in boot::lines(BootStage::Header, rom.version()) {
+        for line in boot::lines(BootStage::Header, &rom) {
             draw_text(
                 &mut expected,
                 rom.font(),
@@ -304,8 +327,37 @@ mod tests {
     }
 
     #[test]
+    fn intro_renders_through_the_intro_renderer() {
+        let rom = fake_rom();
+        for frame in [0, boot::INTRO_FRAMES / 2, boot::INTRO_FRAMES - 1] {
+            let mut system = new_system();
+            for _ in 0..frame {
+                system.update(&[]);
+            }
+            let mut expected = Framebuffer::new();
+            boot::render_intro(&mut expected, rom.font(), rom.version(), frame);
+            assert_eq!(render(&system), expected, "frame {frame}");
+        }
+    }
+
+    #[test]
+    fn intro_hands_over_to_the_header_on_a_clean_screen() {
+        let last_intro = render(&{
+            let mut system = new_system();
+            for _ in 0..boot::INTRO_FRAMES - 1 {
+                system.update(&[]);
+            }
+            system
+        });
+        let mut blank = Framebuffer::new();
+        clear(&mut blank, BACKGROUND);
+        assert_eq!(last_intro, blank);
+        assert!(row_has_ink(&render(&boot_at(BootStage::Header)), 0));
+    }
+
+    #[test]
     fn video_line_appears_at_video_stage() {
-        let video_row = boot::lines(BootStage::Video, &Version::new(0, 1, 0))
+        let video_row = boot::lines(BootStage::Video, &fake_rom())
             .into_iter()
             .find(|line| line.text.starts_with("VIDEO"))
             .unwrap()
@@ -320,7 +372,7 @@ mod tests {
 
     #[test]
     fn shell_renders_prompt() {
-        let prompt_row = Shell::new(version())
+        let prompt_row = Shell::new(info())
             .lines(text_columns(CELL_W), text_rows(CELL_H))
             .into_iter()
             .find(|line| line.text == "> ")
@@ -344,7 +396,7 @@ mod tests {
         system.update(&[InputEvent::Text('H'), InputEvent::Text('I')]);
         system.update(&[InputEvent::Left { select: false }]);
 
-        let mut expected = Shell::new(version());
+        let mut expected = Shell::new(info());
         for event in [
             InputEvent::Text('H'),
             InputEvent::Text('I'),

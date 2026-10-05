@@ -7,10 +7,9 @@ mod parser;
 mod scrollback;
 
 use glaux_input::InputEvent;
-use semver::Version;
 
 use super::line_editor::LineEditor;
-use super::{ACCENT, BACKGROUND, ERROR, Line, TEXT};
+use super::{ACCENT, BACKGROUND, ERROR, Line, SystemInfo, TEXT};
 use commands::{COMMANDS, Context};
 use completion::{Completion, command_token, complete};
 use history::History;
@@ -27,19 +26,19 @@ pub struct Shell {
     editor: LineEditor,
     history: History,
     scrollback: Scrollback,
-    rom_version: Version,
+    info: SystemInfo,
 }
 
 impl Shell {
-    /// A shell showing only the banner, reporting `rom_version` in `info`.
-    pub fn new(rom_version: Version) -> Self {
+    /// A shell showing only the banner, reporting `info` in system commands.
+    pub fn new(info: SystemInfo) -> Self {
         let mut scrollback = Scrollback::default();
         scrollback.push(Entry::Banner(BANNER.into()));
         Self {
             editor: LineEditor::default(),
             history: History::default(),
             scrollback,
-            rom_version,
+            info,
         }
     }
 
@@ -91,7 +90,7 @@ impl Shell {
             Ok(Some(invocation)) => {
                 let mut ctx = Context {
                     scrollback: &mut self.scrollback,
-                    rom_version: &self.rom_version,
+                    info: &self.info,
                 };
                 commands::execute(&invocation, &mut ctx);
             }
@@ -258,6 +257,7 @@ fn wrapped(
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use semver::Version;
 
     use InputEvent::{Backspace, Down, Enter, Tab, Up};
 
@@ -266,8 +266,12 @@ mod tests {
     /// Tall enough that nothing scrolls off.
     const ROWS: usize = 40;
 
+    fn shell_with_rom(rom_version: Version) -> Shell {
+        Shell::new(SystemInfo { rom_version })
+    }
+
     fn new_shell() -> Shell {
-        Shell::new(Version::new(0, 1, 0))
+        shell_with_rom(Version::new(0, 1, 0))
     }
 
     fn typed(text: &str) -> Vec<InputEvent> {
@@ -461,9 +465,10 @@ mod tests {
             [
                 banner(),
                 command("help"),
-                output("HELP   SHOW AVAILABLE COMMANDS"),
-                output("CLEAR  CLEAR THE CONSOLE"),
-                output("INFO   SHOW SYSTEM INFORMATION"),
+                output("HELP     SHOW AVAILABLE COMMANDS"),
+                output("CLEAR    CLEAR THE CONSOLE"),
+                output("INFO     SHOW SYSTEM INFORMATION"),
+                output("VERSION  SHOW THE SYSTEM ROM VERSION"),
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());
@@ -473,7 +478,7 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 5, "> ", TEXT), Line::new(2, 5, "_", TEXT)]
+            [Line::new(0, 6, "> ", TEXT), Line::new(2, 6, "_", TEXT)]
         );
     }
 
@@ -521,9 +526,9 @@ mod tests {
 
     #[test]
     fn info_reports_the_rom_version() {
-        let mut shell = Shell::new(Version::new(2, 0, 7));
+        let mut shell = shell_with_rom(Version::new(2, 0, 7));
         run(&mut shell, "INFO");
-        assert!(entries(&shell).contains(&output("SYSTEM ROM 2.0.7")));
+        assert!(entries(&shell).contains(&output("SYSTEM ROM  2.0.7")));
     }
 
     #[test]
@@ -693,7 +698,7 @@ mod tests {
         send(&mut shell, &[Tab]);
         assert_eq!(
             entries(&shell),
-            [banner(), command(""), output("HELP  CLEAR  INFO")]
+            [banner(), command(""), output("HELP  CLEAR  INFO  VERSION")]
         );
         assert_eq!(shell.editor, LineEditor::default());
     }

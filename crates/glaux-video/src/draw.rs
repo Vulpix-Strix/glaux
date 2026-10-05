@@ -57,8 +57,28 @@ pub fn draw_text(
     y: i32,
     color: u8,
 ) {
+    draw_text_scaled(framebuffer, font, text, x, y, 1, color);
+}
+
+/// Draws `text` like [`draw_text`], with every glyph bit enlarged to a
+/// `scale`×`scale` block and cell advances multiplied by `scale`.
+///
+/// A non-positive `scale` draws nothing.
+pub fn draw_text_scaled(
+    framebuffer: &mut Framebuffer,
+    font: &BitmapFont,
+    text: &str,
+    x: i32,
+    y: i32,
+    scale: i32,
+    color: u8,
+) {
+    if scale <= 0 {
+        return;
+    }
     let metrics = font.metrics();
     let (glyph_width, glyph_height) = (metrics.glyph_width(), metrics.glyph_height());
+    let scale64 = i64::from(scale);
 
     // The pen is tracked in i64 so that advancing it near i32::MAX cannot
     // overflow; pixels that no longer fit in i32 are off-screen anyway.
@@ -67,7 +87,7 @@ pub fn draw_text(
     for ch in text.chars() {
         if ch == '\n' {
             pen_x = i64::from(x);
-            pen_y += i64::from(metrics.cell_height());
+            pen_y += i64::from(metrics.cell_height()) * scale64;
             continue;
         }
 
@@ -77,16 +97,16 @@ pub fn draw_text(
                     if !glyph.is_set(usize::from(gx), usize::from(gy)) {
                         continue;
                     }
-                    let px = i32::try_from(pen_x + i64::from(gx));
-                    let py = i32::try_from(pen_y + i64::from(gy));
+                    let px = i32::try_from(pen_x + i64::from(gx) * scale64);
+                    let py = i32::try_from(pen_y + i64::from(gy) * scale64);
                     if let (Ok(px), Ok(py)) = (px, py) {
-                        framebuffer.set_pixel(px, py, color);
+                        fill_rect(framebuffer, px, py, scale, scale, color);
                     }
                 }
             }
         }
 
-        pen_x += i64::from(metrics.cell_width());
+        pen_x += i64::from(metrics.cell_width()) * scale64;
     }
 }
 
@@ -283,5 +303,61 @@ mod tests {
             (1, 3),
         ]);
         assert_eq!(fb, expected);
+    }
+
+    #[test]
+    fn scaled_glyph_enlarges_each_bit() {
+        let mut fb = Framebuffer::new();
+        draw_text_scaled(&mut fb, &tiny_font(), "x", 10, 20, 2, INK);
+        // 'x' sets the four corners and the center of its 3×3 grid.
+        let bits = [(0, 0), (2, 0), (1, 1), (0, 2), (2, 2)];
+        let expected = with_ink(bits.into_iter().flat_map(|(bx, by)| {
+            (0..2).flat_map(move |dy| (0..2).map(move |dx| (10 + bx * 2 + dx, 20 + by * 2 + dy)))
+        }));
+        assert_eq!(fb, expected);
+    }
+
+    #[test]
+    fn scaled_text_advances_by_scaled_cells() {
+        let mut fb = Framebuffer::new();
+        draw_text_scaled(&mut fb, &tiny_font(), "#\n#", 0, 0, 3, INK);
+        let cell =
+            |x: i32, y: i32| (y..y + 9).flat_map(move |py| (x..x + 9).map(move |px| (px, py)));
+        assert_eq!(fb, with_ink(cell(0, 0).chain(cell(0, 15))));
+
+        let mut fb = Framebuffer::new();
+        draw_text_scaled(&mut fb, &tiny_font(), "##", 0, 0, 3, INK);
+        assert_eq!(fb, with_ink(cell(0, 0).chain(cell(12, 0))));
+    }
+
+    #[test]
+    fn scale_one_matches_draw_text() {
+        let mut fb = Framebuffer::new();
+        draw_text_scaled(&mut fb, &tiny_font(), "x#\n#x", 10, 20, 1, INK);
+        assert_eq!(fb, render("x#\n#x", 10, 20));
+    }
+
+    #[test]
+    fn non_positive_scale_draws_nothing() {
+        let mut fb = Framebuffer::new();
+        draw_text_scaled(&mut fb, &tiny_font(), "##", 0, 0, 0, INK);
+        draw_text_scaled(&mut fb, &tiny_font(), "##", 0, 0, -2, INK);
+        assert_eq!(fb, Framebuffer::new());
+    }
+
+    #[test]
+    fn scaled_extreme_positions_do_not_panic() {
+        let mut fb = Framebuffer::new();
+        draw_text_scaled(
+            &mut fb,
+            &tiny_font(),
+            "##\n##",
+            i32::MAX - 1,
+            i32::MAX - 1,
+            8,
+            INK,
+        );
+        draw_text_scaled(&mut fb, &tiny_font(), "##\n##", i32::MIN, i32::MIN, 8, INK);
+        assert_eq!(fb, Framebuffer::new());
     }
 }

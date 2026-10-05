@@ -1,9 +1,11 @@
 //! Raylib-based host for Glaux.
 
+mod crt;
 mod keyboard;
 
 use std::time::Duration;
 
+use crt::CrtPass;
 use glaux_input::InputEvent;
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
 use keyboard::{EditKeys, KeyState, TextKeys};
@@ -33,13 +35,26 @@ pub enum WindowPlacement {
     PlatformDefault,
 }
 
+/// How frames are drawn to the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presentation {
+    /// Sharp pixels scaled with nearest-neighbor filtering.
+    Clean,
+    /// A simulated CRT: curvature, scanlines, phosphor softness and an RGB
+    /// shadow mask. Falls back to [`Clean`](Self::Clean) if the GPU cannot
+    /// set it up.
+    Crt,
+}
+
 /// A desktop window that presents [`IndexedFrame`]s.
 ///
 /// The frame is drawn at the largest 4:3 size that fits the window, centered
-/// with black bars, and scaled with nearest-neighbor filtering.
+/// with black bars, in the requested [`Presentation`].
 pub struct RaylibHost {
-    // Declared before `rl` so the texture is unloaded before the window
-    // (and its GL context) is closed.
+    // GPU resources are declared before `rl` so they are unloaded before the
+    // window (and its GL context) is closed.
+    /// `None` when presenting [`Presentation::Clean`].
+    crt: Option<CrtPass>,
     texture: Texture2D,
     rgba: Vec<u8>,
     edit_keys: EditKeys,
@@ -51,8 +66,13 @@ pub struct RaylibHost {
 impl RaylibHost {
     /// Opens a resizable window whose initial size is the logical resolution
     /// multiplied by `scale` (clamped to at least 1), placed according to
-    /// `placement`.
-    pub fn new(title: &str, scale: i32, placement: WindowPlacement) -> Result<Self, HostError> {
+    /// `placement` and presenting frames as `presentation`.
+    pub fn new(
+        title: &str,
+        scale: i32,
+        placement: WindowPlacement,
+        presentation: Presentation,
+    ) -> Result<Self, HostError> {
         let scale = scale.max(1);
         let (width, height) = (WIDTH as i32, HEIGHT as i32);
         let (window_width, window_height) = (width * scale, height * scale);
@@ -92,7 +112,20 @@ impl RaylibHost {
             .map_err(HostError::CreateTexture)?;
         texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
 
+        let crt = match presentation {
+            Presentation::Clean => None,
+            Presentation::Crt => match CrtPass::load(&mut rl, &thread) {
+                Ok(crt) => Some(crt),
+                Err(err) => {
+                    tracing::warn!(error = %err, "CRT presentation unavailable, presenting clean");
+                    None
+                }
+            },
+        };
+        tracing::info!(crt = crt.is_some(), "presentation configured");
+
         Ok(Self {
+            crt,
             texture,
             rgba: vec![0; RGBA_LEN],
             edit_keys: EditKeys::default(),
@@ -115,18 +148,23 @@ impl RaylibHost {
             .map_err(HostError::UploadFrame)?;
 
         let dest = fit_4_3(self.rl.get_screen_width(), self.rl.get_screen_height());
-        let source = Rectangle::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32);
+        if let Some(crt) = &mut self.crt {
+            crt.render(&mut self.rl, &self.thread, &self.texture);
+        }
 
         let mut d = self.rl.begin_drawing(&self.thread);
         d.clear_background(Color::BLACK);
-        d.draw_texture_pro(
-            &self.texture,
-            source,
-            dest,
-            Vector2::zero(),
-            0.0,
-            Color::WHITE,
-        );
+        match &self.crt {
+            Some(crt) => crt.draw(&mut d, dest),
+            None => d.draw_texture_pro(
+                &self.texture,
+                Rectangle::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32),
+                dest,
+                Vector2::zero(),
+                0.0,
+                Color::WHITE,
+            ),
+        }
         Ok(())
     }
 
