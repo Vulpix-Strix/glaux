@@ -5,14 +5,21 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
-use glaux_machine::sprite::{OBJ_TILE_CAPACITY, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, encode_obj_tiles};
+use glaux_machine::sprite::{
+    OBJ_SHEET_MAX_HEIGHT, OBJ_SHEET_MAX_WIDTH, OBJ_TILE_BYTES, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH,
+    encode_obj_tiles,
+};
 use png::{BitDepth, ColorType};
 
 /// Facts reported after a successful sprite import.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ImportSummary {
     pub(super) output: PathBuf,
-    pub(super) tile_count: usize,
+    /// Tiles in the source sheet.
+    pub(super) source_tiles: usize,
+    /// Object-tile slots written, including the transparent tiles that pad
+    /// each sheet row to a whole grid row.
+    pub(super) obj_slots: usize,
     pub(super) byte_count: usize,
 }
 
@@ -66,7 +73,8 @@ pub(super) fn import(input: &Path, output: Option<&Path>) -> anyhow::Result<Impo
         .with_context(|| format!("failed to write {}", output.display()))?;
     Ok(ImportSummary {
         output,
-        tile_count: (width / OBJ_TILE_WIDTH) * (height / OBJ_TILE_HEIGHT),
+        source_tiles: (width / OBJ_TILE_WIDTH) * (height / OBJ_TILE_HEIGHT),
+        obj_slots: encoded.len() / OBJ_TILE_BYTES,
         byte_count: encoded.len(),
     })
 }
@@ -75,11 +83,11 @@ fn validate_dimensions(width: usize, height: usize) -> anyhow::Result<()> {
     if !width.is_multiple_of(OBJ_TILE_WIDTH) || !height.is_multiple_of(OBJ_TILE_HEIGHT) {
         bail!("sprite sheet dimensions must be divisible by 8, got {width}x{height}");
     }
-    let tiles = (width / OBJ_TILE_WIDTH)
-        .checked_mul(height / OBJ_TILE_HEIGHT)
-        .context("sprite sheet dimensions are too large")?;
-    if tiles > OBJ_TILE_CAPACITY {
-        bail!("sprite sheet contains {tiles} tiles; G1 supports at most {OBJ_TILE_CAPACITY}");
+    if width > OBJ_SHEET_MAX_WIDTH || height > OBJ_SHEET_MAX_HEIGHT {
+        bail!(
+            "sprite sheet is {width}x{height}; the G1 object-tile grid holds at most \
+             {OBJ_SHEET_MAX_WIDTH}x{OBJ_SHEET_MAX_HEIGHT}"
+        );
     }
     Ok(())
 }
@@ -177,12 +185,12 @@ mod tests {
         let summary = import(&input, None).unwrap();
         let output = fixture.root.join("sprites.bin");
         assert_eq!(summary.output, output);
-        assert_eq!(summary.tile_count, 1);
-        assert_eq!(summary.byte_count, 32);
-        assert_eq!(
-            fs::read(output).unwrap(),
-            [0x01, 0x23, 0x45, 0xef].repeat(8)
-        );
+        assert_eq!(summary.source_tiles, 1);
+        assert_eq!(summary.obj_slots, 16);
+        assert_eq!(summary.byte_count, 16 * 32);
+        let bytes = fs::read(output).unwrap();
+        assert_eq!(bytes[..32], [0x01, 0x23, 0x45, 0xef].repeat(8));
+        assert!(bytes[32..].iter().all(|&byte| byte == 0));
     }
 
     #[test]
@@ -219,7 +227,7 @@ mod tests {
 
         let summary = import(&input, Some(&output)).unwrap();
         assert_eq!(summary.output, output);
-        assert_eq!(fs::read(output).unwrap(), [0; 32]);
+        assert_eq!(fs::read(output).unwrap(), [0; 16 * 32]);
         assert!(!fixture.root.join("sprites.bin").exists());
     }
 
@@ -238,17 +246,21 @@ mod tests {
     }
 
     #[test]
-    fn more_than_1024_tiles_is_rejected() {
+    fn sheets_larger_than_the_tile_grid_are_rejected() {
         let fixture = Fixture::new("capacity");
         let input = fixture.root.join("sheet.png");
-        indexed_png(&input, 1025 * 8, 8, &vec![0; 1025 * 64], 1);
-
-        assert!(
-            import(&input, None)
-                .unwrap_err()
-                .to_string()
-                .contains("1025 tiles")
-        );
+        for (width, height) in [(136, 8), (8, 520)] {
+            indexed_png(
+                &input,
+                width,
+                height,
+                &vec![0; (width * height) as usize],
+                1,
+            );
+            let error = import(&input, None).unwrap_err().to_string();
+            assert!(error.contains(&format!("{width}x{height}")), "{error}");
+            assert!(error.contains("at most 128x512"), "{error}");
+        }
     }
 
     #[test]

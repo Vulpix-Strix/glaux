@@ -6,7 +6,7 @@
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::palette::PALETTE_LEN;
-use glaux_machine::sprite::{OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjTileBank};
+use glaux_machine::sprite::{OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjTileBank, obj_grid_tile};
 
 /// Fills the whole framebuffer with a palette index.
 pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
@@ -30,6 +30,39 @@ pub fn draw_obj_tile(
     x: i32,
     y: i32,
 ) {
+    blit_obj_tile(framebuffer, tiles, tile, i64::from(x), i64::from(y));
+}
+
+/// Draws a `width`x`height` block of object tiles from the object-tile grid
+/// with `first` at its top-left and `(x, y)` as its top-left corner.
+///
+/// Tiles are placed at 8-pixel offsets and drawn like [`draw_obj_tile`].
+/// Block positions that fall outside the grid (see [`obj_grid_tile`]) are
+/// skipped.
+pub fn draw_obj_sprite(
+    framebuffer: &mut Framebuffer,
+    tiles: &ObjTileBank,
+    first: usize,
+    x: i32,
+    y: i32,
+    width: usize,
+    height: usize,
+) {
+    for row in 0..height {
+        for column in 0..width {
+            let Some(tile) = obj_grid_tile(first, column, row) else {
+                continue;
+            };
+            let tile_x = i64::from(x) + (column * OBJ_TILE_WIDTH) as i64;
+            let tile_y = i64::from(y) + (row * OBJ_TILE_HEIGHT) as i64;
+            blit_obj_tile(framebuffer, tiles, tile, tile_x, tile_y);
+        }
+    }
+}
+
+/// Draws one object tile whose top-left corner may lie outside the `i32`
+/// range, as the far tiles of a block near `i32::MAX` do.
+fn blit_obj_tile(framebuffer: &mut Framebuffer, tiles: &ObjTileBank, tile: usize, x: i64, y: i64) {
     for local_y in 0..OBJ_TILE_HEIGHT {
         for local_x in 0..OBJ_TILE_WIDTH {
             let Some(index) = tiles.pixel(tile, local_x, local_y) else {
@@ -38,8 +71,8 @@ pub fn draw_obj_tile(
             if index == 0 {
                 continue;
             }
-            let px = i64::from(x) + local_x as i64;
-            let py = i64::from(y) + local_y as i64;
+            let px = x + local_x as i64;
+            let py = y + local_y as i64;
             if let (Ok(px), Ok(py)) = (i32::try_from(px), i32::try_from(py)) {
                 framebuffer.set_pixel(px, py, index);
             }
@@ -300,6 +333,132 @@ mod tests {
             draw_obj_tile(&mut fb, &tiles, tile, x, y);
         }
         assert_eq!(fb, Framebuffer::new());
+    }
+
+    /// A bank whose tile `n` is solid index `color` for each `(n, color)`.
+    fn solid_tiles(tiles: &[(usize, u8)]) -> ObjTileBank {
+        let mut bytes = vec![0; OBJ_TILE_CAPACITY * OBJ_TILE_BYTES];
+        for &(tile, color) in tiles {
+            bytes[tile * OBJ_TILE_BYTES..(tile + 1) * OBJ_TILE_BYTES].fill((color << 4) | color);
+        }
+        ObjTileBank::from_bytes(&bytes).unwrap()
+    }
+
+    /// The single index filling the 8x8 cell at `(x, y)`, if it is uniform.
+    fn cell(fb: &Framebuffer, x: i32, y: i32) -> Option<u8> {
+        let first = fb.pixel(x, y)?;
+        (0..8)
+            .flat_map(|dy| (0..8).map(move |dx| (x + dx, y + dy)))
+            .all(|(px, py)| fb.pixel(px, py) == Some(first))
+            .then_some(first)
+    }
+
+    #[test]
+    fn a_two_by_two_sprite_uses_consecutive_grid_rows() {
+        let tiles = solid_tiles(&[(24, 1), (25, 2), (40, 3), (41, 4), (26, 9), (27, 9)]);
+        let mut fb = Framebuffer::new();
+
+        draw_obj_sprite(&mut fb, &tiles, 24, 10, 20, 2, 2);
+
+        assert_eq!(cell(&fb, 10, 20), Some(1));
+        assert_eq!(cell(&fb, 18, 20), Some(2));
+        assert_eq!(cell(&fb, 10, 28), Some(3));
+        assert_eq!(cell(&fb, 18, 28), Some(4));
+        assert_eq!(
+            fb.as_bytes().iter().filter(|&&index| index != 0).count(),
+            4 * 64
+        );
+    }
+
+    #[test]
+    fn a_three_by_two_sprite_draws_row_major_blocks() {
+        let tiles = solid_tiles(&[(5, 1), (6, 2), (7, 3), (21, 4), (22, 5), (23, 6)]);
+        let mut fb = Framebuffer::new();
+
+        draw_obj_sprite(&mut fb, &tiles, 5, 0, 0, 3, 2);
+
+        for (index, expected) in (1..=6).enumerate() {
+            let (column, row) = ((index % 3) as i32, (index / 3) as i32);
+            assert_eq!(cell(&fb, column * 8, row * 8), Some(expected));
+        }
+        assert_eq!(fb.pixel(24, 0), Some(0));
+        assert_eq!(fb.pixel(0, 16), Some(0));
+    }
+
+    #[test]
+    fn a_one_by_one_sprite_matches_a_single_tile() {
+        let row = [0x01, 0x23, 0x40, 0x56];
+        let bytes = row
+            .into_iter()
+            .cycle()
+            .take(OBJ_TILE_BYTES)
+            .collect::<Vec<_>>();
+        let tiles = ObjTileBank::from_bytes(&bytes).unwrap();
+        let (mut single, mut block) = (filled(9), filled(9));
+
+        draw_obj_tile(&mut single, &tiles, 0, -3, 5);
+        draw_obj_sprite(&mut block, &tiles, 0, -3, 5, 1, 1);
+
+        assert_eq!(single, block);
+    }
+
+    #[test]
+    fn sprite_blocks_keep_index_zero_transparent() {
+        // Tile 1 stays all zero, so the block's top-right cell shows through.
+        let tiles = solid_tiles(&[(0, 5), (16, 6), (17, 7)]);
+        let mut fb = filled(9);
+
+        draw_obj_sprite(&mut fb, &tiles, 0, 0, 0, 2, 2);
+
+        assert_eq!(cell(&fb, 0, 0), Some(5));
+        assert_eq!(cell(&fb, 8, 0), Some(9));
+        assert_eq!(cell(&fb, 0, 8), Some(6));
+        assert_eq!(cell(&fb, 8, 8), Some(7));
+    }
+
+    #[test]
+    fn sprite_blocks_clip_at_every_edge() {
+        let tiles = solid_tiles(&[(0, 7), (1, 7), (16, 7), (17, 7)]);
+        let (w, h) = (WIDTH as i32, HEIGHT as i32);
+        let cases = [
+            ((-15, -15), 1, Some((0, 0))),
+            ((w - 1, h - 1), 1, Some((w - 1, h - 1))),
+            ((-8, 0), 128, Some((0, 15))),
+            ((0, h - 4), 64, Some((15, h - 1))),
+            ((-16, 0), 0, None),
+            ((0, -16), 0, None),
+            ((w, 0), 0, None),
+            ((0, h), 0, None),
+        ];
+        for ((x, y), count, inside) in cases {
+            let mut fb = Framebuffer::new();
+            draw_obj_sprite(&mut fb, &tiles, 0, x, y, 2, 2);
+            assert_eq!(
+                fb.as_bytes().iter().filter(|&&index| index == 7).count(),
+                count,
+                "sprite at ({x}, {y})"
+            );
+            if let Some((px, py)) = inside {
+                assert_eq!(fb.pixel(px, py), Some(7), "sprite at ({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn sprite_blocks_handle_extreme_coordinates_and_off_grid_tiles() {
+        let tiles = solid_tiles(&[(15, 7), (1023, 7)]);
+        let mut fb = Framebuffer::new();
+        draw_obj_sprite(&mut fb, &tiles, 0, i32::MAX, i32::MAX, 16, 64);
+        draw_obj_sprite(&mut fb, &tiles, 0, i32::MIN, i32::MIN, 16, 64);
+        assert_eq!(fb, Framebuffer::new());
+
+        // Positions past the grid's right or bottom edge draw nothing.
+        draw_obj_sprite(&mut fb, &tiles, 15, 0, 0, 2, 1);
+        draw_obj_sprite(&mut fb, &tiles, 1023, 100, 100, 1, 2);
+        assert_eq!(
+            fb.as_bytes().iter().filter(|&&index| index == 7).count(),
+            128
+        );
     }
 
     #[test]

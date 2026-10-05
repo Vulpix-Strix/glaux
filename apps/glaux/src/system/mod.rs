@@ -1297,6 +1297,34 @@ mod tests {
     }
 
     #[test]
+    fn sprite_blocks_compose_grid_tiles_in_draw_command_order() {
+        let fixture = Fixture::new("sys-draw-sprite-block");
+        let dir = fixture.root().join("pong");
+        let system = shell_with_cartridge(
+            &fixture,
+            "function draw() cls(9) spr(1, 0, 0, 2, 2) pset(0, 0, 7) end",
+        );
+        let mut bytes = vec![0; 18 * 32];
+        for (tile, fill) in [(1, 0x11), (2, 0x22), (17, 0x33), (16, 0x44)] {
+            bytes[tile * 32..(tile + 1) * 32].fill(fill);
+        }
+        std::fs::write(dir.join("sprites.bin"), bytes).unwrap();
+        let system = ticks(enter(enter(system, "load pong"), "run"), 1);
+        let fb = render(&system);
+
+        assert_eq!(fb.pixel(0, 0), Some(7), "pset follows sprite");
+        assert_eq!(fb.pixel(1, 0), Some(1));
+        assert_eq!(fb.pixel(8, 7), Some(2));
+        assert_eq!(
+            fb.pixel(0, 8),
+            Some(3),
+            "second row starts one grid row down"
+        );
+        assert_eq!(fb.pixel(15, 15), Some(9), "tile 18 is transparent");
+        assert_eq!(fb.pixel(16, 0), Some(9));
+    }
+
+    #[test]
     fn a_fresh_run_reloads_object_tiles() {
         let fixture = Fixture::new("sys-draw-sprite-reload");
         let dir = fixture.root().join("pong");

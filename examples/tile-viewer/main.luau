@@ -1,6 +1,7 @@
 local COLUMNS = 8
 local ROWS = 5
 local START_TILE = 0
+local GRID_COLUMNS = 16
 
 local CELL_WIDTH = 39
 local CELL_HEIGHT = 39
@@ -30,16 +31,16 @@ function tick()
     elseif btnp("right") then
         selected_tile = clamp_tile(selected_tile + 1)
     elseif btnp("up") then
-        selected_tile = clamp_tile(selected_tile - COLUMNS)
+        selected_tile = clamp_tile(selected_tile - GRID_COLUMNS)
     elseif btnp("down") then
-        selected_tile = clamp_tile(selected_tile + COLUMNS)
+        selected_tile = clamp_tile(selected_tile + GRID_COLUMNS)
     end
 end
 
 function draw()
     cls(0)
     print("SELECTED TILE " .. selected_tile, 6, 5, 7)
-    print("LEFT/RIGHT: 1   UP/DOWN: " .. COLUMNS, 6, 17, 14)
+    print("LEFT/RIGHT: 1   UP/DOWN: " .. GRID_COLUMNS, 6, 17, 14)
 
     for offset = 0, COLUMNS * ROWS - 1 do
         local tile = selected_tile + offset

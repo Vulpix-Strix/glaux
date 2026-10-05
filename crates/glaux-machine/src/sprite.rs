@@ -10,6 +10,26 @@ pub const OBJ_TILE_BYTES: usize = 32;
 pub const OBJ_TILE_CAPACITY: usize = 1024;
 /// Size of the complete native object-tile bank in bytes.
 pub const OBJ_TILE_BANK_BYTES: usize = OBJ_TILE_CAPACITY * OBJ_TILE_BYTES;
+/// Columns of the logical G1 object-tile grid.
+///
+/// Tile `n` sits at column `n % OBJ_GRID_COLUMNS` and row
+/// `n / OBJ_GRID_COLUMNS`. Imported sheets are placed on this grid, and
+/// multi-tile sprites are composed from it.
+pub const OBJ_GRID_COLUMNS: usize = 16;
+/// Rows of the logical G1 object-tile grid.
+pub const OBJ_GRID_ROWS: usize = OBJ_TILE_CAPACITY / OBJ_GRID_COLUMNS;
+
+/// Returns the tile `column` tiles right of and `row` tiles below `first`
+/// on the object-tile grid.
+///
+/// `None` means the position falls past the right edge of `first`'s grid
+/// row or below the last grid row: compositions never wrap across rows.
+pub fn obj_grid_tile(first: usize, column: usize, row: usize) -> Option<usize> {
+    let grid_column = (first % OBJ_GRID_COLUMNS).checked_add(column)?;
+    let grid_row = (first / OBJ_GRID_COLUMNS).checked_add(row)?;
+    (grid_column < OBJ_GRID_COLUMNS && grid_row < OBJ_GRID_ROWS)
+        .then(|| grid_row * OBJ_GRID_COLUMNS + grid_column)
+}
 
 /// A failure to construct an object-tile bank from native G1 bytes.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -90,8 +110,10 @@ impl Default for ObjTileBank {
 pub enum ObjTileEncodingError {
     #[error("sprite sheet dimensions must be divisible by 8, got {width}x{height}")]
     InvalidDimensions { width: usize, height: usize },
-    #[error("sprite sheet dimensions are too large: {width}x{height}")]
-    DimensionsTooLarge { width: usize, height: usize },
+    #[error("sprite sheet is {width} pixels wide; the G1 object-tile grid is at most {maximum}")]
+    SheetTooWide { width: usize, maximum: usize },
+    #[error("sprite sheet is {height} pixels tall; the G1 object-tile grid is at most {maximum}")]
+    SheetTooTall { height: usize, maximum: usize },
     #[error("expected {expected} pixels for a {width}x{height} sprite sheet, got {actual}")]
     PixelCount {
         width: usize,
@@ -99,8 +121,6 @@ pub enum ObjTileEncodingError {
         expected: usize,
         actual: usize,
     },
-    #[error("sprite sheet contains {tiles} tiles; G1 supports at most {maximum}")]
-    TooManyTiles { tiles: usize, maximum: usize },
     #[error(
         "palette index {index} at pixel ({x}, {y}), tile ({tile_x}, {tile_y}), is outside 0..=15"
     )]
@@ -113,11 +133,20 @@ pub enum ObjTileEncodingError {
     },
 }
 
-/// Encodes a row-major indexed spritesheet as consecutive G1 4 bpp object tiles.
+/// Largest sheet width the object-tile grid can hold, in pixels.
+pub const OBJ_SHEET_MAX_WIDTH: usize = OBJ_GRID_COLUMNS * OBJ_TILE_WIDTH;
+/// Largest sheet height the object-tile grid can hold, in pixels.
+pub const OBJ_SHEET_MAX_HEIGHT: usize = OBJ_GRID_ROWS * OBJ_TILE_HEIGHT;
+
+/// Encodes a row-major indexed spritesheet as native G1 4 bpp object tiles.
 ///
-/// The dimensions must be divisible by 8 and `pixels` must contain exactly
-/// `width * height` palette indices. Tiles are emitted left-to-right and then
-/// top-to-bottom. Within a tile, the left pixel occupies the high nibble.
+/// The dimensions must be divisible by 8 and fit within
+/// [`OBJ_SHEET_MAX_WIDTH`]x[`OBJ_SHEET_MAX_HEIGHT`], and `pixels` must
+/// contain exactly `width * height` palette indices. The sheet tile at
+/// `(tile_x, tile_y)` becomes object tile `tile_y * OBJ_GRID_COLUMNS +
+/// tile_x`; each sheet row is padded with transparent tiles to a whole grid
+/// row, so the output always holds whole grid rows. Within a tile, the left
+/// pixel occupies the high nibble.
 pub fn encode_obj_tiles(
     width: usize,
     height: usize,
@@ -126,27 +155,25 @@ pub fn encode_obj_tiles(
     if !width.is_multiple_of(OBJ_TILE_WIDTH) || !height.is_multiple_of(OBJ_TILE_HEIGHT) {
         return Err(ObjTileEncodingError::InvalidDimensions { width, height });
     }
-    let expected = width
-        .checked_mul(height)
-        .ok_or(ObjTileEncodingError::DimensionsTooLarge { width, height })?;
+    if width > OBJ_SHEET_MAX_WIDTH {
+        return Err(ObjTileEncodingError::SheetTooWide {
+            width,
+            maximum: OBJ_SHEET_MAX_WIDTH,
+        });
+    }
+    if height > OBJ_SHEET_MAX_HEIGHT {
+        return Err(ObjTileEncodingError::SheetTooTall {
+            height,
+            maximum: OBJ_SHEET_MAX_HEIGHT,
+        });
+    }
+    let expected = width * height;
     if pixels.len() != expected {
         return Err(ObjTileEncodingError::PixelCount {
             width,
             height,
             expected,
             actual: pixels.len(),
-        });
-    }
-
-    let tiles_x = width / OBJ_TILE_WIDTH;
-    let tiles_y = height / OBJ_TILE_HEIGHT;
-    let tiles = tiles_x
-        .checked_mul(tiles_y)
-        .ok_or(ObjTileEncodingError::DimensionsTooLarge { width, height })?;
-    if tiles > OBJ_TILE_CAPACITY {
-        return Err(ObjTileEncodingError::TooManyTiles {
-            tiles,
-            maximum: OBJ_TILE_CAPACITY,
         });
     }
 
@@ -164,16 +191,20 @@ pub fn encode_obj_tiles(
         }
     }
 
-    let mut encoded = Vec::with_capacity(tiles * OBJ_TILE_BYTES);
+    let tiles_x = width / OBJ_TILE_WIDTH;
+    let tiles_y = height / OBJ_TILE_HEIGHT;
+    let mut encoded = vec![0; tiles_y * OBJ_GRID_COLUMNS * OBJ_TILE_BYTES];
     for tile_y in 0..tiles_y {
         for tile_x in 0..tiles_x {
+            let tile = tile_y * OBJ_GRID_COLUMNS + tile_x;
+            let out = &mut encoded[tile * OBJ_TILE_BYTES..(tile + 1) * OBJ_TILE_BYTES];
             for row in 0..OBJ_TILE_HEIGHT {
                 let y = tile_y * OBJ_TILE_HEIGHT + row;
                 for pair in 0..OBJ_TILE_WIDTH / 2 {
                     let x = tile_x * OBJ_TILE_WIDTH + pair * 2;
                     let left = pixels[y * width + x];
                     let right = pixels[y * width + x + 1];
-                    encoded.push((left << 4) | right);
+                    out[row * (OBJ_TILE_WIDTH / 2) + pair] = (left << 4) | right;
                 }
             }
         }
@@ -255,41 +286,64 @@ mod tests {
         );
     }
 
+    /// A sheet of solid tiles; tile `(tx, ty)` uses index `values[ty][tx]`.
+    fn solid_sheet(values: &[&[u8]]) -> (usize, usize, Vec<u8>) {
+        let (width, height) = (values[0].len() * 8, values.len() * 8);
+        let mut pixels = vec![0; width * height];
+        for (offset, pixel) in pixels.iter_mut().enumerate() {
+            *pixel = values[offset / width / 8][offset % width / 8];
+        }
+        (width, height, pixels)
+    }
+
     #[test]
     fn packs_an_exact_tile_with_left_pixel_in_the_high_nibble() {
         let row = [0, 1, 2, 3, 4, 5, 14, 15];
         let pixels: Vec<u8> = row.into_iter().cycle().take(64).collect();
 
+        let encoded = encode_obj_tiles(8, 8, &pixels).unwrap();
         assert_eq!(
-            encode_obj_tiles(8, 8, &pixels).unwrap(),
+            encoded[..OBJ_TILE_BYTES],
             [0x01, 0x23, 0x45, 0xef].repeat(8)
         );
     }
 
     #[test]
-    fn emits_tiles_in_spritesheet_row_major_order() {
-        let mut pixels = vec![0; 16 * 16];
-        for tile_y in 0..2 {
-            for tile_x in 0..2 {
-                let value = (tile_y * 2 + tile_x + 1) as u8;
-                for y in 0..8 {
-                    for x in 0..8 {
-                        pixels[(tile_y * 8 + y) * 16 + tile_x * 8 + x] = value;
-                    }
-                }
-            }
-        }
+    fn places_sheet_tiles_on_the_grid_and_pads_each_row() {
+        let (width, height, pixels) = solid_sheet(&[&[1, 2], &[3, 4]]);
 
-        let encoded = encode_obj_tiles(16, 16, &pixels).unwrap();
-        let (tiles, remainder) = encoded.as_chunks::<32>();
+        let encoded = encode_obj_tiles(width, height, &pixels).unwrap();
+        assert_eq!(encoded.len(), 2 * OBJ_GRID_COLUMNS * OBJ_TILE_BYTES);
+        let (tiles, remainder) = encoded.as_chunks::<OBJ_TILE_BYTES>();
         assert!(remainder.is_empty());
-        for (tile, value) in tiles.iter().copied().zip([0x11, 0x22, 0x33, 0x44]) {
-            assert_eq!(tile, [value; 32]);
+        for (index, tile) in tiles.iter().enumerate() {
+            let expected = match index {
+                0 => 0x11,
+                1 => 0x22,
+                16 => 0x33,
+                17 => 0x44,
+                _ => 0,
+            };
+            assert_eq!(*tile, [expected; OBJ_TILE_BYTES], "tile {index}");
         }
     }
 
     #[test]
-    fn rejects_invalid_dimensions_and_too_many_tiles() {
+    fn a_full_width_sheet_keeps_packed_row_major_order() {
+        let row: Vec<u8> = (0..16).map(|n| n as u8).collect();
+        let (width, height, pixels) = solid_sheet(&[&row, &row]);
+
+        let encoded = encode_obj_tiles(width, height, &pixels).unwrap();
+        let (tiles, _) = encoded.as_chunks::<OBJ_TILE_BYTES>();
+        assert_eq!(tiles.len(), 32);
+        for (index, tile) in tiles.iter().enumerate() {
+            let value = (index % 16) as u8;
+            assert_eq!(*tile, [(value << 4) | value; OBJ_TILE_BYTES]);
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_dimensions_and_sheets_larger_than_the_grid() {
         assert_eq!(
             encode_obj_tiles(9, 8, &[0; 72]),
             Err(ObjTileEncodingError::InvalidDimensions {
@@ -298,12 +352,33 @@ mod tests {
             })
         );
         assert_eq!(
-            encode_obj_tiles(1025 * 8, 8, &vec![0; 1025 * 64]),
-            Err(ObjTileEncodingError::TooManyTiles {
-                tiles: 1025,
-                maximum: 1024
+            encode_obj_tiles(17 * 8, 8, &vec![0; 17 * 64]),
+            Err(ObjTileEncodingError::SheetTooWide {
+                width: 136,
+                maximum: 128
             })
         );
+        assert_eq!(
+            encode_obj_tiles(8, 65 * 8, &vec![0; 65 * 64]),
+            Err(ObjTileEncodingError::SheetTooTall {
+                height: 520,
+                maximum: 512
+            })
+        );
+        let full = encode_obj_tiles(128, 512, &vec![0; 128 * 512]).unwrap();
+        assert_eq!(full.len(), OBJ_TILE_BANK_BYTES);
+    }
+
+    #[test]
+    fn grid_tiles_never_wrap_across_rows_or_leave_the_bank() {
+        assert_eq!(obj_grid_tile(24, 0, 0), Some(24));
+        assert_eq!(obj_grid_tile(24, 1, 1), Some(41));
+        assert_eq!(obj_grid_tile(15, 0, 0), Some(15));
+        assert_eq!(obj_grid_tile(15, 1, 0), None);
+        assert_eq!(obj_grid_tile(1008, 15, 0), Some(1023));
+        assert_eq!(obj_grid_tile(1023, 0, 1), None);
+        assert_eq!(obj_grid_tile(OBJ_TILE_CAPACITY, 0, 0), None);
+        assert_eq!(obj_grid_tile(0, usize::MAX, usize::MAX), None);
     }
 
     #[test]

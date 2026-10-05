@@ -10,10 +10,12 @@
 //! - `log.trace(...)`, `log.debug(...)`, `log.info(...)` and `log.warn(...)`,
 //!   which record [`LogEntry`]s in any phase;
 //! - `cls(color)`, `pset(x, y, color)`, `print(text, x, y, color)` and
-//!   `spr(tile, x, y)`, which record [`DrawCommand`]s and may only be called
-//!   during `draw()`. `spr` draws one 8x8 object tile; transparent index 0 is
-//!   skipped and indices 1 through 15 currently map directly to framebuffer
-//!   indices;
+//!   `spr(tile, x, y, [w, h])`, which record [`DrawCommand`]s and may only
+//!   be called during `draw()`. `spr` draws a `w`x`h` block of 8x8 object
+//!   tiles (default 1x1) taken from the 16-column object-tile grid, with
+//!   `tile` at its top-left; the block may not run past the grid's right or
+//!   bottom edge. Transparent index 0 is skipped and indices 1 through 15
+//!   currently map directly to framebuffer indices;
 //! - `btn(button)` and `btnp(button)`, which report whether a game button
 //!   is held, or was just pressed, on the current tick. `button` is one of
 //!   `"up"`, `"down"`, `"left"`, `"right"`, `"a"` or `"b"`; any other value
@@ -31,6 +33,7 @@ use std::rc::Rc;
 
 use glaux_input::{ButtonState, GameButton};
 use glaux_machine::machine::TICK_RATE;
+use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH};
 use mlua::{Function, Lua, MultiValue, Value, VmState};
 
 /// Interrupt checks one call may pass with [`Budget::default`].
@@ -40,7 +43,7 @@ use mlua::{Function, Lua, MultiValue, Value, VmState};
 pub const DEFAULT_INTERRUPT_BUDGET: u64 = 5_000_000;
 
 /// Draw cost one `draw()` call may spend: each `cls` or `pset` costs one,
-/// each `spr` costs the 64 pixels it may draw, and each `print` costs
+/// each `spr` costs the 64 pixels per tile it may draw, and each `print` costs
 /// [`TEXT_CHAR_COST`] per character.
 ///
 /// The completed frame is replayed on every host presentation frame, which
@@ -48,6 +51,9 @@ pub const DEFAULT_INTERRUPT_BUDGET: u64 = 5_000_000;
 /// well as memory. Without it, the interrupt budget alone would let one
 /// `draw()` record millions of commands.
 pub const MAX_DRAW_COMMANDS: usize = 65_536;
+
+/// Draw cost of one object tile drawn by `spr`: the 64 pixels it may set.
+pub const SPRITE_TILE_COST: usize = OBJ_TILE_WIDTH * OBJ_TILE_HEIGHT;
 
 /// Draw cost of one character of `print` text: about the number of pixels
 /// a system font glyph sets, so that text and `pset` cost alike per pixel.
@@ -82,8 +88,16 @@ pub enum DrawCommand {
     Clear(u8),
     /// `pset(x, y, color)`: write one pixel.
     Pixel { x: i32, y: i32, color: u8 },
-    /// `spr(tile, x, y)`: draw one 8x8 object tile at its top-left corner.
-    Sprite { tile: u16, x: i32, y: i32 },
+    /// `spr(tile, x, y, w, h)`: draw a `width`x`height` block of object
+    /// tiles from the object-tile grid, `tile` at its top-left, with `(x, y)`
+    /// as its top-left corner. The block is validated to fit the grid.
+    Sprite {
+        tile: u16,
+        x: i32,
+        y: i32,
+        width: u8,
+        height: u8,
+    },
     /// `print(text, x, y, color)`: draw text with `(x, y)` as the top-left
     /// corner of its first character cell.
     Text {
@@ -402,17 +416,26 @@ impl Runtime {
         globals.raw_set("pset", pset)?;
 
         let pending = Rc::clone(&self.pending);
-        let spr = self
-            .lua
-            .create_function(move |lua, (tile, x, y): (Value, Value, Value)| {
+        let spr = self.lua.create_function(
+            move |lua, (tile, x, y, w, h): (Value, Value, Value, Value, Value)| {
                 expect_draw(lua, &pending, "spr")?;
+                let tile = tile_arg(lua, "spr", 1, &tile)?;
+                let x = coordinate_arg(lua, "spr", 2, &x)?;
+                let y = coordinate_arg(lua, "spr", 3, &y)?;
+                let column = usize::from(tile) % OBJ_GRID_COLUMNS;
+                let row = usize::from(tile) / OBJ_GRID_COLUMNS;
+                let width = tile_span_arg(lua, 4, &w, "width", column, OBJ_GRID_COLUMNS, "column")?;
+                let height = tile_span_arg(lua, 5, &h, "height", row, OBJ_GRID_ROWS, "row")?;
                 let command = DrawCommand::Sprite {
-                    tile: tile_arg(lua, "spr", 1, &tile)?,
-                    x: coordinate_arg(lua, "spr", 2, &x)?,
-                    y: coordinate_arg(lua, "spr", 3, &y)?,
+                    tile,
+                    x,
+                    y,
+                    width,
+                    height,
                 };
                 record(lua, &pending, "spr", command)
-            })?;
+            },
+        )?;
         globals.raw_set("spr", spr)?;
 
         let pending = Rc::clone(&self.pending);
@@ -548,7 +571,12 @@ fn record(
         DrawCommand::Text { text, .. } => {
             text.chars().count().max(1).saturating_mul(TEXT_CHAR_COST)
         }
-        DrawCommand::Sprite { .. } => 64,
+        // Grid-sized blocks cannot overflow; if one did, its cost must still
+        // exceed the limit rather than wrap below it.
+        DrawCommand::Sprite { width, height, .. } => usize::from(*width)
+            .checked_mul(usize::from(*height))
+            .and_then(|tiles| tiles.checked_mul(SPRITE_TILE_COST))
+            .unwrap_or(usize::MAX),
         DrawCommand::Clear(_) | DrawCommand::Pixel { .. } => 1,
     };
     recording.cost = recording.cost.saturating_add(cost);
@@ -626,6 +654,45 @@ fn tile_arg(lua: &Lua, function: &str, position: usize, value: &Value) -> mlua::
             &format!("object tile index 0-1023 expected, got {n}"),
         ))
     }
+}
+
+/// A sprite block's `extent` (width or height) in tiles: `nil` means 1,
+/// otherwise a positive integer that keeps the block inside the object-tile
+/// grid when it starts at grid `axis` `start` of `limit`.
+fn tile_span_arg(
+    lua: &Lua,
+    position: usize,
+    value: &Value,
+    extent: &str,
+    start: usize,
+    limit: usize,
+    axis: &str,
+) -> mlua::Result<u8> {
+    if value.is_nil() {
+        return Ok(1);
+    }
+    let n = number_arg(lua, "spr", position, value)?;
+    if !(n.fract() == 0.0 && n >= 1.0) {
+        return Err(bad_argument(
+            lua,
+            "spr",
+            position,
+            &format!("positive tile count expected, got {n}"),
+        ));
+    }
+    let available = limit - start;
+    if n > available as f64 {
+        return Err(bad_argument(
+            lua,
+            "spr",
+            position,
+            &format!(
+                "{extent} {n} from tile {axis} {start} exceeds the {limit}-{axis} object-tile grid"
+            ),
+        ));
+    }
+    // `available` is at most OBJ_GRID_ROWS, which fits in a byte.
+    Ok(n as u8)
 }
 
 /// A game button, named as scripts name it.
@@ -1120,7 +1187,17 @@ mod tests {
     }
 
     fn sprite(tile: u16, x: i32, y: i32) -> DrawCommand {
-        DrawCommand::Sprite { tile, x, y }
+        sprite_block(tile, x, y, 1, 1)
+    }
+
+    fn sprite_block(tile: u16, x: i32, y: i32, width: u8, height: u8) -> DrawCommand {
+        DrawCommand::Sprite {
+            tile,
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// The frame published by one tick of a script whose `draw()` body is
@@ -1417,6 +1494,103 @@ mod tests {
     }
 
     #[test]
+    fn sprite_blocks_record_one_command_per_call() {
+        assert_eq!(
+            drawn("cls(1) spr(24, 7, 8, 2, 2) pset(0, 0, 2) spr(5, 0.5, -1.5, 3, 2) spr(6, 0, 0)"),
+            [
+                DrawCommand::Clear(1),
+                sprite_block(24, 7, 8, 2, 2),
+                pixel(0, 0, 2),
+                sprite_block(5, 0, -2, 3, 2),
+                sprite(6, 0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_missing_sprite_dimension_defaults_to_one_tile() {
+        assert_eq!(
+            drawn("spr(0, 0, 0, nil, nil) spr(0, 0, 0, 3) spr(0, 0, 0, nil, 4)"),
+            [
+                sprite(0, 0, 0),
+                sprite_block(0, 0, 0, 3, 1),
+                sprite_block(0, 0, 0, 1, 4),
+            ]
+        );
+    }
+
+    #[test]
+    fn sprite_dimensions_must_be_positive_integers() {
+        for (call, detail) in [
+            (
+                "spr(0, 0, 0, 0, 1)",
+                "#4 to 'spr' (positive tile count expected, got 0)",
+            ),
+            (
+                "spr(0, 0, 0, 1, -1)",
+                "#5 to 'spr' (positive tile count expected, got -1)",
+            ),
+            (
+                "spr(0, 0, 0, 1.5, 1)",
+                "#4 to 'spr' (positive tile count expected, got 1.5)",
+            ),
+            (
+                "spr(0, 0, 0, 1, 0/0)",
+                "#5 to 'spr' (positive tile count expected, got NaN)",
+            ),
+            (
+                r#"spr(0, 0, 0, "2", 1)"#,
+                "#4 to 'spr' (number expected, got string)",
+            ),
+        ] {
+            assert_eq!(
+                draw_error(call),
+                format!("main.luau:1: bad argument {detail}"),
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn sprite_blocks_must_fit_the_object_tile_grid() {
+        assert_eq!(
+            drawn("spr(14, 0, 0, 2, 1) spr(1008, 0, 0, 16, 1)"),
+            [
+                sprite_block(14, 0, 0, 2, 1),
+                sprite_block(1008, 0, 0, 16, 1),
+            ]
+        );
+        assert_eq!(
+            drawn("spr(0, 0, 0, 16, 64)"),
+            [sprite_block(0, 0, 0, 16, 64)]
+        );
+        for (call, detail) in [
+            (
+                "spr(15, 0, 0, 2, 1)",
+                "#4 to 'spr' (width 2 from tile column 15 exceeds the 16-column object-tile grid)",
+            ),
+            (
+                "spr(1023, 0, 0, 2, 1)",
+                "#4 to 'spr' (width 2 from tile column 15 exceeds the 16-column object-tile grid)",
+            ),
+            (
+                "spr(1023, 0, 0, 1, 2)",
+                "#5 to 'spr' (height 2 from tile row 63 exceeds the 64-row object-tile grid)",
+            ),
+            (
+                "spr(0, 0, 0, 17, 1)",
+                "#4 to 'spr' (width 17 from tile column 0 exceeds the 16-column object-tile grid)",
+            ),
+        ] {
+            assert_eq!(
+                draw_error(call),
+                format!("main.luau:1: bad argument {detail}"),
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
     fn huge_coordinates_saturate() {
         assert_eq!(
             drawn("pset(1e300, -1e300, 1) pset(math.huge, -math.huge, 2) pset(400, -3, 3)"),
@@ -1495,6 +1669,35 @@ mod tests {
     }
 
     #[test]
+    fn sprite_blocks_cost_sixty_four_units_per_tile() {
+        const BLOCKS: usize = MAX_DRAW_COMMANDS / (4 * SPRITE_TILE_COST);
+        let fits = format!("for i = 1, {BLOCKS} do spr(0, 0, 0, 2, 2) end");
+        assert_eq!(drawn(&fits).len(), BLOCKS);
+        let over = format!("for i = 1, {BLOCKS} do spr(0, 0, 0, 2, 2) end pset(0, 0, 1)");
+        assert!(draw_error(&over).contains("too many draw commands"));
+
+        assert_eq!(drawn("spr(0, 0, 0, 16, 64)").len(), 1);
+        assert!(draw_error("spr(0, 0, 0, 16, 64) cls(0)").contains("too many draw commands"));
+    }
+
+    #[test]
+    fn a_failing_draw_does_not_publish_sprite_blocks() {
+        let mut runtime = started(
+            r#"
+            local n = 0
+            function draw()
+                n += 1
+                spr(0, 0, 0, 2, 2)
+                if n == 2 then spr(0, 0, 0, 16, 64) end
+            end
+            "#,
+        );
+        runtime.tick(NO_BUTTONS).unwrap();
+        assert!(runtime.tick(NO_BUTTONS).is_err());
+        assert_eq!(runtime.frame(), [sprite_block(0, 0, 0, 2, 2)]);
+    }
+
+    #[test]
     fn tile_viewer_example_draws_and_navigates_its_visible_range() {
         let source = include_str!("../../../examples/tile-viewer/main.luau");
         let mut runtime = started(source);
@@ -1516,7 +1719,7 @@ mod tests {
         assert_eq!(sprite_tiles(&runtime), (1..41).collect::<Vec<_>>());
 
         runtime.tick(buttons(&[], &[GameButton::Down])).unwrap();
-        assert_eq!(sprite_tiles(&runtime), (9..49).collect::<Vec<_>>());
+        assert_eq!(sprite_tiles(&runtime), (17..57).collect::<Vec<_>>());
 
         for _ in 0..130 {
             runtime.tick(buttons(&[], &[GameButton::Down])).unwrap();

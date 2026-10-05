@@ -61,10 +61,11 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
         }) => {
             let summary = sprites::import(&args.input, args.output.as_deref())?;
             println!(
-                "Wrote {}: {} tiles, {} bytes, 4 bpp",
-                summary.output.display(),
-                summary.tile_count,
-                summary.byte_count
+                "Imported {} tiles into {} OBJ slots ({} bytes, 4 bpp): {}",
+                summary.source_tiles,
+                summary.obj_slots,
+                summary.byte_count,
+                summary.output.display()
             );
             Ok(())
         }

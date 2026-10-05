@@ -5,7 +5,7 @@ use glaux_luau::{Budget, DrawCommand, LogEntry, Runtime, RuntimeError, StartFail
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::sprite::{ObjTileBank, ObjTileBankError};
-use glaux_video::draw::{clear, draw_obj_tile, draw_text, pixel};
+use glaux_video::draw::{clear, draw_obj_sprite, draw_text, pixel};
 
 use crate::cartridge::{CartridgeError, LoadedCartridge};
 
@@ -100,9 +100,21 @@ impl RunningCartridge {
             match *command {
                 DrawCommand::Clear(color) => clear(framebuffer, color),
                 DrawCommand::Pixel { x, y, color } => pixel(framebuffer, x, y, color),
-                DrawCommand::Sprite { tile, x, y } => {
-                    draw_obj_tile(framebuffer, &self.obj_tiles, usize::from(tile), x, y)
-                }
+                DrawCommand::Sprite {
+                    tile,
+                    x,
+                    y,
+                    width,
+                    height,
+                } => draw_obj_sprite(
+                    framebuffer,
+                    &self.obj_tiles,
+                    usize::from(tile),
+                    x,
+                    y,
+                    usize::from(width),
+                    usize::from(height),
+                ),
                 DrawCommand::Text {
                     ref text,
                     x,

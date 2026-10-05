@@ -5,7 +5,8 @@ and labels each tile with its index. The selected tile is the first tile in the
 visible range and has a border around it.
 
 - Left/right moves the selected tile by one.
-- Up/down moves it by one visible row (eight tiles).
+- Up/down moves it by one row of the 16-column object-tile grid (sixteen
+  tiles).
 - `START_TILE`, `COLUMNS`, and `ROWS` in `main.luau` configure the initial
   range and grid.
 
