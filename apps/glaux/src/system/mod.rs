@@ -11,9 +11,10 @@ pub use boot::Boot;
 pub use shell::Shell;
 
 use glaux_input::InputEvent;
-use glaux_machine::framebuffer::{Framebuffer, WIDTH};
+use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::system_rom::SystemRom;
 use glaux_video::draw::{clear, draw_text, fill_rect};
+use semver::Version;
 
 // System UI colors, as indices into the system palette (Zughy 32).
 const BACKGROUND: u8 = 11;
@@ -21,6 +22,7 @@ const TEXT: u8 = 16;
 const DIM: u8 = 14;
 const OK: u8 = 8;
 const ACCENT: u8 = 18;
+const ERROR: u8 = 28;
 
 /// Where the system is in its own navigation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,13 +35,17 @@ pub enum SystemState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct System {
     state: SystemState,
+    /// Version of the System ROM the system runs from, as reported by the
+    /// shell.
+    rom_version: Version,
 }
 
 impl System {
     /// Starts at frame 0 of the boot sequence.
-    pub fn new() -> Self {
+    pub fn new(rom_version: Version) -> Self {
         Self {
             state: SystemState::Boot(Boot::new()),
+            rom_version,
         }
     }
 
@@ -57,15 +63,14 @@ impl System {
                 boot.tick();
                 if boot.is_finished() {
                     tracing::info!("boot finished, entering shell");
-                    self.state = SystemState::Shell(Shell::new());
+                    self.state = SystemState::Shell(Shell::new(self.rom_version.clone()));
                 }
             }
             SystemState::Shell(shell) => {
+                // Input is deliberately not logged: user input stays out of
+                // application logs.
                 for &event in input {
-                    // Submitted lines are dropped until commands exist. They
-                    // are deliberately not logged: user input stays out of
-                    // application logs.
-                    let _submitted = shell.handle_input(event);
+                    shell.handle_input(event);
                 }
             }
         }
@@ -83,7 +88,7 @@ impl System {
 
         let lines = match &self.state {
             SystemState::Boot(boot) => boot::lines(boot.stage(), rom.version()),
-            SystemState::Shell(shell) => shell.lines(text_columns(cell_w)),
+            SystemState::Shell(shell) => shell.lines(text_columns(cell_w), text_rows(cell_h)),
         };
 
         clear(framebuffer, BACKGROUND);
@@ -105,16 +110,17 @@ impl System {
     }
 }
 
-impl Default for System {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Character cells that fit across the screen inside the margin left by
 /// [`Line::origin`].
 fn text_columns(cell_w: i32) -> usize {
     let cells = WIDTH as i32 / cell_w.max(1);
+    usize::try_from(cells - 2).unwrap_or(0)
+}
+
+/// Character rows that fit down the screen inside the margin left by
+/// [`Line::origin`].
+fn text_rows(cell_h: i32) -> usize {
+    let cells = HEIGHT as i32 / cell_h.max(1);
     usize::try_from(cells - 2).unwrap_or(0)
 }
 
@@ -174,6 +180,14 @@ mod tests {
         SystemRom::new(Version::new(0, 1, 0), Palette::provisional(), font)
     }
 
+    fn version() -> Version {
+        Version::new(0, 1, 0)
+    }
+
+    fn new_system() -> System {
+        System::new(version())
+    }
+
     fn render(system: &System) -> Framebuffer {
         let mut fb = Framebuffer::new();
         system.render(&mut fb, &fake_rom());
@@ -181,7 +195,7 @@ mod tests {
     }
 
     fn boot_at(stage: BootStage) -> System {
-        let mut system = System::new();
+        let mut system = new_system();
         while !matches!(system.state(), SystemState::Boot(b) if b.stage() == stage) {
             system.update(&[]);
         }
@@ -189,7 +203,7 @@ mod tests {
     }
 
     fn shell() -> System {
-        let mut system = System::new();
+        let mut system = new_system();
         while matches!(system.state(), SystemState::Boot(_)) {
             system.update(&[]);
         }
@@ -205,7 +219,7 @@ mod tests {
 
     #[test]
     fn starts_at_boot_frame_zero() {
-        match System::new().state() {
+        match new_system().state() {
             SystemState::Boot(boot) => {
                 assert_eq!(boot.frame(), 0);
                 assert_eq!(boot.stage(), BootStage::Header);
@@ -216,7 +230,7 @@ mod tests {
 
     #[test]
     fn frame_n_is_reached_after_n_updates() {
-        let mut system = System::new();
+        let mut system = new_system();
         for n in 1..=10 {
             system.update(&[]);
             assert_eq!(system.state(), &SystemState::Boot(Boot::at_frame(n)));
@@ -225,7 +239,7 @@ mod tests {
 
     #[test]
     fn boot_stages_advance_in_order_at_their_frames() {
-        let mut system = System::new();
+        let mut system = new_system();
         let mut seen = vec![(0, BootStage::Header)];
         let mut frame = 0;
 
@@ -253,25 +267,25 @@ mod tests {
 
     #[test]
     fn switches_to_shell_exactly_at_finish_frame() {
-        let mut system = System::new();
+        let mut system = new_system();
         for _ in 0..boot::FINISH_FRAME - 1 {
             system.update(&[]);
         }
         assert!(matches!(system.state(), SystemState::Boot(_)));
 
         system.update(&[]);
-        assert_eq!(system.state(), &SystemState::Shell(Shell::new()));
+        assert_eq!(system.state(), &SystemState::Shell(Shell::new(version())));
 
         for _ in 0..100 {
             system.update(&[]);
         }
-        assert_eq!(system.state(), &SystemState::Shell(Shell::new()));
+        assert_eq!(system.state(), &SystemState::Shell(Shell::new(version())));
     }
 
     #[test]
     fn boot_header_renders_at_its_position() {
         let rom = fake_rom();
-        let fb = render(&System::new());
+        let fb = render(&new_system());
 
         let mut expected = Framebuffer::new();
         clear(&mut expected, BACKGROUND);
@@ -306,8 +320,8 @@ mod tests {
 
     #[test]
     fn shell_renders_prompt() {
-        let prompt_row = Shell::new()
-            .lines(text_columns(CELL_W))
+        let prompt_row = Shell::new(version())
+            .lines(text_columns(CELL_W), text_rows(CELL_H))
             .into_iter()
             .find(|line| line.text == "> ")
             .unwrap()
@@ -317,7 +331,7 @@ mod tests {
 
     #[test]
     fn input_during_boot_is_ignored() {
-        let mut system = System::new();
+        let mut system = new_system();
         for n in 1..=10 {
             system.update(&[InputEvent::Text('A'), InputEvent::Enter]);
             assert_eq!(system.state(), &SystemState::Boot(Boot::at_frame(n)));
@@ -330,7 +344,7 @@ mod tests {
         system.update(&[InputEvent::Text('H'), InputEvent::Text('I')]);
         system.update(&[InputEvent::Left { select: false }]);
 
-        let mut expected = Shell::new();
+        let mut expected = Shell::new(version());
         for event in [
             InputEvent::Text('H'),
             InputEvent::Text('I'),
@@ -359,11 +373,18 @@ mod tests {
     }
 
     #[test]
-    fn enter_clears_command_line() {
+    fn submitted_line_stays_on_screen_above_a_new_prompt() {
         let mut system = shell();
         system.update(&[InputEvent::Text('A'), InputEvent::Enter]);
-        assert_eq!(system.state(), &SystemState::Shell(Shell::new()));
-        assert_eq!(render(&system), render(&shell()));
+
+        let fb = render(&system);
+        // Row 1 keeps "> A"; the error follows on row 2 and the new, empty
+        // prompt on row 3 with its cursor in column 2.
+        let glyph = |col: i32, row: i32| fb.pixel((col + 1) * CELL_W, (row + 1) * CELL_H);
+        assert_eq!(glyph(2, 1), Some(TEXT));
+        assert_eq!(glyph(0, 2), Some(ERROR));
+        assert_eq!((glyph(0, 3), glyph(2, 3)), (Some(TEXT), Some(TEXT)));
+        assert!(!row_has_ink(&fb, 4));
     }
 
     #[test]
@@ -383,6 +404,13 @@ mod tests {
         assert_eq!(gap(2), Some(BACKGROUND), "unselected 'A'");
         assert_eq!(gap(3), Some(TEXT), "selected 'B'");
         assert_eq!(fb.pixel(4 * CELL_W, y), Some(BACKGROUND), "glyph of 'B'");
+    }
+
+    #[test]
+    fn text_rows_leave_a_cell_of_margin_top_and_bottom() {
+        assert_eq!(text_rows(CELL_H), 240 / 5 - 2);
+        assert_eq!(text_rows(10), 22);
+        assert_eq!(text_rows(400), 0);
     }
 
     #[test]

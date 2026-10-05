@@ -26,6 +26,30 @@ impl LineEditor {
         &self.chars
     }
 
+    pub(super) fn text(&self) -> String {
+        self.chars.iter().collect()
+    }
+
+    /// Replaces the whole line with `text`, leaving the cursor at its end
+    /// and nothing selected.
+    pub(super) fn set_text(&mut self, text: &str) {
+        self.chars = text.chars().collect();
+        self.set_cursor(self.chars.len(), false);
+    }
+
+    /// Replaces the characters in `range` with `text`, leaving the cursor
+    /// just after the inserted text and nothing selected. `range` is
+    /// clamped to the line.
+    pub(super) fn replace(&mut self, range: Range<usize>, text: &str) {
+        let end = range.end.min(self.chars.len());
+        let start = range.start.min(end);
+        let inserted = text.chars().count();
+        self.chars.splice(start..end, text.chars());
+        // Drop any anchor first: it may point past the new end of the line.
+        self.anchor = None;
+        self.set_cursor(start + inserted, false);
+    }
+
     /// Character index where the next typed character is inserted.
     pub(super) fn cursor(&self) -> usize {
         self.cursor
@@ -68,6 +92,8 @@ impl LineEditor {
                 self.set_cursor(0, false);
                 return Some(line);
             }
+            // Navigation and completion act on the whole shell, not the line.
+            InputEvent::Up | InputEvent::Down | InputEvent::Tab => {}
         }
         None
     }
@@ -338,6 +364,36 @@ mod tests {
         let mut editor = LineEditor::default();
         assert_eq!(editor.apply(Enter), Some(String::new()));
         assert_eq!(editor, LineEditor::default());
+    }
+
+    #[test]
+    fn set_text_replaces_line_and_moves_cursor_to_end() {
+        let mut editor = typed("abcd");
+        apply_all(&mut editor, &[HOME, SHIFT_RIGHT]);
+        editor.set_text("xy");
+        assert_eq!(state(&editor), ("xy".into(), 2, None));
+        assert_eq!(editor.text(), "xy");
+    }
+
+    #[test]
+    fn replace_splices_range_and_places_cursor_after_it() {
+        let mut editor = typed("he foo");
+        apply_all(&mut editor, &[HOME, SHIFT_RIGHT]);
+        editor.replace(0..2, "help");
+        assert_eq!(state(&editor), ("help foo".into(), 4, None));
+
+        editor.replace(8..20, "!");
+        assert_eq!(state(&editor), ("help foo!".into(), 9, None));
+    }
+
+    #[test]
+    fn navigation_events_do_not_edit_the_line() {
+        let mut editor = typed("abc");
+        apply_all(
+            &mut editor,
+            &[InputEvent::Up, InputEvent::Down, InputEvent::Tab],
+        );
+        assert_eq!(state(&editor), ("abc".into(), 3, None));
     }
 
     #[test]

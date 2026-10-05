@@ -173,6 +173,7 @@ dependencies = [
  "glaux-video",
  "pretty_assertions",
  "semver",
+ "thiserror",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

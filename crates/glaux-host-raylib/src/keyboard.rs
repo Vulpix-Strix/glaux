@@ -28,7 +28,7 @@ struct EditKey {
     repeats: bool,
 }
 
-const EDIT_KEYS: [EditKey; 8] = [
+const EDIT_KEYS: [EditKey; 11] = [
     EditKey {
         key: KeyboardKey::KEY_LEFT,
         event: |select| InputEvent::Left { select },
@@ -68,6 +68,23 @@ const EDIT_KEYS: [EditKey; 8] = [
     EditKey {
         key: KeyboardKey::KEY_KP_ENTER,
         event: |_| InputEvent::Enter,
+        repeats: false,
+    },
+    // Up and Down step through discrete entries such as command history,
+    // where a held key racing past them is more confusing than useful.
+    EditKey {
+        key: KeyboardKey::KEY_UP,
+        event: |_| InputEvent::Up,
+        repeats: false,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_DOWN,
+        event: |_| InputEvent::Down,
+        repeats: false,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_TAB,
+        event: |_| InputEvent::Tab,
         repeats: false,
     },
 ];
@@ -316,8 +333,22 @@ mod tests {
 
     #[test]
     fn editing_keys_ignore_shift() {
-        let keys = [KEY_BACKSPACE, KEY_DELETE, KEY_ENTER];
-        let expected = [InputEvent::Backspace, InputEvent::Delete, InputEvent::Enter];
+        let keys = [
+            KEY_BACKSPACE,
+            KEY_DELETE,
+            KEY_ENTER,
+            KEY_UP,
+            KEY_DOWN,
+            KEY_TAB,
+        ];
+        let expected = [
+            InputEvent::Backspace,
+            InputEvent::Delete,
+            InputEvent::Enter,
+            InputEvent::Up,
+            InputEvent::Down,
+            InputEvent::Tab,
+        ];
         assert_eq!(press(&keys, false), expected);
         assert_eq!(press(&keys, true), expected);
     }
@@ -384,6 +415,23 @@ mod tests {
         for key in [KEY_ENTER, KEY_KP_ENTER] {
             assert_eq!(hold(key, 120).iter().sum::<usize>(), 1, "{key:?}");
         }
+    }
+
+    #[test]
+    fn navigation_keys_do_not_repeat() {
+        for key in [KEY_UP, KEY_DOWN, KEY_TAB] {
+            assert_eq!(hold(key, 120).iter().sum::<usize>(), 1, "{key:?}");
+        }
+    }
+
+    #[test]
+    fn tab_press_does_not_start_text_repeat() {
+        let mut text = TextKeys::default();
+        assert_eq!(
+            text_frame(&mut text, "\t", &[KEY_TAB], &[], FRAME),
+            texts("\t")
+        );
+        assert_eq!(text_frame(&mut text, "", &[], &[KEY_TAB], REPEAT_DELAY), []);
     }
 
     #[test]

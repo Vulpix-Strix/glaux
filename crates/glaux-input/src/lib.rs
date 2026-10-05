@@ -28,4 +28,10 @@ pub enum InputEvent {
     Backspace,
     Delete,
     Enter,
+    /// Step toward older entries, such as earlier commands in a history.
+    Up,
+    /// Step toward newer entries.
+    Down,
+    /// Request completion of the word being typed.
+    Tab,
 }

@@ -42,7 +42,7 @@ fn run(placement: WindowPlacement) -> anyhow::Result<()> {
     // The system draws into the machine's framebuffer with data from the
     // machine's ROM; a one-time copy of the ROM avoids borrowing both at once.
     let rom = machine.system_rom().clone();
-    let mut system = System::new();
+    let mut system = System::new(rom.version().clone());
 
     let mut host = RaylibHost::new("Glaux", WINDOW_SCALE, placement)?;
 
