@@ -2,6 +2,8 @@
 
 use std::collections::VecDeque;
 
+use glaux_luau::LogLevel;
+
 /// Most entries kept; pushing another drops the oldest.
 pub(super) const SCROLLBACK_LIMIT: usize = 1024;
 
@@ -14,6 +16,8 @@ pub(super) enum Entry {
     Command(String),
     Output(String),
     Error(String),
+    /// One line a cartridge logged, at the level it was logged with.
+    Log(LogLevel, String),
 }
 
 /// Bounded list of output entries, oldest first.

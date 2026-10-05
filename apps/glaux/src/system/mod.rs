@@ -32,6 +32,8 @@ const DIM: u8 = 14;
 const OK: u8 = 8;
 const ACCENT: u8 = 18;
 const ERROR: u8 = 28;
+const TRACE: u8 = 13;
+const WARN: u8 = 26;
 
 /// Where the system is in its own navigation. Each variant owns exactly the
 /// state that phase needs, and transitions consume one variant to build the
@@ -49,7 +51,7 @@ pub enum SystemState {
         loaded: Option<LoadedCartridge>,
     },
     /// A cartridge runs and receives the logical ticks. The shell keeps its
-    /// state, collecting printed output, but takes no input.
+    /// state, collecting logged output, but takes no input.
     Running {
         shell: Box<Shell>,
         running: RunningCartridge,
@@ -147,9 +149,10 @@ impl System {
             SystemState::Shell { shell, .. } => {
                 shell.lines(text_columns(cell_w), text_rows(cell_h))
             }
-            // Cartridges cannot draw yet, so a running one shows a blank
-            // screen.
-            SystemState::Running { .. } => Vec::new(),
+            SystemState::Running { running, .. } => {
+                running.render(framebuffer, font);
+                return;
+            }
         };
 
         clear(framebuffer, BACKGROUND);
@@ -204,7 +207,7 @@ fn shell_tick(
     SystemState::Shell { shell, loaded }
 }
 
-/// Starts `cartridge`, reporting its start or failure and what it printed.
+/// Starts `cartridge`, reporting its start or failure and what it logged.
 /// A cartridge that fails to start stays loaded in the shell.
 fn start(mut shell: Box<Shell>, cartridge: LoadedCartridge) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
@@ -212,7 +215,7 @@ fn start(mut shell: Box<Shell>, cartridge: LoadedCartridge) -> SystemState {
         Ok(mut running) => {
             tracing::info!(cartridge = %identity, "cartridge started");
             shell.report(format!("RUNNING {identity}"));
-            shell.print(running.take_output());
+            shell.log(running.take_output());
             SystemState::Running { shell, running }
         }
         Err(failed) => {
@@ -225,7 +228,7 @@ fn start(mut shell: Box<Shell>, cartridge: LoadedCartridge) -> SystemState {
                         error = %failure.error,
                         "cartridge failed to start"
                     );
-                    shell.print(failure.output);
+                    shell.log(failure.output);
                     shell.report_error(failure.error.to_string());
                 }
             }
@@ -248,7 +251,7 @@ fn running_tick(
     }
     match running.tick() {
         Ok(()) => {
-            shell.print(running.take_output());
+            shell.log(running.take_output());
             SystemState::Running { shell, running }
         }
         Err(err) => stop(shell, running, StopReason::Failed(err)),
@@ -258,7 +261,7 @@ fn running_tick(
 /// Disposes of the running cartridge's VM and returns to the shell with the
 /// cartridge still loaded. Every way a cartridge stops goes through here.
 fn stop(mut shell: Box<Shell>, mut running: RunningCartridge, reason: StopReason) -> SystemState {
-    shell.print(running.take_output());
+    shell.log(running.take_output());
     let identity = cartridge_identity(running.cartridge().manifest());
     let cartridge = running.stop();
     match reason {
@@ -767,11 +770,11 @@ mod tests {
     }
 
     const LIFECYCLE: &str = r#"
-        print("entry")
-        function boot() print("boot") end
+        log.info("entry")
+        function boot() log.info("boot") end
         local n = 0
-        function tick() n += 1 print("tick", n) end
-        function draw() print("draw", n) end
+        function tick() n += 1 log.info("tick", n) end
+        function draw() log.info("draw", n) end
     "#;
 
     #[test]
@@ -831,7 +834,7 @@ mod tests {
     #[test]
     fn running_again_starts_a_fresh_vm() {
         let fixture = Fixture::new("sys-rerun");
-        let script = "function tick() count = (count or 0) + 1 print(count) end";
+        let script = "function tick() count = (count or 0) + 1 log.info(count) end";
         let system = press_break(ticks(started(&fixture, script), 2));
         let system = press_break(ticks(enter(system, "run"), 1));
         assert_eq!(
@@ -846,11 +849,11 @@ mod tests {
         let fixture = Fixture::new("sys-start-fail");
         for (script, expected) in [
             (
-                r#"print("x") error("boom")"#,
+                r#"log.info("x") error("boom")"#,
                 vec!["x", "! RUNTIME ERROR: main.luau:1: boom"],
             ),
             (
-                r#"print("e") function boot() print("b") error("no") end"#,
+                r#"log.info("e") function boot() log.info("b") error("no") end"#,
                 vec!["e", "b", "! RUNTIME ERROR IN BOOT: main.luau:1: no"],
             ),
             (
@@ -878,19 +881,19 @@ mod tests {
         let fixture = Fixture::new("sys-tick-fail");
         for (script, error) in [
             (
-                r#"function tick() print("t") error("boom") end"#,
+                r#"function tick() log.info("t") error("boom") end"#,
                 "! RUNTIME ERROR IN TICK: main.luau:1: boom",
             ),
             (
-                r#"function tick() print("t") end function draw() error("bad") end"#,
+                r#"function tick() log.info("t") end function draw() error("bad") end"#,
                 "! RUNTIME ERROR IN DRAW: main.luau:1: bad",
             ),
             (
-                r#"function tick() print("t") while true do end end"#,
+                r#"function tick() log.info("t") while true do end end"#,
                 "! EXECUTION LIMIT EXCEEDED IN TICK",
             ),
             (
-                r#"function tick() print("t") end
+                r#"function tick() log.info("t") end
                    function draw() pcall(function() while true do end end) end"#,
                 "! EXECUTION LIMIT EXCEEDED IN DRAW",
             ),
@@ -943,10 +946,10 @@ mod tests {
         for script in [
             "local = 1",
             r#"error("boom")"#,
-            "local t = nil\nprint(t.x)",
+            "local t = nil\nlog.info(t.x)",
             r#"require("../../outside/secret")"#,
-            r#"print(debug.info(1, "s"))"#,
-            r#"function tick() print(debug.info(1, "s")) error("x") end"#,
+            r#"log.info(debug.info(1, "s"))"#,
+            r#"function tick() log.info(debug.info(1, "s")) error("x") end"#,
         ] {
             let system = ticks(started(&fixture, script), 1);
             for line in after(&system, "> run") {
@@ -957,14 +960,147 @@ mod tests {
         }
     }
 
+    // Cartridge drawing.
+
+    /// A framebuffer filled with `color`.
+    fn filled(color: u8) -> Framebuffer {
+        let mut fb = Framebuffer::new();
+        clear(&mut fb, color);
+        fb
+    }
+
     #[test]
-    fn a_running_cartridge_shows_a_blank_screen() {
-        let fixture = Fixture::new("sys-run-render");
-        let system = started(&fixture, r#"function tick() print("x") end"#);
+    fn a_cartridge_that_has_not_drawn_shows_index_zero() {
+        let fixture = Fixture::new("sys-draw-blank");
+        let system = started(&fixture, r#"function tick() log.info("x") end"#);
+        assert_eq!(render(&system), filled(0));
         let system = ticks(system, 2);
         assert!(is_running(&system));
-        let mut blank = Framebuffer::new();
-        clear(&mut blank, BACKGROUND);
-        assert_eq!(render(&system), blank);
+        assert_eq!(render(&system), filled(0));
+    }
+
+    #[test]
+    fn cls_fills_the_screen() {
+        let fixture = Fixture::new("sys-draw-cls");
+        let system = ticks(started(&fixture, "function draw() cls(1) end"), 1);
+        assert_eq!(render(&system), filled(1));
+    }
+
+    #[test]
+    fn later_commands_draw_over_earlier_ones() {
+        let fixture = Fixture::new("sys-draw-order");
+        let system = ticks(
+            started(&fixture, "function draw() cls(1) pset(5, 5, 2) end"),
+            1,
+        );
+        let mut expected = filled(1);
+        expected.set_pixel(5, 5, 2);
+        assert_eq!(render(&system), expected);
+    }
+
+    #[test]
+    fn off_screen_pixels_are_ignored() {
+        let fixture = Fixture::new("sys-draw-clip");
+        let script = "function draw() cls(1) pset(-1, 0, 2) pset(320, 10, 2) pset(0, 240, 2) pset(1e300, 0, 2) end";
+        let system = ticks(started(&fixture, script), 1);
+        assert!(is_running(&system));
+        assert_eq!(render(&system), filled(1));
+    }
+
+    #[test]
+    fn screen_text_uses_the_rom_font() {
+        let fixture = Fixture::new("sys-draw-text");
+        let system = ticks(
+            started(
+                &fixture,
+                r#"function draw() cls(1) print("AB", 10, 20, 7) end"#,
+            ),
+            1,
+        );
+        let mut expected = filled(1);
+        draw_text(&mut expected, fake_rom().font(), "AB", 10, 20, 7);
+        assert_eq!(render(&system), expected);
+        // The fake font draws 3×3 blocks in 4-pixel cells.
+        assert_eq!(expected.pixel(12, 22), Some(7));
+        assert_eq!(expected.pixel(13, 20), Some(1));
+        assert_eq!(expected.pixel(14, 20), Some(7));
+    }
+
+    #[test]
+    fn the_frame_persists_until_the_next_draw_replaces_it() {
+        let fixture = Fixture::new("sys-draw-persist");
+        let script = "local n = 0 function tick() n += 1 end function draw() cls(n) end";
+        let system = ticks(started(&fixture, script), 1);
+        let rom = fake_rom();
+        for _ in 0..3 {
+            let mut fb = filled(200);
+            system.render(&mut fb, &rom);
+            assert_eq!(fb, filled(1));
+        }
+        let system = ticks(system, 1);
+        assert_eq!(render(&system), filled(2));
+    }
+
+    #[test]
+    fn stopping_discards_the_frame_and_shows_the_shell() {
+        let fixture = Fixture::new("sys-draw-stop");
+        let draws = "function draw() cls(1) end";
+        let stopped = [
+            press_break(ticks(started(&fixture, draws), 1)),
+            ticks(
+                started(
+                    &fixture,
+                    "local n = 0 function draw() n += 1 cls(1) if n == 2 then error(\"x\") end end",
+                ),
+                2,
+            ),
+        ];
+        for system in stopped {
+            assert_eq!(loaded_name(&system), Some("Pong"));
+            let fb = render(&system);
+            assert_eq!(fb.pixel(0, 0), Some(BACKGROUND));
+            assert!(fb.as_bytes().iter().all(|&b| b != 1));
+        }
+    }
+
+    #[test]
+    fn a_draw_error_stops_the_cartridge() {
+        let fixture = Fixture::new("sys-draw-error");
+        let system = ticks(
+            started(&fixture, "function draw() cls(1) pset(0, 0, 999) end"),
+            1,
+        );
+        assert_eq!(
+            after(&system, "> run"),
+            [
+                "RUNNING Pong 0.1.0",
+                "! RUNTIME ERROR IN DRAW: main.luau:1: bad argument #3 to 'pset' \
+                 (palette index 0-255 expected, got 999)",
+            ]
+        );
+    }
+
+    #[test]
+    fn drawing_outside_draw_stops_the_cartridge() {
+        let fixture = Fixture::new("sys-draw-phase");
+        let system = ticks(started(&fixture, "function tick() cls(1) end"), 1);
+        assert_eq!(
+            after(&system, "> run"),
+            [
+                "RUNNING Pong 0.1.0",
+                "! RUNTIME ERROR IN TICK: main.luau:1: 'cls' can only be called during draw()",
+            ]
+        );
+    }
+
+    #[test]
+    fn logged_levels_reach_the_shell() {
+        let fixture = Fixture::new("sys-log");
+        let script = r#"function tick() log.trace("t") log.warn("w") end"#;
+        let system = press_break(ticks(started(&fixture, script), 1));
+        assert_eq!(
+            after(&system, "> run"),
+            ["RUNNING Pong 0.1.0", "t", "w", "STOPPED Pong 0.1.0"]
+        );
     }
 }

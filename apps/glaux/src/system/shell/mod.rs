@@ -7,9 +7,10 @@ mod parser;
 mod scrollback;
 
 use glaux_input::InputEvent;
+use glaux_luau::{LogEntry, LogLevel};
 
 use super::line_editor::LineEditor;
-use super::{ACCENT, BACKGROUND, ERROR, Line, SystemInfo, TEXT};
+use super::{ACCENT, BACKGROUND, DIM, ERROR, Line, SystemInfo, TEXT, TRACE, WARN};
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge_fs::CartridgeStorage;
 use commands::{COMMANDS, Context};
@@ -107,11 +108,12 @@ impl Shell {
         None
     }
 
-    /// Adds text printed by a cartridge to the scrollback.
-    pub(super) fn print(&mut self, texts: impl IntoIterator<Item = String>) {
-        for text in texts {
-            for line in print_lines(&text) {
-                self.scrollback.push(Entry::Output(line));
+    /// Adds entries logged by a cartridge to the scrollback, keeping their
+    /// levels.
+    pub(super) fn log(&mut self, entries: impl IntoIterator<Item = LogEntry>) {
+        for entry in entries {
+            for line in log_lines(&entry.text) {
+                self.scrollback.push(Entry::Log(entry.level, line));
             }
         }
     }
@@ -127,13 +129,13 @@ impl Shell {
     }
 
     /// Scrollback text oldest first, with commands after `> ` and errors
-    /// after `! `.
+    /// after `! `. Logged lines show only their text.
     #[cfg(test)]
     pub(super) fn transcript(&self) -> Vec<String> {
         self.scrollback
             .iter()
             .map(|entry| match entry {
-                Entry::Banner(text) | Entry::Output(text) => text.clone(),
+                Entry::Banner(text) | Entry::Output(text) | Entry::Log(_, text) => text.clone(),
                 Entry::Command(text) => format!("{PROMPT}{text}"),
                 Entry::Error(text) => format!("! {text}"),
             })
@@ -229,6 +231,7 @@ impl Shell {
                 Entry::Command(text) => (text, TEXT, true),
                 Entry::Output(text) => (text, TEXT, false),
                 Entry::Error(text) => (text, ERROR, false),
+                Entry::Log(level, text) => (text, log_color(*level), false),
             };
             let text: Vec<char> = text.chars().collect();
             let start = if prompted {
@@ -285,12 +288,22 @@ impl Shell {
     }
 }
 
-/// Columns between tab stops in printed text.
+/// Columns between tab stops in logged text.
 const TAB_WIDTH: usize = 4;
 
-/// Scrollback lines for one `print`: split at newlines, with tabs expanded
+/// The color logged lines of `level` are shown in.
+fn log_color(level: LogLevel) -> u8 {
+    match level {
+        LogLevel::Trace => TRACE,
+        LogLevel::Debug => DIM,
+        LogLevel::Info => TEXT,
+        LogLevel::Warn => WARN,
+    }
+}
+
+/// Scrollback lines for one log entry: split at newlines, with tabs expanded
 /// to spaces because the shell wraps by character and has no tab glyph.
-fn print_lines(text: &str) -> impl Iterator<Item = String> + '_ {
+fn log_lines(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split('\n').map(|line| {
         let mut expanded = String::with_capacity(line.len());
         let mut column = 0;
@@ -313,7 +326,9 @@ fn print_lines(text: &str) -> impl Iterator<Item = String> + '_ {
 fn entry_rows(entry: &Entry, columns: usize) -> usize {
     let cells = match entry {
         Entry::Command(text) => PROMPT.chars().count() + text.chars().count(),
-        Entry::Banner(text) | Entry::Output(text) | Entry::Error(text) => text.chars().count(),
+        Entry::Banner(text) | Entry::Output(text) | Entry::Error(text) | Entry::Log(_, text) => {
+            text.chars().count()
+        }
     };
     cells.div_ceil(columns).max(1)
 }
@@ -784,7 +799,7 @@ mod tests {
         for entry in &entries {
             let text = match entry {
                 Entry::Banner(text) | Entry::Output(text) | Entry::Error(text) => text,
-                Entry::Command(_) => continue,
+                Entry::Command(_) | Entry::Log(..) => continue,
             };
             for host in &host_paths {
                 assert!(!text.contains(host.as_str()), "{text:?} contains {host:?}");
@@ -821,20 +836,50 @@ mod tests {
     }
 
     #[test]
-    fn printed_text_is_split_and_tab_expanded() {
+    fn logged_text_is_split_and_tab_expanded() {
         let mut shell = new_shell();
         shell.scrollback.clear();
-        shell.print(["hello".to_owned(), "a\t1\ttrue\tnil".to_owned()]);
-        shell.print(["ab\tc\nnext".to_owned()]);
+        let entry = |level, text: &str| LogEntry {
+            level,
+            text: text.into(),
+        };
+        shell.log([
+            entry(LogLevel::Info, "hello"),
+            entry(LogLevel::Debug, "a\t1\ttrue\tnil"),
+        ]);
+        shell.log([entry(LogLevel::Warn, "ab\tc\nnext")]);
         assert_eq!(
             entries(&shell),
             [
-                output("hello"),
-                output("a   1   true    nil"),
-                output("ab  c"),
-                output("next"),
+                Entry::Log(LogLevel::Info, "hello".into()),
+                Entry::Log(LogLevel::Debug, "a   1   true    nil".into()),
+                Entry::Log(LogLevel::Warn, "ab  c".into()),
+                Entry::Log(LogLevel::Warn, "next".into()),
             ]
         );
+    }
+
+    #[test]
+    fn log_levels_render_in_distinct_colors() {
+        let mut shell = new_shell();
+        shell.scrollback.clear();
+        let levels = [
+            LogLevel::Trace,
+            LogLevel::Debug,
+            LogLevel::Info,
+            LogLevel::Warn,
+        ];
+        shell.log(levels.map(|level| LogEntry {
+            level,
+            text: "x".into(),
+        }));
+        let colors: Vec<u8> = shell
+            .lines(40, 20)
+            .into_iter()
+            .filter(|line| line.text == "x")
+            .map(|line| line.color)
+            .collect();
+        assert_eq!(colors, [TRACE, DIM, TEXT, WARN]);
     }
 
     #[test]

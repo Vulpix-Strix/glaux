@@ -91,7 +91,9 @@ pub fn draw_text_scaled(
             continue;
         }
 
-        if let Some(glyph) = font.glyph(ch) {
+        if let Some(glyph) = font.glyph(ch)
+            && glyph_visible(pen_x, pen_y, glyph_width, glyph_height, scale64)
+        {
             for gy in 0..glyph_height {
                 for gx in 0..glyph_width {
                     if !glyph.is_set(usize::from(gx), usize::from(gy)) {
@@ -100,7 +102,11 @@ pub fn draw_text_scaled(
                     let px = i32::try_from(pen_x + i64::from(gx) * scale64);
                     let py = i32::try_from(pen_y + i64::from(gy) * scale64);
                     if let (Ok(px), Ok(py)) = (px, py) {
-                        fill_rect(framebuffer, px, py, scale, scale, color);
+                        if scale == 1 {
+                            framebuffer.set_pixel(px, py, color);
+                        } else {
+                            fill_rect(framebuffer, px, py, scale, scale, color);
+                        }
                     }
                 }
             }
@@ -108,6 +114,14 @@ pub fn draw_text_scaled(
 
         pen_x += i64::from(metrics.cell_width()) * scale64;
     }
+}
+
+/// Whether any part of a glyph drawn at the pen position can land on the
+/// framebuffer. Skipping the rest keeps long off-screen text cheap.
+fn glyph_visible(pen_x: i64, pen_y: i64, glyph_width: u8, glyph_height: u8, scale: i64) -> bool {
+    let right = pen_x + i64::from(glyph_width) * scale;
+    let bottom = pen_y + i64::from(glyph_height) * scale;
+    right > 0 && bottom > 0 && pen_x < WIDTH as i64 && pen_y < HEIGHT as i64
 }
 
 #[cfg(test)]
@@ -248,6 +262,14 @@ mod tests {
     #[test]
     fn clips_left_and_top() {
         assert_eq!(render("#", -2, -2), with_ink([(0, 0)]));
+    }
+
+    #[test]
+    fn glyphs_after_off_screen_ones_still_draw() {
+        assert_eq!(render("##", -4, 0), with_ink(block(0, 0)));
+        assert_eq!(render("#\n#", 0, -5), with_ink(block(0, 0)));
+        assert_eq!(render("#", -3, 0), Framebuffer::new());
+        assert_eq!(render("#", 0, -3), Framebuffer::new());
     }
 
     #[test]

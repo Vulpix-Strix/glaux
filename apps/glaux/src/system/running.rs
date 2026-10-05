@@ -1,6 +1,9 @@
 //! A loaded cartridge together with the Luau VM running it.
 
-use glaux_luau::{Budget, Runtime, RuntimeError, StartFailure};
+use glaux_luau::{Budget, DrawCommand, LogEntry, Runtime, RuntimeError, StartFailure};
+use glaux_machine::font::BitmapFont;
+use glaux_machine::framebuffer::Framebuffer;
+use glaux_video::draw::{clear, draw_text, pixel};
 
 use crate::cartridge::{CartridgeError, LoadedCartridge};
 
@@ -51,9 +54,27 @@ impl RunningCartridge {
         self.runtime.tick()
     }
 
-    /// Text the cartridge printed since the last call.
-    pub fn take_output(&mut self) -> Vec<String> {
+    /// Entries the cartridge logged since the last call.
+    pub fn take_output(&mut self) -> Vec<LogEntry> {
         self.runtime.take_output()
+    }
+
+    /// Redraws the cartridge's last completed frame: a screen cleared to
+    /// palette index 0, then its draw commands in the order they were made.
+    pub fn render(&self, framebuffer: &mut Framebuffer, font: &BitmapFont) {
+        clear(framebuffer, 0);
+        for command in self.runtime.frame() {
+            match *command {
+                DrawCommand::Clear(color) => clear(framebuffer, color),
+                DrawCommand::Pixel { x, y, color } => pixel(framebuffer, x, y, color),
+                DrawCommand::Text {
+                    ref text,
+                    x,
+                    y,
+                    color,
+                } => draw_text(framebuffer, font, text, x, y, color),
+            }
+        }
     }
 
     /// Disposes of the VM and gives back the cartridge.
