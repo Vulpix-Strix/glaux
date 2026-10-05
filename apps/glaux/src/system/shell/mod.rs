@@ -10,6 +10,7 @@ use glaux_input::InputEvent;
 
 use super::line_editor::LineEditor;
 use super::{ACCENT, BACKGROUND, ERROR, Line, SystemInfo, TEXT};
+use crate::cartridge_fs::CartridgeStorage;
 use commands::{COMMANDS, Context};
 use completion::{Completion, command_token, complete};
 use history::History;
@@ -19,19 +20,21 @@ const BANNER: &str = "READY. TYPE HELP FOR HELP";
 const PROMPT: &str = "> ";
 const CURSOR: char = '_';
 
-/// Shell state: the command line being edited, the command history and the
-/// output shown above the prompt.
+/// Shell state: the command line being edited, the command history, the
+/// output shown above the prompt and the current cartridge directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shell {
     editor: LineEditor,
     history: History,
     scrollback: Scrollback,
     info: SystemInfo,
+    cartridges: CartridgeStorage,
 }
 
 impl Shell {
-    /// A shell showing only the banner, reporting `info` in system commands.
-    pub fn new(info: SystemInfo) -> Self {
+    /// A shell showing only the banner, reporting `info` in system commands
+    /// and navigating `cartridges`.
+    pub fn new(info: SystemInfo, cartridges: CartridgeStorage) -> Self {
         let mut scrollback = Scrollback::default();
         scrollback.push(Entry::Banner(BANNER.into()));
         Self {
@@ -39,6 +42,7 @@ impl Shell {
             history: History::default(),
             scrollback,
             info,
+            cartridges,
         }
     }
 
@@ -91,6 +95,7 @@ impl Shell {
                 let mut ctx = Context {
                     scrollback: &mut self.scrollback,
                     info: &self.info,
+                    cartridges: &mut self.cartridges,
                 };
                 commands::execute(&invocation, &mut ctx);
             }
@@ -256,6 +261,7 @@ fn wrapped(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge_fs::fixture::Fixture;
     use pretty_assertions::assert_eq;
     use semver::Version;
 
@@ -267,7 +273,7 @@ mod tests {
     const ROWS: usize = 40;
 
     fn shell_with_rom(rom_version: Version) -> Shell {
-        Shell::new(SystemInfo { rom_version })
+        Shell::new(SystemInfo { rom_version }, CartridgeStorage::Unavailable)
     }
 
     fn new_shell() -> Shell {
@@ -469,6 +475,9 @@ mod tests {
                 output("CLEAR    CLEAR THE CONSOLE"),
                 output("INFO     SHOW SYSTEM INFORMATION"),
                 output("VERSION  SHOW THE SYSTEM ROM VERSION"),
+                output("PWD      SHOW THE CURRENT DIRECTORY"),
+                output("LS       LIST A DIRECTORY"),
+                output("CD       CHANGE THE CURRENT DIRECTORY"),
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());
@@ -478,7 +487,7 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 6, "> ", TEXT), Line::new(2, 6, "_", TEXT)]
+            [Line::new(0, 9, "> ", TEXT), Line::new(2, 9, "_", TEXT)]
         );
     }
 
@@ -609,6 +618,72 @@ mod tests {
         );
     }
 
+    #[test]
+    fn navigation_output_never_shows_host_paths() {
+        let fixture = Fixture::new("shell-host-paths");
+        let mut shell = Shell::new(
+            SystemInfo {
+                rom_version: Version::new(0, 1, 0),
+            },
+            fixture.storage(),
+        );
+        for line in [
+            "pwd",
+            "ls",
+            "cd games",
+            "ls ..",
+            "pwd",
+            "cd nope",
+            "cd /b.txt",
+            "ls /b.txt",
+            "cd ../../..",
+            "pwd",
+            "ls ../..",
+            "ls nope",
+            "cd ..\\..",
+        ] {
+            run(&mut shell, line);
+        }
+        let entries = entries(&shell);
+        assert!(entries.contains(&output("/games")));
+        assert!(entries.contains(&error("NO SUCH FILE OR DIRECTORY: /games/nope")));
+
+        let host_paths = [
+            fixture.root().display().to_string(),
+            fixture.base().display().to_string(),
+            std::env::temp_dir().display().to_string(),
+        ];
+        for entry in &entries {
+            let text = match entry {
+                Entry::Banner(text) | Entry::Output(text) | Entry::Error(text) => text,
+                Entry::Command(_) => continue,
+            };
+            for host in &host_paths {
+                assert!(!text.contains(host.as_str()), "{text:?} contains {host:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn filesystem_commands_report_unavailable_storage() {
+        let mut shell = new_shell();
+        shell.scrollback.clear();
+        run(&mut shell, "pwd");
+        run(&mut shell, "cd games");
+        run(&mut shell, "version");
+        assert_eq!(
+            entries(&shell),
+            [
+                command("pwd"),
+                error("CARTRIDGE STORAGE UNAVAILABLE"),
+                command("cd games"),
+                error("CARTRIDGE STORAGE UNAVAILABLE"),
+                command("version"),
+                output("GLAUX G1  SYSTEM ROM 0.1.0"),
+            ]
+        );
+    }
+
     // History navigation.
 
     #[test]
@@ -698,7 +773,11 @@ mod tests {
         send(&mut shell, &[Tab]);
         assert_eq!(
             entries(&shell),
-            [banner(), command(""), output("HELP  CLEAR  INFO  VERSION")]
+            [
+                banner(),
+                command(""),
+                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD")
+            ]
         );
         assert_eq!(shell.editor, LineEditor::default());
     }

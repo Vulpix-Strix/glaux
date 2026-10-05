@@ -3,11 +3,10 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use directories::ProjectDirs;
 use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
@@ -25,11 +24,6 @@ const SESSION_SUFFIX: &str = ".log";
 /// dropped under heavy load.
 pub struct Logging {
     _file_guard: Option<WorkerGuard>,
-}
-
-/// Glaux's platform data directory, if the platform provides one.
-pub fn data_dir() -> Option<PathBuf> {
-    ProjectDirs::from("dev", "cuervolu", "Glaux").map(|dirs| dirs.data_dir().to_path_buf())
 }
 
 /// Installs the global subscriber: INFO and above to stderr, DEBUG and above
@@ -233,6 +227,7 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     /// A fresh, empty directory under the system temp dir.

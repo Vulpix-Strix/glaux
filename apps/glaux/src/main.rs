@@ -1,3 +1,5 @@
+mod app_dirs;
+mod cartridge_fs;
 mod clock;
 mod logging;
 mod platform;
@@ -5,8 +7,10 @@ mod rom;
 mod system;
 
 use std::env::consts::{ARCH, OS};
+use std::path::Path;
 use std::time::Instant;
 
+use cartridge_fs::CartridgeStorage;
 use clock::TickClock;
 use glaux_host_raylib::{Presentation, RaylibHost, WindowPlacement};
 use glaux_machine::machine::Machine;
@@ -19,7 +23,7 @@ const WINDOW_SCALE: i32 = 3;
 const PRESENTATION: Presentation = Presentation::Crt;
 
 fn main() -> anyhow::Result<()> {
-    let data_dir = logging::data_dir();
+    let data_dir = app_dirs::data_dir();
     // Held until `main` returns so the file log is flushed on exit.
     let _logging = logging::init(data_dir.as_deref());
 
@@ -35,7 +39,7 @@ fn main() -> anyhow::Result<()> {
         tracing::info!(session = %session, "display session detected");
     }
 
-    let result = run(platform::window_placement(session));
+    let result = run(platform::window_placement(session), data_dir.as_deref());
     match &result {
         Ok(()) => tracing::info!("clean shutdown"),
         Err(err) => tracing::error!(error = %format!("{err:#}"), "Glaux stopped with an error"),
@@ -43,14 +47,19 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-fn run(placement: WindowPlacement) -> anyhow::Result<()> {
+fn run(placement: WindowPlacement, data_dir: Option<&Path>) -> anyhow::Result<()> {
+    let cartridges = CartridgeStorage::open(data_dir);
+
     let mut machine = Machine::new(rom::load()?);
     // The system draws into the machine's framebuffer with data from the
     // machine's ROM; a one-time copy of the ROM avoids borrowing both at once.
     let rom = machine.system_rom().clone();
-    let mut system = System::new(SystemInfo {
-        rom_version: rom.version().clone(),
-    });
+    let mut system = System::new(
+        SystemInfo {
+            rom_version: rom.version().clone(),
+        },
+        cartridges,
+    );
 
     let mut host = RaylibHost::new("Glaux", WINDOW_SCALE, placement, PRESENTATION)?;
 

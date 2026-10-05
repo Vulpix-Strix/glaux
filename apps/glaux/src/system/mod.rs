@@ -17,6 +17,8 @@ use glaux_machine::system_rom::SystemRom;
 use glaux_video::draw::{clear, draw_text, fill_rect};
 use semver::Version;
 
+use crate::cartridge_fs::CartridgeStorage;
+
 // System UI colors, as indices into the system palette (Zughy 32).
 const BACKGROUND: u8 = 11;
 const TEXT: u8 = 16;
@@ -29,7 +31,7 @@ const ERROR: u8 = 28;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SystemState {
     Boot(Boot),
-    Shell(Shell),
+    Shell(Box<Shell>),
 }
 
 /// Facts about the running system that the shell reports.
@@ -49,14 +51,19 @@ fn identity_line(rom_version: &Version) -> String {
 pub struct System {
     state: SystemState,
     info: SystemInfo,
+    /// Held during boot and moved into the shell when it starts, so there
+    /// is only ever one navigation state.
+    cartridges: Option<CartridgeStorage>,
 }
 
 impl System {
-    /// Starts at frame 0 of the boot sequence.
-    pub fn new(info: SystemInfo) -> Self {
+    /// Starts at frame 0 of the boot sequence. The shell that follows
+    /// navigates `cartridges`.
+    pub fn new(info: SystemInfo, cartridges: CartridgeStorage) -> Self {
         Self {
             state: SystemState::Boot(Boot::new()),
             info,
+            cartridges: Some(cartridges),
         }
     }
 
@@ -74,7 +81,13 @@ impl System {
                 boot.tick();
                 if boot.is_finished() {
                     tracing::info!("boot finished, entering shell");
-                    self.state = SystemState::Shell(Shell::new(self.info.clone()));
+                    // The state leaves `Boot` here, so this runs only once.
+                    let cartridges = self
+                        .cartridges
+                        .take()
+                        .expect("cartridge navigation is held until the shell starts");
+                    self.state =
+                        SystemState::Shell(Box::new(Shell::new(self.info.clone(), cartridges)));
                 }
             }
             SystemState::Shell(shell) => {
@@ -206,8 +219,12 @@ mod tests {
         }
     }
 
+    fn cartridges() -> CartridgeStorage {
+        CartridgeStorage::Unavailable
+    }
+
     fn new_system() -> System {
-        System::new(info())
+        System::new(info(), cartridges())
     }
 
     fn render(system: &System) -> Framebuffer {
@@ -297,12 +314,22 @@ mod tests {
         assert!(matches!(system.state(), SystemState::Boot(_)));
 
         system.update(&[]);
-        assert_eq!(system.state(), &SystemState::Shell(Shell::new(info())));
+        assert_eq!(
+            system.state(),
+            &SystemState::Shell(Box::new(Shell::new(info(), cartridges())))
+        );
+        assert_eq!(
+            system.cartridges, None,
+            "the shell owns the navigation state"
+        );
 
         for _ in 0..100 {
             system.update(&[]);
         }
-        assert_eq!(system.state(), &SystemState::Shell(Shell::new(info())));
+        assert_eq!(
+            system.state(),
+            &SystemState::Shell(Box::new(Shell::new(info(), cartridges())))
+        );
     }
 
     #[test]
@@ -372,7 +399,7 @@ mod tests {
 
     #[test]
     fn shell_renders_prompt() {
-        let prompt_row = Shell::new(info())
+        let prompt_row = Shell::new(info(), cartridges())
             .lines(text_columns(CELL_W), text_rows(CELL_H))
             .into_iter()
             .find(|line| line.text == "> ")
@@ -391,12 +418,28 @@ mod tests {
     }
 
     #[test]
+    fn shell_works_without_cartridge_storage() {
+        let mut system = shell();
+        for line in ["pwd", "version"] {
+            let mut events: Vec<InputEvent> = line.chars().map(InputEvent::Text).collect();
+            events.push(InputEvent::Enter);
+            system.update(&events);
+        }
+
+        // Banner, `> pwd`, its error, `> version`, its output.
+        let fb = render(&system);
+        let glyph = |row: i32| fb.pixel(CELL_W, (row + 1) * CELL_H);
+        assert_eq!(glyph(2), Some(ERROR));
+        assert_eq!(glyph(4), Some(TEXT));
+    }
+
+    #[test]
     fn typed_text_reaches_shell() {
         let mut system = shell();
         system.update(&[InputEvent::Text('H'), InputEvent::Text('I')]);
         system.update(&[InputEvent::Left { select: false }]);
 
-        let mut expected = Shell::new(info());
+        let mut expected = Shell::new(info(), cartridges());
         for event in [
             InputEvent::Text('H'),
             InputEvent::Text('I'),
@@ -404,7 +447,7 @@ mod tests {
         ] {
             expected.handle_input(event);
         }
-        assert_eq!(system.state(), &SystemState::Shell(expected));
+        assert_eq!(system.state(), &SystemState::Shell(Box::new(expected)));
     }
 
     #[test]
