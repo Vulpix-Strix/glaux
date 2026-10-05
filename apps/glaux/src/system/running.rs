@@ -1,5 +1,6 @@
 //! A loaded cartridge together with the Luau VM running it.
 
+use glaux_input::{ButtonLatch, InputEvent};
 use glaux_luau::{Budget, DrawCommand, LogEntry, Runtime, RuntimeError, StartFailure};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -28,6 +29,9 @@ pub struct FailedStart {
 pub struct RunningCartridge {
     cartridge: LoadedCartridge,
     runtime: Runtime,
+    /// Starts with every button released, so nothing held during a previous
+    /// run reaches this one.
+    buttons: ButtonLatch,
 }
 
 impl RunningCartridge {
@@ -40,7 +44,11 @@ impl RunningCartridge {
         };
         let entry = &cartridge.manifest().entry;
         match Runtime::start(entry, &source, Budget::default()) {
-            Ok(runtime) => Ok(Self { cartridge, runtime }),
+            Ok(runtime) => Ok(Self {
+                cartridge,
+                runtime,
+                buttons: ButtonLatch::new(),
+            }),
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
         }
     }
@@ -49,9 +57,11 @@ impl RunningCartridge {
         &self.cartridge
     }
 
-    /// Advances the cartridge by one logical tick.
-    pub fn tick(&mut self) -> Result<(), RuntimeError> {
-        self.runtime.tick()
+    /// Advances the cartridge by one logical tick, applying the button
+    /// events in `input` received since the previous tick.
+    pub fn tick(&mut self, input: &[InputEvent]) -> Result<(), RuntimeError> {
+        let buttons = self.buttons.advance(input);
+        self.runtime.tick(buttons)
     }
 
     /// Entries the cartridge logged since the last call.

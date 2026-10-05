@@ -2,19 +2,25 @@
 //!
 //! A [`Runtime`] owns one VM for the whole time a cartridge runs. Starting it
 //! executes the entry chunk once and calls the script's optional `boot()`;
-//! each [`Runtime::tick`] calls the optional `tick()` and then `draw()`.
+//! each [`Runtime::tick`] takes that tick's [`ButtonState`] and calls the
+//! optional `tick()` and then `draw()`.
 //!
 //! Scripts see Luau's safe standard library without `require`, plus:
 //!
 //! - `log.trace(...)`, `log.debug(...)`, `log.info(...)` and `log.warn(...)`,
 //!   which record [`LogEntry`]s in any phase;
 //! - `cls(color)`, `pset(x, y, color)` and `print(text, x, y, color)`, which
-//!   record [`DrawCommand`]s and may only be called during `draw()`.
+//!   record [`DrawCommand`]s and may only be called during `draw()`;
+//! - `btn(button)` and `btnp(button)`, which report whether a game button
+//!   is held, or was just pressed, on the current tick. `button` is one of
+//!   `"up"`, `"down"`, `"left"`, `"right"`, `"a"` or `"b"`; any other value
+//!   is a runtime error. Both return `false` before the first tick.
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
+use glaux_input::{ButtonState, GameButton};
 use mlua::{Function, Lua, MultiValue, Value, VmState};
 
 /// Interrupt checks one call may pass with [`Budget::default`].
@@ -210,6 +216,8 @@ pub struct Runtime {
     output: Rc<RefCell<Vec<LogEntry>>>,
     pending: PendingFrame,
     frame: Vec<DrawCommand>,
+    /// The game buttons of the tick in progress.
+    buttons: Rc<Cell<ButtonState>>,
     meter: Rc<Meter>,
 }
 
@@ -239,6 +247,7 @@ impl Runtime {
             output: Rc::default(),
             pending: Rc::default(),
             frame: Vec::new(),
+            buttons: Rc::default(),
             meter,
         };
 
@@ -263,9 +272,13 @@ impl Runtime {
     /// Calls `tick()` and then, if it succeeded, `draw()`. A callback the
     /// script does not define is skipped.
     ///
+    /// `btn` and `btnp` report `buttons` during both callbacks, and keep
+    /// reporting it until the next tick.
+    ///
     /// A `draw()` that returns normally replaces [`frame`](Self::frame) with
     /// the commands it recorded; one that fails leaves the previous frame.
-    pub fn tick(&mut self) -> Result<(), RuntimeError> {
+    pub fn tick(&mut self, buttons: ButtonState) -> Result<(), RuntimeError> {
+        self.buttons.set(buttons);
         self.callback(Phase::Tick)?;
 
         *self.pending.borrow_mut() = Some(Recording::default());
@@ -313,7 +326,8 @@ impl Runtime {
         // cannot change how Glaux converts values to text.
         let tostring: Function = globals.get("tostring")?;
         self.install_log(&tostring)?;
-        self.install_draw(&tostring)
+        self.install_draw(&tostring)?;
+        self.install_input()
     }
 
     /// Installs the `log` table.
@@ -383,6 +397,25 @@ impl Runtime {
             },
         )?;
         globals.raw_set("print", print)
+    }
+
+    /// Installs `btn` and `btnp`.
+    fn install_input(&self) -> mlua::Result<()> {
+        let globals = self.lua.globals();
+
+        let buttons = Rc::clone(&self.buttons);
+        let btn = self.lua.create_function(move |lua, button: Value| {
+            let button = button_arg(lua, "btn", 1, &button)?;
+            Ok(buttons.get().held.contains(button))
+        })?;
+        globals.raw_set("btn", btn)?;
+
+        let buttons = Rc::clone(&self.buttons);
+        let btnp = self.lua.create_function(move |lua, button: Value| {
+            let button = button_arg(lua, "btnp", 1, &button)?;
+            Ok(buttons.get().pressed.contains(button))
+        })?;
+        globals.raw_set("btnp", btnp)
     }
 
     /// Calls the global callback for `phase`, if the script defines one.
@@ -525,6 +558,46 @@ fn color_arg(lua: &Lua, function: &str, position: usize, value: &Value) -> mlua:
     }
 }
 
+/// A game button, named as scripts name it.
+fn button_arg(
+    lua: &Lua,
+    function: &str,
+    position: usize,
+    value: &Value,
+) -> mlua::Result<GameButton> {
+    let Value::String(name) = value else {
+        // mlua tells integers apart, but Luau scripts only have `number`.
+        let found = match value {
+            Value::Integer(_) => "number",
+            other => other.type_name(),
+        };
+        return Err(bad_argument(
+            lua,
+            function,
+            position,
+            &format!("string expected, got {found}"),
+        ));
+    };
+    let name = name.to_string_lossy();
+    let button = match name.as_str() {
+        "up" => GameButton::Up,
+        "down" => GameButton::Down,
+        "left" => GameButton::Left,
+        "right" => GameButton::Right,
+        "a" => GameButton::A,
+        "b" => GameButton::B,
+        _ => {
+            return Err(bad_argument(
+                lua,
+                function,
+                position,
+                &format!("unknown button '{name}'; expected up, down, left, right, a or b"),
+            ));
+        }
+    };
+    Ok(button)
+}
+
 fn bad_argument(lua: &Lua, function: &str, position: usize, detail: &str) -> mlua::Error {
     located(
         lua,
@@ -565,9 +638,14 @@ fn script_error(err: &mlua::Error) -> ScriptError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glaux_input::ButtonSet;
     use pretty_assertions::assert_eq;
 
     const SMALL: Budget = Budget { interrupts: 10_000 };
+    const NO_BUTTONS: ButtonState = ButtonState {
+        held: ButtonSet::EMPTY,
+        pressed: ButtonSet::EMPTY,
+    };
 
     fn start(source: &str) -> Result<Runtime, StartFailure> {
         Runtime::start("main.luau", source.as_bytes(), SMALL)
@@ -625,7 +703,7 @@ mod tests {
         );
         assert_eq!(texts(runtime.take_output()), ["entry", "boot"]);
         for _ in 0..3 {
-            runtime.tick().unwrap();
+            runtime.tick(NO_BUTTONS).unwrap();
         }
         assert_eq!(texts(runtime.take_output()), Vec::<String>::new());
     }
@@ -633,8 +711,8 @@ mod tests {
     #[test]
     fn missing_callbacks_are_skipped() {
         let mut runtime = started("local x = 1");
-        assert_eq!(runtime.tick(), Ok(()));
-        assert_eq!(runtime.tick(), Ok(()));
+        assert_eq!(runtime.tick(NO_BUTTONS), Ok(()));
+        assert_eq!(runtime.tick(NO_BUTTONS), Ok(()));
     }
 
     #[test]
@@ -772,8 +850,8 @@ mod tests {
     #[test]
     fn take_output_drains_the_buffer() {
         let mut runtime = started(r#"function tick() log.info("t") end"#);
-        runtime.tick().unwrap();
-        runtime.tick().unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
         assert_eq!(texts(runtime.take_output()), ["t", "t"]);
         assert_eq!(texts(runtime.take_output()), Vec::<String>::new());
     }
@@ -789,7 +867,7 @@ mod tests {
             "#,
         );
         for _ in 0..3 {
-            runtime.tick().unwrap();
+            runtime.tick(NO_BUTTONS).unwrap();
         }
         assert_eq!(
             texts(runtime.take_output()),
@@ -808,7 +886,7 @@ mod tests {
             "#,
         );
         for _ in 0..3 {
-            runtime.tick().unwrap();
+            runtime.tick(NO_BUTTONS).unwrap();
         }
         assert_eq!(texts(runtime.take_output()), ["1\t1", "2\t2", "3\t3"]);
     }
@@ -823,8 +901,8 @@ mod tests {
             end
             "#,
         );
-        runtime.tick().unwrap();
-        runtime.tick().unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
         assert_eq!(texts(runtime.take_output()), ["first", "second"]);
     }
 
@@ -837,7 +915,7 @@ mod tests {
             "#,
         );
         assert_eq!(
-            runtime.tick(),
+            runtime.tick(NO_BUTTONS),
             Err(error(
                 Phase::Tick,
                 ScriptError::Runtime("main.luau:2: boom".into())
@@ -850,7 +928,7 @@ mod tests {
     fn draw_errors_name_the_draw_phase() {
         let mut runtime = started(r#"function draw() error("bad") end"#);
         assert_eq!(
-            runtime.tick(),
+            runtime.tick(NO_BUTTONS),
             Err(error(
                 Phase::Draw,
                 ScriptError::Runtime("main.luau:1: bad".into())
@@ -868,7 +946,7 @@ mod tests {
         );
 
         let mut runtime = started(r#"tick = "x""#);
-        let err = runtime.tick().unwrap_err();
+        let err = runtime.tick(NO_BUTTONS).unwrap_err();
         assert_eq!(err.phase, Phase::Tick);
         assert!(
             matches!(&err.error, ScriptError::Runtime(m) if m.contains("'tick' must be a function")),
@@ -903,7 +981,11 @@ mod tests {
         for body in [RUNAWAY, CAUGHT_RUNAWAY] {
             for (name, phase) in [("tick", Phase::Tick), ("draw", Phase::Draw)] {
                 let mut runtime = started(&format!("function {name}() {body} end"));
-                assert_eq!(runtime.tick(), Err(limit(phase)), "{name}: {body}");
+                assert_eq!(
+                    runtime.tick(NO_BUTTONS),
+                    Err(limit(phase)),
+                    "{name}: {body}"
+                );
                 assert!(
                     !texts(runtime.take_output()).contains(&"after".to_owned()),
                     "{name}: {body}"
@@ -926,7 +1008,7 @@ mod tests {
             "#,
         );
         for _ in 0..20 {
-            assert_eq!(runtime.tick(), Ok(()));
+            assert_eq!(runtime.tick(NO_BUTTONS), Ok(()));
         }
         // Two calls' worth of spinning in one call does not fit.
         assert_eq!(
@@ -971,14 +1053,14 @@ mod tests {
     /// `body`.
     fn drawn(body: &str) -> Vec<DrawCommand> {
         let mut runtime = started(&format!("function draw() {body} end"));
-        runtime.tick().unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
         runtime.frame().to_vec()
     }
 
     /// The runtime error raised by the first tick of `draw()` `body`.
     fn draw_error(body: &str) -> String {
         let mut runtime = started(&format!("function draw() {body} end"));
-        match runtime.tick() {
+        match runtime.tick(NO_BUTTONS) {
             Err(RuntimeError {
                 phase: Phase::Draw,
                 error: ScriptError::Runtime(message),
@@ -1032,9 +1114,9 @@ mod tests {
             function draw() n += 1 for i = 1, n do pset(i, 0, n) end end
             "#,
         );
-        runtime.tick().unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
         assert_eq!(runtime.frame(), [pixel(1, 0, 1)]);
-        runtime.tick().unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
         assert_eq!(runtime.frame(), [pixel(1, 0, 2), pixel(2, 0, 2)]);
     }
 
@@ -1043,9 +1125,9 @@ mod tests {
         let mut runtime = started(
             "local first = true function draw() if first then cls(1) end first = false end",
         );
-        runtime.tick().unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
         assert_eq!(runtime.frame(), [DrawCommand::Clear(1)]);
-        runtime.tick().unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
         assert_eq!(runtime.frame(), []);
     }
 
@@ -1062,8 +1144,8 @@ mod tests {
                 end
                 "#
             ));
-            runtime.tick().unwrap();
-            assert!(runtime.tick().is_err(), "{failure}");
+            runtime.tick(NO_BUTTONS).unwrap();
+            assert!(runtime.tick(NO_BUTTONS).is_err(), "{failure}");
             assert_eq!(runtime.frame(), [DrawCommand::Clear(1)], "{failure}");
         }
     }
@@ -1077,16 +1159,16 @@ mod tests {
             function draw() cls(n) end
             "#,
         );
-        runtime.tick().unwrap();
-        assert!(runtime.tick().is_err());
+        runtime.tick(NO_BUTTONS).unwrap();
+        assert!(runtime.tick(NO_BUTTONS).is_err());
         assert_eq!(runtime.frame(), [DrawCommand::Clear(1)]);
     }
 
     #[test]
     fn removing_draw_keeps_the_last_frame() {
         let mut runtime = started("function draw() cls(4) draw = nil end");
-        runtime.tick().unwrap();
-        runtime.tick().unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
         assert_eq!(runtime.frame(), [DrawCommand::Clear(4)]);
     }
 
@@ -1102,7 +1184,7 @@ mod tests {
             assert_eq!(failure.error.phase, Phase::Boot);
 
             let mut runtime = started(&format!("function tick() {call} end"));
-            let err = runtime.tick().unwrap_err();
+            let err = runtime.tick(NO_BUTTONS).unwrap_err();
             assert_eq!(err.phase, Phase::Tick);
             assert!(
                 matches!(&err.error, ScriptError::Runtime(m) if m.ends_with(&expected)),
@@ -1120,8 +1202,8 @@ mod tests {
             function tick() if later then later() end end
             "#,
         );
-        runtime.tick().unwrap();
-        assert_eq!(runtime.tick().unwrap_err().phase, Phase::Tick);
+        runtime.tick(NO_BUTTONS).unwrap();
+        assert_eq!(runtime.tick(NO_BUTTONS).unwrap_err().phase, Phase::Tick);
     }
 
     #[test]
@@ -1224,10 +1306,10 @@ mod tests {
             "#
         );
         let mut runtime = Runtime::start("main.luau", source.as_bytes(), budget).unwrap();
-        runtime.tick().unwrap();
+        runtime.tick(NO_BUTTONS).unwrap();
         assert_eq!(runtime.frame().len(), MAX_DRAW_COMMANDS);
 
-        let err = runtime.tick().unwrap_err();
+        let err = runtime.tick(NO_BUTTONS).unwrap_err();
         assert_eq!(err.phase, Phase::Draw);
         assert!(
             matches!(&err.error, ScriptError::Runtime(m) if m.contains("too many draw commands")),
@@ -1253,5 +1335,113 @@ mod tests {
         // Empty text still costs one character.
         let empty = format!(r#"for i = 1, {CHARS} + 1 do print("", 0, 0, 1) end"#);
         assert!(draw_error(&empty).contains("too many draw commands"));
+    }
+
+    // Input.
+
+    fn buttons(held: &[GameButton], pressed: &[GameButton]) -> ButtonState {
+        ButtonState {
+            held: held.iter().copied().collect(),
+            pressed: pressed.iter().copied().collect(),
+        }
+    }
+
+    #[test]
+    fn btn_and_btnp_report_the_tick_state_in_tick_and_draw() {
+        let mut runtime = started(
+            r#"
+            function tick() log.info("tick", btn("up"), btnp("up")) end
+            function draw() log.info("draw", btn("up"), btnp("up")) end
+            "#,
+        );
+        use GameButton::Up;
+        for state in [
+            buttons(&[Up], &[Up]),
+            buttons(&[Up], &[]),
+            buttons(&[], &[]),
+            buttons(&[], &[Up]),
+        ] {
+            runtime.tick(state).unwrap();
+        }
+        assert_eq!(
+            texts(runtime.take_output()),
+            [
+                "tick\ttrue\ttrue",
+                "draw\ttrue\ttrue",
+                "tick\ttrue\tfalse",
+                "draw\ttrue\tfalse",
+                "tick\tfalse\tfalse",
+                "draw\tfalse\tfalse",
+                "tick\tfalse\ttrue",
+                "draw\tfalse\ttrue",
+            ]
+        );
+    }
+
+    #[test]
+    fn every_button_name_reads_its_own_button() {
+        let mut runtime = started(
+            r#"
+            function tick()
+                for _, name in { "up", "down", "left", "right", "a", "b" } do
+                    log.info(name, btn(name), btnp(name))
+                end
+            end
+            "#,
+        );
+        runtime
+            .tick(buttons(&[GameButton::Left], &[GameButton::B]))
+            .unwrap();
+        assert_eq!(
+            texts(runtime.take_output()),
+            [
+                "up\tfalse\tfalse",
+                "down\tfalse\tfalse",
+                "left\ttrue\tfalse",
+                "right\tfalse\tfalse",
+                "a\tfalse\tfalse",
+                "b\tfalse\ttrue",
+            ]
+        );
+    }
+
+    #[test]
+    fn buttons_are_released_before_the_first_tick() {
+        assert_eq!(
+            start_output(
+                r#"log.info(btn("a"), btnp("a")) function boot() log.info(btn("b"), btnp("b")) end"#
+            ),
+            ["false\tfalse", "false\tfalse"]
+        );
+    }
+
+    #[test]
+    fn bad_button_names_are_runtime_errors() {
+        for (call, detail) in [
+            (
+                r#"btn("start")"#,
+                "#1 to 'btn' (unknown button 'start'; expected up, down, left, right, a or b)",
+            ),
+            (
+                r#"btnp("esc")"#,
+                "#1 to 'btnp' (unknown button 'esc'; expected up, down, left, right, a or b)",
+            ),
+            (
+                r#"btn("UP")"#,
+                "#1 to 'btn' (unknown button 'UP'; expected up, down, left, right, a or b)",
+            ),
+            ("btn(1)", "#1 to 'btn' (string expected, got number)"),
+            ("btnp()", "#1 to 'btnp' (string expected, got nil)"),
+        ] {
+            let mut runtime = started(&format!("function tick() {call} end"));
+            assert_eq!(
+                runtime.tick(NO_BUTTONS),
+                Err(error(
+                    Phase::Tick,
+                    ScriptError::Runtime(format!("main.luau:1: bad argument {detail}"))
+                )),
+                "{call}"
+            );
+        }
     }
 }

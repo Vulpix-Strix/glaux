@@ -94,7 +94,12 @@ impl LineEditor {
             }
             // Navigation, completion and break act on the whole system, not
             // the line.
-            InputEvent::Up | InputEvent::Down | InputEvent::Tab | InputEvent::Break => {}
+            InputEvent::Up
+            | InputEvent::Down
+            | InputEvent::Tab
+            | InputEvent::Break
+            | InputEvent::ButtonDown(_)
+            | InputEvent::ButtonUp(_) => {}
         }
         None
     }

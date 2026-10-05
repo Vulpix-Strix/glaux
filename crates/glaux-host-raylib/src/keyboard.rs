@@ -7,10 +7,13 @@
 //! <https://github.com/raysan5/raylib/issues/3984>). Typed characters don't
 //! repeat reliably either. Measuring how long a key has been held works
 //! the same on every platform.
+//!
+//! Game buttons are level transitions rather than repeating events, and only
+//! reach the system while it is in [`InputMode::Game`].
 
 use std::time::Duration;
 
-use glaux_input::InputEvent;
+use glaux_input::{ButtonSet, GameButton, InputEvent, InputMode};
 use raylib::consts::KeyboardKey;
 
 /// How long an editing key must be held before it starts repeating.
@@ -241,6 +244,64 @@ impl TextKeys {
             out.push(InputEvent::Text(ch));
         }
     }
+}
+
+/// The physical key behind each virtual game button. Escape is the break
+/// key and is deliberately not a game button.
+const GAME_KEYS: [(KeyboardKey, GameButton); 6] = [
+    (KeyboardKey::KEY_UP, GameButton::Up),
+    (KeyboardKey::KEY_DOWN, GameButton::Down),
+    (KeyboardKey::KEY_LEFT, GameButton::Left),
+    (KeyboardKey::KEY_RIGHT, GameButton::Right),
+    (KeyboardKey::KEY_Z, GameButton::A),
+    (KeyboardKey::KEY_X, GameButton::B),
+];
+
+/// Turns physical key state into game button transitions.
+#[derive(Debug, Default)]
+pub(crate) struct GameKeys {
+    /// Buttons whose key was down at the end of the previous frame.
+    held: ButtonSet,
+}
+
+impl GameKeys {
+    /// Appends this frame's button transitions to `out`.
+    ///
+    /// `queued` are the keys raylib reported going down this frame and
+    /// `is_down` reports whether a key is held now. A key that went down and
+    /// up within one frame appears only in `queued`, so it yields a
+    /// `ButtonDown` immediately followed by a `ButtonUp`. A held key never
+    /// produces another `ButtonDown`, even if the platform reports repeats.
+    pub(crate) fn events(
+        &mut self,
+        queued: &[KeyboardKey],
+        is_down: impl Fn(KeyboardKey) -> bool,
+        out: &mut Vec<InputEvent>,
+    ) {
+        for (key, button) in GAME_KEYS {
+            let down = is_down(key);
+            if !self.held.contains(button) && (down || queued.contains(&key)) {
+                self.held.insert(button);
+                out.push(InputEvent::ButtonDown(button));
+            }
+            if self.held.contains(button) && !down {
+                self.held.remove(button);
+                out.push(InputEvent::ButtonUp(button));
+            }
+        }
+    }
+}
+
+/// Drops the events `mode` does not consume. [`InputEvent::Break`] is kept
+/// in every mode.
+pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
+    events.retain(|event| {
+        let button = matches!(event, InputEvent::ButtonDown(_) | InputEvent::ButtonUp(_));
+        match mode {
+            InputMode::Text => !button,
+            InputMode::Game => button || *event == InputEvent::Break,
+        }
+    });
 }
 
 /// Number of repeats that are due after a key has been held for `held`.
@@ -622,5 +683,142 @@ mod tests {
             [],
             "a new press restarts the delay"
         );
+    }
+
+    /// Button events for one frame in which `queued` keys went down and
+    /// `down` keys are held.
+    fn game_frame(
+        game: &mut GameKeys,
+        queued: &[KeyboardKey],
+        down: &[KeyboardKey],
+    ) -> Vec<InputEvent> {
+        let mut out = Vec::new();
+        game.events(queued, |key| down.contains(&key), &mut out);
+        out
+    }
+
+    #[test]
+    fn physical_keys_map_to_virtual_buttons() {
+        for (key, button) in [
+            (KEY_UP, GameButton::Up),
+            (KEY_DOWN, GameButton::Down),
+            (KEY_LEFT, GameButton::Left),
+            (KEY_RIGHT, GameButton::Right),
+            (KEY_Z, GameButton::A),
+            (KEY_X, GameButton::B),
+        ] {
+            let mut game = GameKeys::default();
+            assert_eq!(
+                game_frame(&mut game, &[key], &[key]),
+                [InputEvent::ButtonDown(button)],
+                "{key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn escape_and_other_keys_are_not_game_buttons() {
+        let mut game = GameKeys::default();
+        let keys = [KEY_ESCAPE, KEY_ENTER, KEY_A, KEY_SPACE];
+        assert_eq!(game_frame(&mut game, &keys, &keys), []);
+    }
+
+    #[test]
+    fn a_held_key_presses_once_and_releases_once() {
+        let mut game = GameKeys::default();
+        let pressed = InputEvent::ButtonDown(GameButton::Up);
+        assert_eq!(game_frame(&mut game, &[KEY_UP], &[KEY_UP]), [pressed]);
+        for _ in 0..120 {
+            assert_eq!(game_frame(&mut game, &[], &[KEY_UP]), []);
+        }
+        // A platform repeat reported as another press is not a new press.
+        assert_eq!(game_frame(&mut game, &[KEY_UP], &[KEY_UP]), []);
+        assert_eq!(
+            game_frame(&mut game, &[], &[]),
+            [InputEvent::ButtonUp(GameButton::Up)]
+        );
+        assert_eq!(game_frame(&mut game, &[], &[]), []);
+    }
+
+    #[test]
+    fn a_tap_within_one_frame_is_not_lost() {
+        let mut game = GameKeys::default();
+        assert_eq!(
+            game_frame(&mut game, &[KEY_Z], &[]),
+            [
+                InputEvent::ButtonDown(GameButton::A),
+                InputEvent::ButtonUp(GameButton::A),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_key_held_when_tracking_starts_presses_once() {
+        let mut game = GameKeys::default();
+        assert_eq!(
+            game_frame(&mut game, &[], &[KEY_X]),
+            [InputEvent::ButtonDown(GameButton::B)]
+        );
+        assert_eq!(game_frame(&mut game, &[], &[KEY_X]), []);
+    }
+
+    /// Every event one frame of `keys` going down produces in `mode`.
+    fn translated(mode: InputMode, keys: &[KeyboardKey], chars: &str) -> Vec<InputEvent> {
+        let chars: Vec<char> = chars.chars().collect();
+        let mut out = Vec::new();
+        TextKeys::default().events(&chars, keys, |k| keys.contains(&k), FRAME, &mut out);
+        EditKeys::default().events(
+            |k| {
+                if keys.contains(&k) {
+                    PRESSED
+                } else {
+                    KeyState::default()
+                }
+            },
+            false,
+            FRAME,
+            &mut out,
+        );
+        GameKeys::default().events(keys, |k| keys.contains(&k), &mut out);
+        retain_for_mode(mode, &mut out);
+        out
+    }
+
+    #[test]
+    fn text_mode_keeps_editing_and_drops_buttons() {
+        assert_eq!(
+            translated(InputMode::Text, &[KEY_LEFT, KEY_UP], ""),
+            [InputEvent::Left { select: false }, InputEvent::Up]
+        );
+        assert_eq!(translated(InputMode::Text, &[KEY_Z], "z"), texts("z"));
+    }
+
+    #[test]
+    fn game_mode_keeps_buttons_and_drops_editing() {
+        assert_eq!(
+            translated(InputMode::Game, &[KEY_LEFT, KEY_UP], ""),
+            [
+                InputEvent::ButtonDown(GameButton::Up),
+                InputEvent::ButtonDown(GameButton::Left),
+            ]
+        );
+        assert_eq!(
+            translated(InputMode::Game, &[KEY_Z, KEY_X], "zx"),
+            [
+                InputEvent::ButtonDown(GameButton::A),
+                InputEvent::ButtonDown(GameButton::B),
+            ]
+        );
+    }
+
+    #[test]
+    fn break_reaches_every_mode() {
+        for mode in [InputMode::Text, InputMode::Game] {
+            assert_eq!(
+                translated(mode, &[KEY_ESCAPE], ""),
+                [InputEvent::Break],
+                "{mode:?}"
+            );
+        }
     }
 }

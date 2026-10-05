@@ -12,7 +12,7 @@ mod shell;
 pub use boot::Boot;
 pub use shell::Shell;
 
-use glaux_input::InputEvent;
+use glaux_input::{InputEvent, InputMode};
 use glaux_luau::RuntimeError;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
@@ -102,10 +102,20 @@ impl System {
         &self.state
     }
 
+    /// The kind of input the current state consumes: game buttons while a
+    /// cartridge runs, text everywhere else.
+    pub fn input_mode(&self) -> InputMode {
+        match self.state {
+            SystemState::Running { .. } => InputMode::Game,
+            SystemState::Boot { .. } | SystemState::Shell { .. } => InputMode::Text,
+        }
+    }
+
     /// Advances the system by one logical tick, applying the tick's `input`.
     ///
     /// Input is ignored during the boot sequence. While a cartridge runs,
-    /// only [`InputEvent::Break`] has an effect: it stops the cartridge.
+    /// [`InputEvent::Break`] stops it and button events reach its `btn` and
+    /// `btnp`; anything else is ignored.
     pub fn update(self, input: &[InputEvent]) -> Self {
         let Self { state, info } = self;
         let state = match state {
@@ -240,7 +250,8 @@ fn start(mut shell: Box<Shell>, cartridge: LoadedCartridge) -> SystemState {
     }
 }
 
-/// Advances the running cartridge by one tick, or stops it on a break.
+/// Advances the running cartridge by one tick, or stops it on a break. A
+/// break wins over any button events in the same tick.
 fn running_tick(
     mut shell: Box<Shell>,
     mut running: RunningCartridge,
@@ -249,7 +260,7 @@ fn running_tick(
     if input.contains(&InputEvent::Break) {
         return stop(shell, running, StopReason::Break);
     }
-    match running.tick() {
+    match running.tick(input) {
         Ok(()) => {
             shell.log(running.take_output());
             SystemState::Running { shell, running }
@@ -1102,5 +1113,123 @@ mod tests {
             after(&system, "> run"),
             ["RUNNING Pong 0.1.0", "t", "w", "STOPPED Pong 0.1.0"]
         );
+    }
+
+    // Game input.
+
+    use glaux_input::GameButton;
+
+    const UP_STATE: &str = r#"function tick() log.info(btn("up"), btnp("up")) end"#;
+
+    fn down() -> InputEvent {
+        InputEvent::ButtonDown(GameButton::Up)
+    }
+
+    fn up() -> InputEvent {
+        InputEvent::ButtonUp(GameButton::Up)
+    }
+
+    /// Runs one tick per entry of `ticks` and returns what the cartridge
+    /// logged on each.
+    fn logged_per_tick(mut system: System, ticks: &[&[InputEvent]]) -> (System, Vec<String>) {
+        let mut lines = Vec::new();
+        for input in ticks {
+            let before = transcript(&system).len();
+            system = system.update(input);
+            lines.extend(transcript(&system).split_off(before));
+        }
+        (system, lines)
+    }
+
+    #[test]
+    fn buttons_reach_the_cartridge_per_tick() {
+        let fixture = Fixture::new("sys-btn");
+        let (_, lines) = logged_per_tick(
+            started(&fixture, UP_STATE),
+            &[
+                &[down()],
+                &[],
+                &[up()],
+                &[down()],
+                &[up(), InputEvent::ButtonDown(GameButton::A)],
+                &[down(), up()],
+                &[],
+            ],
+        );
+        assert_eq!(
+            lines,
+            [
+                "true    true",
+                "true    false",
+                "false   false",
+                "true    true",
+                "false   false",
+                "false   true",
+                "false   false",
+            ]
+        );
+    }
+
+    #[test]
+    fn catch_up_ticks_press_only_once() {
+        // As the main loop does: the first due tick takes the pending input
+        // and the catch-up ticks after it take none.
+        let fixture = Fixture::new("sys-btn-catch-up");
+        let (_, lines) = logged_per_tick(
+            started(&fixture, UP_STATE),
+            &[&[down(), down()], &[], &[], &[]],
+        );
+        assert_eq!(
+            lines,
+            [
+                "true    true",
+                "true    false",
+                "true    false",
+                "true    false"
+            ]
+        );
+    }
+
+    #[test]
+    fn editing_events_do_not_press_buttons() {
+        let fixture = Fixture::new("sys-btn-edit");
+        let (_, lines) = logged_per_tick(
+            started(&fixture, UP_STATE),
+            &[&[InputEvent::Up, InputEvent::Text('z')]],
+        );
+        assert_eq!(lines, ["false   false"]);
+    }
+
+    #[test]
+    fn break_stops_the_cartridge_despite_buttons() {
+        let fixture = Fixture::new("sys-btn-break");
+        let system = started(&fixture, UP_STATE).update(&[down(), InputEvent::Break]);
+        assert_eq!(
+            after(&system, "> run"),
+            ["RUNNING Pong 0.1.0", "STOPPED Pong 0.1.0"]
+        );
+    }
+
+    #[test]
+    fn a_new_run_starts_with_buttons_released() {
+        let fixture = Fixture::new("sys-btn-rerun");
+        let system = started(&fixture, UP_STATE).update(&[down()]);
+        let system = enter(press_break(system), "run");
+        // Up stays physically held, so the host sends nothing new.
+        let (system, lines) = logged_per_tick(system, &[&[]]);
+        assert_eq!(lines, ["false   false"]);
+        assert!(is_running(&system));
+    }
+
+    #[test]
+    fn input_mode_follows_the_active_context() {
+        let fixture = Fixture::new("sys-input-mode");
+        assert_eq!(new_system().input_mode(), InputMode::Text);
+        let system = shell_with_cartridge(&fixture, "");
+        assert_eq!(system.input_mode(), InputMode::Text);
+        let system = enter(enter(system, "load pong"), "run");
+        assert_eq!(system.input_mode(), InputMode::Game);
+        let system = press_break(system);
+        assert_eq!(system.input_mode(), InputMode::Text);
     }
 }

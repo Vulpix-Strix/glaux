@@ -218,6 +218,7 @@ version = "0.1.0"
 name = "glaux-luau"
 version = "0.1.0"
 dependencies = [
+ "glaux-input",
  "mlua",
  "pretty_assertions",
  "thiserror",

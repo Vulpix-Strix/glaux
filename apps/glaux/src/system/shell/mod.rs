@@ -104,6 +104,8 @@ impl Shell {
             // Nothing runs while the shell is active, so there is nothing to
             // interrupt.
             InputEvent::Break => {}
+            // Game buttons belong to a running cartridge.
+            InputEvent::ButtonDown(_) | InputEvent::ButtonUp(_) => {}
         }
         None
     }

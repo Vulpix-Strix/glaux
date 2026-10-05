@@ -74,7 +74,7 @@ fn run(placement: WindowPlacement, data_dir: Option<&Path>) -> anyhow::Result<()
     while !host.should_close() {
         system.render(machine.framebuffer_mut(), &rom);
         host.present(&IndexedFrame::new(machine.framebuffer(), rom.palette()))?;
-        pending.extend(host.poll_input());
+        pending.extend(host.poll_input(system.input_mode()));
 
         let now = Instant::now();
         let ticks = clock.advance(now - last);

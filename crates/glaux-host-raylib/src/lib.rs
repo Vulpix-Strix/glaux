@@ -6,9 +6,9 @@ mod keyboard;
 use std::time::Duration;
 
 use crt::CrtPass;
-use glaux_input::InputEvent;
+use glaux_input::{InputEvent, InputMode};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
-use keyboard::{EditKeys, KeyState, TextKeys};
+use keyboard::{EditKeys, GameKeys, KeyState, TextKeys, retain_for_mode};
 use raylib::core::error::{LoadTextureError, UpdateTextureError};
 use raylib::core::input::key_from_i32;
 use raylib::prelude::*;
@@ -59,6 +59,7 @@ pub struct RaylibHost {
     rgba: Vec<u8>,
     edit_keys: EditKeys,
     text_keys: TextKeys,
+    game_keys: GameKeys,
     rl: RaylibHandle,
     thread: RaylibThread,
 }
@@ -132,6 +133,7 @@ impl RaylibHost {
             rgba: vec![0; RGBA_LEN],
             edit_keys: EditKeys::default(),
             text_keys: TextKeys::default(),
+            game_keys: GameKeys::default(),
             rl,
             thread,
         })
@@ -170,14 +172,19 @@ impl RaylibHost {
         Ok(())
     }
 
-    /// Returns the input received since the previous call.
+    /// Returns the input received since the previous call that `mode`
+    /// consumes, plus any [`InputEvent::Break`].
     ///
     /// Raylib polls the platform when a frame ends, so calling this right
     /// after [`present`](Self::present) yields the input for that frame.
     /// Typed characters and editing keys come from separate raylib queues,
     /// so their relative order within one frame is lost; text is reported
-    /// before editing keys. Held keys auto-repeat, except Enter.
-    pub fn poll_input(&mut self) -> Vec<InputEvent> {
+    /// before editing keys. Held editing keys auto-repeat, except Enter.
+    ///
+    /// Every translator runs whatever the mode, so their held-key state
+    /// stays current: a key already down when the mode changes does not
+    /// report a fresh press in the new mode.
+    pub fn poll_input(&mut self, mode: InputMode) -> Vec<InputEvent> {
         let chars: Vec<char> = std::iter::from_fn(|| self.rl.get_char_pressed()).collect();
         // Codes raylib-rs has no `KeyboardKey` for are skipped rather than
         // ending the drain, so they don't hide keys queued after them.
@@ -207,6 +214,9 @@ impl RaylibHost {
             elapsed,
             &mut events,
         );
+        self.game_keys
+            .events(&pressed, |key| rl.is_key_down(key), &mut events);
+        retain_for_mode(mode, &mut events);
         events
     }
 }
