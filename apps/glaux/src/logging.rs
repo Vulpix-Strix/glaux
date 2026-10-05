@@ -7,10 +7,12 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use tracing::Subscriber;
 use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::{EnvFilter, Layer};
 
 /// Session log files kept in the logs directory, including the current one.
 const MAX_SESSIONS: usize = 10;
@@ -56,12 +58,8 @@ pub fn init(data_dir: Option<&Path>) -> Logging {
         None => (None, None, Vec::new()),
     };
 
-    let stderr_layer = tracing_subscriber::fmt::layer()
-        .with_writer(io::stderr)
-        .with_filter(filter(LevelFilter::INFO));
-
     let installed = tracing_subscriber::registry()
-        .with(stderr_layer)
+        .with(stderr_layer())
         .with(file_layer)
         .try_init();
     if let Err(err) = installed {
@@ -76,6 +74,28 @@ pub fn init(data_dir: Option<&Path>) -> Logging {
     }
 
     Logging { _file_guard: guard }
+}
+
+/// Installs the global subscriber with only the stderr output of [`init`],
+/// for processes that should leave no session log behind.
+pub fn init_stderr() -> Logging {
+    let installed = tracing_subscriber::registry()
+        .with(stderr_layer())
+        .try_init();
+    if let Err(err) = installed {
+        eprintln!("glaux: failed to install the log subscriber: {err}");
+    }
+    Logging { _file_guard: None }
+}
+
+/// INFO and above to stderr, unless `RUST_LOG` says otherwise.
+fn stderr_layer<S>() -> impl Layer<S>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    tracing_subscriber::fmt::layer()
+        .with_writer(io::stderr)
+        .with_filter(filter(LevelFilter::INFO))
 }
 
 /// A filter at `default`, unless `RUST_LOG` says otherwise.

@@ -33,6 +33,30 @@ pub enum WindowPlacement {
     /// Leave the position to the platform, e.g. a Wayland compositor, which
     /// does not let clients position their windows.
     PlatformDefault,
+    /// Put the window's client area at (`x`, `y`) in the global desktop space.
+    At { x: i32, y: i32 },
+}
+
+/// A monitor's rectangle in the global desktop space, in screen coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonitorArea {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl MonitorArea {
+    /// The monitor at (`x`, `y`) with the given size, or `None` when the
+    /// platform reports no usable geometry for it.
+    fn new(x: i32, y: i32, width: i32, height: i32) -> Option<Self> {
+        (width > 0 && height > 0).then_some(Self {
+            x,
+            y,
+            width,
+            height,
+        })
+    }
 }
 
 /// How frames are drawn to the window.
@@ -65,18 +89,19 @@ pub struct RaylibHost {
 }
 
 impl RaylibHost {
-    /// Opens a resizable window whose initial size is the logical resolution
-    /// multiplied by `scale` (clamped to at least 1), placed according to
-    /// `placement` and presenting frames as `presentation`.
+    /// Opens a resizable `width`×`height` window presenting frames as
+    /// `presentation`.
+    ///
+    /// The size is raised to at least the logical resolution, which is also
+    /// the window's minimum size. Where the window appears is up to the
+    /// platform until [`place`](Self::place) is called.
     pub fn new(
         title: &str,
-        scale: i32,
-        placement: WindowPlacement,
+        (width, height): (i32, i32),
         presentation: Presentation,
     ) -> Result<Self, HostError> {
-        let scale = scale.max(1);
+        let (window_width, window_height) = (width.max(WIDTH as i32), height.max(HEIGHT as i32));
         let (width, height) = (WIDTH as i32, HEIGHT as i32);
-        let (window_width, window_height) = (width * scale, height * scale);
 
         let (mut rl, thread) = init()
             .size(window_width, window_height)
@@ -96,7 +121,6 @@ impl RaylibHost {
         tracing::debug!(
             logical_width = width,
             logical_height = height,
-            scale,
             raylib_version = %format_args!(
                 "{}.{}.{}",
                 ffi::RAYLIB_VERSION_MAJOR,
@@ -105,8 +129,6 @@ impl RaylibHost {
             ),
             "host configuration"
         );
-        place_window(&mut rl, placement, window_width, window_height);
-
         // A generated image defaults to uncompressed R8G8B8A8, which is the
         // layout `resolve_rgba` produces.
         let image = Image::gen_image_color(width, height, Color::BLACK);
@@ -137,6 +159,76 @@ impl RaylibHost {
             rl,
             thread,
         })
+    }
+
+    /// Moves the window according to `placement`.
+    pub fn place(&mut self, placement: WindowPlacement) {
+        match placement {
+            WindowPlacement::PlatformDefault => {
+                tracing::debug!("window placement left to the platform");
+            }
+            WindowPlacement::At { x, y } => {
+                self.rl.set_window_position(x, y);
+                tracing::debug!(x, y, "window placed at a saved position");
+            }
+            WindowPlacement::CenterOnMonitor => {
+                let (width, height) = self.window_size();
+                center_window(&mut self.rl, width, height);
+            }
+        }
+    }
+
+    /// The connected monitors that report a usable geometry.
+    pub fn monitors(&self) -> Vec<MonitorArea> {
+        (0..get_monitor_count())
+            .filter_map(|monitor| {
+                let origin = get_monitor_position(monitor);
+                MonitorArea::new(
+                    origin.x as i32,
+                    origin.y as i32,
+                    get_monitor_width(monitor),
+                    get_monitor_height(monitor),
+                )
+            })
+            .collect()
+    }
+
+    /// The window's current client-area size in screen coordinates.
+    pub fn window_size(&self) -> (i32, i32) {
+        (self.rl.get_screen_width(), self.rl.get_screen_height())
+    }
+
+    /// The window's client-area position in the global desktop space.
+    ///
+    /// Only meaningful where the platform reports window positions; Wayland
+    /// does not, and the value there never changes.
+    pub fn window_position(&self) -> (i32, i32) {
+        let position = self.rl.get_window_position();
+        (position.x as i32, position.y as i32)
+    }
+
+    /// Whether the window is maximized.
+    pub fn is_maximized(&self) -> bool {
+        self.rl.is_window_maximized()
+    }
+
+    /// Whether the window is minimized.
+    pub fn is_minimized(&self) -> bool {
+        self.rl.is_window_minimized()
+    }
+
+    /// Maximizes the window.
+    pub fn maximize(&mut self) {
+        self.rl.maximize_window();
+    }
+
+    /// Restores the window if it is minimized and asks the platform to give
+    /// it input focus. The platform may refuse.
+    pub fn focus(&mut self) {
+        if self.rl.is_window_minimized() {
+            self.rl.restore_window();
+        }
+        self.rl.set_window_focused();
     }
 
     /// Returns `true` once the user has asked to close the window.
@@ -221,18 +313,8 @@ impl RaylibHost {
     }
 }
 
-/// Applies `placement` to a freshly opened window.
-fn place_window(
-    rl: &mut RaylibHandle,
-    placement: WindowPlacement,
-    window_width: i32,
-    window_height: i32,
-) {
-    if placement == WindowPlacement::PlatformDefault {
-        tracing::debug!("initial window placement left to the platform");
-        return;
-    }
-
+/// Centers a `window_width`×`window_height` window on its current monitor.
+fn center_window(rl: &mut RaylibHandle, window_width: i32, window_height: i32) {
     let monitor = get_current_monitor();
     let origin = get_monitor_position(monitor);
     let (monitor_width, monitor_height) = (get_monitor_width(monitor), get_monitor_height(monitor));
@@ -373,6 +455,21 @@ mod tests {
     #[test]
     fn window_larger_than_monitor_overhangs_evenly() {
         assert_eq!(center_on_monitor(0, 0, 800, 600, 960, 720), (-80, -60));
+    }
+
+    #[test]
+    fn monitors_without_geometry_are_skipped() {
+        assert_eq!(
+            MonitorArea::new(-1920, 0, 1920, 1080),
+            Some(MonitorArea {
+                x: -1920,
+                y: 0,
+                width: 1920,
+                height: 1080
+            })
+        );
+        assert_eq!(MonitorArea::new(0, 0, 0, 1080), None);
+        assert_eq!(MonitorArea::new(0, 0, 1920, -1), None);
     }
 
     #[test]
