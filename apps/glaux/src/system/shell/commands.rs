@@ -1,14 +1,14 @@
 //! Built-in shell commands.
 
-use glaux_luau::Budget;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME, TICK_RATE};
 use glaux_machine::palette::PALETTE_LEN;
 
 use super::super::{SystemInfo, identity_line};
+use super::ShellRequest;
 use super::parser::Invocation;
 use super::scrollback::{Entry, Scrollback};
-use crate::cartridge::LoadedCartridge;
+use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::{CartridgeStorage, EntryKind};
 
 /// What a command can see and change while it runs.
@@ -16,7 +16,10 @@ pub(super) struct Context<'a> {
     pub(super) scrollback: &'a mut Scrollback,
     pub(super) info: &'a SystemInfo,
     pub(super) cartridges: &'a mut CartridgeStorage,
-    pub(super) loaded: &'a mut Option<LoadedCartridge>,
+    pub(super) loaded: Option<&'a LoadedCartridge>,
+    /// Set by a command that needs the system to change the cartridge
+    /// lifecycle.
+    pub(super) request: &'a mut Option<ShellRequest>,
 }
 
 impl Context<'_> {
@@ -189,18 +192,12 @@ fn clear(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     ctx.scrollback.clear();
 }
 
+/// The shell is only active while no cartridge runs, so it reports either
+/// no cartridge or a loaded one. RUNTIME names the runtime the cartridge is
+/// written for.
 fn info(_: &Invocation<'_>, ctx: &mut Context<'_>) {
-    // A loaded cartridge has been validated but does not run while the shell
-    // does; RUNTIME names the runtime it is written for.
     let (runtime, cartridge, state) = match ctx.loaded {
-        Some(loaded) => {
-            let manifest = loaded.manifest();
-            (
-                "LUAU",
-                format!("{} {}", manifest.name, manifest.version),
-                "LOADED",
-            )
-        }
+        Some(loaded) => ("LUAU", cartridge_identity(loaded.manifest()), "LOADED"),
         None => ("NONE", "NONE".into(), "IDLE"),
     };
     let rows = [
@@ -219,6 +216,11 @@ fn info(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     for (label, value) in rows {
         ctx.output(format!("{label:<width$}{value}"));
     }
+}
+
+/// `Name version`, as a cartridge is named in shell output.
+pub(in crate::system) fn cartridge_identity(manifest: &CartridgeManifest) -> String {
+    format!("{} {}", manifest.name, manifest.version)
 }
 
 fn version(_: &Invocation<'_>, ctx: &mut Context<'_>) {
@@ -259,70 +261,28 @@ fn cd(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     }
 }
 
-/// Validates the cartridge in the directory at `PATH` and makes it the
-/// loaded cartridge. A failed load keeps the cartridge loaded before it.
+/// Validates the cartridge in the directory at `PATH` and asks for it to
+/// become the loaded cartridge. A failed load keeps the cartridge loaded
+/// before it.
 fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let path = &invocation.args[0];
     match LoadedCartridge::load(ctx.cartridges, path) {
         Ok(cartridge) => {
-            let manifest = cartridge.manifest();
-            let line = format!("LOADED {} {}", manifest.name, manifest.version);
-            *ctx.loaded = Some(cartridge);
+            let line = format!("LOADED {}", cartridge_identity(cartridge.manifest()));
+            *ctx.request = Some(ShellRequest::Load(cartridge));
             ctx.output(line);
         }
         Err(err) => ctx.error(err.to_string()),
     }
 }
 
-/// Runs the loaded cartridge's entry script once, showing what it prints.
+/// Asks the system to start the loaded cartridge.
 fn run(_: &Invocation<'_>, ctx: &mut Context<'_>) {
-    let Some(cartridge) = ctx.loaded.as_ref() else {
+    if ctx.loaded.is_none() {
         ctx.error("NO CARTRIDGE LOADED");
         return;
-    };
-    let manifest = cartridge.manifest();
-    let finished = format!("FINISHED {} {}", manifest.name, manifest.version);
-    let entry = manifest.entry.clone();
-    let source = match cartridge.entry_source() {
-        Ok(source) => source,
-        Err(err) => {
-            ctx.error(err.to_string());
-            return;
-        }
-    };
-    let scrollback = &mut *ctx.scrollback;
-    let result = glaux_luau::run(&entry, &source, Budget::default(), &mut |text| {
-        for line in print_lines(&text) {
-            scrollback.push(Entry::Output(line));
-        }
-    });
-    match result {
-        Ok(()) => ctx.output(finished),
-        Err(err) => ctx.error(err.to_string()),
     }
-}
-
-/// Columns between tab stops in printed text.
-const TAB_WIDTH: usize = 4;
-
-/// Scrollback lines for one `print`: split at newlines, with tabs expanded
-/// to spaces because the shell wraps by character and has no tab glyph.
-fn print_lines(text: &str) -> impl Iterator<Item = String> + '_ {
-    text.split('\n').map(|line| {
-        let mut expanded = String::with_capacity(line.len());
-        let mut column = 0;
-        for ch in line.chars() {
-            if ch == '\t' {
-                let spaces = TAB_WIDTH - column % TAB_WIDTH;
-                expanded.extend(std::iter::repeat_n(' ', spaces));
-                column += spaces;
-            } else {
-                expanded.push(ch);
-                column += 1;
-            }
-        }
-        expanded
-    })
+    *ctx.request = Some(ShellRequest::Run);
 }
 
 #[cfg(test)]
@@ -339,23 +299,41 @@ mod tests {
         run_loaded(line, rom_version, cartridges, &mut None)
     }
 
-    /// Like [`run_in`], with `loaded` as the loaded cartridge.
+    /// Runs `line` with `loaded` as the loaded cartridge and returns what it
+    /// printed and the request it made.
+    fn execute_line(
+        line: &str,
+        rom_version: Version,
+        cartridges: &mut CartridgeStorage,
+        loaded: Option<&LoadedCartridge>,
+    ) -> (Vec<Entry>, Option<ShellRequest>) {
+        let mut scrollback = Scrollback::default();
+        let info = SystemInfo { rom_version };
+        let mut request = None;
+        let mut ctx = Context {
+            scrollback: &mut scrollback,
+            info: &info,
+            cartridges,
+            loaded,
+            request: &mut request,
+        };
+        execute(&parse(line).unwrap().unwrap(), &mut ctx);
+        (scrollback.iter().cloned().collect(), request)
+    }
+
+    /// Like [`run_in`], with `loaded` as the loaded cartridge. A load request
+    /// is applied to `loaded` as the system would.
     fn run_loaded(
         line: &str,
         rom_version: Version,
         cartridges: &mut CartridgeStorage,
         loaded: &mut Option<LoadedCartridge>,
     ) -> Vec<Entry> {
-        let mut scrollback = Scrollback::default();
-        let info = SystemInfo { rom_version };
-        let mut ctx = Context {
-            scrollback: &mut scrollback,
-            info: &info,
-            cartridges,
-            loaded,
-        };
-        execute(&parse(line).unwrap().unwrap(), &mut ctx);
-        scrollback.iter().cloned().collect()
+        let (entries, request) = execute_line(line, rom_version, cartridges, loaded.as_ref());
+        if let Some(ShellRequest::Load(cartridge)) = request {
+            *loaded = Some(cartridge);
+        }
+        entries
     }
 
     fn no_cartridges() -> CartridgeStorage {
@@ -487,7 +465,8 @@ mod tests {
             scrollback: &mut scrollback,
             info: &info,
             cartridges: &mut cartridges,
-            loaded: &mut None,
+            loaded: None,
+            request: &mut None,
         };
         execute(&parse("clear").unwrap().unwrap(), &mut ctx);
         assert_eq!(scrollback.iter().len(), 0);
@@ -676,118 +655,41 @@ mod tests {
         );
     }
 
-    /// Loads a `Pong` cartridge whose entry script is `script` and runs it.
-    fn run_script(fixture: &Fixture, script: &str) -> Vec<Entry> {
-        let dir = fixture.root().join("pong");
-        write_cartridge(&dir, "Pong");
-        std::fs::write(dir.join("main.luau"), script).unwrap();
-        let mut fs = fixture.storage();
-        let mut loaded = None;
-        run_load("load pong", &mut fs, &mut loaded);
-        run_load("run", &mut fs, &mut loaded)
-    }
-
-    fn single_error(entries: &[Entry]) -> &str {
-        match entries {
-            [Entry::Error(message)] => message,
-            other => panic!("expected one error, got {other:?}"),
-        }
-    }
-
     #[test]
     fn run_needs_a_loaded_cartridge() {
         assert_eq!(run("run"), error("NO CARTRIDGE LOADED"));
         let fixture = Fixture::new("cmd-run-none");
-        assert_eq!(
-            run_fs("RUN", &mut fixture.storage()),
-            error("NO CARTRIDGE LOADED")
-        );
+        let (entries, request) =
+            execute_line("RUN", Version::new(0, 3, 1), &mut fixture.storage(), None);
+        assert_eq!((entries, request), (error("NO CARTRIDGE LOADED"), None));
     }
 
     #[test]
-    fn run_reports_completion() {
-        let fixture = Fixture::new("cmd-run-ok");
-        assert_eq!(
-            run_script(&fixture, "local x = 1"),
-            output(&["FINISHED Pong 0.1.0"])
-        );
-    }
-
-    #[test]
-    fn print_reaches_the_scrollback() {
-        let fixture = Fixture::new("cmd-run-print");
-        let script = r#"
-            print("hello")
-            print("a", 1, true, nil)
-            print("ab\tc\nnext")
-        "#;
-        assert_eq!(
-            run_script(&fixture, script),
-            output(&[
-                "hello",
-                "a   1   true    nil",
-                "ab  c",
-                "next",
-                "FINISHED Pong 0.1.0",
-            ])
-        );
-    }
-
-    #[test]
-    fn script_errors_are_shell_errors() {
-        let fixture = Fixture::new("cmd-run-errors");
-        assert_eq!(
-            run_script(&fixture, r#"print("x") error("boom")"#),
-            vec![
-                Entry::Output("x".into()),
-                Entry::Error("RUNTIME ERROR: main.luau:1: boom".into()),
-            ]
-        );
-        let syntax = run_script(&fixture, "local = 1");
-        assert!(
-            single_error(&syntax).starts_with("SYNTAX ERROR: main.luau:1:"),
-            "{syntax:?}"
-        );
-    }
-
-    #[test]
-    fn missing_entry_is_reported_at_run() {
-        let fixture = Fixture::new("cmd-run-missing");
-        let dir = fixture.root().join("pong");
-        write_cartridge(&dir, "Pong");
+    fn run_requests_the_loaded_cartridge_to_start() {
+        let fixture = Fixture::new("cmd-run-request");
+        write_cartridge(&fixture.root().join("pong"), "Pong");
         let mut fs = fixture.storage();
         let mut loaded = None;
         run_load("load pong", &mut fs, &mut loaded);
-        std::fs::remove_file(dir.join("main.luau")).unwrap();
-        assert_eq!(
-            run_load("run", &mut fs, &mut loaded),
-            error("ENTRY NOT FOUND: main.luau")
-        );
+        let (entries, request) =
+            execute_line("run", Version::new(0, 3, 1), &mut fs, loaded.as_ref());
+        assert_eq!((entries, request), (vec![], Some(ShellRequest::Run)));
     }
 
     #[test]
-    fn script_errors_do_not_reveal_host_paths() {
-        let fixture = Fixture::new("cmd-run-paths");
-        let host_paths = [
-            fixture.base().display().to_string(),
-            fixture.root().display().to_string(),
-            fixture.outside().display().to_string(),
-        ];
-        for script in [
-            "local = 1",
-            r#"error("boom")"#,
-            "local t = nil\nprint(t.x)",
-            r#"require("../../outside/secret")"#,
-            r#"print(debug.info(1, "s"))"#,
-        ] {
-            for entry in run_script(&fixture, script) {
-                let (Entry::Output(text) | Entry::Error(text)) = &entry else {
-                    panic!("unexpected entry {entry:?}");
-                };
-                for path in &host_paths {
-                    assert!(!text.contains(path.as_str()), "{script}: {text}");
-                }
-            }
-        }
+    fn load_is_a_request() {
+        let fixture = Fixture::new("cmd-load-request");
+        write_cartridge(&fixture.root().join("pong"), "Pong");
+        let (entries, request) = execute_line(
+            "load pong",
+            Version::new(0, 3, 1),
+            &mut fixture.storage(),
+            None,
+        );
+        assert_eq!(entries, output(&["LOADED Pong 0.1.0"]));
+        assert!(
+            matches!(&request, Some(ShellRequest::Load(c)) if c.manifest().name == "Pong"),
+            "{request:?}"
+        );
     }
 }

@@ -80,7 +80,7 @@ fn run(placement: WindowPlacement, data_dir: Option<&Path>) -> anyhow::Result<()
         let ticks = clock.advance(now - last);
         last = now;
         for _ in 0..ticks {
-            system.update(&pending);
+            system = system.update(&pending);
             pending.clear();
         }
     }

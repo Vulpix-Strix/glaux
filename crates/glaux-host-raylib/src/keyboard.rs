@@ -28,7 +28,7 @@ struct EditKey {
     repeats: bool,
 }
 
-const EDIT_KEYS: [EditKey; 11] = [
+const EDIT_KEYS: [EditKey; 12] = [
     EditKey {
         key: KeyboardKey::KEY_LEFT,
         event: |select| InputEvent::Left { select },
@@ -85,6 +85,11 @@ const EDIT_KEYS: [EditKey; 11] = [
     EditKey {
         key: KeyboardKey::KEY_TAB,
         event: |_| InputEvent::Tab,
+        repeats: false,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_ESCAPE,
+        event: |_| InputEvent::Break,
         repeats: false,
     },
 ];
@@ -356,6 +361,13 @@ mod tests {
     #[test]
     fn keypad_enter_is_enter() {
         assert_eq!(press(&[KEY_KP_ENTER], false), [InputEvent::Enter]);
+    }
+
+    #[test]
+    fn escape_is_break_and_does_not_repeat() {
+        assert_eq!(press(&[KEY_ESCAPE], false), [InputEvent::Break]);
+        assert_eq!(press(&[KEY_ESCAPE], true), [InputEvent::Break]);
+        assert_eq!(hold(KEY_ESCAPE, 120).iter().sum::<usize>(), 1);
     }
 
     #[test]

@@ -92,8 +92,9 @@ impl LineEditor {
                 self.set_cursor(0, false);
                 return Some(line);
             }
-            // Navigation and completion act on the whole shell, not the line.
-            InputEvent::Up | InputEvent::Down | InputEvent::Tab => {}
+            // Navigation, completion and break act on the whole system, not
+            // the line.
+            InputEvent::Up | InputEvent::Down | InputEvent::Tab | InputEvent::Break => {}
         }
         None
     }

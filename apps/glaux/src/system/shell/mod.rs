@@ -13,6 +13,8 @@ use super::{ACCENT, BACKGROUND, ERROR, Line, SystemInfo, TEXT};
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge_fs::CartridgeStorage;
 use commands::{COMMANDS, Context};
+
+pub(super) use commands::cartridge_identity;
 use completion::{Completion, command_token, complete};
 use history::History;
 use scrollback::{Entry, Scrollback};
@@ -21,9 +23,18 @@ const BANNER: &str = "READY. TYPE HELP FOR HELP";
 const PROMPT: &str = "> ";
 const CURSOR: char = '_';
 
+/// A cartridge lifecycle change asked for by a shell command and carried
+/// out by the system.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellRequest {
+    /// Make this validated cartridge the loaded one, replacing any other.
+    Load(LoadedCartridge),
+    /// Start the loaded cartridge.
+    Run,
+}
+
 /// The command line being edited, the command history, the
-/// output shown above the prompt, the current cartridge directory and the
-/// loaded cartridge.
+/// output shown above the prompt and the current cartridge directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shell {
     editor: LineEditor,
@@ -31,7 +42,6 @@ pub struct Shell {
     scrollback: Scrollback,
     info: SystemInfo,
     cartridges: CartridgeStorage,
-    loaded: Option<LoadedCartridge>,
 }
 
 impl Shell {
@@ -46,13 +56,20 @@ impl Shell {
             scrollback,
             info,
             cartridges,
-            loaded: None,
         }
     }
 
     /// Applies `event`: edits the command line, navigates history,
     /// completes the command name, or runs the line on Enter.
-    pub fn handle_input(&mut self, event: InputEvent) {
+    ///
+    /// `loaded` is the cartridge the system currently has loaded. A command
+    /// that changes the cartridge lifecycle returns the change for the
+    /// system to carry out.
+    pub fn handle_input(
+        &mut self,
+        event: InputEvent,
+        loaded: Option<&LoadedCartridge>,
+    ) -> Option<ShellRequest> {
         match event {
             InputEvent::Up => {
                 let current = self.editor.text();
@@ -68,7 +85,7 @@ impl Shell {
             InputEvent::Tab => self.complete_command(),
             InputEvent::Enter => {
                 if let Some(line) = self.editor.apply(event) {
-                    self.submit(&line);
+                    return self.submit(&line, loaded);
                 }
             }
             // Changing the text ends history navigation, so the edited line
@@ -83,29 +100,72 @@ impl Shell {
             | InputEvent::End { .. } => {
                 self.editor.apply(event);
             }
+            // Nothing runs while the shell is active, so there is nothing to
+            // interrupt.
+            InputEvent::Break => {}
+        }
+        None
+    }
+
+    /// Adds text printed by a cartridge to the scrollback.
+    pub(super) fn print(&mut self, texts: impl IntoIterator<Item = String>) {
+        for text in texts {
+            for line in print_lines(&text) {
+                self.scrollback.push(Entry::Output(line));
+            }
         }
     }
 
+    /// Adds a system status line to the scrollback.
+    pub(super) fn report(&mut self, line: impl Into<String>) {
+        self.scrollback.push(Entry::Output(line.into()));
+    }
+
+    /// Adds a system error line to the scrollback.
+    pub(super) fn report_error(&mut self, line: impl Into<String>) {
+        self.scrollback.push(Entry::Error(line.into()));
+    }
+
+    /// Scrollback text oldest first, with commands after `> ` and errors
+    /// after `! `.
+    #[cfg(test)]
+    pub(super) fn transcript(&self) -> Vec<String> {
+        self.scrollback
+            .iter()
+            .map(|entry| match entry {
+                Entry::Banner(text) | Entry::Output(text) => text.clone(),
+                Entry::Command(text) => format!("{PROMPT}{text}"),
+                Entry::Error(text) => format!("! {text}"),
+            })
+            .collect()
+    }
+
     /// Echoes and runs a submitted line. Blank lines leave no trace.
-    fn submit(&mut self, line: &str) {
+    fn submit(&mut self, line: &str, loaded: Option<&LoadedCartridge>) -> Option<ShellRequest> {
         self.history.reset();
         if line.trim().is_empty() {
-            return;
+            return None;
         }
         self.scrollback.push(Entry::Command(line.to_owned()));
         self.history.push(line);
         match parser::parse(line) {
             Ok(Some(invocation)) => {
+                let mut request = None;
                 let mut ctx = Context {
                     scrollback: &mut self.scrollback,
                     info: &self.info,
                     cartridges: &mut self.cartridges,
-                    loaded: &mut self.loaded,
+                    loaded,
+                    request: &mut request,
                 };
                 commands::execute(&invocation, &mut ctx);
+                request
             }
-            Ok(None) => {}
-            Err(err) => self.scrollback.push(Entry::Error(err.to_string())),
+            Ok(None) => None,
+            Err(err) => {
+                self.scrollback.push(Entry::Error(err.to_string()));
+                None
+            }
         }
     }
 
@@ -225,6 +285,29 @@ impl Shell {
     }
 }
 
+/// Columns between tab stops in printed text.
+const TAB_WIDTH: usize = 4;
+
+/// Scrollback lines for one `print`: split at newlines, with tabs expanded
+/// to spaces because the shell wraps by character and has no tab glyph.
+fn print_lines(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split('\n').map(|line| {
+        let mut expanded = String::with_capacity(line.len());
+        let mut column = 0;
+        for ch in line.chars() {
+            if ch == '\t' {
+                let spaces = TAB_WIDTH - column % TAB_WIDTH;
+                expanded.extend(std::iter::repeat_n(' ', spaces));
+                column += spaces;
+            } else {
+                expanded.push(ch);
+                column += 1;
+            }
+        }
+        expanded
+    })
+}
+
 /// Rows `entry` takes when wrapped to `columns`; an empty entry still takes
 /// one.
 fn entry_rows(entry: &Entry, columns: usize) -> usize {
@@ -306,13 +389,13 @@ mod tests {
 
     fn send(shell: &mut Shell, events: &[InputEvent]) {
         for &event in events {
-            shell.handle_input(event);
+            shell.handle_input(event, None);
         }
     }
 
     fn run(shell: &mut Shell, line: &str) {
         send(shell, &typed(line));
-        shell.handle_input(Enter);
+        shell.handle_input(Enter, None);
     }
 
     fn entries(shell: &Shell) -> Vec<Entry> {
@@ -727,6 +810,57 @@ mod tests {
                 output("GLAUX G1  SYSTEM ROM 0.1.0"),
             ]
         );
+    }
+
+    #[test]
+    fn break_is_ignored() {
+        let mut shell = shell_with(&typed("ab"));
+        let before = shell.clone();
+        assert_eq!(shell.handle_input(InputEvent::Break, None), None);
+        assert_eq!(shell, before);
+    }
+
+    #[test]
+    fn printed_text_is_split_and_tab_expanded() {
+        let mut shell = new_shell();
+        shell.scrollback.clear();
+        shell.print(["hello".to_owned(), "a\t1\ttrue\tnil".to_owned()]);
+        shell.print(["ab\tc\nnext".to_owned()]);
+        assert_eq!(
+            entries(&shell),
+            [
+                output("hello"),
+                output("a   1   true    nil"),
+                output("ab  c"),
+                output("next"),
+            ]
+        );
+    }
+
+    #[test]
+    fn load_and_run_are_returned_as_requests() {
+        let fixture = Fixture::new("shell-requests");
+        write_cartridge(&fixture.root().join("pong"), "Pong");
+        let mut shell = Shell::new(
+            SystemInfo {
+                rom_version: Version::new(0, 1, 0),
+            },
+            fixture.storage(),
+        );
+        send(&mut shell, &typed("load pong"));
+        let Some(ShellRequest::Load(cartridge)) = shell.handle_input(Enter, None) else {
+            panic!("expected a load request");
+        };
+        assert_eq!(cartridge.manifest().name, "Pong");
+
+        send(&mut shell, &typed("run"));
+        assert_eq!(
+            shell.handle_input(Enter, Some(&cartridge)),
+            Some(ShellRequest::Run)
+        );
+        send(&mut shell, &typed("run"));
+        assert_eq!(shell.handle_input(Enter, None), None);
+        assert_eq!(entries(&shell).last(), Some(&error("NO CARTRIDGE LOADED")));
     }
 
     // History navigation.

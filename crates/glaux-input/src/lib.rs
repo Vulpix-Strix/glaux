@@ -34,4 +34,6 @@ pub enum InputEvent {
     Down,
     /// Request completion of the word being typed.
     Tab,
+    /// Interrupt the running program and return to the system.
+    Break,
 }

@@ -84,6 +84,8 @@ impl RaylibHost {
             .vsync()
             .build();
         rl.set_window_min_size(width, height);
+        // Esc is Glaux's break key; raylib would otherwise close the window.
+        rl.set_exit_key(None);
 
         tracing::info!(
             width = window_width,

@@ -1,22 +1,28 @@
-//! System software: the boot sequence and the shell that follows it.
+//! System software: the boot sequence, the shell that follows it, and the
+//! cartridge runtime the shell starts.
 //!
-//! The system advances one tick per host frame and redraws the whole
+//! The system advances one step per logical tick and redraws the whole
 //! framebuffer from its current state on every frame.
 
 mod boot;
 mod line_editor;
+mod running;
 mod shell;
 
 pub use boot::Boot;
 pub use shell::Shell;
 
 use glaux_input::InputEvent;
+use glaux_luau::RuntimeError;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::system_rom::SystemRom;
 use glaux_video::draw::{clear, draw_text, fill_rect};
+use running::{FailedStart, RunningCartridge, StartError};
 use semver::Version;
+use shell::{ShellRequest, cartridge_identity};
 
+use crate::cartridge::LoadedCartridge;
 use crate::cartridge_fs::CartridgeStorage;
 
 // System UI colors, as indices into the system palette (Zughy 32).
@@ -27,11 +33,27 @@ const OK: u8 = 8;
 const ACCENT: u8 = 18;
 const ERROR: u8 = 28;
 
-/// Where the system is in its own navigation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Where the system is in its own navigation. Each variant owns exactly the
+/// state that phase needs, and transitions consume one variant to build the
+/// next.
+#[derive(Debug)]
 pub enum SystemState {
-    Boot(Boot),
-    Shell(Box<Shell>),
+    /// The boot sequence. The cartridge storage waits here for the shell.
+    Boot {
+        boot: Boot,
+        cartridges: CartridgeStorage,
+    },
+    /// The shell is the active UI, with or without a loaded cartridge.
+    Shell {
+        shell: Box<Shell>,
+        loaded: Option<LoadedCartridge>,
+    },
+    /// A cartridge runs and receives the logical ticks. The shell keeps its
+    /// state, collecting printed output, but takes no input.
+    Running {
+        shell: Box<Shell>,
+        running: RunningCartridge,
+    },
 }
 
 /// Facts about the running system that the shell reports.
@@ -46,14 +68,18 @@ fn identity_line(rom_version: &Version) -> String {
     format!("{NAME} {GENERATION}  SYSTEM ROM {rom_version}")
 }
 
+/// Why a running cartridge stopped.
+enum StopReason {
+    /// The user pressed the break key.
+    Break,
+    Failed(RuntimeError),
+}
+
 /// The system UI state machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct System {
     state: SystemState,
     info: SystemInfo,
-    /// Held during boot and moved into the shell when it starts, so there
-    /// is only ever one navigation state.
-    cartridges: Option<CartridgeStorage>,
 }
 
 impl System {
@@ -61,9 +87,11 @@ impl System {
     /// navigates `cartridges`.
     pub fn new(info: SystemInfo, cartridges: CartridgeStorage) -> Self {
         Self {
-            state: SystemState::Boot(Boot::new()),
+            state: SystemState::Boot {
+                boot: Boot::new(),
+                cartridges,
+            },
             info,
-            cartridges: Some(cartridges),
         }
     }
 
@@ -72,32 +100,32 @@ impl System {
         &self.state
     }
 
-    /// Advances the system by one frame, applying the frame's `input`.
+    /// Advances the system by one logical tick, applying the tick's `input`.
     ///
-    /// Input is ignored during the boot sequence.
-    pub fn update(&mut self, input: &[InputEvent]) {
-        match &mut self.state {
-            SystemState::Boot(boot) => {
+    /// Input is ignored during the boot sequence. While a cartridge runs,
+    /// only [`InputEvent::Break`] has an effect: it stops the cartridge.
+    pub fn update(self, input: &[InputEvent]) -> Self {
+        let Self { state, info } = self;
+        let state = match state {
+            SystemState::Boot {
+                mut boot,
+                cartridges,
+            } => {
                 boot.tick();
                 if boot.is_finished() {
                     tracing::info!("boot finished, entering shell");
-                    // The state leaves `Boot` here, so this runs only once.
-                    let cartridges = self
-                        .cartridges
-                        .take()
-                        .expect("cartridge navigation is held until the shell starts");
-                    self.state =
-                        SystemState::Shell(Box::new(Shell::new(self.info.clone(), cartridges)));
+                    SystemState::Shell {
+                        shell: Box::new(Shell::new(info.clone(), cartridges)),
+                        loaded: None,
+                    }
+                } else {
+                    SystemState::Boot { boot, cartridges }
                 }
             }
-            SystemState::Shell(shell) => {
-                // Input is deliberately not logged: user input stays out of
-                // application logs.
-                for &event in input {
-                    shell.handle_input(event);
-                }
-            }
-        }
+            SystemState::Shell { shell, loaded } => shell_tick(shell, loaded, input),
+            SystemState::Running { shell, running } => running_tick(shell, running, input),
+        };
+        Self { state, info }
     }
 
     /// Redraws the whole framebuffer for the current state using the ROM's
@@ -111,12 +139,17 @@ impl System {
         );
 
         let lines = match &self.state {
-            SystemState::Boot(boot) if boot.stage() == boot::BootStage::Intro => {
+            SystemState::Boot { boot, .. } if boot.stage() == boot::BootStage::Intro => {
                 boot::render_intro(framebuffer, font, rom.version(), boot.frame());
                 return;
             }
-            SystemState::Boot(boot) => boot::lines(boot.stage(), rom),
-            SystemState::Shell(shell) => shell.lines(text_columns(cell_w), text_rows(cell_h)),
+            SystemState::Boot { boot, .. } => boot::lines(boot.stage(), rom),
+            SystemState::Shell { shell, .. } => {
+                shell.lines(text_columns(cell_w), text_rows(cell_h))
+            }
+            // Cartridges cannot draw yet, so a running one shows a blank
+            // screen.
+            SystemState::Running { .. } => Vec::new(),
         };
 
         clear(framebuffer, BACKGROUND);
@@ -135,6 +168,112 @@ impl System {
             }
             draw_text(framebuffer, font, &line.text, x, y, line.color);
         }
+    }
+}
+
+/// Feeds `input` to the shell and carries out the cartridge requests its
+/// commands make.
+///
+/// A started cartridge does not take input, so events that follow a
+/// successful `run` in the same tick are dropped.
+fn shell_tick(
+    mut shell: Box<Shell>,
+    mut loaded: Option<LoadedCartridge>,
+    input: &[InputEvent],
+) -> SystemState {
+    // Input is deliberately not logged: user input stays out of
+    // application logs.
+    for (index, &event) in input.iter().enumerate() {
+        match shell.handle_input(event, loaded.as_ref()) {
+            None => {}
+            Some(ShellRequest::Load(cartridge)) => loaded = Some(cartridge),
+            Some(ShellRequest::Run) => {
+                // `run` only asks to start when a cartridge is loaded.
+                let Some(cartridge) = loaded else {
+                    unreachable!("RUN was requested without a loaded cartridge");
+                };
+                return match start(shell, cartridge) {
+                    SystemState::Shell { shell, loaded } => {
+                        shell_tick(shell, loaded, &input[index + 1..])
+                    }
+                    state => state,
+                };
+            }
+        }
+    }
+    SystemState::Shell { shell, loaded }
+}
+
+/// Starts `cartridge`, reporting its start or failure and what it printed.
+/// A cartridge that fails to start stays loaded in the shell.
+fn start(mut shell: Box<Shell>, cartridge: LoadedCartridge) -> SystemState {
+    let identity = cartridge_identity(cartridge.manifest());
+    match RunningCartridge::start(cartridge) {
+        Ok(mut running) => {
+            tracing::info!(cartridge = %identity, "cartridge started");
+            shell.report(format!("RUNNING {identity}"));
+            shell.print(running.take_output());
+            SystemState::Running { shell, running }
+        }
+        Err(failed) => {
+            let FailedStart { cartridge, error } = *failed;
+            match error {
+                StartError::Cartridge(err) => shell.report_error(err.to_string()),
+                StartError::Script(failure) => {
+                    tracing::info!(
+                        cartridge = %identity,
+                        error = %failure.error,
+                        "cartridge failed to start"
+                    );
+                    shell.print(failure.output);
+                    shell.report_error(failure.error.to_string());
+                }
+            }
+            SystemState::Shell {
+                shell,
+                loaded: Some(cartridge),
+            }
+        }
+    }
+}
+
+/// Advances the running cartridge by one tick, or stops it on a break.
+fn running_tick(
+    mut shell: Box<Shell>,
+    mut running: RunningCartridge,
+    input: &[InputEvent],
+) -> SystemState {
+    if input.contains(&InputEvent::Break) {
+        return stop(shell, running, StopReason::Break);
+    }
+    match running.tick() {
+        Ok(()) => {
+            shell.print(running.take_output());
+            SystemState::Running { shell, running }
+        }
+        Err(err) => stop(shell, running, StopReason::Failed(err)),
+    }
+}
+
+/// Disposes of the running cartridge's VM and returns to the shell with the
+/// cartridge still loaded. Every way a cartridge stops goes through here.
+fn stop(mut shell: Box<Shell>, mut running: RunningCartridge, reason: StopReason) -> SystemState {
+    shell.print(running.take_output());
+    let identity = cartridge_identity(running.cartridge().manifest());
+    let cartridge = running.stop();
+    match reason {
+        StopReason::Break => {
+            tracing::info!(cartridge = %identity, "cartridge stopped");
+            shell.report(format!("STOPPED {identity}"));
+        }
+        StopReason::Failed(err) => {
+            tracing::info!(cartridge = %identity, error = %err, "cartridge failed");
+            shell.report_error(err.to_string());
+        }
+    }
+    SystemState::Shell {
+        shell,
+        loaded: Some(cartridge),
     }
 }
 
@@ -235,18 +374,33 @@ mod tests {
 
     fn boot_at(stage: BootStage) -> System {
         let mut system = new_system();
-        while !matches!(system.state(), SystemState::Boot(b) if b.stage() == stage) {
-            system.update(&[]);
+        while !matches!(system.state(), SystemState::Boot { boot, .. } if boot.stage() == stage) {
+            system = system.update(&[]);
         }
         system
     }
 
     fn shell() -> System {
         let mut system = new_system();
-        while matches!(system.state(), SystemState::Boot(_)) {
-            system.update(&[]);
+        while matches!(system.state(), SystemState::Boot { .. }) {
+            system = system.update(&[]);
         }
         system
+    }
+
+    fn assert_boot_frame(system: &System, frame: u32) {
+        match system.state() {
+            SystemState::Boot { boot, .. } => assert_eq!(boot, &Boot::at_frame(frame)),
+            other => panic!("expected boot, got {other:?}"),
+        }
+    }
+
+    /// The shell of a system whose shell is the active UI.
+    fn shell_of(system: &System) -> &Shell {
+        match system.state() {
+            SystemState::Shell { shell, .. } => shell,
+            other => panic!("expected the shell, got {other:?}"),
+        }
     }
 
     /// Whether any pixel in text row `row` (in cells) differs from the
@@ -259,7 +413,7 @@ mod tests {
     #[test]
     fn starts_at_boot_frame_zero() {
         match new_system().state() {
-            SystemState::Boot(boot) => {
+            SystemState::Boot { boot, .. } => {
                 assert_eq!(boot.frame(), 0);
                 assert_eq!(boot.stage(), BootStage::Intro);
             }
@@ -271,8 +425,8 @@ mod tests {
     fn frame_n_is_reached_after_n_updates() {
         let mut system = new_system();
         for n in 1..=10 {
-            system.update(&[]);
-            assert_eq!(system.state(), &SystemState::Boot(Boot::at_frame(n)));
+            system = system.update(&[]);
+            assert_boot_frame(&system, n);
         }
     }
 
@@ -282,12 +436,12 @@ mod tests {
         let mut seen = vec![(0, BootStage::Intro)];
         let mut frame = 0;
 
-        while let SystemState::Boot(boot) = system.state() {
+        while let SystemState::Boot { boot, .. } = system.state() {
             let stage = boot.stage();
             if seen.last().map(|&(_, s)| s) != Some(stage) {
                 seen.push((frame, stage));
             }
-            system.update(&[]);
+            system = system.update(&[]);
             frame += 1;
         }
 
@@ -309,27 +463,17 @@ mod tests {
     fn switches_to_shell_exactly_at_finish_frame() {
         let mut system = new_system();
         for _ in 0..boot::FINISH_FRAME - 1 {
-            system.update(&[]);
+            system = system.update(&[]);
         }
-        assert!(matches!(system.state(), SystemState::Boot(_)));
+        assert!(matches!(system.state(), SystemState::Boot { .. }));
 
-        system.update(&[]);
-        assert_eq!(
-            system.state(),
-            &SystemState::Shell(Box::new(Shell::new(info(), cartridges())))
-        );
-        assert_eq!(
-            system.cartridges, None,
-            "the shell owns the navigation state"
-        );
+        system = system.update(&[]);
+        assert_eq!(shell_of(&system), &Shell::new(info(), cartridges()));
 
         for _ in 0..100 {
-            system.update(&[]);
+            system = system.update(&[]);
         }
-        assert_eq!(
-            system.state(),
-            &SystemState::Shell(Box::new(Shell::new(info(), cartridges())))
-        );
+        assert_eq!(shell_of(&system), &Shell::new(info(), cartridges()));
     }
 
     #[test]
@@ -359,7 +503,7 @@ mod tests {
         for frame in [0, boot::INTRO_FRAMES / 2, boot::INTRO_FRAMES - 1] {
             let mut system = new_system();
             for _ in 0..frame {
-                system.update(&[]);
+                system = system.update(&[]);
             }
             let mut expected = Framebuffer::new();
             boot::render_intro(&mut expected, rom.font(), rom.version(), frame);
@@ -372,7 +516,7 @@ mod tests {
         let last_intro = render(&{
             let mut system = new_system();
             for _ in 0..boot::INTRO_FRAMES - 1 {
-                system.update(&[]);
+                system = system.update(&[]);
             }
             system
         });
@@ -412,8 +556,8 @@ mod tests {
     fn input_during_boot_is_ignored() {
         let mut system = new_system();
         for n in 1..=10 {
-            system.update(&[InputEvent::Text('A'), InputEvent::Enter]);
-            assert_eq!(system.state(), &SystemState::Boot(Boot::at_frame(n)));
+            system = system.update(&[InputEvent::Text('A'), InputEvent::Enter]);
+            assert_boot_frame(&system, n);
         }
     }
 
@@ -423,7 +567,7 @@ mod tests {
         for line in ["pwd", "version"] {
             let mut events: Vec<InputEvent> = line.chars().map(InputEvent::Text).collect();
             events.push(InputEvent::Enter);
-            system.update(&events);
+            system = system.update(&events);
         }
 
         // Banner, `> pwd`, its error, `> version`, its output.
@@ -436,8 +580,8 @@ mod tests {
     #[test]
     fn typed_text_reaches_shell() {
         let mut system = shell();
-        system.update(&[InputEvent::Text('H'), InputEvent::Text('I')]);
-        system.update(&[InputEvent::Left { select: false }]);
+        system = system.update(&[InputEvent::Text('H'), InputEvent::Text('I')]);
+        system = system.update(&[InputEvent::Left { select: false }]);
 
         let mut expected = Shell::new(info(), cartridges());
         for event in [
@@ -445,16 +589,16 @@ mod tests {
             InputEvent::Text('I'),
             InputEvent::Left { select: false },
         ] {
-            expected.handle_input(event);
+            expected.handle_input(event, None);
         }
-        assert_eq!(system.state(), &SystemState::Shell(Box::new(expected)));
+        assert_eq!(shell_of(&system), &expected);
     }
 
     #[test]
     fn typed_text_renders_after_prompt() {
         let mut system = shell();
         let empty = render(&system);
-        system.update(&[InputEvent::Text('A')]);
+        system = system.update(&[InputEvent::Text('A')]);
         let typed = render(&system);
 
         // Cell columns 2 and 3 follow the two-char prompt. The cursor starts
@@ -470,7 +614,7 @@ mod tests {
     #[test]
     fn submitted_line_stays_on_screen_above_a_new_prompt() {
         let mut system = shell();
-        system.update(&[InputEvent::Text('A'), InputEvent::Enter]);
+        system = system.update(&[InputEvent::Text('A'), InputEvent::Enter]);
 
         let fb = render(&system);
         // Row 1 keeps "> A"; the error follows on row 2 and the new, empty
@@ -485,7 +629,7 @@ mod tests {
     #[test]
     fn selected_cells_render_inverse() {
         let mut system = shell();
-        system.update(&[
+        system = system.update(&[
             InputEvent::Text('A'),
             InputEvent::Text('B'),
             InputEvent::Left { select: false },
@@ -520,14 +664,14 @@ mod tests {
         let mut system = shell();
         let fits = text_columns(CELL_W) - 2;
         let mut input = vec![InputEvent::Text('o'); fits];
-        system.update(&input);
+        system = system.update(&input);
         // The cursor sits in the first cell of row 2 once row 1 is full.
         assert!(row_has_ink(&render(&system), 2));
 
         // Glyph pixels of the first cell on row 2 (margin + row offset).
         let first_cell_of_row_2 = |fb: &Framebuffer| fb.pixel(CELL_W, 3 * CELL_H);
         input.truncate(1);
-        system.update(&input);
+        system = system.update(&input);
         let fb = render(&system);
         assert_eq!(first_cell_of_row_2(&fb), Some(TEXT));
         assert!(row_has_ink(&fb, 2));
@@ -549,5 +693,278 @@ mod tests {
             system.render(&mut second, &rom);
             assert_eq!(first, second);
         }
+    }
+
+    // Cartridge lifecycle.
+
+    use crate::cartridge::fixture::write_cartridge;
+    use crate::cartridge_fs::fixture::Fixture;
+
+    /// A system at the shell, navigating a cartridge root that holds a
+    /// `Pong` cartridge at `/pong` whose entry script is `script`.
+    fn shell_with_cartridge(fixture: &Fixture, script: &str) -> System {
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        std::fs::write(dir.join("main.luau"), script).unwrap();
+        let mut system = System::new(info(), fixture.storage());
+        while matches!(system.state(), SystemState::Boot { .. }) {
+            system = system.update(&[]);
+        }
+        system
+    }
+
+    /// Types `line` and presses Enter within one tick.
+    fn enter(system: System, line: &str) -> System {
+        let mut events: Vec<InputEvent> = line.chars().map(InputEvent::Text).collect();
+        events.push(InputEvent::Enter);
+        system.update(&events)
+    }
+
+    /// Loads and runs the `Pong` cartridge with `script` as its entry.
+    fn started(fixture: &Fixture, script: &str) -> System {
+        let system = shell_with_cartridge(fixture, script);
+        enter(enter(system, "load pong"), "run")
+    }
+
+    fn ticks(mut system: System, n: usize) -> System {
+        for _ in 0..n {
+            system = system.update(&[]);
+        }
+        system
+    }
+
+    fn press_break(system: System) -> System {
+        system.update(&[InputEvent::Break])
+    }
+
+    fn is_running(system: &System) -> bool {
+        matches!(system.state(), SystemState::Running { .. })
+    }
+
+    fn loaded_name(system: &System) -> Option<&str> {
+        match system.state() {
+            SystemState::Shell { loaded, .. } => {
+                loaded.as_ref().map(|c| c.manifest().name.as_str())
+            }
+            other => panic!("expected the shell, got {other:?}"),
+        }
+    }
+
+    fn transcript(system: &System) -> Vec<String> {
+        match system.state() {
+            SystemState::Shell { shell, .. } | SystemState::Running { shell, .. } => {
+                shell.transcript()
+            }
+            other => panic!("expected a shell, got {other:?}"),
+        }
+    }
+
+    /// What was added to the transcript after the line `from`.
+    fn after(system: &System, from: &str) -> Vec<String> {
+        let lines = transcript(system);
+        let start = lines.iter().rposition(|l| l == from).unwrap() + 1;
+        lines[start..].to_vec()
+    }
+
+    const LIFECYCLE: &str = r#"
+        print("entry")
+        function boot() print("boot") end
+        local n = 0
+        function tick() n += 1 print("tick", n) end
+        function draw() print("draw", n) end
+    "#;
+
+    #[test]
+    fn run_starts_the_cartridge_and_ticks_drive_it() {
+        let fixture = Fixture::new("sys-run");
+        let system = started(&fixture, LIFECYCLE);
+        assert!(is_running(&system));
+        assert_eq!(
+            after(&system, "> run"),
+            ["RUNNING Pong 0.1.0", "entry", "boot"]
+        );
+
+        let system = press_break(ticks(system, 3));
+        assert_eq!(
+            after(&system, "> run"),
+            [
+                "RUNNING Pong 0.1.0",
+                "entry",
+                "boot",
+                "tick    1",
+                "draw    1",
+                "tick    2",
+                "draw    2",
+                "tick    3",
+                "draw    3",
+                "STOPPED Pong 0.1.0",
+            ]
+        );
+        assert_eq!(loaded_name(&system), Some("Pong"));
+    }
+
+    #[test]
+    fn the_shell_takes_no_input_while_running() {
+        let fixture = Fixture::new("sys-run-input");
+        let system = enter(started(&fixture, ""), "help");
+        assert!(is_running(&system));
+        let system = press_break(system);
+        assert_eq!(
+            after(&system, "> run"),
+            ["RUNNING Pong 0.1.0", "STOPPED Pong 0.1.0"]
+        );
+        // Nothing typed while running reached the command line.
+        let system = system.update(&[InputEvent::Enter]);
+        assert_eq!(transcript(&system).last().unwrap(), "STOPPED Pong 0.1.0");
+    }
+
+    #[test]
+    fn break_in_the_shell_is_ignored() {
+        let fixture = Fixture::new("sys-shell-break");
+        let system = enter(shell_with_cartridge(&fixture, ""), "load pong");
+        let before = transcript(&system);
+        let system = press_break(system);
+        assert_eq!(transcript(&system), before);
+        assert_eq!(loaded_name(&system), Some("Pong"));
+    }
+
+    #[test]
+    fn running_again_starts_a_fresh_vm() {
+        let fixture = Fixture::new("sys-rerun");
+        let script = "function tick() count = (count or 0) + 1 print(count) end";
+        let system = press_break(ticks(started(&fixture, script), 2));
+        let system = press_break(ticks(enter(system, "run"), 1));
+        assert_eq!(
+            after(&system, "> run"),
+            ["RUNNING Pong 0.1.0", "1", "STOPPED Pong 0.1.0"]
+        );
+        assert!(transcript(&system).contains(&"2".to_owned()));
+    }
+
+    #[test]
+    fn start_failures_keep_the_cartridge_loaded() {
+        let fixture = Fixture::new("sys-start-fail");
+        for (script, expected) in [
+            (
+                r#"print("x") error("boom")"#,
+                vec!["x", "! RUNTIME ERROR: main.luau:1: boom"],
+            ),
+            (
+                r#"print("e") function boot() print("b") error("no") end"#,
+                vec!["e", "b", "! RUNTIME ERROR IN BOOT: main.luau:1: no"],
+            ),
+            (
+                "function boot() while true do end end",
+                vec!["! EXECUTION LIMIT EXCEEDED IN BOOT"],
+            ),
+            ("while true do end", vec!["! EXECUTION LIMIT EXCEEDED"]),
+        ] {
+            let system = started(&fixture, script);
+            assert_eq!(after(&system, "> run"), expected, "{script}");
+            assert_eq!(loaded_name(&system), Some("Pong"), "{script}");
+        }
+
+        let system = started(&fixture, "local = 1");
+        let lines = after(&system, "> run");
+        assert!(
+            matches!(lines.as_slice(), [only] if only.starts_with("! SYNTAX ERROR: main.luau:1:")),
+            "{lines:?}"
+        );
+        assert_eq!(loaded_name(&system), Some("Pong"));
+    }
+
+    #[test]
+    fn callback_failures_stop_the_cartridge() {
+        let fixture = Fixture::new("sys-tick-fail");
+        for (script, error) in [
+            (
+                r#"function tick() print("t") error("boom") end"#,
+                "! RUNTIME ERROR IN TICK: main.luau:1: boom",
+            ),
+            (
+                r#"function tick() print("t") end function draw() error("bad") end"#,
+                "! RUNTIME ERROR IN DRAW: main.luau:1: bad",
+            ),
+            (
+                r#"function tick() print("t") while true do end end"#,
+                "! EXECUTION LIMIT EXCEEDED IN TICK",
+            ),
+            (
+                r#"function tick() print("t") end
+                   function draw() pcall(function() while true do end end) end"#,
+                "! EXECUTION LIMIT EXCEEDED IN DRAW",
+            ),
+        ] {
+            let system = ticks(started(&fixture, script), 1);
+            assert_eq!(
+                after(&system, "> run"),
+                ["RUNNING Pong 0.1.0", "t", error],
+                "{script}"
+            );
+            assert_eq!(loaded_name(&system), Some("Pong"), "{script}");
+        }
+    }
+
+    #[test]
+    fn info_reflects_the_cartridge_state() {
+        let fixture = Fixture::new("sys-info");
+        let state = |system: System| {
+            let system = enter(system, "info");
+            let line = transcript(&system).last().unwrap().clone();
+            (system, line)
+        };
+        let (system, line) = state(shell_with_cartridge(&fixture, ""));
+        assert_eq!(line, "STATE       IDLE");
+        let (system, line) = state(enter(system, "load pong"));
+        assert_eq!(line, "STATE       LOADED");
+        let (system, line) = state(press_break(enter(system, "run")));
+        assert_eq!(line, "STATE       LOADED");
+        assert!(transcript(&system).contains(&"CARTRIDGE   Pong 0.1.0".to_owned()));
+    }
+
+    #[test]
+    fn missing_entry_is_reported_at_run() {
+        let fixture = Fixture::new("sys-run-missing");
+        let system = enter(shell_with_cartridge(&fixture, ""), "load pong");
+        std::fs::remove_file(fixture.root().join("pong/main.luau")).unwrap();
+        let system = enter(system, "run");
+        assert_eq!(after(&system, "> run"), ["! ENTRY NOT FOUND: main.luau"]);
+        assert_eq!(loaded_name(&system), Some("Pong"));
+    }
+
+    #[test]
+    fn script_errors_do_not_reveal_host_paths() {
+        let fixture = Fixture::new("sys-run-paths");
+        let host_paths = [
+            fixture.base().display().to_string(),
+            fixture.root().display().to_string(),
+            fixture.outside().display().to_string(),
+        ];
+        for script in [
+            "local = 1",
+            r#"error("boom")"#,
+            "local t = nil\nprint(t.x)",
+            r#"require("../../outside/secret")"#,
+            r#"print(debug.info(1, "s"))"#,
+            r#"function tick() print(debug.info(1, "s")) error("x") end"#,
+        ] {
+            let system = ticks(started(&fixture, script), 1);
+            for line in after(&system, "> run") {
+                for path in &host_paths {
+                    assert!(!line.contains(path.as_str()), "{script}: {line}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_running_cartridge_shows_a_blank_screen() {
+        let fixture = Fixture::new("sys-run-render");
+        let system = started(&fixture, r#"function tick() print("x") end"#);
+        let system = ticks(system, 2);
+        assert!(is_running(&system));
+        let mut blank = Framebuffer::new();
+        clear(&mut blank, BACKGROUND);
+        assert_eq!(render(&system), blank);
     }
 }
