@@ -7,6 +7,7 @@ use glaux_machine::palette::PALETTE_LEN;
 use super::super::{SystemInfo, identity_line};
 use super::parser::Invocation;
 use super::scrollback::{Entry, Scrollback};
+use crate::cartridge::LoadedCartridge;
 use crate::cartridge_fs::{CartridgeStorage, EntryKind};
 
 /// What a command can see and change while it runs.
@@ -14,6 +15,7 @@ pub(super) struct Context<'a> {
     pub(super) scrollback: &'a mut Scrollback,
     pub(super) info: &'a SystemInfo,
     pub(super) cartridges: &'a mut CartridgeStorage,
+    pub(super) loaded: &'a mut Option<LoadedCartridge>,
 }
 
 impl Context<'_> {
@@ -37,6 +39,8 @@ pub(super) struct Command {
     pub(super) aliases: &'static [&'static str],
     pub(super) usage: &'static str,
     pub(super) description: &'static str,
+    /// Fewest positional arguments accepted; fewer is a usage error.
+    min_args: usize,
     /// Most positional arguments accepted; more is a usage error.
     max_args: usize,
     handler: Handler,
@@ -49,6 +53,7 @@ pub(super) static COMMANDS: &[Command] = &[
         aliases: &["?"],
         usage: "HELP [COMMAND]",
         description: "SHOW AVAILABLE COMMANDS",
+        min_args: 0,
         max_args: 1,
         handler: help,
     },
@@ -57,6 +62,7 @@ pub(super) static COMMANDS: &[Command] = &[
         aliases: &["cls"],
         usage: "CLEAR",
         description: "CLEAR THE CONSOLE",
+        min_args: 0,
         max_args: 0,
         handler: clear,
     },
@@ -65,6 +71,7 @@ pub(super) static COMMANDS: &[Command] = &[
         aliases: &[],
         usage: "INFO",
         description: "SHOW SYSTEM INFORMATION",
+        min_args: 0,
         max_args: 0,
         handler: info,
     },
@@ -73,6 +80,7 @@ pub(super) static COMMANDS: &[Command] = &[
         aliases: &["ver"],
         usage: "VERSION",
         description: "SHOW THE SYSTEM ROM VERSION",
+        min_args: 0,
         max_args: 0,
         handler: version,
     },
@@ -81,6 +89,7 @@ pub(super) static COMMANDS: &[Command] = &[
         aliases: &[],
         usage: "PWD",
         description: "SHOW THE CURRENT DIRECTORY",
+        min_args: 0,
         max_args: 0,
         handler: pwd,
     },
@@ -89,6 +98,7 @@ pub(super) static COMMANDS: &[Command] = &[
         aliases: &["dir"],
         usage: "LS [PATH]",
         description: "LIST A DIRECTORY",
+        min_args: 0,
         max_args: 1,
         handler: ls,
     },
@@ -97,8 +107,18 @@ pub(super) static COMMANDS: &[Command] = &[
         aliases: &[],
         usage: "CD [PATH]",
         description: "CHANGE THE CURRENT DIRECTORY",
+        min_args: 0,
         max_args: 1,
         handler: cd,
+    },
+    Command {
+        name: "load",
+        aliases: &[],
+        usage: "LOAD PATH",
+        description: "LOAD A CARTRIDGE",
+        min_args: 1,
+        max_args: 1,
+        handler: load,
     },
 ];
 
@@ -120,7 +140,7 @@ pub(super) fn execute(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         ctx.error(unknown_command(&invocation.name));
         return;
     };
-    if invocation.args.len() > command.max_args {
+    if !(command.min_args..=command.max_args).contains(&invocation.args.len()) {
         ctx.error(format!("USAGE: {}", command.usage));
         return;
     }
@@ -160,8 +180,19 @@ fn clear(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 }
 
 fn info(_: &Invocation<'_>, ctx: &mut Context<'_>) {
-    // No runtime or cartridge subsystem exists yet, so while the shell runs
-    // nothing else can be loaded or executing.
+    // A loaded cartridge has been validated but does not run while the shell
+    // does; RUNTIME names the runtime it is written for.
+    let (runtime, cartridge, state) = match ctx.loaded {
+        Some(loaded) => {
+            let manifest = loaded.manifest();
+            (
+                "LUAU",
+                format!("{} {}", manifest.name, manifest.version),
+                "LOADED",
+            )
+        }
+        None => ("NONE", "NONE".into(), "IDLE"),
+    };
     let rows = [
         ("MACHINE", format!("{NAME} {GENERATION}")),
         ("SYSTEM ROM", ctx.info.rom_version.to_string()),
@@ -170,9 +201,9 @@ fn info(_: &Invocation<'_>, ctx: &mut Context<'_>) {
             format!("{WIDTH}x{HEIGHT} INDEXED, {PALETTE_LEN} COLORS"),
         ),
         ("TICK RATE", format!("{TICK_RATE} HZ")),
-        ("RUNTIME", "NONE".into()),
-        ("CARTRIDGE", "NONE".into()),
-        ("STATE", "IDLE".into()),
+        ("RUNTIME", runtime.into()),
+        ("CARTRIDGE", cartridge),
+        ("STATE", state.into()),
     ];
     let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0) + 2;
     for (label, value) in rows {
@@ -218,22 +249,49 @@ fn cd(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     }
 }
 
+/// Validates the cartridge in the directory at `PATH` and makes it the
+/// loaded cartridge. A failed load keeps the cartridge loaded before it.
+fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
+    let path = &invocation.args[0];
+    match LoadedCartridge::load(ctx.cartridges, path) {
+        Ok(cartridge) => {
+            let manifest = cartridge.manifest();
+            let line = format!("LOADED {} {}", manifest.name, manifest.version);
+            *ctx.loaded = Some(cartridge);
+            ctx.output(line);
+        }
+        Err(err) => ctx.error(err.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::parser::parse;
     use super::*;
+    use crate::cartridge::fixture::{write_cartridge, write_manifest};
     use crate::cartridge_fs::fixture::Fixture;
     use pretty_assertions::assert_eq;
     use semver::Version;
 
     /// Runs `line` on an empty scrollback and returns what it printed.
     fn run_in(line: &str, rom_version: Version, cartridges: &mut CartridgeStorage) -> Vec<Entry> {
+        run_loaded(line, rom_version, cartridges, &mut None)
+    }
+
+    /// Like [`run_in`], with `loaded` as the loaded cartridge.
+    fn run_loaded(
+        line: &str,
+        rom_version: Version,
+        cartridges: &mut CartridgeStorage,
+        loaded: &mut Option<LoadedCartridge>,
+    ) -> Vec<Entry> {
         let mut scrollback = Scrollback::default();
         let info = SystemInfo { rom_version };
         let mut ctx = Context {
             scrollback: &mut scrollback,
             info: &info,
             cartridges,
+            loaded,
         };
         execute(&parse(line).unwrap().unwrap(), &mut ctx);
         scrollback.iter().cloned().collect()
@@ -301,6 +359,7 @@ mod tests {
                 "PWD      SHOW THE CURRENT DIRECTORY",
                 "LS       LIST A DIRECTORY",
                 "CD       CHANGE THE CURRENT DIRECTORY",
+                "LOAD     LOAD A CARTRIDGE",
             ])
         );
     }
@@ -366,6 +425,7 @@ mod tests {
             scrollback: &mut scrollback,
             info: &info,
             cartridges: &mut cartridges,
+            loaded: &mut None,
         };
         execute(&parse("clear").unwrap().unwrap(), &mut ctx);
         assert_eq!(scrollback.iter().len(), 0);
@@ -386,6 +446,12 @@ mod tests {
         assert_eq!(run("pwd x"), error("USAGE: PWD"));
         assert_eq!(run("ls a b"), error("USAGE: LS [PATH]"));
         assert_eq!(run("cd a b"), error("USAGE: CD [PATH]"));
+        assert_eq!(run("load a b"), error("USAGE: LOAD PATH"));
+    }
+
+    #[test]
+    fn missing_arguments_are_usage_errors() {
+        assert_eq!(run("load"), error("USAGE: LOAD PATH"));
     }
 
     #[test]
@@ -396,7 +462,15 @@ mod tests {
 
     #[test]
     fn filesystem_commands_need_storage() {
-        for line in ["pwd", "ls", "ls games", "dir", "cd", "cd games"] {
+        for line in [
+            "pwd",
+            "ls",
+            "ls games",
+            "dir",
+            "cd",
+            "cd games",
+            "load games",
+        ] {
             assert_eq!(run(line), error("CARTRIDGE STORAGE UNAVAILABLE"), "{line}");
         }
     }
@@ -454,5 +528,88 @@ mod tests {
             error("NOT A DIRECTORY: /b.txt")
         );
         assert_eq!(run_fs("pwd", &mut fs), output(&["/games"]));
+    }
+
+    /// Runs `line` against `cartridges` and the loaded cartridge in `loaded`.
+    fn run_load(
+        line: &str,
+        cartridges: &mut CartridgeStorage,
+        loaded: &mut Option<LoadedCartridge>,
+    ) -> Vec<Entry> {
+        run_loaded(line, Version::new(0, 3, 1), cartridges, loaded)
+    }
+
+    fn info_state(entries: &[Entry]) -> Vec<Entry> {
+        entries[4..].to_vec()
+    }
+
+    #[test]
+    fn load_reports_the_cartridge_and_info_shows_it() {
+        let fixture = Fixture::new("cmd-load");
+        write_cartridge(&fixture.root().join("games/pong"), "Pong");
+        let mut fs = fixture.storage();
+        let mut loaded = None;
+
+        assert_eq!(
+            info_state(&run_load("info", &mut fs, &mut loaded)),
+            output(&["RUNTIME     NONE", "CARTRIDGE   NONE", "STATE       IDLE"])
+        );
+        run_load("cd games", &mut fs, &mut loaded);
+        assert_eq!(
+            run_load("load pong", &mut fs, &mut loaded),
+            output(&["LOADED Pong 0.1.0"])
+        );
+        assert_eq!(
+            info_state(&run_load("info", &mut fs, &mut loaded)),
+            output(&[
+                "RUNTIME     LUAU",
+                "CARTRIDGE   Pong 0.1.0",
+                "STATE       LOADED"
+            ])
+        );
+    }
+
+    #[test]
+    fn failed_load_keeps_the_loaded_cartridge() {
+        let fixture = Fixture::new("cmd-load-keep");
+        write_cartridge(&fixture.root().join("games/pong"), "Pong");
+        write_manifest(&fixture.root().join("games/owl"), "{");
+        let mut fs = fixture.storage();
+        let mut loaded = None;
+
+        assert_eq!(
+            run_load("load games/owl", &mut fs, &mut loaded),
+            error("CART.JSON IS NOT VALID JSON (LINE 1)")
+        );
+        assert_eq!(loaded, None);
+
+        run_load("load /games/pong", &mut fs, &mut loaded);
+        let pong = loaded.clone();
+        for line in ["load games/owl", "load nope", "load b.txt", "load tools"] {
+            assert_eq!(run_load(line, &mut fs, &mut loaded).len(), 1, "{line}");
+            assert_eq!(loaded, pong, "{line}");
+        }
+        assert!(
+            run_load("info", &mut fs, &mut loaded)
+                .contains(&Entry::Output("CARTRIDGE   Pong 0.1.0".into()))
+        );
+    }
+
+    #[test]
+    fn load_replaces_the_loaded_cartridge() {
+        let fixture = Fixture::new("cmd-load-replace");
+        write_cartridge(&fixture.root().join("pong"), "Pong");
+        write_cartridge(&fixture.root().join("owl"), "Owl");
+        let mut fs = fixture.storage();
+        let mut loaded = None;
+        run_load("load pong", &mut fs, &mut loaded);
+        assert_eq!(
+            run_load("load owl", &mut fs, &mut loaded),
+            output(&["LOADED Owl 0.1.0"])
+        );
+        assert_eq!(
+            loaded.map(|c| c.manifest().name.clone()),
+            Some("Owl".into())
+        );
     }
 }

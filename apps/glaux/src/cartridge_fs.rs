@@ -41,6 +41,8 @@ pub enum FsError {
     NotFound(String),
     #[error("NOT A DIRECTORY: {0}")]
     NotADirectory(String),
+    #[error("NOT A FILE: {0}")]
+    NotAFile(String),
     #[error("CANNOT READ {0}")]
     Unreadable(String),
     #[error("CARTRIDGE STORAGE UNAVAILABLE")]
@@ -93,6 +95,11 @@ impl CartridgeStorage {
             Self::Available(fs) => fs.change_dir(path),
             Self::Unavailable => Err(FsError::Unavailable),
         }
+    }
+
+    /// See [`CartridgeFs::subdir`].
+    pub fn subdir(&self, path: &str) -> Result<(String, CartridgeFs), FsError> {
+        self.fs()?.subdir(path)
     }
 
     fn fs(&self) -> Result<&CartridgeFs, FsError> {
@@ -197,6 +204,46 @@ impl CartridgeFs {
         Ok(listing)
     }
 
+    /// The directory at `path`, absolute or relative to the current
+    /// directory, as a filesystem of its own: returns the directory's virtual
+    /// path here and a navigation state at `/` rooted at it.
+    ///
+    /// The new root is the directory's canonical host path, so every lookup
+    /// through the returned filesystem is confined to that directory: `..`
+    /// stops at it and symlinks leading out of it are not followed, even when
+    /// their target lies elsewhere inside this filesystem.
+    pub fn subdir(&self, path: &str) -> Result<(String, CartridgeFs), FsError> {
+        let target = self.resolve(path)?;
+        let dir = self.directory(&target)?;
+        let canonical = fs::canonicalize(&dir).map_err(|err| io_failure(err, &target))?;
+        // `locate` only yields paths inside the root, but the tree may change
+        // between that walk and `canonicalize`.
+        if !canonical.starts_with(&self.root) {
+            tracing::debug!(
+                path = %virtual_path(&target),
+                resolved = %canonical.display(),
+                "directory resolved outside the cartridge root"
+            );
+            return Err(FsError::NotFound(virtual_path(&target)));
+        }
+        Ok((virtual_path(&target), Self::new(canonical)))
+    }
+
+    /// Fails unless `path`, absolute or relative to the current directory,
+    /// is a regular file.
+    pub fn ensure_file(&self, path: &str) -> Result<(), FsError> {
+        let target = self.resolve(path)?;
+        self.regular_file(&target).map(drop)
+    }
+
+    /// Contents of the regular file at `path`, absolute or relative to the
+    /// current directory.
+    pub fn read_file(&self, path: &str) -> Result<Vec<u8>, FsError> {
+        let target = self.resolve(path)?;
+        let file = self.regular_file(&target)?;
+        fs::read(&file).map_err(|err| io_failure(err, &target))
+    }
+
     /// Resolves `path` lexically into components below `/`. `..` at `/`
     /// stays at `/`.
     fn resolve(&self, path: &str) -> Result<Vec<String>, FsError> {
@@ -226,6 +273,29 @@ impl CartridgeFs {
         match self.locate(components) {
             Ok((path, EntryKind::Directory)) => Ok(path),
             Ok((_, EntryKind::File)) => Err(FsError::NotADirectory(virtual_path(components))),
+            Err(Lookup::Missing) => Err(FsError::NotFound(virtual_path(components))),
+            Err(Lookup::Io(err)) => Err(io_failure(err, components)),
+        }
+    }
+
+    /// Host path of the regular file at `components`.
+    ///
+    /// Anything else that is not a directory (a FIFO, socket or device) is
+    /// [`FsError::NotAFile`] too, so reading never blocks on a special file.
+    fn regular_file(&self, components: &[String]) -> Result<PathBuf, FsError> {
+        match self.locate(components) {
+            Ok((path, EntryKind::File)) => {
+                // `locate` returns a path free of symlinks, so this inspects
+                // the file itself.
+                let meta =
+                    fs::symlink_metadata(&path).map_err(|err| io_failure(err, components))?;
+                if meta.is_file() {
+                    Ok(path)
+                } else {
+                    Err(FsError::NotAFile(virtual_path(components)))
+                }
+            }
+            Ok((_, EntryKind::Directory)) => Err(FsError::NotAFile(virtual_path(components))),
             Err(Lookup::Missing) => Err(FsError::NotFound(virtual_path(components))),
             Err(Lookup::Io(err)) => Err(io_failure(err, components)),
         }
@@ -588,6 +658,51 @@ mod tests {
         assert_eq!(err.to_string(), "NOT A DIRECTORY: /b.txt");
     }
 
+    #[test]
+    fn subdir_is_rooted_at_the_directory() {
+        let fixture = Fixture::new("subdir");
+        fs::write(fixture.root().join("games/owl/cart.json"), "{}").unwrap();
+        let mut fs = fixture.open();
+        fs.change_dir("games").unwrap();
+
+        let (path, owl) = fs.subdir("owl").unwrap();
+        assert_eq!(path, "/games/owl");
+        assert_eq!(owl.cwd(), "/");
+        assert_eq!(ls(&owl, None), ["cart.json"]);
+        // `..` stops at the new root.
+        assert_eq!(ls(&owl, Some("../..")), ["cart.json"]);
+        assert_eq!(owl.read_file("/../../readme"), Err(not_found("/readme")));
+
+        assert_eq!(fs.subdir("/").map(|(path, _)| path), Ok("/".into()));
+        assert_eq!(fs.subdir("nope").map(drop), Err(not_found("/games/nope")));
+        assert_eq!(
+            fs.subdir("/b.txt").map(drop),
+            Err(FsError::NotADirectory("/b.txt".into()))
+        );
+        assert_eq!(
+            CartridgeStorage::Unavailable.subdir("/").map(drop),
+            Err(FsError::Unavailable)
+        );
+    }
+
+    #[test]
+    fn files_are_read_only_when_regular() {
+        let fixture = Fixture::new("read-file");
+        fs::write(fixture.root().join("tools/note"), "hello").unwrap();
+        let fs = fixture.open();
+
+        assert_eq!(fs.read_file("tools/note"), Ok(b"hello".to_vec()));
+        assert_eq!(fs.ensure_file("/tools/note"), Ok(()));
+        let not_a_file = FsError::NotAFile("/tools".into());
+        assert_eq!(fs.read_file("tools"), Err(not_a_file.clone()));
+        assert_eq!(fs.ensure_file("tools"), Err(not_a_file));
+        assert_eq!(fs.read_file("/"), Err(FsError::NotAFile("/".into())));
+        assert_eq!(fs.read_file("tools/nope"), Err(not_found("/tools/nope")));
+        assert_eq!(fs.ensure_file("b.txt/x"), Err(not_found("/b.txt/x")));
+        assert_eq!(not_found("/x").to_string(), "NO SUCH FILE OR DIRECTORY: /x");
+        assert_eq!(FsError::NotAFile("/x".into()).to_string(), "NOT A FILE: /x");
+    }
+
     #[cfg(unix)]
     mod symlinks {
         use super::*;
@@ -636,6 +751,44 @@ mod tests {
             assert_eq!(
                 ls(&fs, None),
                 ["games/", "tools/", "Zeta/", "A.txt", "b.txt", "readme"]
+            );
+        }
+
+        #[test]
+        fn subdir_confines_links_to_the_directory() {
+            let fixture = Fixture::new("links-subdir");
+            let root = fixture.root();
+            symlink(root.join("b.txt"), root.join("games/owl/b-abs")).unwrap();
+            symlink("../../b.txt", root.join("games/owl/b-rel")).unwrap();
+            symlink("../../tools", root.join("games/owl/tools")).unwrap();
+            fs::write(root.join("games/owl/own"), "").unwrap();
+            symlink("own", root.join("games/owl/own-link")).unwrap();
+            symlink("games/owl", root.join("owl-link")).unwrap();
+            let fs = fixture.open();
+
+            // Reached through a link, the subdirectory is rooted at its target.
+            let (path, owl) = fs.subdir("owl-link").unwrap();
+            assert_eq!(path, "/owl-link");
+            assert_eq!(owl, fs.subdir("games/owl").unwrap().1);
+
+            assert_eq!(ls(&owl, None), ["own", "own-link"]);
+            assert_eq!(owl.ensure_file("own-link"), Ok(()));
+            for name in ["b-abs", "b-rel", "tools"] {
+                assert_eq!(owl.ensure_file(name), Err(not_found(&format!("/{name}"))));
+            }
+            assert_eq!(owl.read_file("tools/b.txt"), Err(not_found("/tools/b.txt")));
+        }
+
+        #[test]
+        fn special_files_are_not_files() {
+            let fixture = Fixture::new("socket");
+            let _listener =
+                std::os::unix::net::UnixListener::bind(fixture.root().join("sock")).unwrap();
+            let fs = fixture.open();
+            assert_eq!(fs.read_file("sock"), Err(FsError::NotAFile("/sock".into())));
+            assert_eq!(
+                fs.ensure_file("sock"),
+                Err(FsError::NotAFile("/sock".into()))
             );
         }
 

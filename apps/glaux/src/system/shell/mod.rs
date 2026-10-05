@@ -10,6 +10,7 @@ use glaux_input::InputEvent;
 
 use super::line_editor::LineEditor;
 use super::{ACCENT, BACKGROUND, ERROR, Line, SystemInfo, TEXT};
+use crate::cartridge::LoadedCartridge;
 use crate::cartridge_fs::CartridgeStorage;
 use commands::{COMMANDS, Context};
 use completion::{Completion, command_token, complete};
@@ -21,7 +22,8 @@ const PROMPT: &str = "> ";
 const CURSOR: char = '_';
 
 /// Shell state: the command line being edited, the command history, the
-/// output shown above the prompt and the current cartridge directory.
+/// output shown above the prompt, the current cartridge directory and the
+/// loaded cartridge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shell {
     editor: LineEditor,
@@ -29,6 +31,7 @@ pub struct Shell {
     scrollback: Scrollback,
     info: SystemInfo,
     cartridges: CartridgeStorage,
+    loaded: Option<LoadedCartridge>,
 }
 
 impl Shell {
@@ -43,6 +46,7 @@ impl Shell {
             scrollback,
             info,
             cartridges,
+            loaded: None,
         }
     }
 
@@ -96,6 +100,7 @@ impl Shell {
                     scrollback: &mut self.scrollback,
                     info: &self.info,
                     cartridges: &mut self.cartridges,
+                    loaded: &mut self.loaded,
                 };
                 commands::execute(&invocation, &mut ctx);
             }
@@ -261,6 +266,7 @@ fn wrapped(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::fixture::{write_cartridge, write_manifest};
     use crate::cartridge_fs::fixture::Fixture;
     use pretty_assertions::assert_eq;
     use semver::Version;
@@ -478,6 +484,7 @@ mod tests {
                 output("PWD      SHOW THE CURRENT DIRECTORY"),
                 output("LS       LIST A DIRECTORY"),
                 output("CD       CHANGE THE CURRENT DIRECTORY"),
+                output("LOAD     LOAD A CARTRIDGE"),
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());
@@ -487,7 +494,7 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 9, "> ", TEXT), Line::new(2, 9, "_", TEXT)]
+            [Line::new(0, 10, "> ", TEXT), Line::new(2, 10, "_", TEXT)]
         );
     }
 
@@ -621,6 +628,32 @@ mod tests {
     #[test]
     fn navigation_output_never_shows_host_paths() {
         let fixture = Fixture::new("shell-host-paths");
+        let root = fixture.root();
+        write_cartridge(&root.join("games/pong"), "Pong");
+        write_manifest(&root.join("bad/json"), "{");
+        write_manifest(&root.join("bad/fields"), "{}");
+        write_manifest(
+            &root.join("bad/entry"),
+            r#"{"name": "X", "version": "0.1.0", "entry": "../x.luau"}"#,
+        );
+        write_manifest(
+            &root.join("bad/missing"),
+            r#"{"name": "X", "version": "0.1.0", "entry": "main.luau"}"#,
+        );
+        #[cfg(unix)]
+        {
+            let escape = root.join("bad/escape");
+            write_manifest(
+                &escape,
+                r#"{"name": "X", "version": "0.1.0", "entry": "main.luau"}"#,
+            );
+            std::fs::write(fixture.outside().join("main.luau"), "").unwrap();
+            std::os::unix::fs::symlink(
+                fixture.outside().join("main.luau"),
+                escape.join("main.luau"),
+            )
+            .unwrap();
+        }
         let mut shell = Shell::new(
             SystemInfo {
                 rom_version: Version::new(0, 1, 0),
@@ -641,12 +674,23 @@ mod tests {
             "ls ../..",
             "ls nope",
             "cd ..\\..",
+            "load /games/pong",
+            "load /bad/json",
+            "load /bad/fields",
+            "load /bad/entry",
+            "load /bad/missing",
+            "load /bad/escape",
+            "load /games/owl",
+            "load /nope",
+            "load /b.txt",
         ] {
             run(&mut shell, line);
         }
         let entries = entries(&shell);
         assert!(entries.contains(&output("/games")));
         assert!(entries.contains(&error("NO SUCH FILE OR DIRECTORY: /games/nope")));
+        assert!(entries.contains(&output("LOADED Pong 0.1.0")));
+        assert!(entries.contains(&error("NO CART.JSON IN /games/owl")));
 
         let host_paths = [
             fixture.root().display().to_string(),
@@ -776,7 +820,7 @@ mod tests {
             [
                 banner(),
                 command(""),
-                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD")
+                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD")
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());

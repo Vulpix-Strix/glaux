@@ -13,6 +13,7 @@ tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 directories.workspace = true
 semver.workspace = true
+serde_json.workspace = true
 glaux-machine.workspace = true
 glaux-video.workspace = true
 glaux-host-raylib.workspace = true
