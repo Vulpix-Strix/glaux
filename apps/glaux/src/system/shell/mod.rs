@@ -8,6 +8,7 @@ mod scrollback;
 
 use glaux_input::InputEvent;
 use glaux_luau::{LogEntry, LogLevel};
+use glaux_machine::psg::{CHANNELS, Waveform};
 
 use super::line_editor::LineEditor;
 use super::{ACCENT, BACKGROUND, DIM, ERROR, Line, SystemInfo, TEXT, TRACE, WARN};
@@ -20,9 +21,13 @@ use completion::{Completion, command_token, complete};
 use history::History;
 use scrollback::{Entry, Scrollback};
 
-/// A diagnostic square tone the shell holds on PSG channel 0.
+/// A diagnostic tone the shell holds on one PSG channel.
+///
+/// Set with the TONE command as system bring-up tooling; it is not how
+/// cartridges produce sound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tone {
+    pub waveform: Waveform,
     /// Hz, between 1 and [`MAX_FREQUENCY`](glaux_machine::psg::MAX_FREQUENCY).
     pub frequency: u16,
     /// Up to [`MAX_VOLUME`](glaux_machine::psg::MAX_VOLUME).
@@ -75,8 +80,8 @@ pub struct Shell {
     scrollback: Scrollback,
     info: SystemInfo,
     cartridges: CartridgeStorage,
-    /// Set by the TONE command.
-    tone: Option<Tone>,
+    /// Per-channel tones set by the TONE command.
+    tones: [Option<Tone>; CHANNELS],
 }
 
 impl Shell {
@@ -91,13 +96,13 @@ impl Shell {
             scrollback,
             info,
             cartridges,
-            tone: None,
+            tones: [None; CHANNELS],
         }
     }
 
-    /// The diagnostic tone set with TONE, if any.
-    pub fn tone(&self) -> Option<Tone> {
-        self.tone
+    /// The diagnostic tone set with TONE for each PSG channel.
+    pub fn tones(&self) -> [Option<Tone>; CHANNELS] {
+        self.tones
     }
 
     /// Applies `event`: edits the command line, navigates history,
@@ -202,7 +207,7 @@ impl Shell {
                     cartridges: &mut self.cartridges,
                     slot,
                     request: &mut request,
-                    tone: &mut self.tone,
+                    tones: &mut self.tones,
                 };
                 commands::execute(&invocation, &mut ctx);
                 request

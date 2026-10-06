@@ -3,7 +3,7 @@
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME, TICK_RATE};
 use glaux_machine::palette::PALETTE_LEN;
-use glaux_machine::psg::{MAX_FREQUENCY, MAX_VOLUME};
+use glaux_machine::psg::{CHANNELS, MAX_FREQUENCY, MAX_VOLUME, Waveform};
 
 use super::super::{SystemInfo, identity_line};
 use super::parser::Invocation;
@@ -21,8 +21,8 @@ pub(super) struct Context<'a> {
     /// Set by a command that needs the system to change the cartridge
     /// lifecycle.
     pub(super) request: &'a mut Option<ShellRequest>,
-    /// The shell's diagnostic tone.
-    pub(super) tone: &'a mut Option<Tone>,
+    /// The shell's diagnostic tone for each PSG channel.
+    pub(super) tones: &'a mut [Option<Tone>; CHANNELS],
 }
 
 impl Context<'_> {
@@ -166,13 +166,15 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "tone",
         aliases: &[],
-        usage: "TONE HZ [VOLUME] | TONE OFF",
+        usage: TONE_USAGE,
         description: "PLAY A TEST TONE",
         min_args: 1,
-        max_args: 2,
+        max_args: 4,
         handler: tone,
     },
 ];
+
+const TONE_USAGE: &str = "TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF";
 
 /// Volume TONE uses when none is given.
 const DEFAULT_TONE_VOLUME: u8 = 8;
@@ -364,20 +366,62 @@ fn stop(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     }
 }
 
-/// Sets or clears the diagnostic tone the system plays while the shell is
-/// shown.
+/// TONE's printed name for `waveform`.
+fn waveform_name(waveform: Waveform) -> &'static str {
+    match waveform {
+        Waveform::Square => "SQUARE",
+        Waveform::Triangle => "TRIANGLE",
+        Waveform::Saw => "SAW",
+        Waveform::Noise => "NOISE",
+    }
+}
+
+/// Parses a TONE waveform name, ignoring case.
+fn parse_waveform(name: &str) -> Option<Waveform> {
+    match name.to_ascii_uppercase().as_str() {
+        "SQUARE" => Some(Waveform::Square),
+        "TRIANGLE" => Some(Waveform::Triangle),
+        "SAW" => Some(Waveform::Saw),
+        "NOISE" => Some(Waveform::Noise),
+        _ => None,
+    }
+}
+
+/// Sets or clears the diagnostic tones the system plays on the PSG channels
+/// while the shell is shown.
 fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let args = &invocation.args;
     if args[0].eq_ignore_ascii_case("off") {
         if args.len() > 1 {
-            ctx.error("USAGE: TONE OFF");
+            ctx.error("USAGE: TONE [CH] OFF");
             return;
         }
-        *ctx.tone = None;
+        *ctx.tones = [None; CHANNELS];
         ctx.output("TONE OFF");
         return;
     }
-    let Some(frequency) = args[0]
+    let Some(channel) = args[0]
+        .parse::<usize>()
+        .ok()
+        .filter(|channel| *channel < CHANNELS)
+    else {
+        ctx.error(format!("CHANNEL MUST BE 0-{}", CHANNELS - 1));
+        return;
+    };
+    let Some(arg) = args.get(1) else {
+        ctx.error(format!("USAGE: {TONE_USAGE}"));
+        return;
+    };
+    if arg.eq_ignore_ascii_case("off") {
+        if args.len() > 2 {
+            ctx.error("USAGE: TONE [CH] OFF");
+            return;
+        }
+        ctx.tones[channel] = None;
+        ctx.output(format!("TONE {channel} OFF"));
+        return;
+    }
+    let Some(frequency) = arg
         .parse::<u16>()
         .ok()
         .filter(|hz| (1..=MAX_FREQUENCY).contains(hz))
@@ -385,7 +429,7 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         ctx.error(format!("FREQUENCY MUST BE 1-{MAX_FREQUENCY} HZ"));
         return;
     };
-    let volume = match args.get(1) {
+    let volume = match args.get(2) {
         None => DEFAULT_TONE_VOLUME,
         Some(arg) => match arg.parse::<u8>().ok().filter(|v| *v <= MAX_VOLUME) {
             Some(volume) => volume,
@@ -395,8 +439,25 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
             }
         },
     };
-    *ctx.tone = Some(Tone { frequency, volume });
-    ctx.output(format!("TONE {frequency} HZ VOLUME {volume}"));
+    let waveform = match args.get(3) {
+        None => Waveform::Square,
+        Some(arg) => match parse_waveform(arg) {
+            Some(waveform) => waveform,
+            None => {
+                ctx.error("WAVE MUST BE SQUARE, TRIANGLE, SAW OR NOISE");
+                return;
+            }
+        },
+    };
+    ctx.tones[channel] = Some(Tone {
+        waveform,
+        frequency,
+        volume,
+    });
+    ctx.output(format!(
+        "TONE {channel} {} {frequency} HZ VOLUME {volume}",
+        waveform_name(waveform)
+    ));
 }
 
 #[cfg(test)]
@@ -430,7 +491,7 @@ mod tests {
             cartridges,
             slot,
             request: &mut request,
-            tone: &mut None,
+            tones: &mut [None; CHANNELS],
         };
         execute(&parse(line).unwrap().unwrap(), &mut ctx);
         (scrollback.iter().cloned().collect(), request)
@@ -591,7 +652,7 @@ mod tests {
             cartridges: &mut cartridges,
             slot: CartridgeSlot::Empty,
             request: &mut None,
-            tone: &mut None,
+            tones: &mut [None; CHANNELS],
         };
         execute(&parse("clear").unwrap().unwrap(), &mut ctx);
         assert_eq!(scrollback.iter().len(), 0);
@@ -925,9 +986,9 @@ mod tests {
         }
     }
 
-    /// Runs `line` with `tone` as the shell's tone and returns what it
+    /// Runs `line` with `tones` as the shell's tones and returns what it
     /// printed.
-    fn run_tone(line: &str, tone: &mut Option<Tone>) -> Vec<Entry> {
+    fn run_tone(line: &str, tones: &mut [Option<Tone>; CHANNELS]) -> Vec<Entry> {
         let mut scrollback = Scrollback::default();
         let info = SystemInfo {
             rom_version: Version::new(0, 3, 1),
@@ -938,95 +999,111 @@ mod tests {
             cartridges: &mut no_cartridges(),
             slot: CartridgeSlot::Empty,
             request: &mut None,
-            tone,
+            tones,
         };
         execute(&parse(line).unwrap().unwrap(), &mut ctx);
         scrollback.iter().cloned().collect()
     }
 
-    #[test]
-    fn tone_sets_frequency_and_default_volume() {
-        let mut tone = None;
-        assert_eq!(
-            run_tone("tone 440", &mut tone),
-            output(&["TONE 440 HZ VOLUME 8"])
-        );
-        assert_eq!(
-            tone,
-            Some(Tone {
-                frequency: 440,
-                volume: 8
-            })
-        );
+    fn tone(waveform: Waveform, frequency: u16, volume: u8) -> Option<Tone> {
+        Some(Tone {
+            waveform,
+            frequency,
+            volume,
+        })
     }
 
     #[test]
-    fn tone_takes_a_volume() {
-        let mut tone = None;
+    fn tone_sets_one_channel_with_default_volume_and_wave() {
+        let mut tones = [None; CHANNELS];
         assert_eq!(
-            run_tone("TONE 880 15", &mut tone),
-            output(&["TONE 880 HZ VOLUME 15"])
+            run_tone("tone 1 440", &mut tones),
+            output(&["TONE 1 SQUARE 440 HZ VOLUME 8"])
         );
-        assert_eq!(
-            tone,
-            Some(Tone {
-                frequency: 880,
-                volume: 15
-            })
-        );
+        assert_eq!(tones, [None, tone(Waveform::Square, 440, 8), None, None]);
     }
 
     #[test]
-    fn tone_off_clears_the_tone() {
-        let mut tone = Some(Tone {
-            frequency: 440,
-            volume: 8,
-        });
-        assert_eq!(run_tone("tone OFF", &mut tone), output(&["TONE OFF"]));
-        assert_eq!(tone, None);
-    }
-
-    #[test]
-    fn tone_rejects_bad_arguments_and_keeps_the_tone() {
-        let before = Some(Tone {
-            frequency: 440,
-            volume: 8,
-        });
-        for (line, message) in [
-            ("tone 0", "FREQUENCY MUST BE 1-24000 HZ"),
-            ("tone 24001", "FREQUENCY MUST BE 1-24000 HZ"),
-            ("tone loud", "FREQUENCY MUST BE 1-24000 HZ"),
-            ("tone -5", "FREQUENCY MUST BE 1-24000 HZ"),
-            ("tone 440 16", "VOLUME MUST BE 0-15"),
-            ("tone 440 x", "VOLUME MUST BE 0-15"),
-            ("tone off 3", "USAGE: TONE OFF"),
-            ("tone", "USAGE: TONE HZ [VOLUME] | TONE OFF"),
-            ("tone 1 2 3", "USAGE: TONE HZ [VOLUME] | TONE OFF"),
+    fn tone_takes_a_volume_and_wave() {
+        let mut tones = [None; CHANNELS];
+        for (line, printed) in [
+            ("TONE 0 440 8 SQUARE", "TONE 0 SQUARE 440 HZ VOLUME 8"),
+            ("tone 1 660 6 triangle", "TONE 1 TRIANGLE 660 HZ VOLUME 6"),
+            ("tone 2 220 5 Saw", "TONE 2 SAW 220 HZ VOLUME 5"),
+            ("tone 3 1200 4 NOISE", "TONE 3 NOISE 1200 HZ VOLUME 4"),
         ] {
-            let mut tone = before;
-            assert_eq!(run_tone(line, &mut tone), error(message), "{line}");
-            assert_eq!(tone, before, "{line}");
+            assert_eq!(run_tone(line, &mut tones), output(&[printed]), "{line}");
+        }
+        assert_eq!(
+            tones,
+            [
+                tone(Waveform::Square, 440, 8),
+                tone(Waveform::Triangle, 660, 6),
+                tone(Waveform::Saw, 220, 5),
+                tone(Waveform::Noise, 1200, 4),
+            ]
+        );
+    }
+
+    #[test]
+    fn tone_off_clears_one_channel_or_all() {
+        let playing = [tone(Waveform::Saw, 440, 8); CHANNELS];
+
+        let mut tones = playing;
+        assert_eq!(run_tone("tone 2 OFF", &mut tones), output(&["TONE 2 OFF"]));
+        assert_eq!(tones, [playing[0], playing[1], None, playing[3]]);
+
+        let mut tones = playing;
+        assert_eq!(run_tone("tone off", &mut tones), output(&["TONE OFF"]));
+        assert_eq!(tones, [None; CHANNELS]);
+    }
+
+    #[test]
+    fn tone_rejects_bad_arguments_and_keeps_the_tones() {
+        let before = [None, tone(Waveform::Triangle, 440, 8), None, None];
+        for (line, message) in [
+            ("tone 440", "CHANNEL MUST BE 0-3"),
+            ("tone 4 440", "CHANNEL MUST BE 0-3"),
+            ("tone x 440", "CHANNEL MUST BE 0-3"),
+            ("tone -1 off", "CHANNEL MUST BE 0-3"),
+            ("tone 1", "USAGE: TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF"),
+            ("tone 1 0", "FREQUENCY MUST BE 1-24000 HZ"),
+            ("tone 1 24001", "FREQUENCY MUST BE 1-24000 HZ"),
+            ("tone 1 loud", "FREQUENCY MUST BE 1-24000 HZ"),
+            ("tone 1 -5", "FREQUENCY MUST BE 1-24000 HZ"),
+            ("tone 1 440 16", "VOLUME MUST BE 0-15"),
+            ("tone 1 440 x", "VOLUME MUST BE 0-15"),
+            (
+                "tone 1 440 8 sine",
+                "WAVE MUST BE SQUARE, TRIANGLE, SAW OR NOISE",
+            ),
+            ("tone off 3", "USAGE: TONE [CH] OFF"),
+            ("tone 1 off 3", "USAGE: TONE [CH] OFF"),
+            ("tone", "USAGE: TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF"),
+            (
+                "tone 1 440 8 saw x",
+                "USAGE: TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF",
+            ),
+        ] {
+            let mut tones = before;
+            assert_eq!(run_tone(line, &mut tones), error(message), "{line}");
+            assert_eq!(tones, before, "{line}");
         }
     }
 
     #[test]
     fn tone_accepts_the_range_limits() {
-        let mut tone = None;
-        run_tone("tone 1 0", &mut tone);
+        let mut tones = [None; CHANNELS];
+        run_tone("tone 0 1 0", &mut tones);
+        run_tone("tone 3 24000 15", &mut tones);
         assert_eq!(
-            tone,
-            Some(Tone {
-                frequency: 1,
-                volume: 0
-            })
-        );
-        run_tone("tone 24000 15", &mut tone);
-        assert_eq!(
-            tone,
-            Some(Tone {
-                frequency: 24000,
-                volume: 15
-            })
+            tones,
+            [
+                tone(Waveform::Square, 1, 0),
+                None,
+                None,
+                tone(Waveform::Square, 24000, 15),
+            ]
         );
     }
 }
