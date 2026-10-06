@@ -60,7 +60,7 @@ impl RunningCartridge {
             },
             None => ObjTileBank::new(),
         };
-        let entry = &cartridge.manifest().entry;
+        let entry = &cartridge.manifest().runtime.entry;
         match Runtime::start(entry, &source, Budget::default()) {
             Ok(runtime) => Ok(Self {
                 cartridge,

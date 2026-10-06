@@ -1858,7 +1858,7 @@ mod tests {
 
     #[test]
     fn tile_viewer_example_draws_and_navigates_its_visible_range() {
-        let source = include_str!("../../../examples/tile-viewer/main.luau");
+        let source = include_str!("../../../examples/tile-viewer/code/main.luau");
         let mut runtime = started(source);
         let sprite_tiles = |runtime: &Runtime| {
             runtime

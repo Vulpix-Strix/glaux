@@ -15,6 +15,7 @@ tracing-subscriber.workspace = true
 tracing-appender.workspace = true
 directories.workspace = true
 semver.workspace = true
+ron.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 glaux-audio.workspace = true

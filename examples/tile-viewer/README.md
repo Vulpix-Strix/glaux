@@ -7,7 +7,7 @@ visible range and has a border around it.
 - Left/right moves the selected tile by one.
 - Up/down moves it by one row of the 16-column object-tile grid (sixteen
   tiles).
-- `START_TILE`, `COLUMNS`, and `ROWS` in `main.luau` configure the initial
+- `START_TILE`, `COLUMNS`, and `ROWS` in `code/main.luau` configure the initial
   range and grid.
 
 The included `sprites.bin` is generated from FisherG's

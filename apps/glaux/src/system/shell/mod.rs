@@ -58,7 +58,7 @@ pub(super) const BLINK_TICKS: u32 = 36;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellRequest {
     /// Make this validated cartridge the loaded one, replacing any other.
-    Load(LoadedCartridge),
+    Load(Box<LoadedCartridge>),
     /// Start the loaded cartridge.
     Run,
     /// Remove the loaded cartridge from the shell.
@@ -451,7 +451,7 @@ fn wrapped(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::fixture::{write_cartridge, write_manifest};
+    use crate::cartridge::fixture::{manifest_ron, write_cartridge, write_manifest};
     use crate::cartridge_fs::fixture::Fixture;
     use pretty_assertions::assert_eq;
     use semver::Version;
@@ -889,22 +889,13 @@ mod tests {
         let root = fixture.root();
         write_cartridge(&root.join("games/pong"), "Pong");
         write_manifest(&root.join("bad/json"), "{");
-        write_manifest(&root.join("bad/fields"), "{}");
-        write_manifest(
-            &root.join("bad/entry"),
-            r#"{"name": "X", "version": "0.1.0", "entry": "../x.luau"}"#,
-        );
-        write_manifest(
-            &root.join("bad/missing"),
-            r#"{"name": "X", "version": "0.1.0", "entry": "main.luau"}"#,
-        );
+        write_manifest(&root.join("bad/fields"), "()");
+        write_manifest(&root.join("bad/entry"), &manifest_ron("X", "../x.luau"));
+        write_manifest(&root.join("bad/missing"), &manifest_ron("X", "main.luau"));
         #[cfg(unix)]
         {
             let escape = root.join("bad/escape");
-            write_manifest(
-                &escape,
-                r#"{"name": "X", "version": "0.1.0", "entry": "main.luau"}"#,
-            );
+            write_manifest(&escape, &manifest_ron("X", "main.luau"));
             std::fs::write(fixture.outside().join("main.luau"), "").unwrap();
             std::os::unix::fs::symlink(
                 fixture.outside().join("main.luau"),
@@ -948,7 +939,7 @@ mod tests {
         assert!(entries.contains(&output("/games")));
         assert!(entries.contains(&error("NO SUCH FILE OR DIRECTORY: /games/nope")));
         assert!(entries.contains(&output("LOADED Pong 0.1.0")));
-        assert!(entries.contains(&error("NO CART.JSON IN /games/owl")));
+        assert!(entries.contains(&error("NO CARTRIDGE.RON IN /games/owl")));
 
         let host_paths = [
             fixture.root().display().to_string(),
@@ -1059,7 +1050,7 @@ mod tests {
         else {
             panic!("expected a load request");
         };
-        assert_eq!(cartridge.manifest().name, "Pong");
+        assert_eq!(cartridge.manifest().cartridge.name, "Pong");
 
         send(&mut shell, &typed("run"));
         assert_eq!(

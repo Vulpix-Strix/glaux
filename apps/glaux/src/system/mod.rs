@@ -357,7 +357,7 @@ fn shell_tick(
     for (index, &event) in input.iter().enumerate() {
         match shell.handle_input(event, CartridgeSlot::loaded(loaded.as_ref())) {
             None => {}
-            Some(ShellRequest::Load(cartridge)) => loaded = Some(cartridge),
+            Some(ShellRequest::Load(cartridge)) => loaded = Some(*cartridge),
             Some(ShellRequest::Unload) => {
                 let Some(cartridge) = loaded.take() else {
                     unreachable!("UNLOAD was requested without a loaded cartridge");
@@ -1016,7 +1016,7 @@ mod tests {
     fn shell_with_cartridge(fixture: &Fixture, script: &str) -> System {
         let dir = fixture.root().join("pong");
         write_cartridge(&dir, "Pong");
-        std::fs::write(dir.join("main.luau"), script).unwrap();
+        std::fs::write(dir.join("code/main.luau"), script).unwrap();
         let mut system = System::new(info(), sounds(), fixture.storage());
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
@@ -1084,9 +1084,9 @@ mod tests {
 
     fn loaded_name(system: &System) -> Option<&str> {
         match system.state() {
-            SystemState::Shell { loaded, .. } => {
-                loaded.as_ref().map(|c| c.manifest().name.as_str())
-            }
+            SystemState::Shell { loaded, .. } => loaded
+                .as_ref()
+                .map(|c| c.manifest().cartridge.name.as_str()),
             other => panic!("expected the shell, got {other:?}"),
         }
     }
@@ -1205,11 +1205,11 @@ mod tests {
         for (script, expected) in [
             (
                 r#"log.info("x") error("boom")"#,
-                vec!["x", "! RUNTIME ERROR: main.luau:1: boom"],
+                vec!["x", "! RUNTIME ERROR: code/main.luau:1: boom"],
             ),
             (
                 r#"log.info("e") function boot() log.info("b") error("no") end"#,
-                vec!["e", "b", "! RUNTIME ERROR IN BOOT: main.luau:1: no"],
+                vec!["e", "b", "! RUNTIME ERROR IN BOOT: code/main.luau:1: no"],
             ),
             (
                 "function boot() while true do end end",
@@ -1225,7 +1225,7 @@ mod tests {
         let system = started(&fixture, "local = 1");
         let lines = after(&system, "> run");
         assert!(
-            matches!(lines.as_slice(), [only] if only.starts_with("! SYNTAX ERROR: main.luau:1:")),
+            matches!(lines.as_slice(), [only] if only.starts_with("! SYNTAX ERROR: code/main.luau:1:")),
             "{lines:?}"
         );
         assert_eq!(loaded_name(&system), Some("Pong"));
@@ -1237,11 +1237,11 @@ mod tests {
         for (script, error) in [
             (
                 r#"function tick() log.info("t") error("boom") end"#,
-                "! RUNTIME ERROR IN TICK: main.luau:1: boom",
+                "! RUNTIME ERROR IN TICK: code/main.luau:1: boom",
             ),
             (
                 r#"function tick() log.info("t") end function draw() error("bad") end"#,
-                "! RUNTIME ERROR IN DRAW: main.luau:1: bad",
+                "! RUNTIME ERROR IN DRAW: code/main.luau:1: bad",
             ),
             (
                 r#"function tick() log.info("t") while true do end end"#,
@@ -1305,7 +1305,7 @@ mod tests {
         let dir = fixture.root().join("games/pong");
         write_cartridge(&dir, "Pong");
         std::fs::write(dir.join("save.dat"), b"kept").unwrap();
-        let manifest = std::fs::read(dir.join("cart.json")).unwrap();
+        let manifest = std::fs::read(dir.join("cartridge.ron")).unwrap();
 
         let mut system = System::new(info(), sounds(), fixture.storage());
         while matches!(system.state(), SystemState::Boot { .. }) {
@@ -1315,7 +1315,7 @@ mod tests {
         let system = enter(system, "pwd");
 
         assert_eq!(transcript(&system).last().unwrap(), "/games");
-        assert_eq!(std::fs::read(dir.join("cart.json")).unwrap(), manifest);
+        assert_eq!(std::fs::read(dir.join("cartridge.ron")).unwrap(), manifest);
         assert_eq!(std::fs::read(dir.join("save.dat")).unwrap(), b"kept");
     }
 
@@ -1331,9 +1331,12 @@ mod tests {
     fn missing_entry_is_reported_at_run() {
         let fixture = Fixture::new("sys-run-missing");
         let system = enter(shell_with_cartridge(&fixture, ""), "load pong");
-        std::fs::remove_file(fixture.root().join("pong/main.luau")).unwrap();
+        std::fs::remove_file(fixture.root().join("pong/code/main.luau")).unwrap();
         let system = enter(system, "run");
-        assert_eq!(after(&system, "> run"), ["! ENTRY NOT FOUND: main.luau"]);
+        assert_eq!(
+            after(&system, "> run"),
+            ["! ENTRY NOT FOUND: code/main.luau"]
+        );
         assert_eq!(loaded_name(&system), Some("Pong"));
     }
 
@@ -1573,7 +1576,7 @@ mod tests {
             after(&system, "> run"),
             [
                 "RUNNING Pong 0.1.0",
-                "! RUNTIME ERROR IN DRAW: main.luau:1: bad argument #3 to 'pset' \
+                "! RUNTIME ERROR IN DRAW: code/main.luau:1: bad argument #3 to 'pset' \
                  (palette index 0-255 expected, got 999)",
             ]
         );
@@ -1587,7 +1590,7 @@ mod tests {
             after(&system, "> run"),
             [
                 "RUNNING Pong 0.1.0",
-                "! RUNTIME ERROR IN TICK: main.luau:1: 'cls' can only be called during draw()",
+                "! RUNTIME ERROR IN TICK: code/main.luau:1: 'cls' can only be called during draw()",
             ]
         );
     }
@@ -1920,7 +1923,7 @@ mod tests {
         assert_eq!(loaded_name(&system), Some("Pong"));
         assert_eq!(
             transcript(&system).last().unwrap(),
-            "! RUNTIME ERROR IN TICK: main.luau:1: boom"
+            "! RUNTIME ERROR IN TICK: code/main.luau:1: boom"
         );
         let system = enter(system, "resume");
         assert_eq!(after(&system, "> resume"), ["! NO PAUSED CARTRIDGE"]);

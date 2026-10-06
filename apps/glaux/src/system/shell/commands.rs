@@ -297,7 +297,7 @@ fn info(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 
 /// `Name version`, as a cartridge is named in shell output.
 pub(in crate::system) fn cartridge_identity(manifest: &CartridgeManifest) -> String {
-    format!("{} {}", manifest.name, manifest.version)
+    format!("{} {}", manifest.cartridge.name, manifest.cartridge.version)
 }
 
 fn version(_: &Invocation<'_>, ctx: &mut Context<'_>) {
@@ -350,7 +350,7 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     match LoadedCartridge::load(ctx.cartridges, path) {
         Ok(cartridge) => {
             let line = format!("LOADED {}", cartridge_identity(cartridge.manifest()));
-            *ctx.request = Some(ShellRequest::Load(cartridge));
+            *ctx.request = Some(ShellRequest::Load(Box::new(cartridge)));
             ctx.output(line);
         }
         Err(err) => ctx.error(err.to_string()),
@@ -554,7 +554,7 @@ fn gate(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
 mod tests {
     use super::super::parser::parse;
     use super::*;
-    use crate::cartridge::fixture::{write_cartridge, write_manifest};
+    use crate::cartridge::fixture::{manifest_ron, write_cartridge, write_manifest};
     use crate::cartridge_fs::fixture::Fixture;
     use glaux_machine::psg::MAX_ENVELOPE_SAMPLES;
     use pretty_assertions::assert_eq;
@@ -603,7 +603,7 @@ mod tests {
             CartridgeSlot::loaded(loaded.as_ref()),
         );
         if let Some(ShellRequest::Load(cartridge)) = request {
-            *loaded = Some(cartridge);
+            *loaded = Some(*cartridge);
         }
         entries
     }
@@ -897,13 +897,16 @@ mod tests {
     fn failed_load_keeps_the_loaded_cartridge() {
         let fixture = Fixture::new("cmd-load-keep");
         write_cartridge(&fixture.root().join("games/pong"), "Pong");
-        write_manifest(&fixture.root().join("games/owl"), "{");
+        write_manifest(
+            &fixture.root().join("games/owl"),
+            &manifest_ron("Owl", "code/main.luau").replace("format: 1", "format: 2"),
+        );
         let mut fs = fixture.storage();
         let mut loaded = None;
 
         assert_eq!(
             run_load("load games/owl", &mut fs, &mut loaded),
-            error("CART.JSON IS NOT VALID JSON (LINE 1)")
+            error("CARTRIDGE.RON: UNSUPPORTED FORMAT 2")
         );
         assert_eq!(loaded, None);
 
@@ -932,7 +935,7 @@ mod tests {
             output(&["LOADED Owl 0.1.0"])
         );
         assert_eq!(
-            loaded.map(|c| c.manifest().name.clone()),
+            loaded.map(|c| c.manifest().cartridge.name.clone()),
             Some("Owl".into())
         );
     }
@@ -1002,7 +1005,7 @@ mod tests {
         );
         assert_eq!(entries, output(&["LOADED Pong 0.1.0"]));
         assert!(
-            matches!(&request, Some(ShellRequest::Load(c)) if c.manifest().name == "Pong"),
+            matches!(&request, Some(ShellRequest::Load(c)) if c.manifest().cartridge.name == "Pong"),
             "{request:?}"
         );
     }
