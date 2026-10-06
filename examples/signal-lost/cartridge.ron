@@ -1,0 +1,23 @@
+(
+    format: 1,
+
+    cartridge: (
+        name: "Signal Lost",
+        version: "0.1.0",
+        author: Some("cuervolu"),
+    ),
+
+    runtime: (
+        language: Luau,
+        entry: "code/main.luau",
+    ),
+
+    hardware: (
+        model: G1,
+        graphics: G1_4bpp,
+    ),
+
+    compatibility: (
+        min_glaux: "0.1.0",
+    ),
+)

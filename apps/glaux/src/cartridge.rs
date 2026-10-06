@@ -1104,7 +1104,7 @@ mod tests {
         let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
         let root = fs::canonicalize(examples).unwrap();
         let storage = CartridgeStorage::Available(CartridgeFs::new(root));
-        for example in ["sprites", "tile-viewer"] {
+        for example in ["sprites", "tile-viewer", "signal-lost"] {
             let cartridge = LoadedCartridge::load(&storage, example).unwrap();
             assert_eq!(
                 cartridge.manifest().runtime.entry,

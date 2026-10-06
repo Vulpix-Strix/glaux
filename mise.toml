@@ -1,6 +1,8 @@
 [tools]
 rust = { version = "stable", components = "rustfmt,clippy" }
 "aqua:nextest-rs/nextest/cargo-nextest" = "latest"
+python = "3.13"
+uv = "latest"
 
 [tasks.check]
 run = "cargo check --workspace"
@@ -16,3 +18,7 @@ run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
 
 [tasks.glaux]
 run = "cargo run -p glaux"
+
+[tasks.signal-lost-sheet]
+description = "Rebuild examples/signal-lost/sprites.png and code/sheet.luau from the 0x72 DungeonTileset II frames directory given as the argument"
+run = "uv run --script examples/signal-lost/tools/build_sheet.py"

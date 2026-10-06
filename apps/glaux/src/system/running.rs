@@ -214,4 +214,192 @@ mod tests {
             "MODULE NOT FOUND: code/nope.luau (code/main.luau:1)"
         );
     }
+
+    /// Signal Lost (`examples/signal-lost`), driven through the real loader,
+    /// module source and object-tile validation. Assertions look at drawn
+    /// text and command counts rather than sprite tiles or coordinates.
+    mod signal_lost {
+        use std::path::Path;
+
+        use glaux_input::GameButton;
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::cartridge_fs::{CartridgeFs, CartridgeStorage};
+
+        /// Ticks after starting a run after which an idle knight must have
+        /// fallen; about two minutes of play.
+        const IDLE_DEATH_LIMIT: usize = 7200;
+
+        fn start() -> RunningCartridge {
+            let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+            let root = fs::canonicalize(examples).unwrap();
+            let storage = CartridgeStorage::Available(CartridgeFs::new(root));
+            let cartridge = LoadedCartridge::load(&storage, "signal-lost").unwrap();
+            RunningCartridge::start(cartridge).unwrap()
+        }
+
+        fn down(button: GameButton) -> InputEvent {
+            InputEvent::ButtonDown(button)
+        }
+
+        fn up(button: GameButton) -> InputEvent {
+            InputEvent::ButtonUp(button)
+        }
+
+        /// Advances one tick, then commits the cartridge's audio as the host
+        /// does after every tick, which bounds its pending writes.
+        fn step(running: &mut RunningCartridge, input: &[InputEvent]) {
+            running.tick(input).unwrap();
+            running.runtime.audio_mut().commit();
+        }
+
+        fn idle(running: &mut RunningCartridge, ticks: usize) {
+            for _ in 0..ticks {
+                step(running, &[]);
+            }
+        }
+
+        /// Taps A on the title screen to begin the first run.
+        fn start_playing() -> RunningCartridge {
+            let mut running = start();
+            step(&mut running, &[down(GameButton::A)]);
+            step(&mut running, &[up(GameButton::A)]);
+            running
+        }
+
+        fn frame_texts(running: &RunningCartridge) -> Vec<String> {
+            running
+                .runtime
+                .frame()
+                .iter()
+                .filter_map(|command| match command {
+                    DrawCommand::Text { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn shows(running: &RunningCartridge, needle: &str) -> bool {
+            frame_texts(running)
+                .iter()
+                .any(|text| text.contains(needle))
+        }
+
+        fn sprite_count(running: &RunningCartridge) -> usize {
+            running
+                .runtime
+                .frame()
+                .iter()
+                .filter(|command| matches!(command, DrawCommand::Sprite { .. }))
+                .count()
+        }
+
+        #[test]
+        fn boots_to_a_drawn_title_screen() {
+            let mut running = start();
+            assert_eq!(texts(running.take_output()), ["Signal Lost ready"]);
+
+            idle(&mut running, 120);
+            assert!(shows(&running, "SIGNAL LOST"));
+            assert!(shows(&running, "B DASH"));
+            assert!(sprite_count(&running) > 0);
+            assert!(
+                running
+                    .runtime
+                    .frame()
+                    .iter()
+                    .any(|command| matches!(command, DrawCommand::Pixel { .. }))
+            );
+
+            let rom = crate::rom::load().unwrap();
+            let mut framebuffer = Framebuffer::new();
+            running.render(&mut framebuffer, rom.font());
+            let first = framebuffer.as_bytes()[0];
+            assert!(framebuffer.as_bytes().iter().any(|&index| index != first));
+        }
+
+        #[test]
+        fn pressing_a_starts_a_run_with_a_hud() {
+            let mut running = start_playing();
+            assert!(!shows(&running, "PRESS A TO START"));
+            assert!(shows(&running, "SCORE 00000"));
+            assert!(shows(&running, "TIME"));
+            let output = texts(running.take_output());
+            assert!(output.contains(&"run 1 started".to_string()), "{output:?}");
+        }
+
+        #[test]
+        fn holding_a_direction_moves_the_knight() {
+            let mut moved = start_playing();
+            let mut still = start_playing();
+            step(&mut moved, &[down(GameButton::Right)]);
+            step(&mut still, &[]);
+            idle(&mut moved, 20);
+            idle(&mut still, 20);
+            assert_ne!(moved.runtime.frame(), still.runtime.frame());
+        }
+
+        #[test]
+        fn holding_a_throws_axes() {
+            let mut throwing = start_playing();
+            let mut still = start_playing();
+            step(&mut throwing, &[down(GameButton::A)]);
+            step(&mut still, &[]);
+            idle(&mut throwing, 20);
+            idle(&mut still, 20);
+            assert!(sprite_count(&throwing) > sprite_count(&still));
+        }
+
+        #[test]
+        fn an_idle_knight_falls_and_the_game_restarts_in_the_same_vm() {
+            let mut running = start_playing();
+            let fell = (0..IDLE_DEATH_LIMIT).any(|_| {
+                step(&mut running, &[]);
+                shows(&running, "KILLS")
+            });
+            assert!(fell, "still alive after {IDLE_DEATH_LIMIT} ticks");
+            let output = texts(running.take_output());
+            assert!(
+                output
+                    .iter()
+                    .any(|line| line.starts_with("signal lost: score")),
+                "{output:?}"
+            );
+
+            // A is ignored briefly so a held button cannot skip the screen.
+            step(&mut running, &[down(GameButton::A)]);
+            step(&mut running, &[up(GameButton::A)]);
+            assert!(shows(&running, "KILLS"));
+
+            // Once the game-over effects finish, no channel is left open.
+            idle(&mut running, 80);
+            let channels = *running.runtime.audio_mut().channels();
+            assert!(channels.iter().all(|channel| !channel.gate), "{channels:?}");
+
+            step(&mut running, &[down(GameButton::A)]);
+            step(&mut running, &[up(GameButton::A)]);
+            assert!(!shows(&running, "KILLS"));
+            assert!(shows(&running, "SCORE 00000"));
+            assert!(texts(running.take_output()).contains(&"restart: run 2".to_string()));
+        }
+
+        #[test]
+        fn the_same_inputs_replay_the_same_game() {
+            let play = || {
+                let mut running = start_playing();
+                step(
+                    &mut running,
+                    &[down(GameButton::Right), down(GameButton::A)],
+                );
+                idle(&mut running, 60);
+                step(&mut running, &[up(GameButton::Right), down(GameButton::Up)]);
+                step(&mut running, &[down(GameButton::B)]);
+                idle(&mut running, 120);
+                let output = texts(running.take_output());
+                (running.runtime.frame().to_vec(), output)
+            };
+            assert_eq!(play(), play());
+        }
+    }
 }
