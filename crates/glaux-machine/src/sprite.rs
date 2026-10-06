@@ -13,7 +13,7 @@ pub const OBJ_TILE_BANK_BYTES: usize = OBJ_TILE_CAPACITY * OBJ_TILE_BYTES;
 /// Columns of the logical G1 object-tile grid.
 ///
 /// Tile `n` sits at column `n % OBJ_GRID_COLUMNS` and row
-/// `n / OBJ_GRID_COLUMNS`. Imported sheets are placed on this grid, and
+/// `n / OBJ_GRID_COLUMNS`. Converted sheets are placed on this grid, and
 /// multi-tile sprites are composed from it.
 pub const OBJ_GRID_COLUMNS: usize = 16;
 /// Rows of the logical G1 object-tile grid.

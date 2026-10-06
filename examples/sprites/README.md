@@ -6,10 +6,10 @@ releases for free use in the public domain. Regenerate the native asset from the
 with:
 
 ```sh
-mise run glaux -- import sprites examples/sprites/sprites.png
+mise run glaux -- convert sprites examples/sprites/sprites.png
 ```
 
-The importer places the sheet on G1's 16-column object-tile grid: the sheet tile in column `c`
+The converter places the sheet on G1's 16-column object-tile grid: the sheet tile in column `c`
 and row `r` becomes tile `r * 16 + c`. This 64-pixel-wide sheet fills the left half of the
 grid's first eight rows.
 

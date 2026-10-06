@@ -25,28 +25,28 @@ impl Cli {
 /// A standalone Glaux command.
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
-    /// Import assets into native G1 formats.
-    Import(ImportArgs),
+    /// Convert assets into native G1 formats.
+    Convert(ConvertArgs),
 }
 
-/// Commands in the asset-import namespace.
+/// Commands in the asset-conversion namespace.
 #[derive(Debug, Args)]
-pub(crate) struct ImportArgs {
+pub(crate) struct ConvertArgs {
     #[command(subcommand)]
-    command: ImportCommand,
+    command: ConvertCommand,
 }
 
-/// A supported asset importer.
+/// A supported asset converter.
 #[derive(Debug, Subcommand)]
-enum ImportCommand {
-    /// Import an indexed PNG spritesheet as G1 4 bpp object tiles.
+enum ConvertCommand {
+    /// Convert an indexed PNG spritesheet into G1 4 bpp object tiles.
     Sprites(SpriteArgs),
 }
 
-/// Arguments for the sprite importer.
+/// Arguments for the sprite converter.
 #[derive(Debug, Args)]
 struct SpriteArgs {
-    /// Indexed PNG spritesheet to import.
+    /// Indexed PNG spritesheet to convert.
     input: PathBuf,
     /// Destination for the raw tile data.
     #[arg(short, long)]
@@ -56,12 +56,12 @@ struct SpriteArgs {
 /// Executes a parsed standalone command.
 pub(crate) fn run(command: Command) -> anyhow::Result<()> {
     match command {
-        Command::Import(ImportArgs {
-            command: ImportCommand::Sprites(args),
+        Command::Convert(ConvertArgs {
+            command: ConvertCommand::Sprites(args),
         }) => {
-            let summary = sprites::import(&args.input, args.output.as_deref())?;
+            let summary = sprites::convert(&args.input, args.output.as_deref())?;
             println!(
-                "Imported {} tiles into {} OBJ slots ({} bytes, 4 bpp): {}",
+                "Converted {} tiles into {} OBJ slots ({} bytes, 4 bpp): {}",
                 summary.source_tiles,
                 summary.obj_slots,
                 summary.byte_count,
@@ -88,14 +88,20 @@ mod tests {
     #[test]
     fn parses_the_nested_sprite_command_and_both_output_flags() {
         for flag in ["-o", "--output"] {
-            let cli =
-                Cli::try_parse_from(["glaux", "import", "sprites", "sheet.png", flag, "tiles.bin"])
-                    .unwrap();
-            let Some(Command::Import(ImportArgs {
-                command: ImportCommand::Sprites(args),
+            let cli = Cli::try_parse_from([
+                "glaux",
+                "convert",
+                "sprites",
+                "sheet.png",
+                flag,
+                "tiles.bin",
+            ])
+            .unwrap();
+            let Some(Command::Convert(ConvertArgs {
+                command: ConvertCommand::Sprites(args),
             })) = cli.command
             else {
-                panic!("expected the sprite importer")
+                panic!("expected the sprite converter")
             };
             assert_eq!(args.input, Path::new("sheet.png"));
             assert_eq!(args.output.as_deref(), Some(Path::new("tiles.bin")));
@@ -109,19 +115,19 @@ mod tests {
             ErrorKind::DisplayHelp
         );
         assert_eq!(
-            Cli::try_parse_from(["glaux", "import", "--help"])
+            Cli::try_parse_from(["glaux", "convert", "--help"])
                 .unwrap_err()
                 .kind(),
             ErrorKind::DisplayHelp
         );
         assert_eq!(
-            Cli::try_parse_from(["glaux", "import", "map"])
+            Cli::try_parse_from(["glaux", "convert", "map"])
                 .unwrap_err()
                 .kind(),
             ErrorKind::InvalidSubcommand
         );
         assert_eq!(
-            Cli::try_parse_from(["glaux", "import", "sprites"])
+            Cli::try_parse_from(["glaux", "convert", "sprites"])
                 .unwrap_err()
                 .kind(),
             ErrorKind::MissingRequiredArgument

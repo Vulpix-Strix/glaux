@@ -1,4 +1,4 @@
-//! Indexed PNG to native G1 object-tile importing.
+//! Indexed PNG to native G1 object-tile conversion.
 
 use std::fs::File;
 use std::io::BufReader;
@@ -11,9 +11,9 @@ use glaux_machine::sprite::{
 };
 use png::{BitDepth, ColorType};
 
-/// Facts reported after a successful sprite import.
+/// Facts reported after a successful sprite conversion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ImportSummary {
+pub(super) struct ConversionSummary {
     pub(super) output: PathBuf,
     /// Tiles in the source sheet.
     pub(super) source_tiles: usize,
@@ -23,8 +23,8 @@ pub(super) struct ImportSummary {
     pub(super) byte_count: usize,
 }
 
-/// Imports an indexed PNG spritesheet into raw G1 4 bpp object tiles.
-pub(super) fn import(input: &Path, output: Option<&Path>) -> anyhow::Result<ImportSummary> {
+/// Converts an indexed PNG spritesheet into raw G1 4 bpp object tiles.
+pub(super) fn convert(input: &Path, output: Option<&Path>) -> anyhow::Result<ConversionSummary> {
     let file = File::open(input)
         .with_context(|| format!("failed to open input PNG {}", input.display()))?;
     let decoder = png::Decoder::new(BufReader::new(file));
@@ -71,7 +71,7 @@ pub(super) fn import(input: &Path, output: Option<&Path>) -> anyhow::Result<Impo
     let output = output.map_or_else(|| default_output_path(input), Path::to_path_buf);
     std::fs::write(&output, &encoded)
         .with_context(|| format!("failed to write {}", output.display()))?;
-    Ok(ImportSummary {
+    Ok(ConversionSummary {
         output,
         source_tiles: (width / OBJ_TILE_WIDTH) * (height / OBJ_TILE_HEIGHT),
         obj_slots: encoded.len() / OBJ_TILE_BYTES,
@@ -146,7 +146,7 @@ mod tests {
     impl Fixture {
         fn new(name: &str) -> Self {
             let root = std::env::temp_dir().join(format!(
-                "glaux-test-{}-sprite-import-{name}",
+                "glaux-test-{}-sprite-convert-{name}",
                 std::process::id()
             ));
             let _ = fs::remove_dir_all(&root);
@@ -182,7 +182,7 @@ mod tests {
         let pixels: Vec<u8> = row.into_iter().cycle().take(64).collect();
         indexed_png(&input, 8, 8, &pixels, 16);
 
-        let summary = import(&input, None).unwrap();
+        let summary = convert(&input, None).unwrap();
         let output = fixture.root.join("sprites.bin");
         assert_eq!(summary.output, output);
         assert_eq!(summary.source_tiles, 1);
@@ -225,7 +225,7 @@ mod tests {
         let output = fixture.root.join("custom.bin");
         indexed_png(&input, 8, 8, &[0; 64], 1);
 
-        let summary = import(&input, Some(&output)).unwrap();
+        let summary = convert(&input, Some(&output)).unwrap();
         assert_eq!(summary.output, output);
         assert_eq!(fs::read(output).unwrap(), [0; 16 * 32]);
         assert!(!fixture.root.join("sprites.bin").exists());
@@ -238,7 +238,7 @@ mod tests {
         indexed_png(&input, 9, 8, &[0; 72], 1);
 
         assert!(
-            import(&input, None)
+            convert(&input, None)
                 .unwrap_err()
                 .to_string()
                 .contains("dimensions must be divisible by 8")
@@ -257,7 +257,7 @@ mod tests {
                 &vec![0; (width * height) as usize],
                 1,
             );
-            let error = import(&input, None).unwrap_err().to_string();
+            let error = convert(&input, None).unwrap_err().to_string();
             assert!(error.contains(&format!("{width}x{height}")), "{error}");
             assert!(error.contains("at most 128x512"), "{error}");
         }
@@ -271,7 +271,7 @@ mod tests {
         pixels[19] = 37;
         indexed_png(&input, 8, 8, &pixels, 38);
 
-        let error = import(&input, None).unwrap_err().to_string();
+        let error = convert(&input, None).unwrap_err().to_string();
         assert!(error.contains("palette index 37"), "{error}");
         assert!(error.contains("pixel (3, 2)"), "{error}");
     }
@@ -291,7 +291,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            import(&input, None)
+            convert(&input, None)
                 .unwrap_err()
                 .to_string()
                 .contains("unsupported PNG color type Rgb")
