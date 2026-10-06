@@ -38,5 +38,6 @@ glaux-audio = { path = "crates/glaux-audio" }
 glaux-machine = { path = "crates/glaux-machine" }
 glaux-video = { path = "crates/glaux-video" }
 glaux-input = { path = "crates/glaux-input" }
+glaux-modules = { path = "crates/glaux-modules" }
 glaux-host-raylib = { path = "crates/glaux-host-raylib" }
 glaux-luau = { path = "crates/glaux-luau" }

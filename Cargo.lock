@@ -600,6 +600,7 @@ dependencies = [
  "glaux-input",
  "glaux-luau",
  "glaux-machine",
+ "glaux-modules",
  "glaux-video",
  "png",
  "pretty_assertions",
@@ -647,6 +648,7 @@ dependencies = [
  "glaux-audio",
  "glaux-input",
  "glaux-machine",
+ "glaux-modules",
  "mlua",
  "pretty_assertions",
  "thiserror",
@@ -660,6 +662,14 @@ dependencies = [
  "glaux-audio",
  "pretty_assertions",
  "semver",
+ "thiserror",
+]
+
+[[package]]
+name = "glaux-modules"
+version = "0.1.0"
+dependencies = [
+ "pretty_assertions",
  "thiserror",
 ]
 

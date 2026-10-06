@@ -7,6 +7,7 @@
 
 use std::sync::OnceLock;
 
+use glaux_modules::{MODULE_ROOT, ModuleLoadError, ModulePath, ModuleSource};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -373,6 +374,13 @@ impl LoadedCartridge {
             .map_err(|err| entry_error(err, entry))
     }
 
+    /// The cartridge's code modules, for the runtime's `require`.
+    pub fn modules(&self) -> CartridgeModules {
+        CartridgeModules {
+            files: self.files.clone(),
+        }
+    }
+
     /// Current native object-tile bytes, if the optional `sprites.bin` exists.
     ///
     /// The file is read on every call so a fresh cartridge run observes edits
@@ -387,6 +395,33 @@ impl LoadedCartridge {
                 Err(CartridgeError::ObjTilesUnreadable)
             }
         }
+    }
+}
+
+/// Module files of one cartridge, confined to its real `code/` directory.
+///
+/// Each load resolves `code/` again, so a run sees the files as they are
+/// when required. `code/` itself must not be a symlink, and links inside it
+/// are followed only to targets inside it: a module cannot resolve to
+/// another file of the cartridge, such as its manifest or assets, nor to
+/// anything outside the cartridge.
+#[derive(Debug, Clone)]
+pub struct CartridgeModules {
+    files: CartridgeFs,
+}
+
+impl ModuleSource for CartridgeModules {
+    fn load(&self, path: &ModulePath) -> Result<Vec<u8>, ModuleLoadError> {
+        let read = self
+            .files
+            .real_subdir(MODULE_ROOT)
+            .and_then(|code| code.read_file(path.in_root()));
+        read.map_err(|err| match err {
+            FsError::NotFound(_) | FsError::NotADirectory(_) => ModuleLoadError::NotFound,
+            FsError::NotAFile(_) | FsError::Unreadable(_) | FsError::Unavailable => {
+                ModuleLoadError::Unreadable
+            }
+        })
     }
 }
 
@@ -829,6 +864,93 @@ mod tests {
         );
     }
 
+    /// Loads module `name` of `cartridge` as the Luau runtime would.
+    fn load_module(cartridge: &LoadedCartridge, name: &str) -> Result<Vec<u8>, ModuleLoadError> {
+        let path = glaux_modules::ModuleName::parse(name).unwrap().path("luau");
+        cartridge.modules().load(&path)
+    }
+
+    #[test]
+    fn modules_are_read_fresh_from_code() {
+        let fixture = Fixture::new("modules-code");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        fs::create_dir_all(dir.join("code/game")).unwrap();
+        fs::write(dir.join("code/game/enemies.luau"), "return 1").unwrap();
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+
+        assert_eq!(
+            load_module(&cartridge, "game.enemies"),
+            Ok(b"return 1".to_vec())
+        );
+        assert_eq!(load_module(&cartridge, "main"), Ok(Vec::new()));
+        fs::write(dir.join("code/game/enemies.luau"), "return 2").unwrap();
+        assert_eq!(
+            load_module(&cartridge, "game.enemies"),
+            Ok(b"return 2".to_vec())
+        );
+        assert_eq!(
+            load_module(&cartridge, "nope"),
+            Err(ModuleLoadError::NotFound)
+        );
+        assert_eq!(
+            load_module(&cartridge, "game"),
+            Err(ModuleLoadError::NotFound)
+        );
+        fs::create_dir(dir.join("code/dir.luau")).unwrap();
+        assert_eq!(
+            load_module(&cartridge, "dir"),
+            Err(ModuleLoadError::Unreadable)
+        );
+    }
+
+    #[test]
+    fn modules_cannot_name_files_outside_code() {
+        let fixture = Fixture::new("modules-outside-code");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        // Files a module path could only reach by leaving `code/`.
+        fs::write(dir.join("secret.luau"), "").unwrap();
+        fs::write(fixture.root().join("games/owl/main.luau"), "").unwrap();
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+        assert_eq!(
+            load_module(&cartridge, "secret"),
+            Err(ModuleLoadError::NotFound)
+        );
+    }
+
+    #[test]
+    fn a_cartridge_without_code_has_no_modules() {
+        let fixture = Fixture::new("modules-no-code");
+        let dir = fixture.root().join("pong");
+        write_manifest(&dir, &manifest_ron("Pong", "main.luau"));
+        fs::write(dir.join("main.luau"), "").unwrap();
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+        assert_eq!(
+            load_module(&cartridge, "main"),
+            Err(ModuleLoadError::NotFound)
+        );
+
+        fs::write(dir.join("code"), "").unwrap();
+        assert_eq!(
+            load_module(&cartridge, "main"),
+            Err(ModuleLoadError::NotFound)
+        );
+    }
+
+    #[test]
+    fn one_cartridge_cannot_load_another_cartridges_modules() {
+        let fixture = Fixture::new("modules-other-cartridge");
+        let games = fixture.root().join("games");
+        write_cartridge(&games.join("a"), "A");
+        write_cartridge(&games.join("b"), "B");
+        fs::write(games.join("b/code/only_b.luau"), "").unwrap();
+        let a = LoadedCartridge::load(&fixture.storage(), "games/a").unwrap();
+        let b = LoadedCartridge::load(&fixture.storage(), "games/b").unwrap();
+        assert_eq!(load_module(&a, "only_b"), Err(ModuleLoadError::NotFound));
+        assert_eq!(load_module(&b, "only_b"), Ok(Vec::new()));
+    }
+
     #[test]
     fn object_tiles_are_optional_and_read_fresh() {
         let fixture = Fixture::new("load-obj-tiles");
@@ -1104,6 +1226,57 @@ mod tests {
             assert_eq!(
                 load(&storage, "pong-link"),
                 Err(CartridgeError::EntryNotFound("code/main.luau".into()))
+            );
+        }
+
+        #[test]
+        fn module_links_must_stay_inside_code() {
+            let fixture = Fixture::new("modules-links");
+            let dir = fixture.root().join("pong");
+            write_cartridge(&dir, "Pong");
+            let code = dir.join("code");
+            fs::create_dir_all(dir.join("assets")).unwrap();
+            fs::write(dir.join("assets/x.luau"), "").unwrap();
+            fs::write(code.join("real.luau"), "return 1").unwrap();
+            symlink("real.luau", code.join("inner.luau")).unwrap();
+            symlink("../assets/x.luau", code.join("asset.luau")).unwrap();
+            symlink("../cartridge.ron", code.join("manifest.luau")).unwrap();
+            symlink(dir.join("cartridge.ron"), code.join("manifest_abs.luau")).unwrap();
+            fs::write(fixture.outside().join("out.luau"), "").unwrap();
+            symlink(fixture.outside().join("out.luau"), code.join("out.luau")).unwrap();
+            let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+
+            assert_eq!(load_module(&cartridge, "inner"), Ok(b"return 1".to_vec()));
+            for name in ["asset", "manifest", "manifest_abs", "out"] {
+                assert_eq!(
+                    load_module(&cartridge, name),
+                    Err(ModuleLoadError::NotFound),
+                    "{name}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_linked_code_directory_has_no_modules() {
+            let fixture = Fixture::new("modules-code-link");
+            let games = fixture.root().join("games");
+            write_cartridge(&games.join("a"), "A");
+            write_cartridge(&games.join("b"), "B");
+            let a = games.join("a");
+            fs::rename(a.join("code"), a.join("src")).unwrap();
+            symlink("../b/code", a.join("code")).unwrap();
+            write_manifest(&a, &manifest_ron("A", "src/main.luau"));
+            let cartridge = LoadedCartridge::load(&fixture.storage(), "games/a").unwrap();
+            assert_eq!(
+                load_module(&cartridge, "main"),
+                Err(ModuleLoadError::NotFound)
+            );
+
+            fs::remove_file(a.join("code")).unwrap();
+            symlink("src", a.join("code")).unwrap();
+            assert_eq!(
+                load_module(&cartridge, "main"),
+                Err(ModuleLoadError::NotFound)
             );
         }
 

@@ -1,57 +1,37 @@
-local COLUMNS = 8
-local ROWS = 5
-local START_TILE = 0
-local GRID_COLUMNS = 16
+local grid = require("grid")
 
-local CELL_WIDTH = 39
-local CELL_HEIGHT = 39
-local GRID_X = 4
-local GRID_Y = 34
+-- A module runs once; requiring it again returns the same table.
+assert(rawequal(require("grid"), grid))
 
-local selected_tile = START_TILE
-
-local function clamp_tile(tile)
-    return math.max(0, math.min(1023, tile))
-end
-
-local function draw_selection_border(x, y)
-    for offset = -2, 9 do
-        pset(x + offset, y - 2, 15)
-        pset(x + offset, y + 9, 15)
-    end
-    for offset = -1, 8 do
-        pset(x - 2, y + offset, 15)
-        pset(x + 9, y + offset, 15)
-    end
-end
+local selected_tile = grid.START_TILE
 
 function tick()
     if btnp("left") then
-        selected_tile = clamp_tile(selected_tile - 1)
+        selected_tile = grid.clamp_tile(selected_tile - 1)
     elseif btnp("right") then
-        selected_tile = clamp_tile(selected_tile + 1)
+        selected_tile = grid.clamp_tile(selected_tile + 1)
     elseif btnp("up") then
-        selected_tile = clamp_tile(selected_tile - GRID_COLUMNS)
+        selected_tile = grid.clamp_tile(selected_tile - grid.TILE_GRID_COLUMNS)
     elseif btnp("down") then
-        selected_tile = clamp_tile(selected_tile + GRID_COLUMNS)
+        selected_tile = grid.clamp_tile(selected_tile + grid.TILE_GRID_COLUMNS)
     end
 end
 
 function draw()
     cls(0)
     print("SELECTED TILE " .. selected_tile, 6, 5, 7)
-    print("LEFT/RIGHT: 1   UP/DOWN: " .. GRID_COLUMNS, 6, 17, 14)
+    print("LEFT/RIGHT: 1   UP/DOWN: " .. grid.TILE_GRID_COLUMNS, 6, 17, 14)
 
-    for offset = 0, COLUMNS * ROWS - 1 do
+    for offset = 0, grid.COLUMNS * grid.ROWS - 1 do
         local tile = selected_tile + offset
         if tile > 1023 then
             break
         end
 
-        local column = offset % COLUMNS
-        local row = math.floor(offset / COLUMNS)
-        local cell_x = GRID_X + column * CELL_WIDTH
-        local cell_y = GRID_Y + row * CELL_HEIGHT
+        local column = offset % grid.COLUMNS
+        local row = math.floor(offset / grid.COLUMNS)
+        local cell_x = grid.X + column * grid.CELL_WIDTH
+        local cell_y = grid.Y + row * grid.CELL_HEIGHT
         local sprite_x = cell_x + 14
         local sprite_y = cell_y + 2
 
@@ -59,7 +39,7 @@ function draw()
         print(tile, cell_x + 5, cell_y + 14, 7)
 
         if offset == 0 then
-            draw_selection_border(sprite_x, sprite_y)
+            grid.draw_selection_border(sprite_x, sprite_y)
         end
     end
 end

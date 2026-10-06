@@ -20,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 glaux-audio.workspace = true
 glaux-machine.workspace = true
+glaux-modules.workspace = true
 glaux-video.workspace = true
 glaux-host-raylib.workspace = true
 glaux-input.workspace = true

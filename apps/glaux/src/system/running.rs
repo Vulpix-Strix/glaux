@@ -61,7 +61,7 @@ impl RunningCartridge {
             None => ObjTileBank::new(),
         };
         let entry = &cartridge.manifest().runtime.entry;
-        match Runtime::start(entry, &source, Budget::default()) {
+        match Runtime::start(entry, &source, cartridge.modules(), Budget::default()) {
             Ok(runtime) => Ok(Self {
                 cartridge,
                 runtime,
@@ -141,4 +141,77 @@ impl RunningCartridge {
 
 fn failed(cartridge: LoadedCartridge, error: StartError) -> Box<FailedStart> {
     Box::new(FailedStart { cartridge, error })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use glaux_luau::ScriptError;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::cartridge::fixture::write_cartridge;
+    use crate::cartridge_fs::fixture::Fixture;
+
+    fn texts(entries: Vec<LogEntry>) -> Vec<String> {
+        entries.into_iter().map(|entry| entry.text).collect()
+    }
+
+    #[test]
+    fn a_cartridge_requires_its_own_modules() {
+        let fixture = Fixture::new("running-modules");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        fs::create_dir_all(dir.join("code/game")).unwrap();
+        fs::write(
+            dir.join("code/game/enemies.luau"),
+            r#"log.info("enemies loaded") return { count = 3 }"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("code/main.luau"),
+            r#"
+            local enemies = require("game.enemies")
+            function tick() log.info(require("game.enemies").count + enemies.count) end
+            "#,
+        )
+        .unwrap();
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+
+        let mut running = RunningCartridge::start(cartridge).unwrap();
+        assert_eq!(texts(running.take_output()), ["enemies loaded"]);
+        running.tick(&[]).unwrap();
+        running.tick(&[]).unwrap();
+        assert_eq!(texts(running.take_output()), ["6", "6"]);
+    }
+
+    #[test]
+    fn module_errors_name_cartridge_relative_paths() {
+        let fixture = Fixture::new("running-module-errors");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        fs::write(dir.join("code/main.luau"), r#"require("boom")"#).unwrap();
+        fs::write(dir.join("code/boom.luau"), "\nerror(\"x\")").unwrap();
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+
+        let failed = RunningCartridge::start(cartridge).unwrap_err();
+        let StartError::Script(failure) = failed.error else {
+            panic!("expected a script error, got {:?}", failed.error);
+        };
+        assert_eq!(
+            failure.error.error,
+            ScriptError::Runtime("code/boom.luau:2: x".into())
+        );
+
+        fs::write(dir.join("code/main.luau"), r#"require("nope")"#).unwrap();
+        let failed = RunningCartridge::start(failed.cartridge).unwrap_err();
+        let StartError::Script(failure) = failed.error else {
+            panic!("expected a script error, got {:?}", failed.error);
+        };
+        assert_eq!(
+            failure.error.to_string(),
+            "MODULE NOT FOUND: code/nope.luau (code/main.luau:1)"
+        );
+    }
 }

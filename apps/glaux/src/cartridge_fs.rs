@@ -229,6 +229,34 @@ impl CartridgeFs {
         Ok((virtual_path(&target), Self::new(canonical)))
     }
 
+    /// The real directory `name` directly inside the root, as a filesystem
+    /// of its own rooted at it.
+    ///
+    /// Unlike [`subdir`](Self::subdir), `name` is never followed through a
+    /// symlink: a linked entry is [`FsError::NotFound`] even when its target
+    /// lies inside this filesystem. Every lookup through the result is
+    /// confined to that directory.
+    pub fn real_subdir(&self, name: &str) -> Result<CartridgeFs, FsError> {
+        let missing = || FsError::NotFound(virtual_path(&[name.to_owned()]));
+        if !is_name(name) {
+            return Err(missing());
+        }
+        let dir = self.root.join(name);
+        let meta = fs::symlink_metadata(&dir).map_err(|err| match lookup_error(err) {
+            Lookup::Missing => missing(),
+            Lookup::Io(err) => io_failure(err, &[name.to_owned()]),
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(missing());
+        }
+        if !meta.is_dir() {
+            return Err(FsError::NotADirectory(virtual_path(&[name.to_owned()])));
+        }
+        // A canonical root joined with a plain name that is a real directory
+        // is itself canonical.
+        Ok(Self::new(dir))
+    }
+
     /// Fails unless `path`, absolute or relative to the current directory,
     /// is a regular file.
     pub fn ensure_file(&self, path: &str) -> Result<(), FsError> {
@@ -686,6 +714,28 @@ mod tests {
     }
 
     #[test]
+    fn real_subdir_is_rooted_at_the_directory() {
+        let fixture = Fixture::new("real-subdir");
+        fs::write(fixture.root().join("games/owl/cart.json"), "{}").unwrap();
+        let fs = fixture.open();
+
+        let games = fs.real_subdir("games").unwrap();
+        assert_eq!(ls(&games, None), ["owl/"]);
+        assert_eq!(games.read_file("/../readme"), Err(not_found("/readme")));
+        assert_eq!(fs.real_subdir("nope").map(drop), Err(not_found("/nope")));
+        assert_eq!(
+            fs.real_subdir("b.txt").map(drop),
+            Err(FsError::NotADirectory("/b.txt".into()))
+        );
+        for name in ["", ".", "..", "games/owl", r"games\owl"] {
+            assert!(
+                matches!(fs.real_subdir(name), Err(FsError::NotFound(_))),
+                "{name:?}"
+            );
+        }
+    }
+
+    #[test]
     fn files_are_read_only_when_regular() {
         let fixture = Fixture::new("read-file");
         fs::write(fixture.root().join("tools/note"), "hello").unwrap();
@@ -777,6 +827,22 @@ mod tests {
                 assert_eq!(owl.ensure_file(name), Err(not_found(&format!("/{name}"))));
             }
             assert_eq!(owl.read_file("tools/b.txt"), Err(not_found("/tools/b.txt")));
+        }
+
+        #[test]
+        fn real_subdir_does_not_follow_links() {
+            let fixture = Fixture::new("links-real-subdir");
+            let root = fixture.root();
+            symlink("games", root.join("games-link")).unwrap();
+            symlink(fixture.outside(), root.join("out")).unwrap();
+            let fs = fixture.open();
+
+            for name in ["games-link", "out"] {
+                assert_eq!(
+                    fs.real_subdir(name).map(drop),
+                    Err(not_found(&format!("/{name}")))
+                );
+            }
         }
 
         #[test]
