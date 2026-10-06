@@ -50,7 +50,8 @@ pub struct Voice {
 
 const BANNER: &str = "READY. TYPE HELP FOR HELP";
 const PROMPT: &str = "> ";
-const CURSOR: char = '_';
+/// Shell ticks the cursor spends in each blink phase: 600 ms at 60 Hz.
+pub(super) const BLINK_TICKS: u32 = 36;
 
 /// A cartridge lifecycle change asked for by a shell command and carried
 /// out by the system.
@@ -96,6 +97,8 @@ pub struct Shell {
     cartridges: CartridgeStorage,
     /// Per-channel diagnostic voices set by TONE, ENV and GATE.
     voices: [Voice; CHANNELS],
+    /// Ticks since the cursor blink last restarted in its visible phase.
+    blink: u32,
 }
 
 impl Shell {
@@ -111,7 +114,13 @@ impl Shell {
             info,
             cartridges,
             voices: [Voice::default(); CHANNELS],
+            blink: 0,
         }
+    }
+
+    /// Advances the cursor blink by one system tick.
+    pub(super) fn tick(&mut self) {
+        self.blink = self.blink.wrapping_add(1);
     }
 
     /// The diagnostic voice set with TONE, ENV and GATE for each PSG
@@ -131,6 +140,14 @@ impl Shell {
         event: InputEvent,
         slot: CartridgeSlot<'_>,
     ) -> Option<ShellRequest> {
+        // Any input the shell acts on shows the cursor and restarts its
+        // blink, so it stays solid while typing or moving.
+        if !matches!(
+            event,
+            InputEvent::Break | InputEvent::ButtonDown(_) | InputEvent::ButtonUp(_)
+        ) {
+            self.blink = 0;
+        }
         match event {
             InputEvent::Up => {
                 let current = self.editor.text();
@@ -337,17 +354,23 @@ impl Shell {
             ));
         }
 
-        // At the end of a full row the cursor wraps to the start of the
-        // next one, where the next character will go.
-        let cursor = [CURSOR];
-        lines.extend(wrapped(
-            text_start + self.editor.cursor(),
-            &cursor,
-            columns,
-            row,
-            TEXT,
-            None,
-        ));
+        // The cursor is a filled cell drawn last, so it covers whatever is
+        // under it, selected or not, and shows that character inverse. A
+        // space gives it a cell's width past the end of the line. At the end
+        // of a full row it wraps to the start of the next one, where the next
+        // character will go.
+        if (self.blink / BLINK_TICKS).is_multiple_of(2) {
+            let cursor = self.editor.cursor();
+            let under = [chars.get(cursor).copied().unwrap_or(' ')];
+            lines.extend(wrapped(
+                text_start + cursor,
+                &under,
+                columns,
+                row,
+                BACKGROUND,
+                Some(TEXT),
+            ));
+        }
         lines
     }
 }
@@ -497,6 +520,18 @@ mod tests {
         Entry::Error(text.into())
     }
 
+    /// The block cursor over `under`, the character in its cell.
+    fn cursor(col: i32, row: i32, under: &str) -> Line {
+        Line::new(col, row, under, BACKGROUND).with_background(TEXT)
+    }
+
+    fn ticked(mut shell: Shell, ticks: u32) -> Shell {
+        for _ in 0..ticks {
+            shell.tick();
+        }
+        shell
+    }
+
     /// Editor lines, which follow everything laid out for the scrollback.
     fn editor_lines(shell: &Shell, columns: usize) -> Vec<Line> {
         let lines = shell.lines(columns, ROWS);
@@ -516,7 +551,7 @@ mod tests {
             [
                 Line::new(0, 0, BANNER, ACCENT),
                 Line::new(0, 1, "> ", TEXT),
-                Line::new(2, 1, "_", TEXT),
+                cursor(2, 1, " "),
             ]
         );
     }
@@ -526,7 +561,7 @@ mod tests {
         let lines = shell_with(&typed("help")).lines(COLUMNS, ROWS);
         assert_eq!(
             lines[2..],
-            [Line::new(2, 1, "help", TEXT), Line::new(6, 1, "_", TEXT)]
+            [Line::new(2, 1, "help", TEXT), cursor(6, 1, " ")]
         );
     }
 
@@ -535,7 +570,7 @@ mod tests {
         let mut events = typed("abc");
         events.push(InputEvent::Left { select: false });
         let lines = shell_with(&events).lines(COLUMNS, ROWS);
-        assert_eq!(lines.last(), Some(&Line::new(4, 1, "_", TEXT)));
+        assert_eq!(lines.last(), Some(&cursor(4, 1, "c")));
     }
 
     #[test]
@@ -553,7 +588,7 @@ mod tests {
                 Line::new(2, 1, "ab", TEXT),
                 Line::new(4, 1, "cd", BACKGROUND).with_background(TEXT),
                 Line::new(6, 1, "e", TEXT),
-                Line::new(4, 1, "_", TEXT),
+                cursor(4, 1, "c"),
             ]
         );
     }
@@ -563,7 +598,7 @@ mod tests {
         let lines = shell_with(&typed("日é")).lines(COLUMNS, ROWS);
         assert_eq!(
             lines[2..],
-            [Line::new(2, 1, "日é", TEXT), Line::new(4, 1, "_", TEXT)]
+            [Line::new(2, 1, "日é", TEXT), cursor(4, 1, " ")]
         );
     }
 
@@ -576,7 +611,7 @@ mod tests {
                 Line::new(0, 0, "> ", TEXT),
                 Line::new(2, 0, "abcdef", TEXT),
                 Line::new(0, 1, "ghijklmn", TEXT),
-                Line::new(0, 2, "_", TEXT),
+                cursor(0, 2, " "),
             ]
         );
     }
@@ -584,10 +619,64 @@ mod tests {
     #[test]
     fn cursor_wraps_to_next_row_when_row_is_full() {
         let lines = editor_only(&typed("abcde")).lines(8, ROWS);
-        assert_eq!(lines.last(), Some(&Line::new(7, 0, "_", TEXT)));
+        assert_eq!(lines.last(), Some(&cursor(7, 0, " ")));
 
         let lines = editor_only(&typed("abcdef")).lines(8, ROWS);
-        assert_eq!(lines.last(), Some(&Line::new(0, 1, "_", TEXT)));
+        assert_eq!(lines.last(), Some(&cursor(0, 1, " ")));
+    }
+
+    #[test]
+    fn cursor_over_text_shows_the_character_inverse() {
+        let mut events = typed("abc");
+        events.push(InputEvent::Home { select: false });
+        let lines = shell_with(&events).lines(COLUMNS, ROWS);
+        assert_eq!(lines.last(), Some(&cursor(2, 1, "a")));
+    }
+
+    #[test]
+    fn cursor_over_a_selection_is_drawn_after_it() {
+        let mut events = typed("abc");
+        events.push(InputEvent::Left { select: true });
+        let lines = shell_with(&events).lines(COLUMNS, ROWS);
+        assert_eq!(
+            lines[2..],
+            [
+                Line::new(2, 1, "ab", TEXT),
+                Line::new(4, 1, "c", BACKGROUND).with_background(TEXT),
+                cursor(4, 1, "c"),
+            ]
+        );
+    }
+
+    #[test]
+    fn cursor_blinks_without_moving_the_text() {
+        let mut events = typed("abcd");
+        events.extend([InputEvent::Left { select: true }; 2]);
+        let shell = shell_with(&events);
+        let on = shell.lines(COLUMNS, ROWS);
+        assert_eq!(on.last(), Some(&cursor(4, 1, "c")));
+
+        let off = ticked(shell.clone(), BLINK_TICKS).lines(COLUMNS, ROWS);
+        assert_eq!(off, on[..on.len() - 1]);
+        assert_eq!(
+            ticked(shell.clone(), BLINK_TICKS - 1).lines(COLUMNS, ROWS),
+            on
+        );
+        assert_eq!(ticked(shell, 2 * BLINK_TICKS).lines(COLUMNS, ROWS), on);
+    }
+
+    #[test]
+    fn input_restarts_the_blink_visible() {
+        let mut shell = ticked(shell_with(&typed("ab")), BLINK_TICKS);
+        assert_eq!(shell.lines(COLUMNS, ROWS).last().unwrap().text, "ab");
+
+        send(&mut shell, &[InputEvent::Left { select: false }]);
+        assert_eq!(shell.lines(COLUMNS, ROWS).last(), Some(&cursor(3, 1, "b")));
+
+        // Input the shell ignores leaves the blink running.
+        let mut shell = ticked(shell, BLINK_TICKS);
+        send(&mut shell, &[InputEvent::Break]);
+        assert_eq!(shell.lines(COLUMNS, ROWS).last().unwrap().text, "ab");
     }
 
     #[test]
@@ -604,7 +693,7 @@ mod tests {
                 Line::new(6, 0, "ef", BACKGROUND).with_background(TEXT),
                 Line::new(0, 1, "g", BACKGROUND).with_background(TEXT),
                 Line::new(1, 1, "h", TEXT),
-                Line::new(1, 1, "_", TEXT),
+                cursor(1, 1, "h"),
             ]
         );
     }
@@ -623,7 +712,7 @@ mod tests {
                 (0, 1, " ".into()),
                 (0, 2, "a".into()),
                 (0, 3, "b".into()),
-                (0, 4, "_".into()),
+                (0, 4, " ".into()),
             ]
         );
     }
@@ -663,7 +752,7 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 17, "> ", TEXT), Line::new(2, 17, "_", TEXT)]
+            [Line::new(0, 17, "> ", TEXT), cursor(2, 17, " ")]
         );
     }
 
@@ -724,7 +813,7 @@ mod tests {
         assert_eq!(entries(&shell), []);
         assert_eq!(
             shell.lines(COLUMNS, ROWS),
-            [Line::new(0, 0, "> ", TEXT), Line::new(2, 0, "_", TEXT)]
+            [Line::new(0, 0, "> ", TEXT), cursor(2, 0, " ")]
         );
 
         send(&mut shell, &[Up]);
@@ -772,7 +861,7 @@ mod tests {
                 (3, "UNKNOWN COMMAND: C9"),
                 (4, "> "),
                 (4, "x"),
-                (4, "_"),
+                (4, " "),
             ]
         );
     }
@@ -789,7 +878,7 @@ mod tests {
             [
                 Line::new(0, 0, "ijkl", TEXT),
                 Line::new(0, 1, "> ", TEXT),
-                Line::new(2, 1, "_", TEXT),
+                cursor(2, 1, " "),
             ]
         );
     }

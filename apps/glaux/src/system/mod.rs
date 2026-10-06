@@ -285,6 +285,8 @@ fn shell_tick(
     mut loaded: Option<LoadedCartridge>,
     input: &[InputEvent],
 ) -> SystemState {
+    // Ticking before the input lets this tick's input restart the blink.
+    shell.tick();
     // Input is deliberately not logged: user input stays out of
     // application logs.
     for (index, &event) in input.iter().enumerate() {
@@ -424,6 +426,7 @@ fn paused_shell_tick(
     running: RunningCartridge,
     input: &[InputEvent],
 ) -> SystemState {
+    shell.tick();
     for &event in input {
         match shell.handle_input(event, CartridgeSlot::Paused(running.cartridge())) {
             None => {}
@@ -669,10 +672,12 @@ mod tests {
         system = system.update(&[]);
         assert_eq!(shell_of(&system), &Shell::new(info(), cartridges()));
 
+        let mut expected = Shell::new(info(), cartridges());
         for _ in 0..100 {
             system = system.update(&[]);
+            expected.tick();
         }
-        assert_eq!(shell_of(&system), &Shell::new(info(), cartridges()));
+        assert_eq!(shell_of(&system), &expected);
     }
 
     #[test]
@@ -801,13 +806,47 @@ mod tests {
         let typed = render(&system);
 
         // Cell columns 2 and 3 follow the two-char prompt. The cursor starts
-        // in column 2; typing puts 'A' there and moves the cursor to 3.
-        let ink = |fb: &Framebuffer, col: i32| fb.pixel((col + 1) * CELL_W, 2 * CELL_H);
+        // in column 2; typing puts 'A' there and moves the cursor to 3. Fake
+        // glyphs leave column 3 of each cell empty, so only the cursor block
+        // fills it.
+        let y = 2 * CELL_H;
+        let glyph = |fb: &Framebuffer, col: i32| fb.pixel((col + 1) * CELL_W, y);
+        let block = |fb: &Framebuffer, col: i32| fb.pixel((col + 1) * CELL_W + 3, y);
         assert_eq!(
-            (ink(&empty, 2), ink(&empty, 3)),
+            (block(&empty, 2), block(&empty, 3)),
             (Some(TEXT), Some(BACKGROUND))
         );
-        assert_eq!((ink(&typed, 2), ink(&typed, 3)), (Some(TEXT), Some(TEXT)));
+        assert_eq!(glyph(&typed, 2), Some(TEXT));
+        assert_eq!(
+            (block(&typed, 2), block(&typed, 3)),
+            (Some(BACKGROUND), Some(TEXT))
+        );
+    }
+
+    #[test]
+    fn cursor_cell_blinks_until_input_restarts_it() {
+        // The cursor cell after the prompt on row 1, outside the 3×3 area
+        // the fake font inks for every character, space included, so only
+        // the block's fill shows there.
+        let cell = |fb: &Framebuffer| {
+            let (x, y) = (3 * CELL_W, 2 * CELL_H);
+            (0..CELL_H)
+                .flat_map(|dy| (0..CELL_W).map(move |dx| (dx, dy)))
+                .filter(|&(dx, dy)| dx >= 3 || dy >= 3)
+                .map(|(dx, dy)| fb.pixel(x + dx, y + dy))
+                .collect::<Vec<_>>()
+        };
+        let all = |color| vec![Some(color); (CELL_W * CELL_H - 9) as usize];
+
+        let mut system = shell();
+        assert_eq!(cell(&render(&system)), all(TEXT));
+        for _ in 0..shell::BLINK_TICKS {
+            system = system.update(&[]);
+        }
+        assert_eq!(cell(&render(&system)), all(BACKGROUND));
+
+        system = system.update(&[InputEvent::Text('A'), InputEvent::Backspace]);
+        assert_eq!(cell(&render(&system)), all(TEXT));
     }
 
     #[test]
@@ -817,11 +856,12 @@ mod tests {
 
         let fb = render(&system);
         // Row 1 keeps "> A"; the error follows on row 2 and the new, empty
-        // prompt on row 3 with its cursor in column 2.
+        // prompt on row 3 with its cursor block in column 2.
         let glyph = |col: i32, row: i32| fb.pixel((col + 1) * CELL_W, (row + 1) * CELL_H);
         assert_eq!(glyph(2, 1), Some(TEXT));
         assert_eq!(glyph(0, 2), Some(ERROR));
-        assert_eq!((glyph(0, 3), glyph(2, 3)), (Some(TEXT), Some(TEXT)));
+        assert_eq!(glyph(0, 3), Some(TEXT));
+        assert_eq!(fb.pixel(3 * CELL_W + 3, 4 * CELL_H), Some(TEXT));
         assert!(!row_has_ink(&fb, 4));
     }
 
