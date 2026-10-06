@@ -4,10 +4,12 @@
 //! The system advances one step per logical tick and redraws the whole
 //! framebuffer from its current state on every frame.
 
+mod audio;
 mod boot;
 mod line_editor;
 mod pause;
 mod running;
+mod sfx;
 mod shell;
 
 pub use boot::Boot;
@@ -18,11 +20,12 @@ use glaux_luau::RuntimeError;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::psg::Psg;
-use glaux_machine::system_rom::SystemRom;
+use glaux_machine::system_rom::{SystemRom, SystemSounds};
 use glaux_video::draw::{clear, draw_text, fill_rect};
 use pause::PauseOverlay;
 use running::{FailedStart, RunningCartridge, StartError};
 use semver::Version;
+use sfx::SystemSound;
 use shell::{CartridgeSlot, ShellRequest, cartridge_identity};
 
 use crate::cartridge::LoadedCartridge;
@@ -103,6 +106,8 @@ enum StopReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AudioSource {
     Silent,
+    /// System ROM sound effects.
+    System,
     /// The shell's diagnostic voices.
     Shell,
     /// The running cartridge's audio.
@@ -116,12 +121,13 @@ pub struct System {
     info: SystemInfo,
     /// The source that last wrote the PSG.
     audio_source: AudioSource,
+    sound: SystemSound,
 }
 
 impl System {
-    /// Starts at frame 0 of the boot sequence. The shell that follows
-    /// navigates `cartridges`.
-    pub fn new(info: SystemInfo, cartridges: CartridgeStorage) -> Self {
+    /// Starts at frame 0 of the boot sequence, which plays the System ROM's
+    /// `sounds`. The shell that follows navigates `cartridges`.
+    pub fn new(info: SystemInfo, sounds: SystemSounds, cartridges: CartridgeStorage) -> Self {
         Self {
             state: SystemState::Boot {
                 boot: Boot::new(),
@@ -129,6 +135,7 @@ impl System {
             },
             info,
             audio_source: AudioSource::Silent,
+            sound: SystemSound::new(sounds),
         }
     }
 
@@ -159,15 +166,19 @@ impl System {
             state,
             info,
             audio_source,
+            mut sound,
         } = self;
         let state = match state {
             SystemState::Boot {
                 mut boot,
                 cartridges,
             } => {
-                boot.tick();
+                if let Some(sfx) = boot.tick() {
+                    sound.play(sfx);
+                }
                 if boot.is_finished() {
                     tracing::info!("boot finished, entering shell");
+                    sound.stop();
                     SystemState::Shell {
                         shell: Box::new(Shell::new(info.clone(), cartridges)),
                         loaded: None,
@@ -189,20 +200,23 @@ impl System {
                 view: PausedView::Shell,
             } => paused_shell_tick(shell, running, input),
         };
+        sound.tick();
         Self {
             state,
             info,
             audio_source,
+            sound,
         }
     }
 
     /// Writes the system's sound for the current state into `psg`.
     ///
-    /// The shell's diagnostic voices play while the shell is the active view,
-    /// and a running cartridge plays its own audio. Boot and the pause screen
-    /// are silent. Whenever the source changes, `psg` is reset first, so the
-    /// shell and a cartridge never share oscillator or envelope state, every
-    /// run starts from the same PSG state, and pausing or stopping a
+    /// The boot sequence plays System ROM sound effects, the shell's
+    /// diagnostic voices play while the shell is the active view, and a
+    /// running cartridge plays its own audio. The pause screen is silent.
+    /// Whenever the source changes, `psg` is reset first, so the System ROM,
+    /// the shell and a cartridge never share oscillator or envelope state,
+    /// every run starts from the same PSG state, and pausing or stopping a
     /// cartridge silences it at once.
     ///
     /// For the shell, each channel plays the TONE oscillator, the ENV
@@ -220,8 +234,8 @@ impl System {
                 ..
             } => AudioSource::Shell,
             SystemState::Running { .. } => AudioSource::Cartridge,
-            SystemState::Boot { .. }
-            | SystemState::Paused {
+            SystemState::Boot { .. } => AudioSource::System,
+            SystemState::Paused {
                 view: PausedView::Game(_),
                 ..
             } => AudioSource::Silent,
@@ -239,8 +253,8 @@ impl System {
                 ..
             } => shell_audio(shell, psg),
             SystemState::Running { running, .. } => running.apply_audio(psg, fresh),
-            SystemState::Boot { .. }
-            | SystemState::Paused {
+            SystemState::Boot { .. } => self.sound.apply(psg, fresh),
+            SystemState::Paused {
                 view: PausedView::Game(_),
                 ..
             } => {}
@@ -586,6 +600,7 @@ mod tests {
     use glaux_machine::psg::{
         Adsr, CHANNELS, ENVELOPE_FULL, EnvelopeStage, SAMPLES_PER_TICK, Waveform,
     };
+    use glaux_machine::system_rom::SystemSfx;
     use pretty_assertions::assert_eq;
     use semver::Version;
 
@@ -617,8 +632,12 @@ mod tests {
         CartridgeStorage::Unavailable
     }
 
+    fn sounds() -> SystemSounds {
+        crate::rom::sounds().unwrap()
+    }
+
     fn new_system() -> System {
-        System::new(info(), cartridges())
+        System::new(info(), sounds(), cartridges())
     }
 
     fn render(system: &System) -> Framebuffer {
@@ -998,7 +1017,7 @@ mod tests {
         let dir = fixture.root().join("pong");
         write_cartridge(&dir, "Pong");
         std::fs::write(dir.join("main.luau"), script).unwrap();
-        let mut system = System::new(info(), fixture.storage());
+        let mut system = System::new(info(), sounds(), fixture.storage());
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
         }
@@ -1288,7 +1307,7 @@ mod tests {
         std::fs::write(dir.join("save.dat"), b"kept").unwrap();
         let manifest = std::fs::read(dir.join("cart.json")).unwrap();
 
-        let mut system = System::new(info(), fixture.storage());
+        let mut system = System::new(info(), sounds(), fixture.storage());
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
         }
@@ -1979,9 +1998,126 @@ mod tests {
         std::array::from_fn(|index| psg.channel(index).unwrap().gate())
     }
 
+    // System ROM audio.
+
+    /// Boots `system` the way the main loop does, writing and rendering
+    /// the PSG after every update, until the shell takes over. Returns the
+    /// samples of each tick; tick `n` is the one that reaches frame `n + 1`.
+    fn boot_audio(mut system: System, psg: &mut Psg) -> (System, Vec<Vec<i16>>) {
+        let mut ticks = Vec::new();
+        while matches!(system.state(), SystemState::Boot { .. }) {
+            system = system.update(&[]);
+            system.audio(psg);
+            ticks.push(render_psg(psg));
+        }
+        (system, ticks)
+    }
+
+    fn quiet(samples: &[i16]) -> bool {
+        samples.iter().all(|&sample| sample == 0)
+    }
+
+    /// Ticks of the boot chime rendered on its own: long enough for every
+    /// release to finish.
+    const CHIME_TICKS: usize = 60;
+
+    fn chime_alone() -> Vec<Vec<i16>> {
+        let mut sound = SystemSound::new(sounds());
+        sound.play(SystemSfx::Boot);
+        let mut psg = Psg::new();
+        (0..CHIME_TICKS)
+            .map(|_| {
+                sound.tick();
+                sound.apply(&mut psg, false);
+                render_psg(&mut psg)
+            })
+            .collect()
+    }
+
     #[test]
-    fn boot_is_silent() {
-        assert!(is_silent(&mut new_system(), &mut Psg::new()));
+    fn boot_plays_its_chime_once_through_the_psg() {
+        let (_, ticks) = boot_audio(new_system(), &mut Psg::new());
+        let start = boot::CHIME_FRAME as usize - 1;
+        let chime = chime_alone();
+        assert!(chime.iter().any(|samples| !quiet(samples)));
+        assert!(quiet(chime.last().unwrap()), "the chime has faded out");
+
+        assert!(ticks[..start].iter().all(|samples| quiet(samples)));
+        assert_eq!(&ticks[start..start + CHIME_TICKS], chime.as_slice());
+        assert!(
+            ticks[start + CHIME_TICKS..]
+                .iter()
+                .all(|samples| quiet(samples))
+        );
+    }
+
+    #[test]
+    fn a_rom_without_sounds_boots_silent() {
+        let system = System::new(info(), SystemSounds::default(), cartridges());
+        let (_, ticks) = boot_audio(system, &mut Psg::new());
+        assert!(ticks.iter().all(|samples| quiet(samples)));
+    }
+
+    #[test]
+    fn the_shell_starts_with_no_system_sound() {
+        let mut psg = Psg::new();
+        let (mut system, _) = boot_audio(new_system(), &mut psg);
+        assert!(!system.sound.is_active());
+        system.audio(&mut psg);
+        assert_silent(&mut psg);
+
+        let mut system = enter(enter(system, "tone 1 330 9"), "gate 1 on");
+        assert_eq!(gates(&mut system, &mut psg), [false, true, false, false]);
+        assert_eq!(voices(&mut system, &mut psg)[1], (Waveform::Square, 330, 9));
+    }
+
+    #[test]
+    fn a_chime_cut_off_by_the_shell_leaves_nothing_behind() {
+        let mut psg = Psg::new();
+        let mut sound = SystemSound::new(sounds());
+        sound.play(SystemSfx::Boot);
+        let mut system = System {
+            state: SystemState::Boot {
+                boot: Boot::at_frame(boot::FINISH_FRAME - 2),
+                cartridges: cartridges(),
+            },
+            info: info(),
+            audio_source: AudioSource::Silent,
+            sound,
+        };
+        system = system.update(&[]);
+        system.audio(&mut psg);
+        assert!(gates(&mut system, &mut psg).iter().any(|&open| open));
+        assert!(!quiet(&render_psg(&mut psg)));
+
+        system = system.update(&[]);
+        assert!(matches!(system.state(), SystemState::Shell { .. }));
+        assert!(!system.sound.is_active());
+        system.audio(&mut psg);
+        assert_silent(&mut psg);
+    }
+
+    #[test]
+    fn boot_runs_the_same_without_audio_output() {
+        let mut psg = Psg::new();
+        let mut heard = new_system();
+        let mut unheard = new_system();
+        while let SystemState::Boot { boot, .. } = heard.state() {
+            let SystemState::Boot { boot: other, .. } = unheard.state() else {
+                panic!("boot ended early without audio output");
+            };
+            assert_eq!(boot, other);
+            heard = heard.update(&[]);
+            heard.audio(&mut psg);
+            unheard = unheard.update(&[]);
+        }
+        assert_eq!(shell_of(&heard), shell_of(&unheard));
+    }
+
+    #[test]
+    fn every_boot_sounds_the_same() {
+        let first = boot_audio(new_system(), &mut Psg::new()).1;
+        assert_eq!(boot_audio(new_system(), &mut Psg::new()).1, first);
     }
 
     #[test]

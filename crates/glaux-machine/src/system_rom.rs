@@ -1,18 +1,47 @@
 //! System ROM data injected into the machine.
 
+use glaux_audio::sfx::Sfx;
 use semver::Version;
 
 use crate::font::BitmapFont;
 use crate::palette::Palette;
 
+/// A sound the System ROM plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemSfx {
+    /// The power-on chime.
+    Boot,
+}
+
+/// The sound effects shipped with the System ROM. The default has every
+/// sound empty, so a ROM built without sounds plays nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SystemSounds {
+    boot: Sfx,
+}
+
+impl SystemSounds {
+    pub fn new(boot: Sfx) -> Self {
+        Self { boot }
+    }
+
+    pub fn get(&self, sfx: SystemSfx) -> &Sfx {
+        match sfx {
+            SystemSfx::Boot => &self.boot,
+        }
+    }
+}
+
 /// Built-in data the machine is created with: the ROM version, its
-/// copyright notice, the system palette and the system font.
+/// copyright notice, the system palette, the system font and the system
+/// sounds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemRom {
     version: Version,
     copyright: String,
     palette: Palette,
     font: BitmapFont,
+    sounds: SystemSounds,
 }
 
 impl SystemRom {
@@ -22,7 +51,14 @@ impl SystemRom {
             copyright,
             palette,
             font,
+            sounds: SystemSounds::default(),
         }
+    }
+
+    /// This ROM with `sounds` in place of its sound effects.
+    pub fn with_sounds(mut self, sounds: SystemSounds) -> Self {
+        self.sounds = sounds;
+        self
     }
 
     /// The ROM version, independent of the application version.
@@ -44,6 +80,11 @@ impl SystemRom {
     /// The system font.
     pub fn font(&self) -> &BitmapFont {
         &self.font
+    }
+
+    /// The system sound effects.
+    pub fn sounds(&self) -> &SystemSounds {
+        &self.sounds
     }
 }
 
@@ -157,5 +198,29 @@ mod tests {
         );
         assert_eq!(rom.font().glyph('.').unwrap().rows(), &[0, 0, 0b010]);
         assert_eq!(rom.font().glyph('x'), None);
+    }
+
+    #[test]
+    fn sounds_are_empty_unless_injected() {
+        use glaux_audio::sfx::{SfxAction, SfxStep};
+
+        let rom = SystemRom::new(
+            Version::new(0, 1, 0),
+            notice(),
+            Palette::provisional(),
+            empty_font(),
+        );
+        assert_eq!(rom.sounds().get(SystemSfx::Boot), &Sfx::default());
+
+        let chime = Sfx::new(vec![SfxStep {
+            tick: 0,
+            action: SfxAction::Gate {
+                channel: 0,
+                open: true,
+            },
+        }])
+        .unwrap();
+        let rom = rom.with_sounds(SystemSounds::new(chime.clone()));
+        assert_eq!(rom.sounds().get(SystemSfx::Boot), &chime);
     }
 }

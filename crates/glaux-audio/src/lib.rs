@@ -15,6 +15,8 @@
 
 use std::fmt;
 
+pub mod sfx;
+
 /// Number of sound channels.
 pub const CHANNELS: usize = 4;
 

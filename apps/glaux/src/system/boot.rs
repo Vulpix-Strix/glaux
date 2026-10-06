@@ -7,7 +7,7 @@
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
-use glaux_machine::system_rom::SystemRom;
+use glaux_machine::system_rom::{SystemRom, SystemSfx};
 use glaux_video::draw::{clear, draw_text_scaled, fill_rect};
 use semver::Version;
 
@@ -33,6 +33,10 @@ const GLOW_START: u32 = 14;
 const LOGO_START: u32 = 22;
 const LOGO_FADE_OUT: u32 = 78;
 const LOGO_END: u32 = 86;
+
+/// Frame on which the power-on chime starts, as the logo begins to light.
+pub(super) const CHIME_FRAME: u32 = LOGO_START;
+const _: () = assert!(CHIME_FRAME > 0, "a tick can only cue a frame after 0");
 
 /// Frames each step of a color ramp is held.
 const RAMP_STEP_FRAMES: u32 = 2;
@@ -92,8 +96,11 @@ impl Boot {
         self.frame
     }
 
-    pub fn tick(&mut self) {
+    /// Advances one frame and returns the sound the frame it enters starts
+    /// with, so the cue plays on the same tick its frame is reached.
+    pub fn tick(&mut self) -> Option<SystemSfx> {
         self.frame = self.frame.saturating_add(1);
+        (self.frame == CHIME_FRAME).then_some(SystemSfx::Boot)
     }
 
     pub fn stage(&self) -> BootStage {
@@ -287,6 +294,18 @@ mod tests {
             .flat_map(|y| (0..WIDTH as i32).map(move |x| (x, y)))
             .filter(|&(x, y)| fb.pixel(x, y) != Some(BACKGROUND))
             .collect()
+    }
+
+    #[test]
+    fn the_chime_is_cued_once_on_reaching_its_frame() {
+        let mut boot = Boot::new();
+        let mut cues = Vec::new();
+        while !boot.is_finished() {
+            if let Some(sfx) = boot.tick() {
+                cues.push((boot.frame(), sfx));
+            }
+        }
+        assert_eq!(cues, [(CHIME_FRAME, SystemSfx::Boot)]);
     }
 
     #[test]

@@ -111,6 +111,7 @@ fn run(
         SystemInfo {
             rom_version: rom.version().clone(),
         },
+        rom.sounds().clone(),
         cartridges,
     );
 

@@ -1,9 +1,12 @@
-//! Builds the System ROM from the assets in the repository's `rom/` folder.
+//! Builds the System ROM from the assets in the repository's `rom/` folder
+//! and the sound effects defined here.
 
 use anyhow::{Context, bail, ensure};
+use glaux_audio::sfx::{Sfx, SfxAction, SfxStep};
+use glaux_audio::{Envelope, Tone, Waveform};
 use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
 use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
-use glaux_machine::system_rom::SystemRom;
+use glaux_machine::system_rom::{SystemRom, SystemSounds};
 use semver::Version;
 
 const VERSION: &str = include_str!("../../../rom/version");
@@ -34,7 +37,60 @@ fn build(version: &str, copyright: &str, palette: &str, font: &str) -> anyhow::R
     let copyright = parse_copyright(copyright).context("invalid rom/copyright")?;
     let palette = parse_palette(palette).context("invalid rom/palette/system.hex")?;
     let font = parse_bdf(font, FontMetrics::SYSTEM).context("invalid rom/font/Tamzen5x9r.bdf")?;
-    Ok(SystemRom::new(version, copyright, palette, font))
+    Ok(SystemRom::new(version, copyright, palette, font).with_sounds(sounds()?))
+}
+
+/// The System ROM sound effects.
+pub fn sounds() -> anyhow::Result<SystemSounds> {
+    let boot = Sfx::new(boot_chime()).context("invalid boot chime")?;
+    Ok(SystemSounds::new(boot))
+}
+
+/// The power-on chime, about half a second: a C major arpeggio over a
+/// triangle bass, whose top voice leaps an octave by retriggering its gate.
+fn boot_chime() -> Vec<SfxStep> {
+    const BASS: usize = 2;
+    const LEAD: usize = 0;
+    const FIFTH: usize = 1;
+
+    let bass_env = Envelope {
+        attack_ms: 5,
+        decay_ms: 300,
+        sustain: 6,
+        release_ms: 220,
+    };
+    let bell_env = Envelope {
+        attack_ms: 2,
+        decay_ms: 120,
+        sustain: 5,
+        release_ms: 200,
+    };
+    let note = |waveform, frequency, volume| Tone {
+        waveform,
+        frequency,
+        volume,
+    };
+    let at = |tick, action| SfxStep { tick, action };
+    let tone = |channel, tone| SfxAction::Tone { channel, tone };
+    let envelope = |channel, envelope| SfxAction::Envelope { channel, envelope };
+    let gate = |channel, open| SfxAction::Gate { channel, open };
+
+    vec![
+        at(0, envelope(BASS, bass_env)),
+        at(0, tone(BASS, note(Waveform::Triangle, 131, 12))),
+        at(0, gate(BASS, true)),
+        at(0, envelope(LEAD, bell_env)),
+        at(0, tone(LEAD, note(Waveform::Square, 523, 6))),
+        at(0, gate(LEAD, true)),
+        at(6, envelope(FIFTH, bell_env)),
+        at(6, tone(FIFTH, note(Waveform::Square, 784, 5))),
+        at(6, gate(FIFTH, true)),
+        at(12, tone(LEAD, note(Waveform::Square, 1047, 7))),
+        at(12, gate(LEAD, true)),
+        at(20, gate(LEAD, false)),
+        at(20, gate(FIFTH, false)),
+        at(20, gate(BASS, false)),
+    ]
 }
 
 /// Parses the copyright notice: one non-empty line of printable ASCII, so
@@ -303,5 +359,26 @@ mod tests {
                 0b00000, 0b00000, 0b01100, 0b10010, 0b11110, 0b10010, 0b10010, 0b00000, 0b00000
             ]
         );
+        assert_eq!(rom.sounds(), &sounds().unwrap());
+    }
+
+    #[test]
+    fn boot_chime_is_short_valid_and_ends_released() {
+        use glaux_audio::AudioState;
+        use glaux_audio::sfx::SfxPlayer;
+        use glaux_machine::system_rom::SystemSfx;
+
+        let mut player = SfxPlayer::new();
+        player.play(sounds().unwrap().get(SystemSfx::Boot).clone());
+        let mut audio = AudioState::new();
+        let mut ticks = 0;
+        while player.is_active() {
+            player.tick(&mut audio).unwrap();
+            audio.commit();
+            ticks += 1;
+        }
+        // 200-600 ms at 60 ticks per second, before the release tails.
+        assert!((12..=36).contains(&ticks), "{ticks} ticks");
+        assert!(audio.channels().iter().all(|channel| !channel.gate));
     }
 }
