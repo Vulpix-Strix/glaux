@@ -8,7 +8,7 @@ mod scrollback;
 
 use glaux_input::InputEvent;
 use glaux_luau::{LogEntry, LogLevel};
-use glaux_machine::psg::{CHANNELS, Waveform};
+use glaux_machine::psg::{Adsr, CHANNELS, Waveform};
 
 use super::line_editor::LineEditor;
 use super::{ACCENT, BACKGROUND, DIM, ERROR, Line, SystemInfo, TEXT, TRACE, WARN};
@@ -32,6 +32,20 @@ pub struct Tone {
     pub frequency: u16,
     /// Up to [`MAX_VOLUME`](glaux_machine::psg::MAX_VOLUME).
     pub volume: u8,
+}
+
+/// The diagnostic sound state the shell holds for one PSG channel: the
+/// oscillator set with TONE, the envelope set with ENV and the gate set with
+/// GATE.
+///
+/// This is system bring-up tooling; it is not how cartridges produce sound.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Voice {
+    /// `None` mutes the channel.
+    pub tone: Option<Tone>,
+    /// Envelope parameters in PSG units (samples).
+    pub adsr: Adsr,
+    pub gate: bool,
 }
 
 const BANNER: &str = "READY. TYPE HELP FOR HELP";
@@ -80,8 +94,8 @@ pub struct Shell {
     scrollback: Scrollback,
     info: SystemInfo,
     cartridges: CartridgeStorage,
-    /// Per-channel tones set by the TONE command.
-    tones: [Option<Tone>; CHANNELS],
+    /// Per-channel diagnostic voices set by TONE, ENV and GATE.
+    voices: [Voice; CHANNELS],
 }
 
 impl Shell {
@@ -96,13 +110,14 @@ impl Shell {
             scrollback,
             info,
             cartridges,
-            tones: [None; CHANNELS],
+            voices: [Voice::default(); CHANNELS],
         }
     }
 
-    /// The diagnostic tone set with TONE for each PSG channel.
-    pub fn tones(&self) -> [Option<Tone>; CHANNELS] {
-        self.tones
+    /// The diagnostic voice set with TONE, ENV and GATE for each PSG
+    /// channel.
+    pub fn voices(&self) -> [Voice; CHANNELS] {
+        self.voices
     }
 
     /// Applies `event`: edits the command line, navigates history,
@@ -207,7 +222,7 @@ impl Shell {
                     cartridges: &mut self.cartridges,
                     slot,
                     request: &mut request,
-                    tones: &mut self.tones,
+                    voices: &mut self.voices,
                 };
                 commands::execute(&invocation, &mut ctx);
                 request
@@ -637,6 +652,8 @@ mod tests {
                 output("RESUME   RESUME THE PAUSED CARTRIDGE"),
                 output("STOP     STOP THE PAUSED CARTRIDGE"),
                 output("TONE     PLAY A TEST TONE"),
+                output("ENV      SET A CHANNEL ENVELOPE"),
+                output("GATE     OPEN OR CLOSE A CHANNEL GATE"),
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());
@@ -646,7 +663,7 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 15, "> ", TEXT), Line::new(2, 15, "_", TEXT)]
+            [Line::new(0, 17, "> ", TEXT), Line::new(2, 17, "_", TEXT)]
         );
     }
 
@@ -1065,7 +1082,7 @@ mod tests {
                 banner(),
                 command(""),
                 output(
-                    "HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  UNLOAD  RUN  RESUME  STOP  TONE"
+                    "HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  UNLOAD  RUN  RESUME  STOP  TONE  ENV  GATE"
                 )
             ]
         );

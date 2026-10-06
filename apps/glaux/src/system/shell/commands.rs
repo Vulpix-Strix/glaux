@@ -3,12 +3,15 @@
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME, TICK_RATE};
 use glaux_machine::palette::PALETTE_LEN;
-use glaux_machine::psg::{CHANNELS, MAX_FREQUENCY, MAX_VOLUME, Waveform};
+use glaux_machine::psg::{
+    Adsr, CHANNELS, MAX_ENVELOPE_SAMPLES, MAX_FREQUENCY, MAX_SUSTAIN, MAX_VOLUME, SAMPLE_RATE,
+    Waveform,
+};
 
 use super::super::{SystemInfo, identity_line};
 use super::parser::Invocation;
 use super::scrollback::{Entry, Scrollback};
-use super::{CartridgeSlot, ShellRequest, Tone};
+use super::{CartridgeSlot, ShellRequest, Tone, Voice};
 use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::{CartridgeStorage, EntryKind};
 
@@ -21,8 +24,8 @@ pub(super) struct Context<'a> {
     /// Set by a command that needs the system to change the cartridge
     /// lifecycle.
     pub(super) request: &'a mut Option<ShellRequest>,
-    /// The shell's diagnostic tone for each PSG channel.
-    pub(super) tones: &'a mut [Option<Tone>; CHANNELS],
+    /// The shell's diagnostic voice for each PSG channel.
+    pub(super) voices: &'a mut [Voice; CHANNELS],
 }
 
 impl Context<'_> {
@@ -172,9 +175,43 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 4,
         handler: tone,
     },
+    Command {
+        name: "env",
+        aliases: &[],
+        usage: ENV_USAGE,
+        description: "SET A CHANNEL ENVELOPE",
+        min_args: 5,
+        max_args: 5,
+        handler: env,
+    },
+    Command {
+        name: "gate",
+        aliases: &[],
+        usage: GATE_USAGE,
+        description: "OPEN OR CLOSE A CHANNEL GATE",
+        min_args: 2,
+        max_args: 2,
+        handler: gate,
+    },
 ];
 
 const TONE_USAGE: &str = "TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF";
+
+/// A, D and R are milliseconds; S uses the PSG's 0-15 sustain scale.
+const ENV_USAGE: &str = "ENV CH A D S R";
+
+const GATE_USAGE: &str = "GATE CH ON|OFF";
+
+/// PSG samples in one millisecond, which ENV times are given in.
+const SAMPLES_PER_MS: u32 = SAMPLE_RATE / 1000;
+
+const _: () = assert!(
+    SAMPLE_RATE.is_multiple_of(1000),
+    "ENV milliseconds must convert to whole samples"
+);
+
+/// Longest ENV time, in milliseconds.
+const MAX_ENVELOPE_MS: u32 = MAX_ENVELOPE_SAMPLES / SAMPLES_PER_MS;
 
 /// Volume TONE uses when none is given.
 const DEFAULT_TONE_VOLUME: u8 = 8;
@@ -387,8 +424,21 @@ fn parse_waveform(name: &str) -> Option<Waveform> {
     }
 }
 
-/// Sets or clears the diagnostic tones the system plays on the PSG channels
-/// while the shell is shown.
+/// Parses a channel argument, reporting an out-of-range or malformed one.
+fn parse_channel(arg: &str, ctx: &mut Context<'_>) -> Option<usize> {
+    let channel = arg
+        .parse::<usize>()
+        .ok()
+        .filter(|channel| *channel < CHANNELS);
+    if channel.is_none() {
+        ctx.error(format!("CHANNEL MUST BE 0-{}", CHANNELS - 1));
+    }
+    channel
+}
+
+/// Sets or clears the diagnostic oscillators the system plays on the PSG
+/// channels while the shell is shown. Setting a tone leaves the gate alone;
+/// clearing one also closes its gate.
 fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let args = &invocation.args;
     if args[0].eq_ignore_ascii_case("off") {
@@ -396,16 +446,14 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
             ctx.error("USAGE: TONE [CH] OFF");
             return;
         }
-        *ctx.tones = [None; CHANNELS];
+        for voice in ctx.voices.iter_mut() {
+            voice.tone = None;
+            voice.gate = false;
+        }
         ctx.output("TONE OFF");
         return;
     }
-    let Some(channel) = args[0]
-        .parse::<usize>()
-        .ok()
-        .filter(|channel| *channel < CHANNELS)
-    else {
-        ctx.error(format!("CHANNEL MUST BE 0-{}", CHANNELS - 1));
+    let Some(channel) = parse_channel(&args[0], ctx) else {
         return;
     };
     let Some(arg) = args.get(1) else {
@@ -417,7 +465,9 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
             ctx.error("USAGE: TONE [CH] OFF");
             return;
         }
-        ctx.tones[channel] = None;
+        let voice = &mut ctx.voices[channel];
+        voice.tone = None;
+        voice.gate = false;
         ctx.output(format!("TONE {channel} OFF"));
         return;
     }
@@ -449,7 +499,7 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
             }
         },
     };
-    ctx.tones[channel] = Some(Tone {
+    ctx.voices[channel].tone = Some(Tone {
         waveform,
         frequency,
         volume,
@@ -457,6 +507,57 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     ctx.output(format!(
         "TONE {channel} {} {frequency} HZ VOLUME {volume}",
         waveform_name(waveform)
+    ));
+}
+
+/// Sets a channel's envelope from attack, decay and release times in
+/// milliseconds and a sustain level. It takes effect on the channel's
+/// envelope at once, including a ramp in progress.
+fn env(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
+    let args = &invocation.args;
+    let Some(channel) = parse_channel(&args[0], ctx) else {
+        return;
+    };
+    let parse_ms = |arg: &String| arg.parse::<u32>().ok().filter(|ms| *ms <= MAX_ENVELOPE_MS);
+    let (Some(attack), Some(decay), Some(release)) =
+        (parse_ms(&args[1]), parse_ms(&args[2]), parse_ms(&args[4]))
+    else {
+        ctx.error(format!("TIME MUST BE 0-{MAX_ENVELOPE_MS} MS"));
+        return;
+    };
+    let Some(sustain) = args[3].parse::<u8>().ok().filter(|s| *s <= MAX_SUSTAIN) else {
+        ctx.error(format!("SUSTAIN MUST BE 0-{MAX_SUSTAIN}"));
+        return;
+    };
+    ctx.voices[channel].adsr = Adsr {
+        attack: attack * SAMPLES_PER_MS,
+        decay: decay * SAMPLES_PER_MS,
+        sustain,
+        release: release * SAMPLES_PER_MS,
+    };
+    ctx.output(format!(
+        "ENV {channel} A {attack} MS D {decay} MS S {sustain} R {release} MS"
+    ));
+}
+
+/// Opens or closes a channel's gate, starting its attack or release.
+fn gate(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
+    let args = &invocation.args;
+    let Some(channel) = parse_channel(&args[0], ctx) else {
+        return;
+    };
+    let open = if args[1].eq_ignore_ascii_case("on") {
+        true
+    } else if args[1].eq_ignore_ascii_case("off") {
+        false
+    } else {
+        ctx.error(format!("USAGE: {GATE_USAGE}"));
+        return;
+    };
+    ctx.voices[channel].gate = open;
+    ctx.output(format!(
+        "GATE {channel} {}",
+        if open { "ON" } else { "OFF" }
     ));
 }
 
@@ -491,7 +592,7 @@ mod tests {
             cartridges,
             slot,
             request: &mut request,
-            tones: &mut [None; CHANNELS],
+            voices: &mut [Voice::default(); CHANNELS],
         };
         execute(&parse(line).unwrap().unwrap(), &mut ctx);
         (scrollback.iter().cloned().collect(), request)
@@ -585,6 +686,8 @@ mod tests {
                 "RESUME   RESUME THE PAUSED CARTRIDGE",
                 "STOP     STOP THE PAUSED CARTRIDGE",
                 "TONE     PLAY A TEST TONE",
+                "ENV      SET A CHANNEL ENVELOPE",
+                "GATE     OPEN OR CLOSE A CHANNEL GATE",
             ])
         );
     }
@@ -652,7 +755,7 @@ mod tests {
             cartridges: &mut cartridges,
             slot: CartridgeSlot::Empty,
             request: &mut None,
-            tones: &mut [None; CHANNELS],
+            voices: &mut [Voice::default(); CHANNELS],
         };
         execute(&parse("clear").unwrap().unwrap(), &mut ctx);
         assert_eq!(scrollback.iter().len(), 0);
@@ -986,9 +1089,9 @@ mod tests {
         }
     }
 
-    /// Runs `line` with `tones` as the shell's tones and returns what it
+    /// Runs `line` with `voices` as the shell's voices and returns what it
     /// printed.
-    fn run_tone(line: &str, tones: &mut [Option<Tone>; CHANNELS]) -> Vec<Entry> {
+    fn run_voice(line: &str, voices: &mut [Voice; CHANNELS]) -> Vec<Entry> {
         let mut scrollback = Scrollback::default();
         let info = SystemInfo {
             rom_version: Version::new(0, 3, 1),
@@ -999,10 +1102,14 @@ mod tests {
             cartridges: &mut no_cartridges(),
             slot: CartridgeSlot::Empty,
             request: &mut None,
-            tones,
+            voices,
         };
         execute(&parse(line).unwrap().unwrap(), &mut ctx);
         scrollback.iter().cloned().collect()
+    }
+
+    fn silent() -> [Voice; CHANNELS] {
+        [Voice::default(); CHANNELS]
     }
 
     fn tone(waveform: Waveform, frequency: u16, volume: u8) -> Option<Tone> {
@@ -1013,29 +1120,40 @@ mod tests {
         })
     }
 
+    fn tones(voices: &[Voice; CHANNELS]) -> [Option<Tone>; CHANNELS] {
+        voices.map(|voice| voice.tone)
+    }
+
+    fn gates(voices: &[Voice; CHANNELS]) -> [bool; CHANNELS] {
+        voices.map(|voice| voice.gate)
+    }
+
     #[test]
     fn tone_sets_one_channel_with_default_volume_and_wave() {
-        let mut tones = [None; CHANNELS];
+        let mut voices = silent();
         assert_eq!(
-            run_tone("tone 1 440", &mut tones),
+            run_voice("tone 1 440", &mut voices),
             output(&["TONE 1 SQUARE 440 HZ VOLUME 8"])
         );
-        assert_eq!(tones, [None, tone(Waveform::Square, 440, 8), None, None]);
+        assert_eq!(
+            tones(&voices),
+            [None, tone(Waveform::Square, 440, 8), None, None]
+        );
     }
 
     #[test]
     fn tone_takes_a_volume_and_wave() {
-        let mut tones = [None; CHANNELS];
+        let mut voices = silent();
         for (line, printed) in [
             ("TONE 0 440 8 SQUARE", "TONE 0 SQUARE 440 HZ VOLUME 8"),
             ("tone 1 660 6 triangle", "TONE 1 TRIANGLE 660 HZ VOLUME 6"),
             ("tone 2 220 5 Saw", "TONE 2 SAW 220 HZ VOLUME 5"),
             ("tone 3 1200 4 NOISE", "TONE 3 NOISE 1200 HZ VOLUME 4"),
         ] {
-            assert_eq!(run_tone(line, &mut tones), output(&[printed]), "{line}");
+            assert_eq!(run_voice(line, &mut voices), output(&[printed]), "{line}");
         }
         assert_eq!(
-            tones,
+            tones(&voices),
             [
                 tone(Waveform::Square, 440, 8),
                 tone(Waveform::Triangle, 660, 6),
@@ -1046,21 +1164,51 @@ mod tests {
     }
 
     #[test]
-    fn tone_off_clears_one_channel_or_all() {
-        let playing = [tone(Waveform::Saw, 440, 8); CHANNELS];
+    fn tone_leaves_the_gate_alone() {
+        let mut voices = silent();
+        run_voice("tone 0 440", &mut voices);
+        assert_eq!(gates(&voices), [false; CHANNELS]);
 
-        let mut tones = playing;
-        assert_eq!(run_tone("tone 2 OFF", &mut tones), output(&["TONE 2 OFF"]));
-        assert_eq!(tones, [playing[0], playing[1], None, playing[3]]);
-
-        let mut tones = playing;
-        assert_eq!(run_tone("tone off", &mut tones), output(&["TONE OFF"]));
-        assert_eq!(tones, [None; CHANNELS]);
+        run_voice("gate 0 on", &mut voices);
+        run_voice("tone 0 880 12 saw", &mut voices);
+        assert_eq!(gates(&voices), [true, false, false, false]);
     }
 
     #[test]
-    fn tone_rejects_bad_arguments_and_keeps_the_tones() {
-        let before = [None, tone(Waveform::Triangle, 440, 8), None, None];
+    fn tone_off_clears_the_tone_and_gate_of_one_channel_or_all() {
+        let playing = [Voice {
+            tone: tone(Waveform::Saw, 440, 8),
+            adsr: Adsr {
+                attack: 480,
+                decay: 960,
+                sustain: 8,
+                release: 4800,
+            },
+            gate: true,
+        }; CHANNELS];
+        let off = Voice {
+            tone: None,
+            gate: false,
+            ..playing[0]
+        };
+
+        let mut voices = playing;
+        assert_eq!(
+            run_voice("tone 2 OFF", &mut voices),
+            output(&["TONE 2 OFF"])
+        );
+        assert_eq!(voices, [playing[0], playing[1], off, playing[3]]);
+
+        let mut voices = playing;
+        assert_eq!(run_voice("tone off", &mut voices), output(&["TONE OFF"]));
+        assert_eq!(voices, [off; CHANNELS]);
+    }
+
+    #[test]
+    fn tone_rejects_bad_arguments_and_keeps_the_voices() {
+        let mut before = silent();
+        before[1].tone = tone(Waveform::Triangle, 440, 8);
+        before[1].gate = true;
         for (line, message) in [
             ("tone 440", "CHANNEL MUST BE 0-3"),
             ("tone 4 440", "CHANNEL MUST BE 0-3"),
@@ -1085,19 +1233,19 @@ mod tests {
                 "USAGE: TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF",
             ),
         ] {
-            let mut tones = before;
-            assert_eq!(run_tone(line, &mut tones), error(message), "{line}");
-            assert_eq!(tones, before, "{line}");
+            let mut voices = before;
+            assert_eq!(run_voice(line, &mut voices), error(message), "{line}");
+            assert_eq!(voices, before, "{line}");
         }
     }
 
     #[test]
     fn tone_accepts_the_range_limits() {
-        let mut tones = [None; CHANNELS];
-        run_tone("tone 0 1 0", &mut tones);
-        run_tone("tone 3 24000 15", &mut tones);
+        let mut voices = silent();
+        run_voice("tone 0 1 0", &mut voices);
+        run_voice("tone 3 24000 15", &mut voices);
         assert_eq!(
-            tones,
+            tones(&voices),
             [
                 tone(Waveform::Square, 1, 0),
                 None,
@@ -1105,5 +1253,100 @@ mod tests {
                 tone(Waveform::Square, 24000, 15),
             ]
         );
+    }
+
+    #[test]
+    fn env_sets_one_channel_in_samples() {
+        let mut voices = silent();
+        assert_eq!(
+            run_voice("env 2 10 80 8 200", &mut voices),
+            output(&["ENV 2 A 10 MS D 80 MS S 8 R 200 MS"])
+        );
+        assert_eq!(
+            voices[2].adsr,
+            Adsr {
+                attack: 480,
+                decay: 3840,
+                sustain: 8,
+                release: 9600,
+            }
+        );
+        for index in [0, 1, 3] {
+            assert_eq!(voices[index], Voice::default());
+        }
+    }
+
+    #[test]
+    fn env_accepts_the_range_limits() {
+        let mut voices = silent();
+        run_voice("ENV 0 0 0 0 0", &mut voices);
+        run_voice("ENV 3 10000 10000 15 10000", &mut voices);
+        assert_eq!(
+            voices[0].adsr,
+            Adsr {
+                attack: 0,
+                decay: 0,
+                sustain: 0,
+                release: 0,
+            }
+        );
+        assert_eq!(
+            voices[3].adsr,
+            Adsr {
+                attack: MAX_ENVELOPE_SAMPLES,
+                decay: MAX_ENVELOPE_SAMPLES,
+                sustain: MAX_SUSTAIN,
+                release: MAX_ENVELOPE_SAMPLES,
+            }
+        );
+    }
+
+    #[test]
+    fn env_rejects_bad_arguments_and_keeps_the_voices() {
+        let before = silent();
+        for (line, message) in [
+            ("env 4 10 80 8 200", "CHANNEL MUST BE 0-3"),
+            ("env x 10 80 8 200", "CHANNEL MUST BE 0-3"),
+            ("env 0 10001 80 8 200", "TIME MUST BE 0-10000 MS"),
+            ("env 0 10 -1 8 200", "TIME MUST BE 0-10000 MS"),
+            ("env 0 10 80 8 slow", "TIME MUST BE 0-10000 MS"),
+            ("env 0 10 80 16 200", "SUSTAIN MUST BE 0-15"),
+            ("env 0 10 80 x 200", "SUSTAIN MUST BE 0-15"),
+            ("env 0 10 80 8", "USAGE: ENV CH A D S R"),
+            ("env 0 10 80 8 200 1", "USAGE: ENV CH A D S R"),
+        ] {
+            let mut voices = before;
+            assert_eq!(run_voice(line, &mut voices), error(message), "{line}");
+            assert_eq!(voices, before, "{line}");
+        }
+    }
+
+    #[test]
+    fn gate_opens_and_closes_one_channel() {
+        let mut voices = silent();
+        assert_eq!(run_voice("gate 1 on", &mut voices), output(&["GATE 1 ON"]));
+        assert_eq!(run_voice("GATE 3 On", &mut voices), output(&["GATE 3 ON"]));
+        assert_eq!(gates(&voices), [false, true, false, true]);
+        assert_eq!(
+            run_voice("gate 1 OFF", &mut voices),
+            output(&["GATE 1 OFF"])
+        );
+        assert_eq!(gates(&voices), [false, false, false, true]);
+    }
+
+    #[test]
+    fn gate_rejects_bad_arguments_and_keeps_the_voices() {
+        let before = silent();
+        for (line, message) in [
+            ("gate 4 on", "CHANNEL MUST BE 0-3"),
+            ("gate on 0", "CHANNEL MUST BE 0-3"),
+            ("gate 0 open", "USAGE: GATE CH ON|OFF"),
+            ("gate 0", "USAGE: GATE CH ON|OFF"),
+            ("gate 0 on now", "USAGE: GATE CH ON|OFF"),
+        ] {
+            let mut voices = before;
+            assert_eq!(run_voice(line, &mut voices), error(message), "{line}");
+            assert_eq!(voices, before, "{line}");
+        }
     }
 }
