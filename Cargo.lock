@@ -592,6 +592,7 @@ dependencies = [
  "anyhow",
  "clap",
  "directories",
+ "glaux-audio",
  "glaux-host-raylib",
  "glaux-input",
  "glaux-luau",
@@ -608,6 +609,14 @@ dependencies = [
  "tracing-subscriber",
  "windows-sys",
  "zbus",
+]
+
+[[package]]
+name = "glaux-audio"
+version = "0.1.0"
+dependencies = [
+ "pretty_assertions",
+ "thiserror",
 ]
 
 [[package]]
@@ -631,6 +640,7 @@ version = "0.1.0"
 name = "glaux-luau"
 version = "0.1.0"
 dependencies = [
+ "glaux-audio",
  "glaux-input",
  "glaux-machine",
  "mlua",
@@ -643,6 +653,7 @@ dependencies = [
 name = "glaux-machine"
 version = "0.1.0"
 dependencies = [
+ "glaux-audio",
  "pretty_assertions",
  "semver",
  "thiserror",

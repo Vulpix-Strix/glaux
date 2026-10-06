@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+glaux-audio.workspace = true
 glaux-input.workspace = true
 glaux-machine.workspace = true
 mlua.workspace = true

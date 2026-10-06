@@ -1,11 +1,11 @@
 //! Built-in shell commands.
 
+use glaux_audio::MAX_ENVELOPE_MS;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME, TICK_RATE};
 use glaux_machine::palette::PALETTE_LEN;
 use glaux_machine::psg::{
-    Adsr, CHANNELS, MAX_ENVELOPE_SAMPLES, MAX_FREQUENCY, MAX_SUSTAIN, MAX_VOLUME, SAMPLE_RATE,
-    Waveform,
+    Adsr, CHANNELS, MAX_FREQUENCY, MAX_SUSTAIN, MAX_VOLUME, SAMPLES_PER_MS, Waveform,
 };
 
 use super::super::{SystemInfo, identity_line};
@@ -201,17 +201,6 @@ const TONE_USAGE: &str = "TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF";
 const ENV_USAGE: &str = "ENV CH A D S R";
 
 const GATE_USAGE: &str = "GATE CH ON|OFF";
-
-/// PSG samples in one millisecond, which ENV times are given in.
-const SAMPLES_PER_MS: u32 = SAMPLE_RATE / 1000;
-
-const _: () = assert!(
-    SAMPLE_RATE.is_multiple_of(1000),
-    "ENV milliseconds must convert to whole samples"
-);
-
-/// Longest ENV time, in milliseconds.
-const MAX_ENVELOPE_MS: u32 = MAX_ENVELOPE_SAMPLES / SAMPLES_PER_MS;
 
 /// Volume TONE uses when none is given.
 const DEFAULT_TONE_VOLUME: u8 = 8;
@@ -567,6 +556,7 @@ mod tests {
     use super::*;
     use crate::cartridge::fixture::{write_cartridge, write_manifest};
     use crate::cartridge_fs::fixture::Fixture;
+    use glaux_machine::psg::MAX_ENVELOPE_SAMPLES;
     use pretty_assertions::assert_eq;
     use semver::Version;
 

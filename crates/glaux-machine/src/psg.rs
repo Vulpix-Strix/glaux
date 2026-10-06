@@ -21,14 +21,22 @@ const _: () = assert!(
     "a tick must span a whole number of samples"
 );
 
-/// Number of PSG channels.
-pub const CHANNELS: usize = 4;
+// The limits cartridges see are part of the cartridge audio contract; the
+// PSG takes them from there rather than defining its own.
+pub use glaux_audio::{CHANNELS, MAX_FREQUENCY, MAX_SUSTAIN, MAX_VOLUME};
 
-/// Loudest channel volume. Volume 0 is silent.
-pub const MAX_VOLUME: u8 = 15;
+const _: () = assert!(
+    MAX_FREQUENCY as u32 <= SAMPLE_RATE / 2,
+    "the highest frequency must stay within the Nyquist limit"
+);
 
-/// Highest frequency a channel plays, in Hz: the Nyquist limit.
-pub const MAX_FREQUENCY: u16 = (SAMPLE_RATE / 2) as u16;
+/// PSG samples in one millisecond.
+pub const SAMPLES_PER_MS: u32 = SAMPLE_RATE / 1000;
+
+const _: () = assert!(
+    SAMPLE_RATE.is_multiple_of(1000),
+    "milliseconds must convert to whole samples"
+);
 
 /// Sample magnitude of one channel at [`MAX_VOLUME`].
 ///
@@ -44,11 +52,9 @@ const _: () = assert!(
 /// Full envelope level. Envelope levels run from 0 to this value.
 pub const ENVELOPE_FULL: u32 = 1 << 16;
 
-/// Highest sustain value: sustain at this value holds [`ENVELOPE_FULL`].
-pub const MAX_SUSTAIN: u8 = 15;
-
-/// Longest attack, decay or release, in samples: 10 seconds.
-pub const MAX_ENVELOPE_SAMPLES: u32 = 10 * SAMPLE_RATE;
+/// Longest attack, decay or release, in samples:
+/// [`MAX_ENVELOPE_MS`](glaux_audio::MAX_ENVELOPE_MS) converted to samples.
+pub const MAX_ENVELOPE_SAMPLES: u32 = glaux_audio::MAX_ENVELOPE_MS * SAMPLES_PER_MS;
 
 /// Noise register state after reset. Any nonzero value works; zero would
 /// lock the register.
@@ -85,7 +91,8 @@ pub struct Adsr {
     pub attack: u32,
     /// Samples from full level to 0, up to [`MAX_ENVELOPE_SAMPLES`].
     pub decay: u32,
-    /// Level held while the gate stays on, from 0 to [`MAX_SUSTAIN`].
+    /// Level held while the gate stays on, from 0 to [`MAX_SUSTAIN`]; sustain
+    /// at [`MAX_SUSTAIN`] holds [`ENVELOPE_FULL`].
     pub sustain: u8,
     /// Samples from full level to 0, up to [`MAX_ENVELOPE_SAMPLES`].
     pub release: u32,

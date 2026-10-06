@@ -33,6 +33,7 @@ mlua = { version = "0.12", features = ["luau"] }
 
 pretty_assertions = "1"
 
+glaux-audio = { path = "crates/glaux-audio" }
 glaux-machine = { path = "crates/glaux-machine" }
 glaux-video = { path = "crates/glaux-video" }
 glaux-input = { path = "crates/glaux-input" }

@@ -17,13 +17,13 @@ use glaux_input::{InputEvent, InputMode};
 use glaux_luau::RuntimeError;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
-use glaux_machine::psg::{CHANNELS, Psg};
+use glaux_machine::psg::Psg;
 use glaux_machine::system_rom::SystemRom;
 use glaux_video::draw::{clear, draw_text, fill_rect};
 use pause::PauseOverlay;
 use running::{FailedStart, RunningCartridge, StartError};
 use semver::Version;
-use shell::{CartridgeSlot, ShellRequest, Voice, cartridge_identity};
+use shell::{CartridgeSlot, ShellRequest, cartridge_identity};
 
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge_fs::CartridgeStorage;
@@ -99,11 +99,23 @@ enum StopReason {
     Failed(RuntimeError),
 }
 
+/// What drives the PSG.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AudioSource {
+    Silent,
+    /// The shell's diagnostic voices.
+    Shell,
+    /// The running cartridge's audio.
+    Cartridge,
+}
+
 /// The system UI state machine.
 #[derive(Debug)]
 pub struct System {
     state: SystemState,
     info: SystemInfo,
+    /// The source that last wrote the PSG.
+    audio_source: AudioSource,
 }
 
 impl System {
@@ -116,6 +128,7 @@ impl System {
                 cartridges,
             },
             info,
+            audio_source: AudioSource::Silent,
         }
     }
 
@@ -142,7 +155,11 @@ impl System {
     /// `btnp`; anything else is ignored. On the pause screen, Break resumes
     /// the cartridge and Enter opens the shell with it still paused.
     pub fn update(self, input: &[InputEvent]) -> Self {
-        let Self { state, info } = self;
+        let Self {
+            state,
+            info,
+            audio_source,
+        } = self;
         let state = match state {
             SystemState::Boot {
                 mut boot,
@@ -172,50 +189,61 @@ impl System {
                 view: PausedView::Shell,
             } => paused_shell_tick(shell, running, input),
         };
-        Self { state, info }
+        Self {
+            state,
+            info,
+            audio_source,
+        }
     }
 
     /// Writes the system's sound for the current state into `psg`.
     ///
-    /// While the shell is the active view, each channel plays the shell's
-    /// diagnostic voice for it: the TONE oscillator, the ENV envelope and
-    /// the GATE state. A gate change reaches the PSG only when the PSG's gate
-    /// differs, so writing the same state every tick neither retriggers nor
-    /// restarts an envelope. Every channel is muted with its gate closed
-    /// otherwise, so tones never sound over boot or a cartridge.
-    pub fn audio(&self, psg: &mut Psg) {
-        let voices = match &self.state {
+    /// The shell's diagnostic voices play while the shell is the active view,
+    /// and a running cartridge plays its own audio. Boot and the pause screen
+    /// are silent. Whenever the source changes, `psg` is reset first, so the
+    /// shell and a cartridge never share oscillator or envelope state, every
+    /// run starts from the same PSG state, and pausing or stopping a
+    /// cartridge silences it at once.
+    ///
+    /// For the shell, each channel plays the TONE oscillator, the ENV
+    /// envelope and the GATE state. A gate change reaches the PSG only when
+    /// the PSG's gate differs, so writing the same state every tick neither
+    /// retriggers nor restarts an envelope.
+    ///
+    /// Call once after each [`update`](Self::update): a cartridge's envelope
+    /// and gate writes reach the PSG once each.
+    pub fn audio(&mut self, psg: &mut Psg) {
+        let source = match &self.state {
+            SystemState::Shell { .. }
+            | SystemState::Paused {
+                view: PausedView::Shell,
+                ..
+            } => AudioSource::Shell,
+            SystemState::Running { .. } => AudioSource::Cartridge,
+            SystemState::Boot { .. }
+            | SystemState::Paused {
+                view: PausedView::Game(_),
+                ..
+            } => AudioSource::Silent,
+        };
+        let fresh = source != self.audio_source;
+        if fresh {
+            *psg = Psg::new();
+            self.audio_source = source;
+        }
+        match &mut self.state {
             SystemState::Shell { shell, .. }
             | SystemState::Paused {
                 shell,
                 view: PausedView::Shell,
                 ..
-            } => shell.voices(),
+            } => shell_audio(shell, psg),
+            SystemState::Running { running, .. } => running.apply_audio(psg, fresh),
             SystemState::Boot { .. }
-            | SystemState::Running { .. }
             | SystemState::Paused {
                 view: PausedView::Game(_),
                 ..
-            } => [Voice::default(); CHANNELS],
-        };
-        for (index, voice) in voices.into_iter().enumerate() {
-            let Some(channel) = psg.channel_mut(index) else {
-                unreachable!("the shell holds one voice per PSG channel");
-            };
-            channel.set_adsr(voice.adsr);
-            let Some(tone) = voice.tone else {
-                channel.set_volume(0);
-                channel.gate_off();
-                continue;
-            };
-            channel.set_waveform(tone.waveform);
-            channel.set_frequency(tone.frequency);
-            channel.set_volume(tone.volume);
-            match (voice.gate, channel.gate()) {
-                (true, false) => channel.gate_on(),
-                (false, true) => channel.gate_off(),
-                _ => {}
-            }
+            } => {}
         }
     }
 
@@ -271,6 +299,29 @@ impl System {
                 );
             }
             draw_text(framebuffer, font, &line.text, x, y, line.color);
+        }
+    }
+}
+
+/// Writes the shell's diagnostic voices into `psg`.
+fn shell_audio(shell: &Shell, psg: &mut Psg) {
+    for (index, voice) in shell.voices().into_iter().enumerate() {
+        let Some(channel) = psg.channel_mut(index) else {
+            unreachable!("the shell holds one voice per PSG channel");
+        };
+        channel.set_adsr(voice.adsr);
+        let Some(tone) = voice.tone else {
+            channel.set_volume(0);
+            channel.gate_off();
+            continue;
+        };
+        channel.set_waveform(tone.waveform);
+        channel.set_frequency(tone.frequency);
+        channel.set_volume(tone.volume);
+        match (voice.gate, channel.gate()) {
+            (true, false) => channel.gate_on(),
+            (false, true) => channel.gate_off(),
+            _ => {}
         }
     }
 }
@@ -532,7 +583,9 @@ mod tests {
     use super::*;
     use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
     use glaux_machine::palette::Palette;
-    use glaux_machine::psg::{Adsr, EnvelopeStage, SAMPLES_PER_TICK, Waveform};
+    use glaux_machine::psg::{
+        Adsr, CHANNELS, ENVELOPE_FULL, EnvelopeStage, SAMPLES_PER_TICK, Waveform,
+    };
     use pretty_assertions::assert_eq;
     use semver::Version;
 
@@ -1902,63 +1955,68 @@ mod tests {
     }
 
     /// Each channel's (waveform, frequency, volume) after `system` writes
-    /// its sound into a fresh PSG.
-    fn voices(system: &System) -> [(Waveform, u16, u8); CHANNELS] {
-        let mut psg = Psg::new();
-        system.audio(&mut psg);
+    /// its sound into `psg`.
+    ///
+    /// `System::audio` remembers which source last wrote the PSG, so a test
+    /// must keep passing it the same PSG.
+    fn voices(system: &mut System, psg: &mut Psg) -> [(Waveform, u16, u8); CHANNELS] {
+        system.audio(psg);
         std::array::from_fn(|index| {
             let channel = psg.channel(index).unwrap();
             (channel.waveform(), channel.frequency(), channel.volume())
         })
     }
 
-    fn is_silent(system: &System) -> bool {
-        voices(system).iter().all(|&(_, _, volume)| volume == 0)
+    fn is_silent(system: &mut System, psg: &mut Psg) -> bool {
+        voices(system, psg)
+            .iter()
+            .all(|&(_, _, volume)| volume == 0)
     }
 
     /// Each channel's gate after `system` writes its sound into `psg`.
-    fn gates(system: &System, psg: &mut Psg) -> [bool; CHANNELS] {
+    fn gates(system: &mut System, psg: &mut Psg) -> [bool; CHANNELS] {
         system.audio(psg);
         std::array::from_fn(|index| psg.channel(index).unwrap().gate())
     }
 
     #[test]
     fn boot_is_silent() {
-        assert!(is_silent(&new_system()));
+        assert!(is_silent(&mut new_system(), &mut Psg::new()));
     }
 
     #[test]
     fn shell_tones_reach_the_psg_until_turned_off() {
-        let system = shell();
-        assert!(is_silent(&system));
+        let mut psg = Psg::new();
+        let mut system = shell();
+        assert!(is_silent(&mut system, &mut psg));
 
         let system = enter(system, "tone 0 440 12");
-        let system = enter(system, "tone 2 220 5 saw");
-        let playing = voices(&system);
+        let mut system = enter(system, "tone 2 220 5 saw");
+        let playing = voices(&mut system, &mut psg);
         assert_eq!(playing[0], (Waveform::Square, 440, 12));
         assert_eq!(playing[1].2, 0);
         assert_eq!(playing[2], (Waveform::Saw, 220, 5));
         assert_eq!(playing[3].2, 0);
 
-        let system = enter(system, "tone 0 off");
-        let playing = voices(&system);
+        let mut system = enter(system, "tone 0 off");
+        let playing = voices(&mut system, &mut psg);
         assert_eq!(playing[0].2, 0);
         assert_eq!(playing[2], (Waveform::Saw, 220, 5));
 
-        let system = enter(system, "tone off");
-        assert!(is_silent(&system));
+        let mut system = enter(system, "tone off");
+        assert!(is_silent(&mut system, &mut psg));
     }
 
     #[test]
     fn shell_gates_and_envelopes_reach_the_psg() {
         let mut psg = Psg::new();
-        let system = enter(shell(), "tone 0 440 12");
-        assert_eq!(gates(&system, &mut psg), [false; CHANNELS]);
+        let mut system = enter(shell(), "tone 0 440 12");
+        assert_eq!(gates(&mut system, &mut psg), [false; CHANNELS]);
         assert_eq!(render_psg(&mut psg), vec![0; SAMPLES_PER_TICK]);
 
         let system = enter(system, "env 0 10 80 8 200");
-        let system = enter(system, "gate 0 on");
-        assert_eq!(gates(&system, &mut psg), [true, false, false, false]);
+        let mut system = enter(system, "gate 0 on");
+        assert_eq!(gates(&mut system, &mut psg), [true, false, false, false]);
         let channel = psg.channel(0).unwrap();
         assert_eq!(
             channel.adsr(),
@@ -1974,7 +2032,7 @@ mod tests {
         // Rewriting the same voice every tick lets the envelope run on
         // instead of restarting it.
         for _ in 0..5 {
-            gates(&system, &mut psg);
+            gates(&mut system, &mut psg);
             render_psg(&mut psg);
         }
         assert_eq!(
@@ -1982,15 +2040,15 @@ mod tests {
             EnvelopeStage::Sustain
         );
 
-        let system = enter(system, "gate 0 off");
-        assert_eq!(gates(&system, &mut psg), [false; CHANNELS]);
+        let mut system = enter(system, "gate 0 off");
+        assert_eq!(gates(&mut system, &mut psg), [false; CHANNELS]);
         assert_eq!(
             psg.channel(0).unwrap().envelope_stage(),
             EnvelopeStage::Release
         );
 
-        let system = enter(enter(system, "gate 0 on"), "tone 0 off");
-        assert_eq!(gates(&system, &mut psg), [false; CHANNELS]);
+        let mut system = enter(enter(system, "gate 0 on"), "tone 0 off");
+        assert_eq!(gates(&mut system, &mut psg), [false; CHANNELS]);
         assert_eq!(psg.channel(0).unwrap().volume(), 0);
     }
 
@@ -2006,23 +2064,319 @@ mod tests {
         let fixture = Fixture::new("sys-tone");
         let system = enter(shell_with_cartridge(&fixture, ""), "tone 0 440 12");
         let system = enter(system, "tone 3 1200 4 noise");
-        let system = enter(enter(system, "gate 0 on"), "gate 3 on");
-        assert_eq!(gates(&system, &mut psg), [true, false, false, true]);
+        let mut system = enter(enter(system, "gate 0 on"), "gate 3 on");
+        assert_eq!(gates(&mut system, &mut psg), [true, false, false, true]);
 
-        let system = enter(enter(system, "load pong"), "run");
+        let mut system = enter(enter(system, "load pong"), "run");
         assert!(is_running(&system));
-        assert!(is_silent(&system));
-        assert_eq!(gates(&system, &mut psg), [false; CHANNELS]);
+        assert!(is_silent(&mut system, &mut psg));
+        assert_eq!(gates(&mut system, &mut psg), [false; CHANNELS]);
 
-        let system = press_break(system);
+        let mut system = press_break(system);
         assert!(is_paused_game(&system));
-        assert!(is_silent(&system));
-        assert_eq!(gates(&system, &mut psg), [false; CHANNELS]);
+        assert!(is_silent(&mut system, &mut psg));
+        assert_eq!(gates(&mut system, &mut psg), [false; CHANNELS]);
 
-        let system = open_shell(system);
-        let playing = voices(&system);
+        let mut system = open_shell(system);
+        let playing = voices(&mut system, &mut psg);
         assert_eq!(playing[0], (Waveform::Square, 440, 12));
         assert_eq!(playing[3], (Waveform::Noise, 1200, 4));
-        assert_eq!(gates(&system, &mut psg), [true, false, false, true]);
+        assert_eq!(gates(&mut system, &mut psg), [true, false, false, true]);
+    }
+
+    // Cartridge audio.
+
+    /// Plays the tick already written into `psg`, then advances `system` one
+    /// tick and writes its sound, the way the main loop does. Returns the
+    /// samples played.
+    fn step(system: System, psg: &mut Psg) -> (System, Vec<i16>) {
+        let samples = render_psg(psg);
+        let mut system = system.update(&[]);
+        system.audio(psg);
+        (system, samples)
+    }
+
+    fn steps(mut system: System, psg: &mut Psg, n: usize) -> System {
+        for _ in 0..n {
+            system = step(system, psg).0;
+        }
+        system
+    }
+
+    /// Starts `script` and writes the sound of its start into `psg`.
+    fn started_audio(fixture: &Fixture, script: &str, psg: &mut Psg) -> System {
+        let mut system = started(fixture, script);
+        assert!(is_running(&system));
+        system.audio(psg);
+        system
+    }
+
+    fn stage(psg: &Psg, index: usize) -> EnvelopeStage {
+        psg.channel(index).unwrap().envelope_stage()
+    }
+
+    fn assert_silent(psg: &mut Psg) {
+        for index in 0..CHANNELS {
+            let channel = psg.channel(index).unwrap();
+            assert_eq!(channel.volume(), 0, "channel {index}");
+            assert_eq!(
+                channel.envelope_stage(),
+                EnvelopeStage::Idle,
+                "channel {index}"
+            );
+        }
+        assert_eq!(render_psg(psg), vec![0; SAMPLES_PER_TICK]);
+    }
+
+    /// Channel 0 holds a 100 ms attack, no decay and sustain 8: it reaches
+    /// Sustain within 6 ticks and has room to attack again from there.
+    const HELD_NOTE: &str = r#"
+        audio.env(0, 100, 0, 8, 1000)
+        audio.tone(0, 440, 12, "square")
+        function boot() audio.gate(0, true) end
+    "#;
+
+    #[test]
+    fn cartridge_audio_reaches_the_psg_in_samples() {
+        let mut psg = Psg::new();
+        let fixture = Fixture::new("sys-audio-units");
+        let script = r#"
+            audio.env(1, 10, 80, 8, 200)
+            audio.tone(1, 660, 9, "triangle")
+            audio.gate(1, true)
+        "#;
+        let _system = started_audio(&fixture, script, &mut psg);
+        let channel = psg.channel(1).unwrap();
+        assert_eq!(
+            channel.adsr(),
+            Adsr {
+                attack: 480,
+                decay: 3840,
+                sustain: 8,
+                release: 9600,
+            }
+        );
+        assert_eq!(
+            (channel.waveform(), channel.frequency(), channel.volume()),
+            (Waveform::Triangle, 660, 9)
+        );
+        assert_eq!(channel.envelope_stage(), EnvelopeStage::Attack);
+        assert!(render_psg(&mut psg).iter().any(|&sample| sample != 0));
+    }
+
+    #[test]
+    fn cartridge_gates_open_retrigger_and_release() {
+        let mut psg = Psg::new();
+        let fixture = Fixture::new("sys-audio-gate");
+        let script = format!(
+            r#"{HELD_NOTE}
+            function tick()
+                if frame() == 10 then audio.gate(0, true) end
+                if frame() == 20 then audio.gate(0, false) end
+            end
+            "#
+        );
+        let system = started_audio(&fixture, &script, &mut psg);
+        assert_eq!(stage(&psg, 0), EnvelopeStage::Attack);
+
+        let system = steps(system, &mut psg, 10);
+        assert_eq!(stage(&psg, 0), EnvelopeStage::Sustain);
+
+        // Opening an open gate retriggers the attack from the held level.
+        let system = steps(system, &mut psg, 1);
+        assert_eq!(stage(&psg, 0), EnvelopeStage::Attack);
+        assert!(psg.channel(0).unwrap().gate());
+
+        let _system = steps(system, &mut psg, 10);
+        assert_eq!(stage(&psg, 0), EnvelopeStage::Release);
+        assert!(!psg.channel(0).unwrap().gate());
+    }
+
+    #[test]
+    fn cartridge_tone_changes_do_not_retrigger_the_envelope() {
+        let mut psg = Psg::new();
+        let fixture = Fixture::new("sys-audio-tone");
+        let script = format!(
+            r#"{HELD_NOTE}
+            function tick()
+                if frame() == 10 then audio.tone(0, 880, 5, "saw") end
+            end
+            "#
+        );
+        let system = steps(started_audio(&fixture, &script, &mut psg), &mut psg, 10);
+        assert_eq!(stage(&psg, 0), EnvelopeStage::Sustain);
+        let level = psg.channel(0).unwrap().envelope_level();
+
+        let _system = steps(system, &mut psg, 1);
+        let channel = psg.channel(0).unwrap();
+        assert_eq!(
+            (channel.waveform(), channel.frequency(), channel.volume()),
+            (Waveform::Saw, 880, 5)
+        );
+        assert_eq!(channel.envelope_stage(), EnvelopeStage::Sustain);
+        assert_eq!(channel.envelope_level(), level);
+    }
+
+    #[test]
+    fn gate_writes_within_one_tick_all_reach_the_psg() {
+        let mut psg = Psg::new();
+        let fixture = Fixture::new("sys-audio-blip");
+        // Opening and closing in the same tick with an instant attack leaves
+        // a release from full level; the final gate state alone would leave
+        // the channel idle.
+        let script = r#"
+            audio.env(0, 0, 0, 15, 1000)
+            audio.tone(0, 440, 12, "square")
+            audio.gate(0, true)
+            audio.gate(0, false)
+        "#;
+        let _system = started_audio(&fixture, script, &mut psg);
+        let channel = psg.channel(0).unwrap();
+        assert_eq!(channel.envelope_stage(), EnvelopeStage::Release);
+        assert_eq!(channel.envelope_level(), ENVELOPE_FULL);
+    }
+
+    #[test]
+    fn cartridge_audio_persists_across_ticks() {
+        let mut psg = Psg::new();
+        let fixture = Fixture::new("sys-audio-persist");
+        let script = r#"
+            function boot()
+                audio.tone(2, 330, 7, "noise")
+                audio.gate(2, true)
+            end
+            function tick() end
+        "#;
+        let mut system = started_audio(&fixture, script, &mut psg);
+        for _ in 0..30 {
+            let (next, samples) = step(system, &mut psg);
+            system = next;
+            assert!(samples.iter().any(|&sample| sample != 0));
+        }
+        let channel = psg.channel(2).unwrap();
+        assert_eq!(
+            (channel.waveform(), channel.frequency(), channel.volume()),
+            (Waveform::Noise, 330, 7)
+        );
+        assert!(channel.gate());
+    }
+
+    #[test]
+    fn pausing_silences_the_cartridge_and_resuming_reattacks_open_gates() {
+        let fixture = Fixture::new("sys-audio-pause");
+        let resumes: [fn(System) -> System; 2] =
+            [press_break, |system| enter(open_shell(system), "resume")];
+        for resume in resumes {
+            let mut psg = Psg::new();
+            let system = steps(started_audio(&fixture, HELD_NOTE, &mut psg), &mut psg, 10);
+            assert_eq!(stage(&psg, 0), EnvelopeStage::Sustain);
+
+            let mut system = press_break(system);
+            system.audio(&mut psg);
+            assert!(is_paused_game(&system));
+            assert_silent(&mut psg);
+
+            let mut system = resume(system);
+            assert!(is_running(&system));
+            system.audio(&mut psg);
+            let channel = psg.channel(0).unwrap();
+            assert_eq!(
+                (channel.waveform(), channel.frequency(), channel.volume()),
+                (Waveform::Square, 440, 12)
+            );
+            assert_eq!(channel.adsr().sustain, 8);
+            assert_eq!(channel.envelope_stage(), EnvelopeStage::Attack);
+            assert_eq!(channel.envelope_level(), 0);
+        }
+    }
+
+    #[test]
+    fn stopping_or_failing_leaves_the_psg_silent() {
+        let fixture = Fixture::new("sys-audio-stop");
+        let mut psg = Psg::new();
+        let system = steps(started_audio(&fixture, HELD_NOTE, &mut psg), &mut psg, 3);
+        let mut system = stop_cartridge(system);
+        system.audio(&mut psg);
+        assert_eq!(loaded_name(&system), Some("Pong"));
+        assert_silent(&mut psg);
+
+        let mut psg = Psg::new();
+        let script =
+            format!(r#"{HELD_NOTE} function tick() if frame() == 3 then error("boom") end end"#);
+        let system = steps(started_audio(&fixture, &script, &mut psg), &mut psg, 4);
+        assert!(!is_running(&system));
+        assert_silent(&mut psg);
+    }
+
+    #[test]
+    fn shell_and_cartridge_audio_stay_isolated() {
+        let mut psg = Psg::new();
+        let fixture = Fixture::new("sys-audio-isolated");
+        let script = r#"
+            audio.tone(1, 660, 9, "saw")
+            audio.gate(1, true)
+        "#;
+        let system = enter(shell_with_cartridge(&fixture, script), "tone 0 440 12");
+        let mut system = enter(system, "gate 0 on");
+        assert_eq!(gates(&mut system, &mut psg), [true, false, false, false]);
+
+        // The shell's voice does not play over the cartridge.
+        let mut system = enter(enter(system, "load pong"), "run");
+        assert_eq!(gates(&mut system, &mut psg), [false, true, false, false]);
+        assert_eq!(voices(&mut system, &mut psg)[0].2, 0);
+
+        // The cartridge's voice does not play over the shell, and the shell's
+        // own voice returns.
+        let mut system = open_shell(press_break(system));
+        assert_eq!(gates(&mut system, &mut psg), [true, false, false, false]);
+        assert_eq!(voices(&mut system, &mut psg)[1].2, 0);
+
+        let mut system = enter(system, "stop");
+        assert_eq!(gates(&mut system, &mut psg), [true, false, false, false]);
+        assert_eq!(voices(&mut system, &mut psg)[1].2, 0);
+    }
+
+    #[test]
+    fn same_cartridge_writes_produce_identical_psg_state() {
+        let script = r#"
+            audio.env(0, 5, 40, 6, 120)
+            audio.env(3, 0, 20, 4, 60)
+            audio.tone(0, 440, 12, "square")
+            audio.tone(1, 660, 6, "triangle")
+            audio.tone(2, 220, 5, "saw")
+            audio.tone(3, 1200, 4, "noise")
+            function tick()
+                local f = frame()
+                audio.gate(f % 4, f % 3 ~= 0)
+                if f % 5 == 0 then audio.tone(2, 220 + f, 5, "saw") end
+            end
+        "#;
+        let run = |fixture: &Fixture, shell_tones: bool| {
+            let mut psg = Psg::new();
+            let mut system = shell_with_cartridge(fixture, script);
+            if shell_tones {
+                system = enter(enter(system, "tone 2 1000 15 noise"), "gate 2 on");
+                system = steps(system, &mut psg, 7);
+            }
+            let mut system = enter(enter(system, "load pong"), "run");
+            system.audio(&mut psg);
+            let mut samples = Vec::new();
+            for _ in 0..30 {
+                let (next, played) = step(system, &mut psg);
+                system = next;
+                samples.extend(played);
+            }
+            (samples, psg)
+        };
+        let (samples, psg) = run(&Fixture::new("sys-audio-determinism-a"), false);
+        assert!(samples.iter().any(|&sample| sample != 0));
+        assert_eq!(
+            run(&Fixture::new("sys-audio-determinism-b"), false),
+            (samples.clone(), psg.clone())
+        );
+        assert_eq!(
+            run(&Fixture::new("sys-audio-determinism-c"), true),
+            (samples, psg)
+        );
     }
 }
