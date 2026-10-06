@@ -1,10 +1,12 @@
 //! Raylib-based host for Glaux.
 
+mod audio;
 mod crt;
 mod keyboard;
 
 use std::time::Duration;
 
+pub use audio::{AudioDevice, AudioError, AudioOutput};
 use crt::CrtPass;
 use glaux_input::{InputEvent, InputMode};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};

@@ -20,6 +20,15 @@ use completion::{Completion, command_token, complete};
 use history::History;
 use scrollback::{Entry, Scrollback};
 
+/// A diagnostic square tone the shell holds on PSG channel 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tone {
+    /// Hz, between 1 and [`MAX_FREQUENCY`](glaux_machine::psg::MAX_FREQUENCY).
+    pub frequency: u16,
+    /// Up to [`MAX_VOLUME`](glaux_machine::psg::MAX_VOLUME).
+    pub volume: u8,
+}
+
 const BANNER: &str = "READY. TYPE HELP FOR HELP";
 const PROMPT: &str = "> ";
 const CURSOR: char = '_';
@@ -66,6 +75,8 @@ pub struct Shell {
     scrollback: Scrollback,
     info: SystemInfo,
     cartridges: CartridgeStorage,
+    /// Set by the TONE command.
+    tone: Option<Tone>,
 }
 
 impl Shell {
@@ -80,7 +91,13 @@ impl Shell {
             scrollback,
             info,
             cartridges,
+            tone: None,
         }
+    }
+
+    /// The diagnostic tone set with TONE, if any.
+    pub fn tone(&self) -> Option<Tone> {
+        self.tone
     }
 
     /// Applies `event`: edits the command line, navigates history,
@@ -185,6 +202,7 @@ impl Shell {
                     cartridges: &mut self.cartridges,
                     slot,
                     request: &mut request,
+                    tone: &mut self.tone,
                 };
                 commands::execute(&invocation, &mut ctx);
                 request
@@ -613,6 +631,7 @@ mod tests {
                 output("RUN      RUN THE LOADED CARTRIDGE"),
                 output("RESUME   RESUME THE PAUSED CARTRIDGE"),
                 output("STOP     STOP THE PAUSED CARTRIDGE"),
+                output("TONE     PLAY A TEST TONE"),
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());
@@ -622,7 +641,7 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 14, "> ", TEXT), Line::new(2, 14, "_", TEXT)]
+            [Line::new(0, 15, "> ", TEXT), Line::new(2, 15, "_", TEXT)]
         );
     }
 
@@ -1040,7 +1059,9 @@ mod tests {
             [
                 banner(),
                 command(""),
-                output("HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  UNLOAD  RUN  RESUME  STOP")
+                output(
+                    "HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  UNLOAD  RUN  RESUME  STOP  TONE"
+                )
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());

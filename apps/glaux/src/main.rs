@@ -17,8 +17,9 @@ use cartridge_fs::CartridgeStorage;
 use clock::TickClock;
 use desktop::single_instance::{self, PrimaryInstance, SecondaryLaunch, Startup};
 use desktop::window_state::{self, WindowSnapshot, WindowTracker};
-use glaux_host_raylib::{Presentation, RaylibHost};
+use glaux_host_raylib::{AudioDevice, AudioOutput, Presentation, RaylibHost};
 use glaux_machine::machine::Machine;
+use glaux_machine::psg::{SAMPLE_RATE, SAMPLES_PER_TICK};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
 use platform::SessionKind;
 use system::{System, SystemInfo};
@@ -126,6 +127,18 @@ fn run(
     }
     let mut tracker = WindowTracker::new(session, saved.as_ref(), placement);
 
+    // Declared before the output that borrows it, so it is dropped after.
+    let audio_device = AudioDevice::open()
+        .inspect_err(|err| tracing::warn!(error = %err, "audio unavailable, running silent"))
+        .ok();
+    let mut audio = audio_device.as_ref().and_then(|device| {
+        device
+            .output(SAMPLE_RATE)
+            .inspect_err(|err| tracing::warn!(error = %err, "audio unavailable, running silent"))
+            .ok()
+    });
+    let mut samples = [0; SAMPLES_PER_TICK];
+
     // Presentation follows the host refresh rate while the system advances
     // at the machine's fixed tick rate. Input polled on frames where no tick
     // is due waits for the next tick instead of being dropped.
@@ -153,7 +166,13 @@ fn run(
         for _ in 0..ticks {
             system = system.update(&pending);
             pending.clear();
+            system.audio(machine.psg_mut());
+            machine.psg_mut().render(&mut samples);
+            if let Some(output) = &mut audio {
+                output.queue(&samples);
+            }
         }
+        pump_audio(&mut audio);
     }
 
     if let (Some(dir), Some(state)) = (config_dir, tracker.finish()) {
@@ -165,6 +184,17 @@ fn run(
         }
     }
     Ok(())
+}
+
+/// Feeds the device the samples queued so far. A failed stream is closed
+/// and the rest of the session runs silent.
+fn pump_audio(audio: &mut Option<AudioOutput<'_>>) {
+    if let Some(output) = audio
+        && let Err(err) = output.pump()
+    {
+        tracing::warn!(error = %err, "audio stream failed, running silent");
+        *audio = None;
+    }
 }
 
 /// The window's current state, with its position only where `tracker`

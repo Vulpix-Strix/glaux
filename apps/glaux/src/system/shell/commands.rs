@@ -3,11 +3,12 @@
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME, TICK_RATE};
 use glaux_machine::palette::PALETTE_LEN;
+use glaux_machine::psg::{MAX_FREQUENCY, MAX_VOLUME};
 
 use super::super::{SystemInfo, identity_line};
 use super::parser::Invocation;
 use super::scrollback::{Entry, Scrollback};
-use super::{CartridgeSlot, ShellRequest};
+use super::{CartridgeSlot, ShellRequest, Tone};
 use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::{CartridgeStorage, EntryKind};
 
@@ -20,6 +21,8 @@ pub(super) struct Context<'a> {
     /// Set by a command that needs the system to change the cartridge
     /// lifecycle.
     pub(super) request: &'a mut Option<ShellRequest>,
+    /// The shell's diagnostic tone.
+    pub(super) tone: &'a mut Option<Tone>,
 }
 
 impl Context<'_> {
@@ -160,7 +163,19 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 0,
         handler: stop,
     },
+    Command {
+        name: "tone",
+        aliases: &[],
+        usage: "TONE HZ [VOLUME] | TONE OFF",
+        description: "PLAY A TEST TONE",
+        min_args: 1,
+        max_args: 2,
+        handler: tone,
+    },
 ];
+
+/// Volume TONE uses when none is given.
+const DEFAULT_TONE_VOLUME: u8 = 8;
 
 /// Reported by commands that would replace or restart a paused cartridge.
 const PAUSED_ERROR: &str = "CARTRIDGE PAUSED: RESUME OR STOP IT FIRST";
@@ -349,6 +364,41 @@ fn stop(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     }
 }
 
+/// Sets or clears the diagnostic tone the system plays while the shell is
+/// shown.
+fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
+    let args = &invocation.args;
+    if args[0].eq_ignore_ascii_case("off") {
+        if args.len() > 1 {
+            ctx.error("USAGE: TONE OFF");
+            return;
+        }
+        *ctx.tone = None;
+        ctx.output("TONE OFF");
+        return;
+    }
+    let Some(frequency) = args[0]
+        .parse::<u16>()
+        .ok()
+        .filter(|hz| (1..=MAX_FREQUENCY).contains(hz))
+    else {
+        ctx.error(format!("FREQUENCY MUST BE 1-{MAX_FREQUENCY} HZ"));
+        return;
+    };
+    let volume = match args.get(1) {
+        None => DEFAULT_TONE_VOLUME,
+        Some(arg) => match arg.parse::<u8>().ok().filter(|v| *v <= MAX_VOLUME) {
+            Some(volume) => volume,
+            None => {
+                ctx.error(format!("VOLUME MUST BE 0-{MAX_VOLUME}"));
+                return;
+            }
+        },
+    };
+    *ctx.tone = Some(Tone { frequency, volume });
+    ctx.output(format!("TONE {frequency} HZ VOLUME {volume}"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::parser::parse;
@@ -380,6 +430,7 @@ mod tests {
             cartridges,
             slot,
             request: &mut request,
+            tone: &mut None,
         };
         execute(&parse(line).unwrap().unwrap(), &mut ctx);
         (scrollback.iter().cloned().collect(), request)
@@ -472,6 +523,7 @@ mod tests {
                 "RUN      RUN THE LOADED CARTRIDGE",
                 "RESUME   RESUME THE PAUSED CARTRIDGE",
                 "STOP     STOP THE PAUSED CARTRIDGE",
+                "TONE     PLAY A TEST TONE",
             ])
         );
     }
@@ -539,6 +591,7 @@ mod tests {
             cartridges: &mut cartridges,
             slot: CartridgeSlot::Empty,
             request: &mut None,
+            tone: &mut None,
         };
         execute(&parse("clear").unwrap().unwrap(), &mut ctx);
         assert_eq!(scrollback.iter().len(), 0);
@@ -870,5 +923,110 @@ mod tests {
                 "{line}"
             );
         }
+    }
+
+    /// Runs `line` with `tone` as the shell's tone and returns what it
+    /// printed.
+    fn run_tone(line: &str, tone: &mut Option<Tone>) -> Vec<Entry> {
+        let mut scrollback = Scrollback::default();
+        let info = SystemInfo {
+            rom_version: Version::new(0, 3, 1),
+        };
+        let mut ctx = Context {
+            scrollback: &mut scrollback,
+            info: &info,
+            cartridges: &mut no_cartridges(),
+            slot: CartridgeSlot::Empty,
+            request: &mut None,
+            tone,
+        };
+        execute(&parse(line).unwrap().unwrap(), &mut ctx);
+        scrollback.iter().cloned().collect()
+    }
+
+    #[test]
+    fn tone_sets_frequency_and_default_volume() {
+        let mut tone = None;
+        assert_eq!(
+            run_tone("tone 440", &mut tone),
+            output(&["TONE 440 HZ VOLUME 8"])
+        );
+        assert_eq!(
+            tone,
+            Some(Tone {
+                frequency: 440,
+                volume: 8
+            })
+        );
+    }
+
+    #[test]
+    fn tone_takes_a_volume() {
+        let mut tone = None;
+        assert_eq!(
+            run_tone("TONE 880 15", &mut tone),
+            output(&["TONE 880 HZ VOLUME 15"])
+        );
+        assert_eq!(
+            tone,
+            Some(Tone {
+                frequency: 880,
+                volume: 15
+            })
+        );
+    }
+
+    #[test]
+    fn tone_off_clears_the_tone() {
+        let mut tone = Some(Tone {
+            frequency: 440,
+            volume: 8,
+        });
+        assert_eq!(run_tone("tone OFF", &mut tone), output(&["TONE OFF"]));
+        assert_eq!(tone, None);
+    }
+
+    #[test]
+    fn tone_rejects_bad_arguments_and_keeps_the_tone() {
+        let before = Some(Tone {
+            frequency: 440,
+            volume: 8,
+        });
+        for (line, message) in [
+            ("tone 0", "FREQUENCY MUST BE 1-24000 HZ"),
+            ("tone 24001", "FREQUENCY MUST BE 1-24000 HZ"),
+            ("tone loud", "FREQUENCY MUST BE 1-24000 HZ"),
+            ("tone -5", "FREQUENCY MUST BE 1-24000 HZ"),
+            ("tone 440 16", "VOLUME MUST BE 0-15"),
+            ("tone 440 x", "VOLUME MUST BE 0-15"),
+            ("tone off 3", "USAGE: TONE OFF"),
+            ("tone", "USAGE: TONE HZ [VOLUME] | TONE OFF"),
+            ("tone 1 2 3", "USAGE: TONE HZ [VOLUME] | TONE OFF"),
+        ] {
+            let mut tone = before;
+            assert_eq!(run_tone(line, &mut tone), error(message), "{line}");
+            assert_eq!(tone, before, "{line}");
+        }
+    }
+
+    #[test]
+    fn tone_accepts_the_range_limits() {
+        let mut tone = None;
+        run_tone("tone 1 0", &mut tone);
+        assert_eq!(
+            tone,
+            Some(Tone {
+                frequency: 1,
+                volume: 0
+            })
+        );
+        run_tone("tone 24000 15", &mut tone);
+        assert_eq!(
+            tone,
+            Some(Tone {
+                frequency: 24000,
+                volume: 15
+            })
+        );
     }
 }

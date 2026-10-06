@@ -1,6 +1,7 @@
 //! The Glaux machine.
 
 use crate::framebuffer::Framebuffer;
+use crate::psg::Psg;
 use crate::system_rom::SystemRom;
 
 /// Machine family name.
@@ -17,15 +18,17 @@ pub const TICK_RATE: u32 = 60;
 #[derive(Debug, Clone)]
 pub struct Machine {
     framebuffer: Framebuffer,
+    psg: Psg,
     system_rom: SystemRom,
 }
 
 impl Machine {
     /// Creates a machine around `system_rom`, with the framebuffer cleared to
-    /// index 0.
+    /// index 0 and the PSG silent.
     pub fn new(system_rom: SystemRom) -> Self {
         Self {
             framebuffer: Framebuffer::new(),
+            psg: Psg::new(),
             system_rom,
         }
     }
@@ -36,6 +39,14 @@ impl Machine {
 
     pub fn framebuffer_mut(&mut self) -> &mut Framebuffer {
         &mut self.framebuffer
+    }
+
+    pub fn psg(&self) -> &Psg {
+        &self.psg
+    }
+
+    pub fn psg_mut(&mut self) -> &mut Psg {
+        &mut self.psg
     }
 
     pub fn system_rom(&self) -> &SystemRom {

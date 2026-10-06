@@ -17,6 +17,7 @@ use glaux_input::{InputEvent, InputMode};
 use glaux_luau::RuntimeError;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
+use glaux_machine::psg::Psg;
 use glaux_machine::system_rom::SystemRom;
 use glaux_video::draw::{clear, draw_text, fill_rect};
 use pause::PauseOverlay;
@@ -172,6 +173,38 @@ impl System {
             } => paused_shell_tick(shell, running, input),
         };
         Self { state, info }
+    }
+
+    /// Writes the system's sound for the current state into `psg`.
+    ///
+    /// Channel 0 plays the shell's diagnostic TONE while the shell is the
+    /// active view and is silent otherwise, so the tone never sounds over
+    /// boot or a cartridge.
+    pub fn audio(&self, psg: &mut Psg) {
+        let tone = match &self.state {
+            SystemState::Shell { shell, .. }
+            | SystemState::Paused {
+                shell,
+                view: PausedView::Shell,
+                ..
+            } => shell.tone(),
+            SystemState::Boot { .. }
+            | SystemState::Running { .. }
+            | SystemState::Paused {
+                view: PausedView::Game(_),
+                ..
+            } => None,
+        };
+        let Some(channel) = psg.channel_mut(0) else {
+            unreachable!("the PSG has at least one channel");
+        };
+        match tone {
+            Some(tone) => {
+                channel.set_frequency(tone.frequency);
+                channel.set_volume(tone.volume);
+            }
+            None => channel.set_volume(0),
+        }
     }
 
     /// Redraws the whole framebuffer for the current state using the ROM's
@@ -1813,5 +1846,46 @@ mod tests {
         let system = started(&fixture, UP_STATE).update(&[down(), InputEvent::Break]);
         let (_, lines) = logged_per_tick(press_break(system), &[&[], &[up()], &[down()]]);
         assert_eq!(lines, ["false   false", "false   false", "true    true"]);
+    }
+
+    /// Channel 0's (frequency, volume) after `system` writes its sound.
+    fn tone_of(system: &System) -> (u16, u8) {
+        let mut psg = Psg::new();
+        system.audio(&mut psg);
+        let channel = psg.channel(0).unwrap();
+        (channel.frequency(), channel.volume())
+    }
+
+    #[test]
+    fn boot_is_silent() {
+        assert_eq!(tone_of(&new_system()).1, 0);
+    }
+
+    #[test]
+    fn shell_tone_reaches_the_psg_until_turned_off() {
+        let system = shell();
+        assert_eq!(tone_of(&system).1, 0);
+
+        let system = enter(system, "tone 440 12");
+        assert_eq!(tone_of(&system), (440, 12));
+
+        let system = enter(system, "tone off");
+        assert_eq!(tone_of(&system).1, 0);
+    }
+
+    #[test]
+    fn tone_is_muted_while_a_cartridge_runs_or_shows_its_pause_screen() {
+        let fixture = Fixture::new("sys-tone");
+        let system = enter(shell_with_cartridge(&fixture, ""), "tone 440 12");
+        let system = enter(enter(system, "load pong"), "run");
+        assert!(is_running(&system));
+        assert_eq!(tone_of(&system).1, 0);
+
+        let system = press_break(system);
+        assert!(is_paused_game(&system));
+        assert_eq!(tone_of(&system).1, 0);
+
+        let system = open_shell(system);
+        assert_eq!(tone_of(&system), (440, 12));
     }
 }
