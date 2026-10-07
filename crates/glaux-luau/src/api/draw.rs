@@ -1,5 +1,5 @@
-//! `cls`, `pset`, `spr` and `print`, which record [`DrawCommand`]s during
-//! `draw()`.
+//! `cls`, `pset`, `rectfill`, `spr` and `print`, which record
+//! [`DrawCommand`]s during `draw()`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -7,11 +7,11 @@ use std::rc::Rc;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH};
 use mlua::{Function, Lua, Value};
 
-use crate::args::{color_arg, coordinate_arg, located, tile_arg, tile_span_arg, to_text};
+use crate::args::{color_arg, coordinate_arg, located, size_arg, tile_arg, tile_span_arg, to_text};
 
-/// Draw cost one `draw()` call may spend: each `cls` or `pset` costs one,
-/// each `spr` costs the 64 pixels per tile it may draw, and each `print` costs
-/// [`TEXT_CHAR_COST`] per character.
+/// Draw cost one `draw()` call may spend: each `cls`, `pset` or `rectfill`
+/// costs one whatever area it covers, each `spr` costs the 64 pixels per tile
+/// it may draw, and each `print` costs [`TEXT_CHAR_COST`] per character.
 ///
 /// The completed frame is replayed on every host presentation frame, which
 /// may run faster than the 60 Hz tick, so this bounds per-frame host work as
@@ -36,6 +36,16 @@ pub enum DrawCommand {
     Clear(u8),
     /// `pset(x, y, color)`: write one pixel.
     Pixel { x: i32, y: i32, color: u8 },
+    /// `rectfill(x, y, width, height, color)`: fill the `width`x`height`
+    /// rectangle whose top-left corner is `(x, y)`. Both sizes are at
+    /// least 1.
+    Rect {
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        color: u8,
+    },
     /// `spr(tile, x, y, w, h)`: draw a `width`x`height` block of object
     /// tiles from the object-tile grid, `tile` at its top-left, with `(x, y)`
     /// as its top-left corner. The block is validated to fit the grid.
@@ -68,7 +78,7 @@ pub(crate) struct Recording {
 /// which is how drawing functions reject other phases.
 pub(crate) type PendingFrame = Rc<RefCell<Option<Recording>>>;
 
-/// Installs `cls`, `pset`, `spr` and `print`.
+/// Installs `cls`, `pset`, `rectfill`, `spr` and `print`.
 pub(crate) fn install(
     lua: &Lua,
     tostring: &Function,
@@ -95,6 +105,22 @@ pub(crate) fn install(
         record(lua, &pending, "pset", command)
     })?;
     globals.raw_set("pset", pset)?;
+
+    let pending = Rc::clone(pending_frame);
+    let rectfill = lua.create_function(
+        move |lua, (x, y, width, height, color): (Value, Value, Value, Value, Value)| {
+            expect_draw(lua, &pending, "rectfill")?;
+            let command = DrawCommand::Rect {
+                x: coordinate_arg(lua, "rectfill", 1, &x)?,
+                y: coordinate_arg(lua, "rectfill", 2, &y)?,
+                width: size_arg(lua, "rectfill", 3, &width, "width")?,
+                height: size_arg(lua, "rectfill", 4, &height, "height")?,
+                color: color_arg(lua, "rectfill", 5, &color)?,
+            };
+            record(lua, &pending, "rectfill", command)
+        },
+    )?;
+    globals.raw_set("rectfill", rectfill)?;
 
     let pending = Rc::clone(pending_frame);
     let spr = lua.create_function(
@@ -178,7 +204,7 @@ fn record(
             .checked_mul(usize::from(*height))
             .and_then(|tiles| tiles.checked_mul(SPRITE_TILE_COST))
             .unwrap_or(usize::MAX),
-        DrawCommand::Clear(_) | DrawCommand::Pixel { .. } => 1,
+        DrawCommand::Clear(_) | DrawCommand::Pixel { .. } | DrawCommand::Rect { .. } => 1,
     };
     recording.cost = recording.cost.saturating_add(cost);
     if recording.cost > MAX_DRAW_COMMANDS {

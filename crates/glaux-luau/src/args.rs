@@ -58,6 +58,29 @@ pub(crate) fn coordinate_arg(
     Ok(n.floor() as i32)
 }
 
+/// A size in pixels: a positive integer. `what` names the size in the
+/// error. Values past `i32::MAX` saturate, as coordinates do; the result is
+/// always at least 1.
+pub(crate) fn size_arg(
+    lua: &Lua,
+    function: &str,
+    position: usize,
+    value: &Value,
+    what: &str,
+) -> mlua::Result<i32> {
+    let n = number_arg(lua, function, position, value)?;
+    if n.fract() == 0.0 && n >= 1.0 {
+        Ok(n as i32)
+    } else {
+        Err(bad_argument(
+            lua,
+            function,
+            position,
+            &format!("positive {what} expected, got {n}"),
+        ))
+    }
+}
+
 /// A palette index: an integer in `0..=255`, never wrapped or clamped.
 pub(crate) fn color_arg(
     lua: &Lua,

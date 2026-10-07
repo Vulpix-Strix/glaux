@@ -244,6 +244,8 @@ local function centered(text, y, color)
 end
 
 local function draw_hud(run)
+    rectfill(0, 0, 320, 16, DARK)
+
     local hp = run.player.hp
     for i = 1, player.MAX_HP // 2 do
         local tile = sheet.heart_empty
@@ -264,8 +266,8 @@ local function draw_hud(run)
         label("DASH", 276, 3, GRAY)
         -- Recharge bar under the label.
         local filled = math.floor(24 * (1 - p.dash_cooldown / player.DASH_COOLDOWN))
-        for x = 0, filled - 1 do
-            pset(276 + x, 13, LIME)
+        if filled > 0 then
+            rectfill(276, 13, filled, 1, LIME)
         end
     end
 end

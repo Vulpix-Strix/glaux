@@ -81,7 +81,8 @@ over between runs: the PRNG stream, the best score and the run counter.
   - `cls()` for the floor;
   - `spr()` single-tile for coins and skulls;
   - `spr(..., w, h)` multi-tile at 2×2 (goblins, axes, hearts, walls, floor), 2×3 (knight, orcs) and 4×4 (ogres);
-  - `pset()` for particles, spawn warnings, floor joints, the arena edge and the dash bar;
+  - `rectfill()` for the dark HUD band, the dash recharge bar, the floor joint marks and the arena edge;
+  - `pset()` for particles and spawn warnings;
   - `print()` for the HUD and screen text.
 - **Logging:**
   - `log.info` on boot, run start/restart, every 30-second difficulty milestone and game over;
@@ -167,8 +168,9 @@ reproduces all three files byte for byte.
 
 ## Development notes
 
-Signal Lost was written against the APIs as they stand, with no engine
-changes. These are the notes it produced.
+Signal Lost was first written against the APIs as they stood, with no engine
+changes. These are the notes it produced. The filled-rectangle primitive it
+asked for has since been added as `rectfill()`, and the game now uses it.
 
 ### What worked well
 
@@ -197,12 +199,15 @@ changes. These are the notes it produced.
   budget kills the cartridge, so every entity list has a hard cap sized to
   keep the worst-case frame near 50 k. There is no way to query the remaining
   budget.
-- **`pset` is the only fill.** The first HUD was a dark 320×16 band, which
-  took 5 120 `pset` calls per frame. With the dotted floor joints that was
-  about 12 000 script calls, and a debug-build tick took about 8 ms of the
-  16.7 ms frame. The HUD moved onto the wall sprites and the joints became
-  corner marks (about 2 600 calls). A filled-rectangle primitive would have
-  removed the problem outright.
+- **`pset` was the only fill (resolved).** The first HUD was a dark 320×16
+  band, which took 5 120 `pset` calls per frame. With the dotted floor joints
+  that was about 12 000 script calls, and a debug-build tick took about 8 ms
+  of the 16.7 ms frame. The HUD moved onto the wall sprites and the joints
+  became corner marks (about 2 600 calls). This exposed the need for a
+  filled-rectangle primitive. `rectfill(x, y, width, height, color)` now
+  fills any rectangle as one draw command, so the dark HUD band is back as a
+  single call, and the joint marks, arena edge and dash bar are a few hundred
+  `rectfill`s instead of thousands of `pset`s.
 - **Tile indices are manual bookkeeping.** Nothing ties a name to a tile
   range, so the sheet builder generates `sheet.luau` to keep code and sheet in
   sync. Without that step every layout change would mean editing numbers by
@@ -229,8 +234,6 @@ These limitations were demonstrated while building the game:
   hit flashes impossible.
 - **Sprite flip.** Every character and the axe are stored twice, mirrored.
   That is 156 of the sheet's 384 tiles.
-- **A filled-rectangle primitive.** See the HUD band above: it would turn
-  thousands of `pset` calls into one command.
 
 ### What should NOT be added yet
 

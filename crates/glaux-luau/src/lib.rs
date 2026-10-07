@@ -20,9 +20,14 @@
 //!   counts against that call's [`Budget`];
 //! - `log.trace(...)`, `log.debug(...)`, `log.info(...)` and `log.warn(...)`,
 //!   which record [`LogEntry`]s in any phase;
-//! - `cls(color)`, `pset(x, y, color)`, `print(text, x, y, color)` and
-//!   `spr(tile, x, y, [w, h])`, which record [`DrawCommand`]s and may only
-//!   be called during `draw()`. `spr` draws a `w`x`h` block of 8x8 object
+//! - `cls(color)`, `pset(x, y, color)`, `rectfill(x, y, width, height,
+//!   color)`, `print(text, x, y, color)` and `spr(tile, x, y, [w, h])`,
+//!   which record [`DrawCommand`]s and may only be called during `draw()`.
+//!   `rectfill` is a filled rectangle primitive: `(x, y)` is its top-left
+//!   corner and `width` and `height` are positive integer sizes in pixels,
+//!   not end coordinates. Like every drawing function it is clipped to the
+//!   screen, and like `cls` it costs one draw unit however large it is.
+//!   `spr` draws a `w`x`h` block of 8x8 object
 //!   tiles (default 1x1) taken from the 16-column object-tile grid, with
 //!   `tile` at its top-left; the block may not run past the grid's right or
 //!   bottom edge. Transparent index 0 is skipped and indices 1 through 15

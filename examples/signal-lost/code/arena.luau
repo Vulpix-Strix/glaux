@@ -35,9 +35,6 @@ do
     end
 end
 
--- Every `pset` is a separate script call, so the background keeps them under
--- 3000: the HUD sits on the brick wall instead of a filled band, and slab
--- joints are only marked where they cross.
 function arena.draw()
     cls(FLOOR)
 
@@ -48,13 +45,11 @@ function arena.draw()
         spr(sheet.wall_mid, x, 20, 2, 2)
     end
 
+    -- A small cross where slab joints meet.
     for y = FLOOR_TOP + 16, 223, 16 do
         for x = 16, 304, 16 do
-            pset(x, y, JOINT)
-            pset(x - 1, y, JOINT)
-            pset(x + 1, y, JOINT)
-            pset(x, y - 1, JOINT)
-            pset(x, y + 1, JOINT)
+            rectfill(x - 1, y, 3, 1, JOINT)
+            rectfill(x, y - 1, 1, 3, JOINT)
         end
     end
 
@@ -62,17 +57,14 @@ function arena.draw()
         spr(slab.tile, slab.x, slab.y, 2, 2)
     end
 
-    -- Side and bottom edges.
-    for y = FLOOR_TOP, 239 do
-        pset(0, y, EDGE_DARK)
-        pset(1, y, EDGE_LIGHT)
-        pset(318, y, EDGE_LIGHT)
-        pset(319, y, EDGE_DARK)
-    end
-    for x = 2, 317 do
-        pset(x, 238, EDGE_LIGHT)
-        pset(x, 239, EDGE_DARK)
-    end
+    -- Side and bottom edges, two pixels thick.
+    local side = 240 - FLOOR_TOP
+    rectfill(0, FLOOR_TOP, 1, side, EDGE_DARK)
+    rectfill(1, FLOOR_TOP, 1, side, EDGE_LIGHT)
+    rectfill(318, FLOOR_TOP, 1, side, EDGE_LIGHT)
+    rectfill(319, FLOOR_TOP, 1, side, EDGE_DARK)
+    rectfill(2, 238, 316, 1, EDGE_LIGHT)
+    rectfill(2, 239, 316, 1, EDGE_DARK)
 end
 
 return arena

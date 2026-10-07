@@ -1,7 +1,7 @@
 //! Drawing primitives over the logical framebuffer.
 //!
-//! All primitives clip through [`Framebuffer::set_pixel`]: anything that
-//! falls outside the framebuffer is silently dropped.
+//! All primitives clip to the framebuffer: anything that falls outside it is
+//! silently dropped.
 
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
@@ -99,15 +99,22 @@ pub fn fill_rect(
     height: i32,
     color: u8,
 ) {
-    // Clamp to the i32 range in i64 so that `x + width` cannot overflow.
-    let clamp = |v: i64| v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-    let (x0, y0) = (x.max(0), y.max(0));
-    let x1 = clamp(i64::from(x) + i64::from(width)).min(WIDTH as i32);
-    let y1 = clamp(i64::from(y) + i64::from(height)).min(HEIGHT as i32);
-    for py in y0..y1 {
-        for px in x0..x1 {
-            framebuffer.set_pixel(px, py, color);
-        }
+    // Clip in i64 so that `x + width` cannot overflow; every bound then lies
+    // in `0..=WIDTH` or `0..=HEIGHT`.
+    let clip = |start: i32, size: i32, limit: usize| {
+        let end = (i64::from(start) + i64::from(size)).clamp(0, limit as i64) as usize;
+        let start = i64::from(start).clamp(0, limit as i64) as usize;
+        start..end.max(start)
+    };
+    let columns = clip(x, width, WIDTH);
+    let rows = clip(y, height, HEIGHT);
+    if columns.is_empty() {
+        return;
+    }
+    let pixels = framebuffer.as_bytes_mut();
+    for row in rows {
+        let offset = row * WIDTH;
+        pixels[offset + columns.start..offset + columns.end].fill(color);
     }
 }
 
@@ -477,20 +484,56 @@ mod tests {
         assert_eq!(fb, expected);
     }
 
-    #[test]
-    fn fill_rect_covers_exact_region() {
+    /// A blank framebuffer with the `width`×`height` region at `(x, y)` set
+    /// to `INK`; every pixel of the region must be on screen.
+    fn with_rect(x: i32, y: i32, width: i32, height: i32) -> Framebuffer {
+        with_ink((y..y + height).flat_map(move |py| (x..x + width).map(move |px| (px, py))))
+    }
+
+    fn rect(x: i32, y: i32, width: i32, height: i32) -> Framebuffer {
         let mut fb = Framebuffer::new();
-        fill_rect(&mut fb, 10, 20, 3, 2, INK);
-        let expected = with_ink((20..22).flat_map(|y| (10..13).map(move |x| (x, y))));
-        assert_eq!(fb, expected);
+        fill_rect(&mut fb, x, y, width, height, INK);
+        fb
     }
 
     #[test]
-    fn fill_rect_clips_at_edges() {
-        let mut fb = Framebuffer::new();
-        fill_rect(&mut fb, -1, -1, 2, 2, INK);
-        fill_rect(&mut fb, 319, 239, 5, 5, INK);
-        assert_eq!(fb, with_ink([(0, 0), (319, 239)]));
+    fn fill_rect_covers_exact_region() {
+        assert_eq!(rect(10, 20, 3, 2), with_rect(10, 20, 3, 2));
+    }
+
+    #[test]
+    fn fill_rect_draws_a_single_pixel() {
+        assert_eq!(rect(12, 34, 1, 1), with_ink([(12, 34)]));
+    }
+
+    #[test]
+    fn fill_rect_clips_each_edge() {
+        let (w, h) = (WIDTH as i32, HEIGHT as i32);
+        assert_eq!(rect(-5, 10, 8, 4), with_rect(0, 10, 3, 4), "left");
+        assert_eq!(rect(10, -5, 4, 8), with_rect(10, 0, 4, 3), "top");
+        assert_eq!(rect(w - 3, 10, 8, 4), with_rect(w - 3, 10, 3, 4), "right");
+        assert_eq!(rect(10, h - 3, 4, 8), with_rect(10, h - 3, 4, 3), "bottom");
+        assert_eq!(rect(-1, -1, 2, 2), with_ink([(0, 0)]), "top-left corner");
+        assert_eq!(
+            rect(w - 1, h - 1, 5, 5),
+            with_ink([(w - 1, h - 1)]),
+            "bottom-right corner"
+        );
+    }
+
+    #[test]
+    fn fill_rect_covers_the_whole_screen() {
+        let (w, h) = (WIDTH as i32, HEIGHT as i32);
+        assert_eq!(rect(0, 0, w, h), filled(INK));
+        assert_eq!(rect(-50, -50, w + 100, h + 100), filled(INK));
+    }
+
+    #[test]
+    fn fill_rect_off_screen_draws_nothing() {
+        let (w, h) = (WIDTH as i32, HEIGHT as i32);
+        for (x, y) in [(-10, 10), (10, -10), (w, 10), (10, h), (-10, -10), (w, h)] {
+            assert_eq!(rect(x, y, 10, 10), Framebuffer::new(), "rect at ({x}, {y})");
+        }
     }
 
     #[test]
@@ -507,10 +550,11 @@ mod tests {
         let mut fb = Framebuffer::new();
         fill_rect(&mut fb, i32::MAX, i32::MAX, i32::MAX, i32::MAX, INK);
         fill_rect(&mut fb, i32::MIN, i32::MIN, i32::MAX, i32::MAX, INK);
+        fill_rect(&mut fb, i32::MIN, i32::MIN, i32::MIN, i32::MIN, INK);
         assert_eq!(fb, Framebuffer::new());
 
         fill_rect(&mut fb, -10, -10, i32::MAX, i32::MAX, INK);
-        assert!(fb.as_bytes().iter().all(|&b| b == INK));
+        assert_eq!(fb, filled(INK));
     }
 
     #[test]

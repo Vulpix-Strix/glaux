@@ -7,6 +7,16 @@ fn pixel(x: i32, y: i32, color: u8) -> DrawCommand {
     DrawCommand::Pixel { x, y, color }
 }
 
+fn rect(x: i32, y: i32, width: i32, height: i32, color: u8) -> DrawCommand {
+    DrawCommand::Rect {
+        x,
+        y,
+        width,
+        height,
+        color,
+    }
+}
+
 fn sprite(tile: u16, x: i32, y: i32) -> DrawCommand {
     sprite_block(tile, x, y, 1, 1)
 }
@@ -50,11 +60,15 @@ fn the_frame_starts_empty() {
 fn draw_functions_record_commands_in_call_order() {
     assert_eq!(drawn("cls(3)"), [DrawCommand::Clear(3)]);
     assert_eq!(
-        drawn(r#"cls(1) spr(3, 7, 8) pset(5, 5, 2) print("HI", 10, 20, 16) cls(0)"#),
+        drawn(
+            r#"cls(1) rectfill(1, 2, 3, 4, 9) spr(3, 7, 8) pset(5, 5, 2) rectfill(0, 0, 8, 8, 6) print("HI", 10, 20, 16) cls(0)"#
+        ),
         [
             DrawCommand::Clear(1),
+            rect(1, 2, 3, 4, 9),
             sprite(3, 7, 8),
             pixel(5, 5, 2),
+            rect(0, 0, 8, 8, 6),
             DrawCommand::Text {
                 text: "HI".into(),
                 x: 10,
@@ -166,6 +180,7 @@ fn draw_functions_fail_outside_draw() {
     for call in [
         "cls(1)",
         "pset(0, 0, 1)",
+        "rectfill(0, 0, 1, 1, 1)",
         "spr(0, 0, 0)",
         r#"print("x", 0, 0, 1)"#,
     ] {
@@ -408,6 +423,131 @@ fn sprite_blocks_must_fit_the_object_tile_grid() {
             "{call}"
         );
     }
+}
+
+#[test]
+fn rectfill_records_one_rectangle() {
+    assert_eq!(
+        drawn("rectfill(10, 20, 30, 40, 5)"),
+        [rect(10, 20, 30, 40, 5)]
+    );
+    // Off-screen and oversized rectangles are recorded unclipped.
+    assert_eq!(
+        drawn("rectfill(-500, 1000, 1, 1, 0) rectfill(1.9, -0.5, 2, 3, 255)"),
+        [rect(-500, 1000, 1, 1, 0), rect(1, -1, 2, 3, 255)]
+    );
+    assert_eq!(
+        drawn("rectfill(0, 0, 1e300, 4, 1)"),
+        [rect(0, 0, i32::MAX, 4, 1)]
+    );
+}
+
+#[test]
+fn rectfill_sizes_must_be_positive_integers() {
+    for (call, detail) in [
+        (
+            "rectfill(0, 0, 0, 4, 1)",
+            "#3 to 'rectfill' (positive width expected, got 0)",
+        ),
+        (
+            "rectfill(0, 0, 4, 0, 1)",
+            "#4 to 'rectfill' (positive height expected, got 0)",
+        ),
+        (
+            "rectfill(0, 0, -3, 4, 1)",
+            "#3 to 'rectfill' (positive width expected, got -3)",
+        ),
+        (
+            "rectfill(0, 0, 4, -1, 1)",
+            "#4 to 'rectfill' (positive height expected, got -1)",
+        ),
+        (
+            "rectfill(0, 0, 1.5, 4, 1)",
+            "#3 to 'rectfill' (positive width expected, got 1.5)",
+        ),
+        (
+            "rectfill(0, 0, 0/0, 4, 1)",
+            "#3 to 'rectfill' (positive width expected, got NaN)",
+        ),
+        (
+            "rectfill(0, 0, math.huge, 4, 1)",
+            "#3 to 'rectfill' (positive width expected, got inf)",
+        ),
+        (
+            r#"rectfill(0, 0, "4", 4, 1)"#,
+            "#3 to 'rectfill' (number expected, got string)",
+        ),
+        (
+            "rectfill(0, 0, 4, nil, 1)",
+            "#4 to 'rectfill' (number expected, got nil)",
+        ),
+    ] {
+        assert_eq!(
+            draw_error(call),
+            format!("main.luau:1: bad argument {detail}"),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn rectfill_validates_coordinates_and_color() {
+    for (call, detail) in [
+        (
+            r#"rectfill("1", 0, 4, 4, 1)"#,
+            "#1 to 'rectfill' (number expected, got string)",
+        ),
+        (
+            "rectfill(0, {}, 4, 4, 1)",
+            "#2 to 'rectfill' (number expected, got table)",
+        ),
+        (
+            "rectfill(0/0, 0, 4, 4, 1)",
+            "#1 to 'rectfill' (number is NaN)",
+        ),
+        (
+            "rectfill(0, 0, 4, 4, 300)",
+            "#5 to 'rectfill' (palette index 0-255 expected, got 300)",
+        ),
+        (
+            "rectfill(0, 0, 4, 4, true)",
+            "#5 to 'rectfill' (number expected, got boolean)",
+        ),
+        (
+            "rectfill(0, 0, 4, 4)",
+            "#5 to 'rectfill' (number expected, got nil)",
+        ),
+    ] {
+        assert_eq!(
+            draw_error(call),
+            format!("main.luau:1: bad argument {detail}"),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn a_rectfill_costs_one_draw_unit_whatever_its_area() {
+    let budget = Budget {
+        interrupts: 4 * MAX_DRAW_COMMANDS as u64,
+    };
+    let run = |extra: &str| {
+        let source = format!(
+            "function draw() for i = 1, {MAX_DRAW_COMMANDS} - 1 do pset(0, 0, 1) end \
+             rectfill(-1000, -1000, 100000, 100000, 1) {extra} end"
+        );
+        let mut runtime =
+            Runtime::start("main.luau", source.as_bytes(), Files::default(), budget).unwrap();
+        runtime.tick(NO_INPUT).map(|()| runtime.frame().len())
+    };
+    assert_eq!(run("").unwrap(), MAX_DRAW_COMMANDS);
+
+    let err = run("pset(0, 0, 1)").unwrap_err();
+    assert_eq!(err.phase, Phase::Draw);
+    assert!(
+        matches!(&err.error, ScriptError::Runtime(m) if m.contains("too many draw commands")),
+        "{err:?}"
+    );
 }
 
 #[test]

@@ -6,7 +6,7 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::psg::Psg;
 use glaux_machine::sprite::{ObjTileBank, ObjTileBankError};
-use glaux_video::draw::{clear, draw_obj_sprite, draw_text, pixel};
+use glaux_video::draw::{clear, draw_obj_sprite, draw_text, fill_rect, pixel};
 
 use super::audio;
 use crate::cartridge::{CartridgeError, LoadedCartridge};
@@ -102,6 +102,13 @@ impl RunningCartridge {
             match *command {
                 DrawCommand::Clear(color) => clear(framebuffer, color),
                 DrawCommand::Pixel { x, y, color } => pixel(framebuffer, x, y, color),
+                DrawCommand::Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                    color,
+                } => fill_rect(framebuffer, x, y, width, height, color),
                 DrawCommand::Sprite {
                     tile,
                     x,
@@ -309,7 +316,7 @@ mod tests {
                     .runtime
                     .frame()
                     .iter()
-                    .any(|command| matches!(command, DrawCommand::Pixel { .. }))
+                    .any(|command| matches!(command, DrawCommand::Rect { .. }))
             );
 
             let rom = crate::rom::load().unwrap();
@@ -325,6 +332,20 @@ mod tests {
             assert!(!shows(&running, "PRESS Z TO START"));
             assert!(shows(&running, "SCORE 00000"));
             assert!(shows(&running, "TIME"));
+            let band = DrawCommand::Rect {
+                x: 0,
+                y: 0,
+                width: 320,
+                height: 16,
+                color: 11,
+            };
+            assert!(running.runtime.frame().contains(&band));
+
+            let rom = crate::rom::load().unwrap();
+            let mut framebuffer = Framebuffer::new();
+            running.render(&mut framebuffer, rom.font());
+            assert_eq!(framebuffer.pixel(150, 14), Some(11));
+
             let output = texts(running.take_output());
             assert!(output.contains(&"run 1 started".to_string()), "{output:?}");
         }
