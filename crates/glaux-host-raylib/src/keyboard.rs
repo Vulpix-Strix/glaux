@@ -246,8 +246,10 @@ impl TextKeys {
     }
 }
 
-/// The physical key behind each virtual game button. Escape is the break
-/// key and is deliberately not a game button.
+/// The default desktop binding for each virtual game button: the arrow keys
+/// drive the D-pad, Z is A and X is B. Cartridges only see the virtual
+/// buttons, so player-facing text that names physical keys depends on this
+/// table. Escape is the break key and is deliberately not a game button.
 const GAME_KEYS: [(KeyboardKey, GameButton); 6] = [
     (KeyboardKey::KEY_UP, GameButton::Up),
     (KeyboardKey::KEY_DOWN, GameButton::Down),
@@ -697,22 +699,41 @@ mod tests {
         out
     }
 
+    /// The documented desktop bindings, spelled out independently of
+    /// `GAME_KEYS` so a change to the table fails a test.
+    const DESKTOP_BINDINGS: [(KeyboardKey, GameButton); 6] = [
+        (KEY_UP, GameButton::Up),
+        (KEY_DOWN, GameButton::Down),
+        (KEY_LEFT, GameButton::Left),
+        (KEY_RIGHT, GameButton::Right),
+        (KEY_Z, GameButton::A),
+        (KEY_X, GameButton::B),
+    ];
+
     #[test]
-    fn physical_keys_map_to_virtual_buttons() {
-        for (key, button) in [
-            (KEY_UP, GameButton::Up),
-            (KEY_DOWN, GameButton::Down),
-            (KEY_LEFT, GameButton::Left),
-            (KEY_RIGHT, GameButton::Right),
-            (KEY_Z, GameButton::A),
-            (KEY_X, GameButton::B),
-        ] {
+    fn game_keys_are_the_documented_desktop_bindings() {
+        assert_eq!(GAME_KEYS, DESKTOP_BINDINGS);
+    }
+
+    #[test]
+    fn every_virtual_button_has_exactly_one_key() {
+        for button in GameButton::ALL {
+            let keys = GAME_KEYS.iter().filter(|(_, b)| *b == button).count();
+            assert_eq!(keys, 1, "{button:?}");
+        }
+    }
+
+    #[test]
+    fn each_binding_presses_and_releases_its_button_in_game_mode() {
+        for (key, button) in DESKTOP_BINDINGS {
             let mut game = GameKeys::default();
-            assert_eq!(
-                game_frame(&mut game, &[key], &[key]),
-                [InputEvent::ButtonDown(button)],
-                "{key:?}"
-            );
+            let mut down = game_frame(&mut game, &[key], &[key]);
+            retain_for_mode(InputMode::Game, &mut down);
+            assert_eq!(down, [InputEvent::ButtonDown(button)], "{key:?} down");
+
+            let mut up = game_frame(&mut game, &[], &[]);
+            retain_for_mode(InputMode::Game, &mut up);
+            assert_eq!(up, [InputEvent::ButtonUp(button)], "{key:?} up");
         }
     }
 
@@ -808,6 +829,14 @@ mod tests {
                 InputEvent::ButtonDown(GameButton::A),
                 InputEvent::ButtonDown(GameButton::B),
             ]
+        );
+    }
+
+    #[test]
+    fn escape_breaks_without_releasing_held_buttons() {
+        assert_eq!(
+            translated(InputMode::Game, &[KEY_Z, KEY_ESCAPE], "z"),
+            [InputEvent::Break, InputEvent::ButtonDown(GameButton::A)]
         );
     }
 

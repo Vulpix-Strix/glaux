@@ -302,7 +302,7 @@ mod tests {
 
             idle(&mut running, 120);
             assert!(shows(&running, "SIGNAL LOST"));
-            assert!(shows(&running, "B DASH"));
+            assert!(shows(&running, "X DASH"));
             assert!(sprite_count(&running) > 0);
             assert!(
                 running
@@ -322,7 +322,7 @@ mod tests {
         #[test]
         fn pressing_a_starts_a_run_with_a_hud() {
             let mut running = start_playing();
-            assert!(!shows(&running, "PRESS A TO START"));
+            assert!(!shows(&running, "PRESS Z TO START"));
             assert!(shows(&running, "SCORE 00000"));
             assert!(shows(&running, "TIME"));
             let output = texts(running.take_output());

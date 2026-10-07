@@ -7,12 +7,18 @@ gaps, grab the coins they drop, and see how long you last.
 
 ## Controls
 
-| Button | Action |
-|---|---|
-| D-pad | Move (8 directions) |
-| A (hold) | Throw axes in the facing direction. While A is held, the aim stays locked, so you can back away while throwing. |
-| B | Dash: a short invulnerable burst, then a cooldown (shown under `DASH` in the HUD) |
-| A on the title / game-over screen | Start / retry |
+The game reads Glaux's virtual buttons (D-pad, `A`, `B`). The desktop host
+maps them to the keyboard, and the on-screen prompts name those keys:
+
+| Virtual button                    | Desktop key | Action                                                                                                           |
+|-----------------------------------|-------------|------------------------------------------------------------------------------------------------------------------|
+| D-pad                             | Arrow keys  | Move (8 directions)                                                                                              |
+| A (hold)                          | `Z`         | Throw axes in the facing direction. While it is held, the aim stays locked, so you can back away while throwing. |
+| B                                 | `X`         | Dash: a short invulnerable burst, then a cooldown (shown under `DASH` in the HUD)                                |
+| A on the title / game-over screen | `Z`         | Start / retry                                                                                                    |
+
+`Esc` is not a game button: it pauses the cartridge (press it again to resume,
+or `Enter` to open the shell).
 
 ## Objective
 
@@ -47,18 +53,18 @@ run
 `cartridge.ron` (format v1) names `code/main.luau` as the entry. Everything
 else is loaded with `require`:
 
-| Module | Role |
-|---|---|
-| `main.luau` | Game state and the title → playing → game over cycle. Owns `boot`/`tick`/`draw`, collision resolution, scoring, milestones and logging. |
-| `player.luau` | Movement, aim lock, dash and cooldown, fire cadence, damage and healing. |
-| `enemies.luau` | Enemy kinds, the difficulty curve, edge spawns with a warning marker, chasing with separation. |
-| `projectiles.luau` | Thrown axes. |
-| `pickups.luau` | Coins and flasks, with lifetime, blink and magnet. |
-| `particles.luau` | `pset` sparks and dust, and the skulls dead enemies leave. |
-| `arena.luau` | Play-field bounds and the background. |
-| `audio.luau` | Every sound effect, on the PSG. |
-| `util.luau` | xorshift32 PRNG, AABB overlap, vector helpers, clock formatting. |
-| `sheet.luau` | **Generated** object-tile indices for every sprite (see below). |
+| Module             | Role                                                                                                                                    |
+|--------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| `main.luau`        | Game state and the title → playing → game over cycle. Owns `boot`/`tick`/`draw`, collision resolution, scoring, milestones and logging. |
+| `player.luau`      | Movement, aim lock, dash and cooldown, fire cadence, damage and healing.                                                                |
+| `enemies.luau`     | Enemy kinds, the difficulty curve, edge spawns with a warning marker, chasing with separation.                                          |
+| `projectiles.luau` | Thrown axes.                                                                                                                            |
+| `pickups.luau`     | Coins and flasks, with lifetime, blink and magnet.                                                                                      |
+| `particles.luau`   | `pset` sparks and dust, and the skulls dead enemies leave.                                                                              |
+| `arena.luau`       | Play-field bounds and the background.                                                                                                   |
+| `audio.luau`       | Every sound effect, on the PSG.                                                                                                         |
+| `util.luau`        | xorshift32 PRNG, AABB overlap, vector helpers, clock formatting.                                                                        |
+| `sheet.luau`       | **Generated** object-tile indices for every sprite (see below).                                                                         |
 
 Modules are plain tables of functions. Run state is one table that
 `main.luau` creates in `start_run()`. A retry discards it and builds a fresh
@@ -98,19 +104,19 @@ CC0. The repository keeps only the derived sheet, never the source pack.
 
 Source files used, all from `0x72_DungeonTilesetII_v1.7/frames/`:
 
-| Use | Files | Adaptation |
-|---|---|---|
-| Knight (player) | `knight_m_idle_anim_f0-3.png`, `knight_m_run_anim_f0-3.png` | Crop the empty top 4 rows (16×28 → 16×24); add a mirrored copy |
-| Goblin | `goblin_run_anim_f0-3.png` | Mirrored copy |
-| Masked orc | `masked_orc_run_anim_f0-3.png` | Bottom-align 16×23 in 16×24; mirrored copy |
-| Ogre | `ogre_run_anim_f0-3.png` | Crop the empty top 4 rows (32×36 → 32×32); mirrored copy |
-| Axe | `weapon_throwing_axe.png` | Center in 16×16; mirrored copy |
-| Coin | `coin_anim_f0-3.png` | Center in 8×8 |
-| Skull | `skull.png` | Crop to its 6×6 content, center in 8×8 |
-| Flask | `flask_big_red.png` | — |
-| Hearts | `ui_heart_full.png`, `ui_heart_half.png`, `ui_heart_empty.png` | Center 13×12 in 16×16 |
-| Wall | `wall_mid.png`, `wall_top_mid.png` | — |
-| Floor | `floor_1.png` … `floor_8.png` | — |
+| Use             | Files                                                          | Adaptation                                                     |
+|-----------------|----------------------------------------------------------------|----------------------------------------------------------------|
+| Knight (player) | `knight_m_idle_anim_f0-3.png`, `knight_m_run_anim_f0-3.png`    | Crop the empty top 4 rows (16×28 → 16×24); add a mirrored copy |
+| Goblin          | `goblin_run_anim_f0-3.png`                                     | Mirrored copy                                                  |
+| Masked orc      | `masked_orc_run_anim_f0-3.png`                                 | Bottom-align 16×23 in 16×24; mirrored copy                     |
+| Ogre            | `ogre_run_anim_f0-3.png`                                       | Crop the empty top 4 rows (32×36 → 32×32); mirrored copy       |
+| Axe             | `weapon_throwing_axe.png`                                      | Center in 16×16; mirrored copy                                 |
+| Coin            | `coin_anim_f0-3.png`                                           | Center in 8×8                                                  |
+| Skull           | `skull.png`                                                    | Crop to its 6×6 content, center in 8×8                         |
+| Flask           | `flask_big_red.png`                                            | —                                                              |
+| Hearts          | `ui_heart_full.png`, `ui_heart_half.png`, `ui_heart_empty.png` | Center 13×12 in 16×16                                          |
+| Wall            | `wall_mid.png`, `wall_top_mid.png`                             | —                                                              |
+| Floor           | `floor_1.png` … `floor_8.png`                                  | —                                                              |
 
 No pixels were redrawn. The only edits are cropping, padding, mirroring and
 the palette remap below.
@@ -129,11 +135,11 @@ or a saturated red.
 entries (redmean-weighted RGB distance). Three overrides are pinned by hand
 because nearest-match collapses them:
 
-| Source | Nearest | Pinned to | Why |
-|---|---|---|---|
-| `#5c7a56` | 9 | 8 `#71aa34` | the goblin's two greens merged |
-| `#facb3e` | 5 | 6 `#f4cca1` | the coin's highlight merged with its body |
-| `#da4e38` | 3 | 5 `#eea160` | the full heart was nearly the same as the empty one |
+| Source    | Nearest | Pinned to   | Why                                                 |
+|-----------|---------|-------------|-----------------------------------------------------|
+| `#5c7a56` | 9       | 8 `#71aa34` | the goblin's two greens merged                      |
+| `#facb3e` | 5       | 6 `#f4cca1` | the coin's highlight merged with its body           |
+| `#da4e38` | 3       | 5 `#eea160` | the full heart was nearly the same as the empty one |
 
 The full source → index table is printed every time the sheet is built.
 

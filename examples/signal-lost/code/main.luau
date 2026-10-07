@@ -293,11 +293,13 @@ local function draw_title(tick)
 
     centered("SIGNAL LOST", 64, ORANGE)
     centered("SURVIVE THE ARENA", 80, PALE)
+    -- Prompts name the default desktop keys (Z = A, X = B), not the
+    -- virtual buttons the code reads.
     if (tick // 30) % 2 == 0 then
-        centered("PRESS A TO START", 164, WHITE)
+        centered("PRESS Z TO START", 164, WHITE)
     end
-    centered("ARROWS MOVE   A THROW   B DASH", 190, GRAY)
-    centered("HOLD A TO LOCK YOUR AIM", 202, GRAY)
+    centered("ARROWS MOVE   Z THROW   X DASH", 190, GRAY)
+    centered("HOLD Z TO LOCK YOUR AIM", 202, GRAY)
     if game.best > 0 then
         centered("BEST " .. game.best, 220, LIME)
     end
@@ -308,7 +310,7 @@ local function draw_gameover(run, tick)
     centered(string.format("SCORE %d   KILLS %d   TIME %s", run.score, run.kills, util.clock(run.elapsed)), 110, WHITE)
     centered("BEST " .. game.best, 124, LIME)
     if game.lock == 0 and (tick // 30) % 2 == 0 then
-        centered("PRESS A TO RETRY", 146, WHITE)
+        centered("PRESS Z TO RETRY", 146, WHITE)
     end
 end
 
