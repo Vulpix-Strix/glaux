@@ -1,6 +1,6 @@
 //! A loaded cartridge together with the Luau VM running it.
 
-use glaux_input::{ButtonLatch, InputEvent};
+use glaux_input::{InputEvent, InputLatch};
 use glaux_luau::{Budget, DrawCommand, LogEntry, Runtime, RuntimeError, StartFailure};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -35,10 +35,10 @@ pub struct RunningCartridge {
     cartridge: LoadedCartridge,
     runtime: Runtime,
     obj_tiles: ObjTileBank,
-    /// Starts with every button released, so nothing held during a previous
-    /// run reaches this one, and is reset whenever the system resumes the
-    /// cartridge from a pause.
-    buttons: ButtonLatch,
+    /// Starts with every button and key released, so nothing held during a
+    /// previous run reaches this one, and is reset whenever the system
+    /// resumes the cartridge from a pause.
+    input: InputLatch,
 }
 
 impl RunningCartridge {
@@ -66,7 +66,7 @@ impl RunningCartridge {
                 cartridge,
                 runtime,
                 obj_tiles,
-                buttons: ButtonLatch::new(),
+                input: InputLatch::new(),
             }),
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
         }
@@ -76,17 +76,17 @@ impl RunningCartridge {
         &self.cartridge
     }
 
-    /// Advances the cartridge by one logical tick, applying the button
-    /// events in `input` received since the previous tick.
+    /// Advances the cartridge by one logical tick, applying the button and
+    /// key events in `input` received since the previous tick.
     pub fn tick(&mut self, input: &[InputEvent]) -> Result<(), RuntimeError> {
-        let buttons = self.buttons.advance(input);
-        self.runtime.tick(buttons)
+        let state = self.input.advance(input);
+        self.runtime.tick(state)
     }
 
-    /// Releases every game button as seen by the cartridge, so its next tick
-    /// sees no held buttons and no presses from before this call.
+    /// Releases every button and key as seen by the cartridge, so its next
+    /// tick sees nothing held and no presses from before this call.
     pub fn reset_input(&mut self) {
-        self.buttons = ButtonLatch::new();
+        self.input = InputLatch::new();
     }
 
     /// Entries the cartridge logged since the last call.
@@ -221,7 +221,7 @@ mod tests {
     mod signal_lost {
         use std::path::Path;
 
-        use glaux_input::GameButton;
+        use glaux_input::Button;
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -239,11 +239,11 @@ mod tests {
             RunningCartridge::start(cartridge).unwrap()
         }
 
-        fn down(button: GameButton) -> InputEvent {
+        fn down(button: Button) -> InputEvent {
             InputEvent::ButtonDown(button)
         }
 
-        fn up(button: GameButton) -> InputEvent {
+        fn up(button: Button) -> InputEvent {
             InputEvent::ButtonUp(button)
         }
 
@@ -263,8 +263,8 @@ mod tests {
         /// Taps A on the title screen to begin the first run.
         fn start_playing() -> RunningCartridge {
             let mut running = start();
-            step(&mut running, &[down(GameButton::A)]);
-            step(&mut running, &[up(GameButton::A)]);
+            step(&mut running, &[down(Button::A)]);
+            step(&mut running, &[up(Button::A)]);
             running
         }
 
@@ -333,7 +333,7 @@ mod tests {
         fn holding_a_direction_moves_the_knight() {
             let mut moved = start_playing();
             let mut still = start_playing();
-            step(&mut moved, &[down(GameButton::Right)]);
+            step(&mut moved, &[down(Button::Right)]);
             step(&mut still, &[]);
             idle(&mut moved, 20);
             idle(&mut still, 20);
@@ -344,7 +344,7 @@ mod tests {
         fn holding_a_throws_axes() {
             let mut throwing = start_playing();
             let mut still = start_playing();
-            step(&mut throwing, &[down(GameButton::A)]);
+            step(&mut throwing, &[down(Button::A)]);
             step(&mut still, &[]);
             idle(&mut throwing, 20);
             idle(&mut still, 20);
@@ -368,8 +368,8 @@ mod tests {
             );
 
             // A is ignored briefly so a held button cannot skip the screen.
-            step(&mut running, &[down(GameButton::A)]);
-            step(&mut running, &[up(GameButton::A)]);
+            step(&mut running, &[down(Button::A)]);
+            step(&mut running, &[up(Button::A)]);
             assert!(shows(&running, "KILLS"));
 
             // Once the game-over effects finish, no channel is left open.
@@ -377,8 +377,8 @@ mod tests {
             let channels = *running.runtime.audio_mut().channels();
             assert!(channels.iter().all(|channel| !channel.gate), "{channels:?}");
 
-            step(&mut running, &[down(GameButton::A)]);
-            step(&mut running, &[up(GameButton::A)]);
+            step(&mut running, &[down(Button::A)]);
+            step(&mut running, &[up(Button::A)]);
             assert!(!shows(&running, "KILLS"));
             assert!(shows(&running, "SCORE 00000"));
             assert!(texts(running.take_output()).contains(&"restart: run 2".to_string()));
@@ -388,13 +388,10 @@ mod tests {
         fn the_same_inputs_replay_the_same_game() {
             let play = || {
                 let mut running = start_playing();
-                step(
-                    &mut running,
-                    &[down(GameButton::Right), down(GameButton::A)],
-                );
+                step(&mut running, &[down(Button::Right), down(Button::A)]);
                 idle(&mut running, 60);
-                step(&mut running, &[up(GameButton::Right), down(GameButton::Up)]);
-                step(&mut running, &[down(GameButton::B)]);
+                step(&mut running, &[up(Button::Right), down(Button::Up)]);
+                step(&mut running, &[down(Button::B)]);
                 idle(&mut running, 120);
                 let output = texts(running.take_output());
                 (running.runtime.frame().to_vec(), output)

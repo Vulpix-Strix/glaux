@@ -218,7 +218,7 @@ end
 function tick()
     sfx.update()
     if game.state == "title" then
-        if btnp("a") then
+        if btnp(Button.A) then
             start_run()
         end
     elseif game.state == "playing" then
@@ -227,7 +227,7 @@ function tick()
         particles.update(game.run.sparks)
         if game.lock > 0 then
             game.lock -= 1
-        elseif btnp("a") then
+        elseif btnp(Button.A) then
             start_run()
         end
     end

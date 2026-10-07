@@ -18,7 +18,7 @@ fn entry_and_boot_run_once_each_at_start() {
     );
     assert_eq!(texts(runtime.take_output()), ["entry", "boot"]);
     for _ in 0..3 {
-        runtime.tick(NO_BUTTONS).unwrap();
+        runtime.tick(NO_INPUT).unwrap();
     }
     assert_eq!(texts(runtime.take_output()), Vec::<String>::new());
 }
@@ -26,8 +26,8 @@ fn entry_and_boot_run_once_each_at_start() {
 #[test]
 fn missing_callbacks_are_skipped() {
     let mut runtime = started("local x = 1");
-    assert_eq!(runtime.tick(NO_BUTTONS), Ok(()));
-    assert_eq!(runtime.tick(NO_BUTTONS), Ok(()));
+    assert_eq!(runtime.tick(NO_INPUT), Ok(()));
+    assert_eq!(runtime.tick(NO_INPUT), Ok(()));
 }
 
 #[test]
@@ -91,7 +91,7 @@ fn tick_runs_once_per_call_and_draw_follows_it() {
         "#,
     );
     for _ in 0..3 {
-        runtime.tick(NO_BUTTONS).unwrap();
+        runtime.tick(NO_INPUT).unwrap();
     }
     assert_eq!(
         texts(runtime.take_output()),
@@ -110,7 +110,7 @@ fn globals_persist_across_ticks() {
         "#,
     );
     for _ in 0..3 {
-        runtime.tick(NO_BUTTONS).unwrap();
+        runtime.tick(NO_INPUT).unwrap();
     }
     assert_eq!(texts(runtime.take_output()), ["1\t1", "2\t2", "3\t3"]);
 }
@@ -125,8 +125,8 @@ fn callbacks_are_looked_up_on_every_call() {
         end
         "#,
     );
-    runtime.tick(NO_BUTTONS).unwrap();
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(texts(runtime.take_output()), ["first", "second"]);
 }
 
@@ -139,7 +139,7 @@ fn a_failing_tick_skips_draw() {
         "#,
     );
     assert_eq!(
-        runtime.tick(NO_BUTTONS),
+        runtime.tick(NO_INPUT),
         Err(error(
             Phase::Tick,
             ScriptError::Runtime("main.luau:2: boom".into())
@@ -152,7 +152,7 @@ fn a_failing_tick_skips_draw() {
 fn draw_errors_name_the_draw_phase() {
     let mut runtime = started(r#"function draw() error("bad") end"#);
     assert_eq!(
-        runtime.tick(NO_BUTTONS),
+        runtime.tick(NO_INPUT),
         Err(error(
             Phase::Draw,
             ScriptError::Runtime("main.luau:1: bad".into())
@@ -170,7 +170,7 @@ fn non_function_callbacks_are_errors() {
     );
 
     let mut runtime = started(r#"tick = "x""#);
-    let err = runtime.tick(NO_BUTTONS).unwrap_err();
+    let err = runtime.tick(NO_INPUT).unwrap_err();
     assert_eq!(err.phase, Phase::Tick);
     assert!(
         matches!(&err.error, ScriptError::Runtime(m) if m.contains("'tick' must be a function")),

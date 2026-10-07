@@ -2,8 +2,10 @@
 //! located errors raised when they are wrong.
 
 use glaux_audio::{CHANNELS, Waveform};
-use glaux_input::GameButton;
+use glaux_input::{Button, Key};
 use mlua::{Function, Lua, Value};
+
+use crate::api::input::{ButtonValue, KeyValue};
 
 /// Converts `value` with the `tostring` captured before the script ran.
 pub(crate) fn to_text(
@@ -190,48 +192,63 @@ pub(crate) fn waveform_arg(
     })
 }
 
-/// The type name a script sees for `value`. mlua tells integers apart, but
-/// Luau scripts only have `number`.
+/// The type name a script sees for `value`, as `typeof` reports it. mlua
+/// tells integers apart, but Luau scripts only have `number`.
 pub(crate) fn script_type_name(value: &Value) -> &'static str {
     match value {
         Value::Integer(_) => "number",
+        Value::UserData(data) if data.is::<ButtonValue>() => "Button",
+        Value::UserData(data) if data.is::<KeyValue>() => "Key",
         other => other.type_name(),
     }
 }
 
-/// A game button, named as scripts name it.
+/// A `Button` constant. Anything else, including a button name as a
+/// string, is rejected.
 pub(crate) fn button_arg(
     lua: &Lua,
     function: &str,
     position: usize,
     value: &Value,
-) -> mlua::Result<GameButton> {
-    let Value::String(name) = value else {
-        return Err(bad_argument(
-            lua,
-            function,
-            position,
-            &format!("string expected, got {}", script_type_name(value)),
-        ));
-    };
-    let name = name.to_string_lossy();
-    let button = match name.as_str() {
-        "up" => GameButton::Up,
-        "down" => GameButton::Down,
-        "left" => GameButton::Left,
-        "right" => GameButton::Right,
-        "a" => GameButton::A,
-        "b" => GameButton::B,
-        _ => {
-            return Err(bad_argument(
-                lua,
-                function,
-                position,
-                &format!("unknown button '{name}'; expected up, down, left, right, a or b"),
-            ));
-        }
-    };
-    Ok(button)
+) -> mlua::Result<Button> {
+    if let Value::UserData(data) = value
+        && let Ok(button) = data.borrow::<ButtonValue>()
+    {
+        return Ok(button.0);
+    }
+    Err(bad_argument(
+        lua,
+        function,
+        position,
+        &format!(
+            "Button expected, got {}; use Button.A etc.",
+            script_type_name(value)
+        ),
+    ))
+}
+
+/// A `Key` constant. Anything else, including a key name as a string, is
+/// rejected.
+pub(crate) fn key_arg(
+    lua: &Lua,
+    function: &str,
+    position: usize,
+    value: &Value,
+) -> mlua::Result<Key> {
+    if let Value::UserData(data) = value
+        && let Ok(key) = data.borrow::<KeyValue>()
+    {
+        return Ok(key.0);
+    }
+    Err(bad_argument(
+        lua,
+        function,
+        position,
+        &format!(
+            "Key expected, got {}; use Key.A etc.",
+            script_type_name(value)
+        ),
+    ))
 }
 
 pub(crate) fn bad_argument(

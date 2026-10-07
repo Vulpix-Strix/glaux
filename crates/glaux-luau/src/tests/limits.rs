@@ -21,11 +21,7 @@ fn runaway_tick_and_draw_are_interrupted() {
     for body in [RUNAWAY, CAUGHT_RUNAWAY] {
         for (name, phase) in [("tick", Phase::Tick), ("draw", Phase::Draw)] {
             let mut runtime = started(&format!("function {name}() {body} end"));
-            assert_eq!(
-                runtime.tick(NO_BUTTONS),
-                Err(limit(phase)),
-                "{name}: {body}"
-            );
+            assert_eq!(runtime.tick(NO_INPUT), Err(limit(phase)), "{name}: {body}");
             assert!(
                 !texts(runtime.take_output()).contains(&"after".to_owned()),
                 "{name}: {body}"
@@ -48,7 +44,7 @@ fn the_budget_applies_to_each_call() {
         "#,
     );
     for _ in 0..20 {
-        assert_eq!(runtime.tick(NO_BUTTONS), Ok(()));
+        assert_eq!(runtime.tick(NO_INPUT), Ok(()));
     }
     // Two calls' worth of spinning in one call does not fit.
     assert_eq!(

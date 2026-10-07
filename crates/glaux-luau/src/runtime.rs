@@ -5,7 +5,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use glaux_audio::AudioState;
-use glaux_input::ButtonState;
+use glaux_input::InputState;
 use glaux_modules::ModuleSource;
 use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, Value, VmState};
@@ -91,8 +91,8 @@ pub struct Runtime {
     output: Rc<RefCell<Vec<LogEntry>>>,
     pending: PendingFrame,
     frame: Vec<DrawCommand>,
-    /// The game buttons of the tick in progress.
-    buttons: Rc<Cell<ButtonState>>,
+    /// The buttons and keys of the tick in progress.
+    input: Rc<Cell<InputState>>,
     /// Logical ticks completed so far, as read by `frame()` and `t()`.
     ticks: Rc<Cell<u64>>,
     audio: Rc<RefCell<AudioState>>,
@@ -134,7 +134,7 @@ impl Runtime {
             output: Rc::default(),
             pending: Rc::default(),
             frame: Vec::new(),
-            buttons: Rc::default(),
+            input: Rc::default(),
             ticks: Rc::default(),
             audio: Rc::default(),
             meter,
@@ -166,16 +166,16 @@ impl Runtime {
     /// Calls `tick()` and then, if it succeeded, `draw()`. A callback the
     /// script does not define is skipped.
     ///
-    /// `btn` and `btnp` report `buttons` during both callbacks, and keep
-    /// reporting it until the next tick.
+    /// `btn`, `btnp`, `key` and `keyp` report `input` during both
+    /// callbacks, and keep reporting it until the next tick.
     ///
     /// A `draw()` that returns normally replaces [`frame`](Self::frame) with
     /// the commands it recorded; one that fails leaves the previous frame.
     ///
     /// A successful call advances the logical time read by `frame()` and
     /// `t()`; a failed one does not.
-    pub fn tick(&mut self, buttons: ButtonState) -> Result<(), RuntimeError> {
-        self.buttons.set(buttons);
+    pub fn tick(&mut self, input: InputState) -> Result<(), RuntimeError> {
+        self.input.set(input);
         self.callback(Phase::Tick)?;
 
         *self.pending.borrow_mut() = Some(Recording::default());
@@ -229,7 +229,7 @@ impl Runtime {
         let tostring: Function = globals.get("tostring")?;
         api::log::install(&self.lua, &tostring, &self.output)?;
         api::draw::install(&self.lua, &tostring, &self.pending)?;
-        api::input::install(&self.lua, &self.buttons)?;
+        api::input::install(&self.lua, &self.input)?;
         api::time::install(&self.lua, &self.ticks)?;
         api::audio::install(&self.lua, &self.audio)?;
         modules::install(&self.lua, &self.modules, &self.source, &self.meter)

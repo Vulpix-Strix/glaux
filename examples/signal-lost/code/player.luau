@@ -43,16 +43,16 @@ end
 -- Direction held on the d-pad, normalized, or `(0, 0)`.
 local function stick()
     local dx, dy = 0, 0
-    if btn("left") then
+    if btn(Button.Left) then
         dx -= 1
     end
-    if btn("right") then
+    if btn(Button.Right) then
         dx += 1
     end
-    if btn("up") then
+    if btn(Button.Up) then
         dy -= 1
     end
-    if btn("down") then
+    if btn(Button.Down) then
         dy += 1
     end
     if dx ~= 0 and dy ~= 0 then
@@ -65,7 +65,7 @@ end
 -- whether an axe should be thrown this tick.
 function player.update(p)
     local dx, dy = stick()
-    local firing = btn("a")
+    local firing = btn(Button.A)
     p.moving = dx ~= 0 or dy ~= 0
 
     -- Holding A locks the aim so the knight can back away while throwing.
@@ -77,7 +77,7 @@ function player.update(p)
     end
 
     local dashed = false
-    if btnp("b") and p.dash_cooldown == 0 then
+    if btnp(Button.B) and p.dash_cooldown == 0 then
         p.dash = DASH_TICKS
         p.dash_cooldown = player.DASH_COOLDOWN
         if p.moving then

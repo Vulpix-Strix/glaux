@@ -75,7 +75,7 @@ over between runs: the PRNG stream, the best score and the run counter.
 
 - **Lifecycle:** `boot()` seeds the PRNG and enters the title screen. `tick()` runs the simulation and `draw()` only draws.
 - **Modules:** ten Luau files joined with `require()`, some of them shared (e.g. `util`, `sheet`).
-- **Input:** `btn()` for held movement and fire, `btnp("b")` for the dash, `btnp("a")` to start and retry.
+- **Input:** `btn(Button.Left)` and the other D-pad buttons for held movement, `btn(Button.A)` for fire, `btnp(Button.B)` for the dash and `btnp(Button.A)` to start and retry. The game never reads `Key`s; only its prompts name the desktop keys.
 - **Time:** `frame()` drives animation, spawn timing and the difficulty curve. `t()` drives the HUD clock. No host clock is used.
 - **Drawing:**
   - `cls()` for the floor;

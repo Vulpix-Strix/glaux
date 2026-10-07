@@ -144,7 +144,11 @@ impl Shell {
         // blink, so it stays solid while typing or moving.
         if !matches!(
             event,
-            InputEvent::Break | InputEvent::ButtonDown(_) | InputEvent::ButtonUp(_)
+            InputEvent::Break
+                | InputEvent::ButtonDown(_)
+                | InputEvent::ButtonUp(_)
+                | InputEvent::KeyDown(_)
+                | InputEvent::KeyUp(_)
         ) {
             self.blink = 0;
         }
@@ -182,8 +186,11 @@ impl Shell {
             // nothing to interrupt. A paused cartridge is left with the
             // RESUME and STOP commands.
             InputEvent::Break => {}
-            // Game buttons belong to a running cartridge.
-            InputEvent::ButtonDown(_) | InputEvent::ButtonUp(_) => {}
+            // Game buttons and keys belong to a running cartridge.
+            InputEvent::ButtonDown(_)
+            | InputEvent::ButtonUp(_)
+            | InputEvent::KeyDown(_)
+            | InputEvent::KeyUp(_) => {}
         }
         None
     }

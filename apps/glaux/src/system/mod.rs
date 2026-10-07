@@ -1608,16 +1608,21 @@ mod tests {
 
     // Game input.
 
-    use glaux_input::GameButton;
+    use glaux_input::{Button, Key};
 
-    const UP_STATE: &str = r#"function tick() log.info(btn("up"), btnp("up")) end"#;
+    const UP_STATE: &str = r#"function tick() log.info(btn(Button.Up), btnp(Button.Up)) end"#;
+    const SPACE_STATE: &str = r#"function tick() log.info(key(Key.Space), keyp(Key.Space)) end"#;
+
+    fn space_down() -> InputEvent {
+        InputEvent::KeyDown(Key::Space)
+    }
 
     fn down() -> InputEvent {
-        InputEvent::ButtonDown(GameButton::Up)
+        InputEvent::ButtonDown(Button::Up)
     }
 
     fn up() -> InputEvent {
-        InputEvent::ButtonUp(GameButton::Up)
+        InputEvent::ButtonUp(Button::Up)
     }
 
     /// Runs one tick per entry of `ticks` and returns what the cartridge
@@ -1642,7 +1647,7 @@ mod tests {
                 &[],
                 &[up()],
                 &[down()],
-                &[up(), InputEvent::ButtonDown(GameButton::A)],
+                &[up(), InputEvent::ButtonDown(Button::A)],
                 &[down(), up()],
                 &[],
             ],
@@ -1657,6 +1662,30 @@ mod tests {
                 "false   false",
                 "false   true",
                 "false   false",
+            ]
+        );
+    }
+
+    #[test]
+    fn keys_reach_the_cartridge_per_tick() {
+        let fixture = Fixture::new("sys-key");
+        let (_, lines) = logged_per_tick(
+            started(&fixture, SPACE_STATE),
+            &[
+                &[space_down()],
+                // A platform auto-repeat that reaches the system anyway.
+                &[space_down()],
+                &[InputEvent::KeyUp(Key::Space)],
+                &[space_down(), InputEvent::KeyUp(Key::Space)],
+            ],
+        );
+        assert_eq!(
+            lines,
+            [
+                "true    true",
+                "true    false",
+                "false   false",
+                "false   true",
             ]
         );
     }
@@ -1966,6 +1995,38 @@ mod tests {
             let (_, lines) = logged_per_tick(system, &[&[], &[]]);
             assert_eq!(lines, ["false   false", "false   false"]);
         }
+    }
+
+    #[test]
+    fn resumed_keys_start_released() {
+        let fixture = Fixture::new("sys-pause-keys");
+        let resumes: [fn(System) -> System; 2] =
+            [press_break, |system| enter(open_shell(system), "resume")];
+        for resume in resumes {
+            let (system, lines) =
+                logged_per_tick(started(&fixture, SPACE_STATE), &[&[space_down()]]);
+            assert_eq!(lines, ["true    true"]);
+            let system = resume(press_break(system));
+            let (_, lines) = logged_per_tick(system, &[&[], &[]]);
+            assert_eq!(lines, ["false   false", "false   false"]);
+        }
+    }
+
+    #[test]
+    fn keys_pressed_while_paused_do_not_reach_the_cartridge() {
+        let fixture = Fixture::new("sys-pause-keys-ignored");
+        let system = press_break(started(&fixture, SPACE_STATE)).update(&[space_down()]);
+        let (_, lines) = logged_per_tick(press_break(system), &[&[]]);
+        assert_eq!(lines, ["false   false"]);
+    }
+
+    #[test]
+    fn a_new_run_starts_with_keys_released() {
+        let fixture = Fixture::new("sys-key-rerun");
+        let system = started(&fixture, SPACE_STATE).update(&[space_down()]);
+        let system = enter(stop_cartridge(system), "run");
+        let (_, lines) = logged_per_tick(system, &[&[]]);
+        assert_eq!(lines, ["false   false"]);
     }
 
     #[test]

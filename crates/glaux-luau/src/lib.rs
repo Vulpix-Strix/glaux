@@ -2,7 +2,7 @@
 //!
 //! A [`Runtime`] owns one VM for the whole time a cartridge runs. Starting it
 //! executes the entry chunk once and calls the script's optional `boot()`;
-//! each [`Runtime::tick`] takes that tick's [`ButtonState`] and calls the
+//! each [`Runtime::tick`] takes that tick's [`InputState`] and calls the
 //! optional `tick()` and then `draw()`.
 //!
 //! Scripts see Luau's safe standard library, plus:
@@ -27,10 +27,18 @@
 //!   `tile` at its top-left; the block may not run past the grid's right or
 //!   bottom edge. Transparent index 0 is skipped and indices 1 through 15
 //!   currently map directly to framebuffer indices;
-//! - `btn(button)` and `btnp(button)`, which report whether a game button
-//!   is held, or was just pressed, on the current tick. `button` is one of
-//!   `"up"`, `"down"`, `"left"`, `"right"`, `"a"` or `"b"`; any other value
-//!   is a runtime error. Both return `false` before the first tick.
+//! - `Button` and `Key`, read-only tables of opaque constants: the virtual
+//!   G1 buttons (`Button.Up`, `Button.Down`, `Button.Left`, `Button.Right`,
+//!   `Button.A`, `Button.B`) and physical keyboard keys (`Key.A`, `Key.Num0`,
+//!   `Key.F1`, `Key.Space`, `Key.PageUp`, `Key.LeftShift`, `Key.Up` and so on;
+//!   see [`Key`]). `tostring` gives `Button.A` or `Key.F2`, and `typeof`
+//!   gives `Button` or `Key`;
+//! - `btn(button)` and `btnp(button)`, which report whether a `Button` is
+//!   held, or was pressed, on the current tick, and `key(key)` and
+//!   `keyp(key)`, which do the same for a `Key`. Any other argument,
+//!   including a name as a string or a constant of the other kind, is a
+//!   runtime error. All four return `false` before the first tick. Which
+//!   physical input drives each `Button` is up to the host;
 //! - `frame()` and `t()`, which report logical time in any phase: `frame()`
 //!   is the number of ticks completed before the current one, and `t()` is
 //!   that count in seconds, `frame() / TICK_RATE`. Both are `0` during the
@@ -47,7 +55,8 @@
 //!   changes only the oscillator; `gate(channel, true)` opens the gate, or
 //!   retriggers it if already open, and `gate(channel, false)` releases it.
 //!
-//! [`ButtonState`]: glaux_input::ButtonState
+//! [`InputState`]: glaux_input::InputState
+//! [`Key`]: glaux_input::Key
 //! [`ModuleSource`]: glaux_modules::ModuleSource
 //! [`ModuleName`]: glaux_modules::ModuleName
 //! [`AudioState`]: glaux_audio::AudioState

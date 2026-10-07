@@ -2,8 +2,12 @@
 //!
 //! Hosts translate their native keyboard handling into these events; the
 //! system never sees host key codes or keyboard state.
+//!
+//! Three kinds of input stay separate: typed text and editing events for the
+//! shell, virtual [`Button`]s for portable game controls, and physical
+//! [`Key`]s for cartridges that need a specific key.
 
-/// A semantic input event, either for text editing or for a game button.
+/// A semantic input event: text editing, a game button or a physical key.
 ///
 /// `select` is set when the movement should extend the current selection
 /// (typically Shift held) instead of collapsing it.
@@ -39,29 +43,34 @@ pub enum InputEvent {
     Break,
     /// A game button went from released to pressed. Never repeated while
     /// the button stays held.
-    ButtonDown(GameButton),
+    ButtonDown(Button),
     /// A game button went from pressed to released.
-    ButtonUp(GameButton),
+    ButtonUp(Button),
+    /// A physical key went from released to pressed. Never repeated while
+    /// the key stays held, even if the platform auto-repeats it.
+    KeyDown(Key),
+    /// A physical key went from pressed to released.
+    KeyUp(Key),
 }
 
 /// Which kind of input the active system context consumes.
 ///
 /// Hosts emit only the events of the current mode, plus
 /// [`InputEvent::Break`] in both, so one physical key never acts as a game
-/// button and an editing key at the same time.
+/// input and an editing key at the same time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum InputMode {
     /// Text and editing events, for the shell.
     #[default]
     Text,
-    /// [`InputEvent::ButtonDown`] and [`InputEvent::ButtonUp`], for a
-    /// running cartridge.
+    /// Button and key transitions, for a running cartridge.
     Game,
 }
 
-/// A virtual Glaux game button. Cartridges see only these, never host keys.
+/// A virtual Glaux G1 controller button. Which physical input drives each
+/// button is up to the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GameButton {
+pub enum Button {
     Up,
     Down,
     Left,
@@ -70,7 +79,7 @@ pub enum GameButton {
     B,
 }
 
-impl GameButton {
+impl Button {
     pub const ALL: [Self; 6] = [
         Self::Up,
         Self::Down,
@@ -80,36 +89,120 @@ impl GameButton {
         Self::B,
     ];
 
+    /// The button's name as cartridges spell it, as in `Button.Up`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Up => "Up",
+            Self::Down => "Down",
+            Self::Left => "Left",
+            Self::Right => "Right",
+            Self::A => "A",
+            Self::B => "B",
+        }
+    }
+
     fn bit(self) -> u8 {
         1 << self as u8
     }
 }
 
-/// A set of [`GameButton`]s, one bit per button.
+/// Declares [`Key`] together with its `ALL` list and cartridge names, so the
+/// three cannot drift apart.
+macro_rules! keys {
+    ($($key:ident),+ $(,)?) => {
+        /// A physical keyboard key, independent of any host's key codes.
+        ///
+        /// Escape is not a key: hosts reserve it for [`InputEvent::Break`].
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[repr(u8)]
+        pub enum Key {
+            $($key),+
+        }
+
+        impl Key {
+            pub const ALL: &[Self] = &[$(Self::$key),+];
+
+            /// The key's name as cartridges spell it, as in `Key.PageUp`.
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Self::$key => stringify!($key)),+
+                }
+            }
+        }
+    };
+}
+
+keys! {
+    A, B, C, D, E, F, G, H, I, J, K, L, M,
+    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
+    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    Space, Enter, Tab, Backspace, Insert, Delete, Home, End, PageUp, PageDown,
+    LeftShift, RightShift, LeftControl, RightControl, LeftAlt, RightAlt,
+    Up, Down, Left, Right,
+}
+
+impl Key {
+    fn bit(self) -> u128 {
+        1 << self as u8
+    }
+}
+
+/// A set of [`Button`]s, one bit per button.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ButtonSet(u8);
 
 impl ButtonSet {
     pub const EMPTY: Self = Self(0);
 
-    pub fn contains(self, button: GameButton) -> bool {
+    pub fn contains(self, button: Button) -> bool {
         self.0 & button.bit() != 0
     }
 
-    pub fn insert(&mut self, button: GameButton) {
+    pub fn insert(&mut self, button: Button) {
         self.0 |= button.bit();
     }
 
-    pub fn remove(&mut self, button: GameButton) {
+    pub fn remove(&mut self, button: Button) {
         self.0 &= !button.bit();
     }
 }
 
-impl FromIterator<GameButton> for ButtonSet {
-    fn from_iter<I: IntoIterator<Item = GameButton>>(iter: I) -> Self {
+impl FromIterator<Button> for ButtonSet {
+    fn from_iter<I: IntoIterator<Item = Button>>(iter: I) -> Self {
         let mut set = Self::EMPTY;
         for button in iter {
             set.insert(button);
+        }
+        set
+    }
+}
+
+/// A set of [`Key`]s, one bit per key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KeySet(u128);
+
+impl KeySet {
+    pub const EMPTY: Self = Self(0);
+
+    pub fn contains(self, key: Key) -> bool {
+        self.0 & key.bit() != 0
+    }
+
+    pub fn insert(&mut self, key: Key) {
+        self.0 |= key.bit();
+    }
+
+    pub fn remove(&mut self, key: Key) {
+        self.0 &= !key.bit();
+    }
+}
+
+impl FromIterator<Key> for KeySet {
+    fn from_iter<I: IntoIterator<Item = Key>>(iter: I) -> Self {
+        let mut set = Self::EMPTY;
+        for key in iter {
+            set.insert(key);
         }
         set
     }
@@ -127,40 +220,70 @@ pub struct ButtonState {
     pub pressed: ButtonSet,
 }
 
-/// Folds button events into one [`ButtonState`] per logical tick.
-///
-/// A new latch has every button released.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ButtonLatch {
-    held: ButtonSet,
+/// The physical keys as seen by one logical tick, with the same meaning of
+/// `held` and `pressed` as [`ButtonState`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KeyState {
+    /// Keys down at the tick boundary.
+    pub held: KeySet,
+    /// Keys that went from released to pressed since the previous tick.
+    pub pressed: KeySet,
 }
 
-impl ButtonLatch {
+/// Everything a cartridge can read about input during one logical tick.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InputState {
+    pub buttons: ButtonState,
+    pub keys: KeyState,
+}
+
+/// Folds button and key events into one [`InputState`] per logical tick.
+///
+/// A new latch has every button and key released.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InputLatch {
+    buttons: ButtonSet,
+    keys: KeySet,
+}
+
+impl InputLatch {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Applies the button events received since the previous tick, in
-    /// order, and returns the state for this tick. Other events are
+    /// Applies the events received since the previous tick, in order, and
+    /// returns the state for this tick. Text and editing events are
     /// ignored.
     ///
-    /// A `ButtonDown` for a button that is already held is not a new press,
-    /// and a `ButtonUp` for one that is not held changes nothing.
-    pub fn advance(&mut self, events: &[InputEvent]) -> ButtonState {
-        let mut pressed = ButtonSet::EMPTY;
+    /// A down event for a button or key that is already held is not a new
+    /// press, and an up event for one that is not held changes nothing.
+    pub fn advance(&mut self, events: &[InputEvent]) -> InputState {
+        let mut buttons = ButtonSet::EMPTY;
+        let mut keys = KeySet::EMPTY;
         for event in events {
             match *event {
-                InputEvent::ButtonDown(button) if !self.held.contains(button) => {
-                    self.held.insert(button);
-                    pressed.insert(button);
+                InputEvent::ButtonDown(button) if !self.buttons.contains(button) => {
+                    self.buttons.insert(button);
+                    buttons.insert(button);
                 }
-                InputEvent::ButtonUp(button) => self.held.remove(button),
+                InputEvent::ButtonUp(button) => self.buttons.remove(button),
+                InputEvent::KeyDown(key) if !self.keys.contains(key) => {
+                    self.keys.insert(key);
+                    keys.insert(key);
+                }
+                InputEvent::KeyUp(key) => self.keys.remove(key),
                 _ => {}
             }
         }
-        ButtonState {
-            held: self.held,
-            pressed,
+        InputState {
+            buttons: ButtonState {
+                held: self.buttons,
+                pressed: buttons,
+            },
+            keys: KeyState {
+                held: self.keys,
+                pressed: keys,
+            },
         }
     }
 }
@@ -168,14 +291,14 @@ impl ButtonLatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use GameButton::*;
-    use InputEvent::{ButtonDown, ButtonUp};
+    use Button::*;
+    use InputEvent::{ButtonDown, ButtonUp, KeyDown, KeyUp};
 
-    fn set(buttons: &[GameButton]) -> ButtonSet {
+    fn set(buttons: &[Button]) -> ButtonSet {
         buttons.iter().copied().collect()
     }
 
-    fn state(held: &[GameButton], pressed: &[GameButton]) -> ButtonState {
+    fn state(held: &[Button], pressed: &[Button]) -> ButtonState {
         ButtonState {
             held: set(held),
             pressed: set(pressed),
@@ -187,7 +310,7 @@ mod tests {
         let mut buttons = ButtonSet::EMPTY;
         buttons.insert(Left);
         buttons.insert(B);
-        for button in GameButton::ALL {
+        for button in Button::ALL {
             assert_eq!(buttons.contains(button), matches!(button, Left | B));
         }
         buttons.remove(Left);
@@ -196,19 +319,25 @@ mod tests {
 
     #[test]
     fn press_hold_release_and_press_again() {
-        let mut latch = ButtonLatch::new();
-        assert_eq!(latch.advance(&[ButtonDown(Left)]), state(&[Left], &[Left]));
-        assert_eq!(latch.advance(&[]), state(&[Left], &[]));
-        assert_eq!(latch.advance(&[ButtonUp(Left)]), state(&[], &[]));
-        assert_eq!(latch.advance(&[]), state(&[], &[]));
-        assert_eq!(latch.advance(&[ButtonDown(Left)]), state(&[Left], &[Left]));
+        let mut latch = InputLatch::new();
+        assert_eq!(
+            latch.advance(&[ButtonDown(Left)]).buttons,
+            state(&[Left], &[Left])
+        );
+        assert_eq!(latch.advance(&[]).buttons, state(&[Left], &[]));
+        assert_eq!(latch.advance(&[ButtonUp(Left)]).buttons, state(&[], &[]));
+        assert_eq!(latch.advance(&[]).buttons, state(&[], &[]));
+        assert_eq!(
+            latch.advance(&[ButtonDown(Left)]).buttons,
+            state(&[Left], &[Left])
+        );
     }
 
     #[test]
     fn unrelated_buttons_stay_released() {
-        let mut latch = ButtonLatch::new();
-        let tick = latch.advance(&[ButtonDown(A)]);
-        for button in GameButton::ALL.into_iter().filter(|&b| b != A) {
+        let mut latch = InputLatch::new();
+        let tick = latch.advance(&[ButtonDown(A)]).buttons;
+        for button in Button::ALL.into_iter().filter(|&b| b != A) {
             assert!(!tick.held.contains(button), "{button:?}");
             assert!(!tick.pressed.contains(button), "{button:?}");
         }
@@ -216,54 +345,142 @@ mod tests {
 
     #[test]
     fn a_tap_between_ticks_is_pressed_but_not_held() {
-        let mut latch = ButtonLatch::new();
+        let mut latch = InputLatch::new();
         assert_eq!(
-            latch.advance(&[ButtonDown(Up), ButtonUp(Up)]),
+            latch.advance(&[ButtonDown(Up), ButtonUp(Up)]).buttons,
             state(&[], &[Up])
         );
-        assert_eq!(latch.advance(&[]), state(&[], &[]));
+        assert_eq!(latch.advance(&[]).buttons, state(&[], &[]));
     }
 
     #[test]
     fn several_host_frames_before_a_tick_press_once() {
         // A press in the first of three host frames, delivered to one tick.
-        let mut latch = ButtonLatch::new();
+        let mut latch = InputLatch::new();
         let frames = [ButtonDown(Down), ButtonDown(Down), ButtonDown(Down)];
-        assert_eq!(latch.advance(&frames), state(&[Down], &[Down]));
+        assert_eq!(latch.advance(&frames).buttons, state(&[Down], &[Down]));
     }
 
     #[test]
     fn catch_up_ticks_do_not_repeat_the_press() {
-        let mut latch = ButtonLatch::new();
-        assert_eq!(latch.advance(&[ButtonDown(B)]), state(&[B], &[B]));
+        let mut latch = InputLatch::new();
+        assert_eq!(latch.advance(&[ButtonDown(B)]).buttons, state(&[B], &[B]));
         for _ in 0..3 {
-            assert_eq!(latch.advance(&[]), state(&[B], &[]));
+            assert_eq!(latch.advance(&[]).buttons, state(&[B], &[]));
         }
     }
 
     #[test]
     fn repeated_down_while_held_is_not_a_press() {
-        let mut latch = ButtonLatch::new();
+        let mut latch = InputLatch::new();
         latch.advance(&[ButtonDown(Right)]);
-        assert_eq!(latch.advance(&[ButtonDown(Right)]), state(&[Right], &[]));
+        assert_eq!(
+            latch.advance(&[ButtonDown(Right)]).buttons,
+            state(&[Right], &[])
+        );
     }
 
     #[test]
     fn release_and_press_within_a_tick_is_a_new_press() {
-        let mut latch = ButtonLatch::new();
+        let mut latch = InputLatch::new();
         latch.advance(&[ButtonDown(A)]);
         assert_eq!(
-            latch.advance(&[ButtonUp(A), ButtonDown(A)]),
+            latch.advance(&[ButtonUp(A), ButtonDown(A)]).buttons,
             state(&[A], &[A])
         );
     }
 
     #[test]
     fn up_without_down_and_other_events_are_ignored() {
-        let mut latch = ButtonLatch::new();
+        let mut latch = InputLatch::new();
         assert_eq!(
-            latch.advance(&[ButtonUp(A), InputEvent::Up, InputEvent::Break]),
+            latch
+                .advance(&[ButtonUp(A), InputEvent::Up, InputEvent::Break])
+                .buttons,
             state(&[], &[])
         );
+    }
+
+    fn keys(held: &[Key], pressed: &[Key]) -> KeyState {
+        KeyState {
+            held: held.iter().copied().collect(),
+            pressed: pressed.iter().copied().collect(),
+        }
+    }
+
+    #[test]
+    fn key_names_are_unique_and_escape_is_not_a_key() {
+        let mut names: Vec<&str> = Key::ALL.iter().map(|key| key.name()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), Key::ALL.len());
+        assert!(!names.contains(&"Escape"));
+    }
+
+    #[test]
+    fn key_set_tracks_every_key_separately() {
+        // The last keys sit in the high bits of the 128-bit set.
+        for &key in Key::ALL {
+            let set: KeySet = [key].into_iter().collect();
+            for &other in Key::ALL {
+                assert_eq!(set.contains(other), other == key, "{key:?} {other:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn key_press_hold_release_and_press_again() {
+        let mut latch = InputLatch::new();
+        use Key::F2;
+        assert_eq!(latch.advance(&[KeyDown(F2)]).keys, keys(&[F2], &[F2]));
+        assert_eq!(latch.advance(&[]).keys, keys(&[F2], &[]));
+        assert_eq!(latch.advance(&[KeyUp(F2)]).keys, keys(&[], &[]));
+        assert_eq!(latch.advance(&[KeyDown(F2)]).keys, keys(&[F2], &[F2]));
+    }
+
+    #[test]
+    fn repeated_key_down_while_held_is_not_a_press() {
+        let mut latch = InputLatch::new();
+        latch.advance(&[KeyDown(Key::Insert)]);
+        let repeats = [KeyDown(Key::Insert), KeyDown(Key::Insert)];
+        assert_eq!(latch.advance(&repeats).keys, keys(&[Key::Insert], &[]));
+    }
+
+    #[test]
+    fn a_key_tap_between_ticks_is_pressed_but_not_held() {
+        let mut latch = InputLatch::new();
+        let tap = [KeyDown(Key::Space), KeyUp(Key::Space)];
+        assert_eq!(latch.advance(&tap).keys, keys(&[], &[Key::Space]));
+        assert_eq!(latch.advance(&[]).keys, keys(&[], &[]));
+    }
+
+    #[test]
+    fn simultaneous_buttons_and_keys_are_tracked_independently() {
+        let mut latch = InputLatch::new();
+        let tick = latch.advance(&[
+            ButtonDown(A),
+            KeyDown(Key::Z),
+            ButtonDown(Left),
+            KeyDown(Key::LeftShift),
+        ]);
+        assert_eq!(tick.buttons, state(&[A, Left], &[A, Left]));
+        assert_eq!(
+            tick.keys,
+            keys(&[Key::Z, Key::LeftShift], &[Key::Z, Key::LeftShift])
+        );
+
+        let tick = latch.advance(&[ButtonUp(A), KeyUp(Key::LeftShift)]);
+        assert_eq!(tick.buttons, state(&[Left], &[]));
+        assert_eq!(tick.keys, keys(&[Key::Z], &[]));
+    }
+
+    #[test]
+    fn button_and_key_events_do_not_cross() {
+        // `Button::Up` and `Key::Up` share a name but not a state.
+        let mut latch = InputLatch::new();
+        let tick = latch.advance(&[ButtonDown(Up)]);
+        assert_eq!(tick.keys, KeyState::default());
+        let tick = latch.advance(&[KeyUp(Key::Up)]);
+        assert_eq!(tick.buttons, state(&[Up], &[]));
     }
 }

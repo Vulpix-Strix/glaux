@@ -91,8 +91,8 @@ fn log_rejects_a_non_string_tostring_result() {
 #[test]
 fn take_output_drains_the_buffer() {
     let mut runtime = started(r#"function tick() log.info("t") end"#);
-    runtime.tick(NO_BUTTONS).unwrap();
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(texts(runtime.take_output()), ["t", "t"]);
     assert_eq!(texts(runtime.take_output()), Vec::<String>::new());
 }

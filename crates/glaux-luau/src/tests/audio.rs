@@ -104,7 +104,7 @@ fn audio_writes_in_every_phase_are_kept_in_order() {
         function draw() audio.gate(1, false) end
         "#,
     );
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(
         runtime.audio_mut().writes(),
         [
@@ -128,7 +128,7 @@ fn audio_state_persists_across_ticks() {
     );
     runtime.audio_mut().commit();
     for _ in 0..5 {
-        runtime.tick(NO_BUTTONS).unwrap();
+        runtime.tick(NO_INPUT).unwrap();
     }
     let audio = runtime.audio_mut();
     assert!(audio.writes().is_empty());
@@ -265,7 +265,7 @@ fn too_many_envelope_writes_in_one_tick_fail() {
         MAX_ENVELOPE_WRITES + 1
     ));
     assert_eq!(
-        runtime.tick(NO_BUTTONS),
+        runtime.tick(NO_INPUT),
         Err(error(
             Phase::Tick,
             ScriptError::Runtime(format!(
@@ -281,7 +281,7 @@ fn committed_writes_free_the_budget() {
         "function tick() for i = 1, {MAX_ENVELOPE_WRITES} do audio.gate(0, i % 2 == 1) end end",
     ));
     for _ in 0..3 {
-        runtime.tick(NO_BUTTONS).unwrap();
+        runtime.tick(NO_INPUT).unwrap();
         assert_eq!(runtime.audio_mut().writes().len(), MAX_ENVELOPE_WRITES);
         runtime.audio_mut().commit();
     }

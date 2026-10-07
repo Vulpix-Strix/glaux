@@ -25,14 +25,14 @@ fn sprite_block(tile: u16, x: i32, y: i32, width: u8, height: u8) -> DrawCommand
 /// `body`.
 fn drawn(body: &str) -> Vec<DrawCommand> {
     let mut runtime = started(&format!("function draw() {body} end"));
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     runtime.frame().to_vec()
 }
 
 /// The runtime error raised by the first tick of `draw()` `body`.
 fn draw_error(body: &str) -> String {
     let mut runtime = started(&format!("function draw() {body} end"));
-    match runtime.tick(NO_BUTTONS) {
+    match runtime.tick(NO_INPUT) {
         Err(RuntimeError {
             phase: Phase::Draw,
             error: ScriptError::Runtime(message),
@@ -87,9 +87,9 @@ fn each_successful_draw_replaces_the_frame() {
         function draw() n += 1 for i = 1, n do pset(i, 0, n) end end
         "#,
     );
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(runtime.frame(), [pixel(1, 0, 1)]);
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(runtime.frame(), [pixel(1, 0, 2), pixel(2, 0, 2)]);
 }
 
@@ -97,9 +97,9 @@ fn each_successful_draw_replaces_the_frame() {
 fn a_draw_that_records_nothing_publishes_an_empty_frame() {
     let mut runtime =
         started("local first = true function draw() if first then cls(1) end first = false end");
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(runtime.frame(), [DrawCommand::Clear(1)]);
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(runtime.frame(), []);
 }
 
@@ -116,8 +116,8 @@ fn a_failing_draw_keeps_the_previous_frame() {
             end
             "#
         ));
-        runtime.tick(NO_BUTTONS).unwrap();
-        assert!(runtime.tick(NO_BUTTONS).is_err(), "{failure}");
+        runtime.tick(NO_INPUT).unwrap();
+        assert!(runtime.tick(NO_INPUT).is_err(), "{failure}");
         assert_eq!(runtime.frame(), [DrawCommand::Clear(1)], "{failure}");
     }
 }
@@ -134,8 +134,8 @@ fn a_failing_draw_does_not_publish_sprite_commands() {
         end
         "#,
     );
-    runtime.tick(NO_BUTTONS).unwrap();
-    assert!(runtime.tick(NO_BUTTONS).is_err());
+    runtime.tick(NO_INPUT).unwrap();
+    assert!(runtime.tick(NO_INPUT).is_err());
     assert_eq!(runtime.frame(), [DrawCommand::Clear(1)]);
 }
 
@@ -148,16 +148,16 @@ fn a_failing_tick_keeps_the_previous_frame() {
         function draw() cls(n) end
         "#,
     );
-    runtime.tick(NO_BUTTONS).unwrap();
-    assert!(runtime.tick(NO_BUTTONS).is_err());
+    runtime.tick(NO_INPUT).unwrap();
+    assert!(runtime.tick(NO_INPUT).is_err());
     assert_eq!(runtime.frame(), [DrawCommand::Clear(1)]);
 }
 
 #[test]
 fn removing_draw_keeps_the_last_frame() {
     let mut runtime = started("function draw() cls(4) draw = nil end");
-    runtime.tick(NO_BUTTONS).unwrap();
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(runtime.frame(), [DrawCommand::Clear(4)]);
 }
 
@@ -178,7 +178,7 @@ fn draw_functions_fail_outside_draw() {
         assert_eq!(failure.error.phase, Phase::Boot);
 
         let mut runtime = started(&format!("function tick() {call} end"));
-        let err = runtime.tick(NO_BUTTONS).unwrap_err();
+        let err = runtime.tick(NO_INPUT).unwrap_err();
         assert_eq!(err.phase, Phase::Tick);
         assert!(
             matches!(&err.error, ScriptError::Runtime(m) if m.ends_with(&expected)),
@@ -196,8 +196,8 @@ fn draw_functions_fail_after_draw_returns() {
         function tick() if later then later() end end
         "#,
     );
-    runtime.tick(NO_BUTTONS).unwrap();
-    assert_eq!(runtime.tick(NO_BUTTONS).unwrap_err().phase, Phase::Tick);
+    runtime.tick(NO_INPUT).unwrap();
+    assert_eq!(runtime.tick(NO_INPUT).unwrap_err().phase, Phase::Tick);
 }
 
 #[test]
@@ -435,10 +435,10 @@ fn draw_commands_are_capped_per_frame() {
     );
     let mut runtime =
         Runtime::start("main.luau", source.as_bytes(), Files::default(), budget).unwrap();
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(runtime.frame().len(), MAX_DRAW_COMMANDS);
 
-    let err = runtime.tick(NO_BUTTONS).unwrap_err();
+    let err = runtime.tick(NO_INPUT).unwrap_err();
     assert_eq!(err.phase, Phase::Draw);
     assert!(
         matches!(&err.error, ScriptError::Runtime(m) if m.contains("too many draw commands")),
@@ -475,7 +475,7 @@ fn sprites_cost_sixty_four_draw_units() {
     let fits = format!("function draw() for i = 1, {SPRITES} do spr(0, 0, 0) end end");
     let mut runtime =
         Runtime::start("main.luau", fits.as_bytes(), Files::default(), budget).unwrap();
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(runtime.frame().len(), SPRITES);
 
     let over = format!(
@@ -484,7 +484,7 @@ fn sprites_cost_sixty_four_draw_units() {
     );
     let mut runtime =
         Runtime::start("main.luau", over.as_bytes(), Files::default(), budget).unwrap();
-    let err = runtime.tick(NO_BUTTONS).unwrap_err();
+    let err = runtime.tick(NO_INPUT).unwrap_err();
     assert!(matches!(
         err.error,
         ScriptError::Runtime(message) if message.contains("too many draw commands")
@@ -515,8 +515,8 @@ fn a_failing_draw_does_not_publish_sprite_blocks() {
         end
         "#,
     );
-    runtime.tick(NO_BUTTONS).unwrap();
-    assert!(runtime.tick(NO_BUTTONS).is_err());
+    runtime.tick(NO_INPUT).unwrap();
+    assert!(runtime.tick(NO_INPUT).is_err());
     assert_eq!(runtime.frame(), [sprite_block(0, 0, 0, 2, 2)]);
 }
 
@@ -540,17 +540,17 @@ fn tile_viewer_example_draws_and_navigates_its_visible_range() {
             .collect::<Vec<_>>()
     };
 
-    runtime.tick(NO_BUTTONS).unwrap();
+    runtime.tick(NO_INPUT).unwrap();
     assert_eq!(sprite_tiles(&runtime), (0..40).collect::<Vec<_>>());
 
-    runtime.tick(buttons(&[], &[GameButton::Right])).unwrap();
+    runtime.tick(buttons(&[], &[Button::Right])).unwrap();
     assert_eq!(sprite_tiles(&runtime), (1..41).collect::<Vec<_>>());
 
-    runtime.tick(buttons(&[], &[GameButton::Down])).unwrap();
+    runtime.tick(buttons(&[], &[Button::Down])).unwrap();
     assert_eq!(sprite_tiles(&runtime), (17..57).collect::<Vec<_>>());
 
     for _ in 0..130 {
-        runtime.tick(buttons(&[], &[GameButton::Down])).unwrap();
+        runtime.tick(buttons(&[], &[Button::Down])).unwrap();
     }
     assert_eq!(sprite_tiles(&runtime), vec![1023]);
     assert!(runtime.frame().iter().any(|command| matches!(

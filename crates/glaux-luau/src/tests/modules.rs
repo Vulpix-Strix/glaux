@@ -270,7 +270,7 @@ fn runaway_modules_hit_the_budget_of_the_requiring_call() {
     );
 
     let mut runtime = started_with(r#"function tick() require("slow") end"#, files());
-    let tick = runtime.tick(NO_BUTTONS).unwrap_err();
+    let tick = runtime.tick(NO_INPUT).unwrap_err();
     assert_eq!(tick, error(Phase::Tick, in_module));
     assert_eq!(
         tick.to_string(),
@@ -359,7 +359,7 @@ fn module_state_persists_across_ticks() {
     "#;
     let mut runtime = started_with(source, files);
     for _ in 0..3 {
-        runtime.tick(NO_BUTTONS).unwrap();
+        runtime.tick(NO_INPUT).unwrap();
     }
     assert_eq!(
         texts(runtime.take_output()),
@@ -371,7 +371,7 @@ fn module_state_persists_across_ticks() {
 fn module_errors_in_callbacks_name_the_callback() {
     let mut runtime = started_with(r#"function tick() require("nope") end"#, Files::default());
     assert_eq!(
-        runtime.tick(NO_BUTTONS).unwrap_err().to_string(),
+        runtime.tick(NO_INPUT).unwrap_err().to_string(),
         "MODULE NOT FOUND IN TICK: code/nope.luau (main.luau:1)"
     );
 }

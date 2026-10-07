@@ -13,15 +13,21 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use glaux_input::{ButtonSet, ButtonState, GameButton};
+use glaux_input::{Button, ButtonSet, ButtonState, InputState, Key, KeySet, KeyState};
 use glaux_modules::{ModuleLoadError, ModulePath, ModuleSource};
 
 use crate::*;
 
 pub(super) const SMALL: Budget = Budget { interrupts: 10_000 };
-pub(super) const NO_BUTTONS: ButtonState = ButtonState {
-    held: ButtonSet::EMPTY,
-    pressed: ButtonSet::EMPTY,
+pub(super) const NO_INPUT: InputState = InputState {
+    buttons: ButtonState {
+        held: ButtonSet::EMPTY,
+        pressed: ButtonSet::EMPTY,
+    },
+    keys: KeyState {
+        held: KeySet::EMPTY,
+        pressed: KeySet::EMPTY,
+    },
 };
 
 /// In-memory modules, keyed by cartridge-relative path, that record
@@ -122,9 +128,24 @@ fn limit(phase: Phase) -> RuntimeError {
     error(phase, ScriptError::LimitExceeded)
 }
 
-fn buttons(held: &[GameButton], pressed: &[GameButton]) -> ButtonState {
-    ButtonState {
-        held: held.iter().copied().collect(),
-        pressed: pressed.iter().copied().collect(),
+/// Input with only these buttons held and pressed.
+fn buttons(held: &[Button], pressed: &[Button]) -> InputState {
+    InputState {
+        buttons: ButtonState {
+            held: held.iter().copied().collect(),
+            pressed: pressed.iter().copied().collect(),
+        },
+        ..NO_INPUT
+    }
+}
+
+/// Input with only these keys held and pressed.
+fn keys(held: &[Key], pressed: &[Key]) -> InputState {
+    InputState {
+        keys: KeyState {
+            held: held.iter().copied().collect(),
+            pressed: pressed.iter().copied().collect(),
+        },
+        ..NO_INPUT
     }
 }

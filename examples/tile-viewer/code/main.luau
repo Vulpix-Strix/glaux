@@ -6,13 +6,13 @@ assert(rawequal(require("grid"), grid))
 local selected_tile = grid.START_TILE
 
 function tick()
-    if btnp("left") then
+    if btnp(Button.Left) then
         selected_tile = grid.clamp_tile(selected_tile - 1)
-    elseif btnp("right") then
+    elseif btnp(Button.Right) then
         selected_tile = grid.clamp_tile(selected_tile + 1)
-    elseif btnp("up") then
+    elseif btnp(Button.Up) then
         selected_tile = grid.clamp_tile(selected_tile - grid.TILE_GRID_COLUMNS)
-    elseif btnp("down") then
+    elseif btnp(Button.Down) then
         selected_tile = grid.clamp_tile(selected_tile + grid.TILE_GRID_COLUMNS)
     end
 end

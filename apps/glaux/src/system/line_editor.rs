@@ -99,7 +99,9 @@ impl LineEditor {
             | InputEvent::Tab
             | InputEvent::Break
             | InputEvent::ButtonDown(_)
-            | InputEvent::ButtonUp(_) => {}
+            | InputEvent::ButtonUp(_)
+            | InputEvent::KeyDown(_)
+            | InputEvent::KeyUp(_) => {}
         }
         None
     }
