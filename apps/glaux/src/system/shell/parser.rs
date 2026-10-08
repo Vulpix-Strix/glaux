@@ -41,6 +41,24 @@ pub(super) enum OptionError {
 /// Options given to a command, by name without the leading `--`.
 pub(super) type Options<'a> = Vec<(&'static str, &'a str)>;
 
+/// A positional argument among a command's options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Positional<'a> {
+    pub(super) word: &'a str,
+    /// Index in [`Split::options`] of the option given most recently before
+    /// this word, if any. In `--name My Game`, `Game` follows `--name`: when
+    /// a command gets more positional words than it takes, such words are
+    /// likely the rest of a value with spaces that was not quoted.
+    pub(super) after: Option<usize>,
+}
+
+/// A command's arguments separated by [`split_options`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Split<'a> {
+    pub(super) positional: Vec<Positional<'a>>,
+    pub(super) options: Options<'a>,
+}
+
 /// Separates `args` into positional arguments and the `known` options, each
 /// written `--name value` or `--name=value`. Option names are matched
 /// exactly; every option takes a value and may be given once.
@@ -51,13 +69,16 @@ pub(super) type Options<'a> = Vec<(&'static str, &'a str)>;
 pub(super) fn split_options<'a>(
     args: &'a [String],
     known: &[&'static str],
-) -> Result<(Vec<&'a str>, Options<'a>), OptionError> {
+) -> Result<Split<'a>, OptionError> {
     let mut positional = Vec::new();
     let mut options: Options<'a> = Vec::new();
     let mut words = args.iter().map(String::as_str);
     while let Some(word) = words.next() {
         let Some(option) = word.strip_prefix("--") else {
-            positional.push(word);
+            positional.push(Positional {
+                word,
+                after: options.len().checked_sub(1),
+            });
             continue;
         };
         let (name, inline) = match option.split_once('=') {
@@ -75,7 +96,28 @@ pub(super) fn split_options<'a>(
         }
         options.push((name, value));
     }
-    Ok((positional, options))
+    Ok(Split {
+        positional,
+        options,
+    })
+}
+
+/// `word` as it must be typed to reach a command as a single argument: as
+/// is when it has no whitespace or quotes, otherwise in double quotes with
+/// `"` and `\` escaped.
+pub(super) fn quote(word: &str) -> String {
+    if !word.is_empty() && !word.contains(|c: char| c.is_whitespace() || c == '"' || c == '\'') {
+        return word.to_owned();
+    }
+    let mut quoted = String::from('"');
+    for c in word.chars() {
+        if c == '"' || c == '\\' {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    quoted.push('"');
+    quoted
 }
 
 /// Parses `line` into a command invocation. Returns `None` for a line with
@@ -278,8 +320,11 @@ mod tests {
         );
     }
 
-    fn split<'a>(args: &'a [String]) -> Result<(Vec<&'a str>, Options<'a>), OptionError> {
-        split_options(args, &["name", "version"])
+    /// The positional words and options of `args`.
+    fn split(args: &[String]) -> Result<(Vec<&str>, Options<'_>), OptionError> {
+        let split = split_options(args, &["name", "version"])?;
+        let words = split.positional.iter().map(|p| p.word).collect();
+        Ok((words, split.options))
     }
 
     #[test]
@@ -300,6 +345,38 @@ mod tests {
             split(&args),
             Ok((vec!["x"], vec![("name", "--odd"), ("version", "")]))
         );
+    }
+
+    #[test]
+    fn positional_words_know_the_option_before_them() {
+        let args = owned(&["id", "--name", "My", "Game", "--version", "1.0.0", "x"]);
+        let after: Vec<_> = split_options(&args, &["name", "version"])
+            .unwrap()
+            .positional
+            .iter()
+            .map(|p| (p.word, p.after))
+            .collect();
+        assert_eq!(after, [("id", None), ("Game", Some(0)), ("x", Some(1))]);
+    }
+
+    #[test]
+    fn quoted_words_parse_back_to_themselves() {
+        for word in [
+            "owl",
+            "1.2.0",
+            "--odd",
+            r"a\b",
+            "My Game",
+            "",
+            "it's",
+            r#"say "hi""#,
+            r"c:\a b",
+        ] {
+            let line = format!("cmd {}", quote(word));
+            assert_eq!(parse(&line).unwrap().unwrap().args, [word], "{line}");
+        }
+        assert_eq!(quote("owl"), "owl");
+        assert_eq!(quote("My Game"), r#""My Game""#);
     }
 
     #[test]

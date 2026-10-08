@@ -292,6 +292,10 @@ impl Shell {
             Ok(None) => None,
             Err(err) => {
                 self.scrollback.push(Entry::Error(err.to_string()));
+                let parser::ParseError::UnterminatedQuote { quote, .. } = err;
+                self.scrollback.push(Entry::Output(format!(
+                    "Close the quoted text with another {quote}"
+                )));
                 None
             }
         }
@@ -828,7 +832,8 @@ mod tests {
             [
                 banner(),
                 command("new \"Super Owl"),
-                error("Unterminated \" quote")
+                error("Unterminated \" quote"),
+                output("Close the quoted text with another \""),
             ]
         );
     }

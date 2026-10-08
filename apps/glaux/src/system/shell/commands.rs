@@ -9,12 +9,12 @@ use glaux_machine::psg::{
 };
 
 use super::super::{SystemInfo, identity_line};
-use super::parser::{Invocation, split_options};
+use super::parser::{Invocation, OptionError, Split, quote, split_options};
 use super::scrollback::{Entry, Scrollback};
 use super::{CartridgeSlot, LoadOrigin, ShellRequest, Tone, Voice};
 use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::{CartridgeStorage, EntryKind};
-use crate::cartridge_template::{self, NewCartridge};
+use crate::cartridge_template::{self, CreateError, NewCartridge};
 
 /// What a command can see and change while it runs.
 pub(super) struct Context<'a> {
@@ -37,6 +37,19 @@ impl Context<'_> {
     fn error(&mut self, line: impl Into<String>) {
         self.scrollback.push(Entry::Error(line.into()));
     }
+
+    /// Reports `problem` followed by `usage` as the way to fix it.
+    fn usage_error(&mut self, problem: impl Into<String>, usage: &str) {
+        self.error(problem);
+        self.output(format!("Usage: {usage}"));
+    }
+
+    /// Reports `problem` followed by `command` as the line that was most
+    /// likely meant.
+    fn suggest(&mut self, problem: impl Into<String>, command: impl std::fmt::Display) {
+        self.error(problem);
+        self.output(format!("Try: {command}"));
+    }
 }
 
 type Handler = fn(&Invocation<'_>, &mut Context<'_>);
@@ -55,6 +68,9 @@ pub(super) struct Command {
     /// Most positional arguments accepted; more is a usage error.
     max_args: usize,
     handler: Handler,
+    /// Whether the one argument is a path, so extra words are most likely
+    /// the rest of a path with spaces that was not quoted.
+    takes_path: bool,
 }
 
 /// Every built-in command, in the order `help` lists them.
@@ -67,6 +83,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 1,
         handler: help,
+        takes_path: false,
     },
     Command {
         name: "clear",
@@ -76,6 +93,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 0,
         handler: clear,
+        takes_path: false,
     },
     Command {
         name: "info",
@@ -85,6 +103,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 0,
         handler: info,
+        takes_path: false,
     },
     Command {
         name: "version",
@@ -94,6 +113,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 0,
         handler: version,
+        takes_path: false,
     },
     Command {
         name: "pwd",
@@ -103,6 +123,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 0,
         handler: pwd,
+        takes_path: false,
     },
     Command {
         name: "ls",
@@ -112,6 +133,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 1,
         handler: ls,
+        takes_path: true,
     },
     Command {
         name: "cd",
@@ -121,6 +143,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 1,
         handler: cd,
+        takes_path: true,
     },
     Command {
         name: "new",
@@ -128,8 +151,10 @@ pub(super) static COMMANDS: &[Command] = &[
         usage: NEW_USAGE,
         description: "Create a new cartridge",
         min_args: 1,
-        max_args: 7,
+        // `new` explains extra words itself; see `explain_new_words`.
+        max_args: usize::MAX,
         handler: new,
+        takes_path: false,
     },
     Command {
         name: "load",
@@ -139,6 +164,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 1,
         max_args: 1,
         handler: load,
+        takes_path: true,
     },
     Command {
         name: "unload",
@@ -148,6 +174,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 0,
         handler: unload,
+        takes_path: false,
     },
     Command {
         name: "run",
@@ -157,6 +184,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 0,
         handler: run,
+        takes_path: false,
     },
     Command {
         name: "resume",
@@ -166,6 +194,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 0,
         handler: resume,
+        takes_path: false,
     },
     Command {
         name: "stop",
@@ -175,6 +204,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 0,
         handler: stop,
+        takes_path: false,
     },
     Command {
         name: "tone",
@@ -184,6 +214,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 1,
         max_args: 4,
         handler: tone,
+        takes_path: false,
     },
     Command {
         name: "env",
@@ -193,6 +224,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 5,
         max_args: 5,
         handler: env,
+        takes_path: false,
     },
     Command {
         name: "gate",
@@ -202,6 +234,7 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 2,
         max_args: 2,
         handler: gate,
+        takes_path: false,
     },
 ];
 
@@ -249,11 +282,50 @@ pub(super) fn execute(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         ctx.error(unknown_command(&invocation.name));
         return;
     };
-    if !(command.min_args..=command.max_args).contains(&invocation.args.len()) {
-        ctx.error(usage(command.usage));
+    let given = invocation.args.len();
+    if given < command.min_args {
+        ctx.usage_error(missing_argument(command.usage, given), command.usage);
+        return;
+    }
+    if given > command.max_args {
+        too_many_arguments(command, invocation, ctx);
         return;
     }
     (command.handler)(invocation, ctx);
+}
+
+/// Names the first argument missing when `given` were given, from the
+/// required `<placeholders>` of the first form in `usage`.
+fn missing_argument(usage: &str, given: usize) -> String {
+    let first_form = usage.split('|').next().unwrap_or(usage);
+    first_form
+        .split_whitespace()
+        .skip(1)
+        .filter(|token| token.starts_with('<'))
+        .nth(given)
+        .map_or_else(
+            || "Missing an argument".into(),
+            |name| format!("Missing {name}"),
+        )
+}
+
+/// Explains why `invocation` has more arguments than `command` takes.
+fn too_many_arguments(command: &Command, invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
+    if command.max_args == 0 {
+        ctx.error(format!("{} doesn't take any arguments", command.name));
+        return;
+    }
+    // Quotes already typed make the intended split unclear, so only an
+    // unquoted path gets a corrected line.
+    let raw = invocation.raw_args.trim_end();
+    if command.takes_path && !raw.contains(['"', '\'']) {
+        ctx.suggest(
+            "Paths with spaces need quotes",
+            format!("{} {}", command.name, quote(raw)),
+        );
+        return;
+    }
+    ctx.usage_error("Too many arguments", command.usage);
 }
 
 fn unknown_command(name: &str) -> String {
@@ -367,19 +439,31 @@ fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         ctx.error(PAUSED_ERROR);
         return;
     }
-    let (positional, options) = match split_options(&invocation.args, NEW_OPTIONS) {
+    let split = match split_options(&invocation.args, NEW_OPTIONS) {
         Ok(split) => split,
         Err(err) => {
             ctx.error(err.to_string());
+            if let OptionError::Unknown(_) = err {
+                ctx.output("Options: --name, --version, --author");
+            }
             return;
         }
     };
-    let [id] = positional[..] else {
-        ctx.error(usage(NEW_USAGE));
-        return;
+    let (id, after) = match split.positional[..] {
+        [] => {
+            let options = owned_options(&split);
+            ctx.suggest("Missing <id>", new_line("my-game", &options));
+            return;
+        }
+        [id] => (id.word, id.after),
+        _ => {
+            explain_new_words(&split, ctx);
+            return;
+        }
     };
     let option = |name: &str| {
-        options
+        split
+            .options
             .iter()
             .find_map(|&(option, value)| (option == name).then_some(value))
     };
@@ -392,8 +476,100 @@ fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
                 origin: LoadOrigin::Created,
             });
         }
+        // `new --name My Game`: the only word is not an ID but likely the
+        // rest of the value before it.
+        Err(CreateError::InvalidId(_)) if after.is_some() => {
+            let mut options = owned_options(&split);
+            if let Some(index) = after {
+                let value = &mut options[index].1;
+                value.push(' ');
+                value.push_str(id);
+            }
+            let suggested = options
+                .iter()
+                .find(|(name, _)| *name == "name")
+                .and_then(|(_, name)| cartridge_template::suggest_id(name))
+                .unwrap_or_else(|| "my-game".into());
+            ctx.suggest(
+                "Values with spaces need quotes",
+                new_line(&suggested, &options),
+            );
+        }
+        Err(err @ CreateError::InvalidId(_)) => {
+            ctx.error(err.to_string());
+            if let Some(suggested) = cartridge_template::suggest_id(id) {
+                ctx.output(format!(
+                    "Try: {}",
+                    new_line(&suggested, &owned_options(&split))
+                ));
+            }
+        }
         Err(err) => ctx.error(err.to_string()),
     }
+}
+
+/// `split`'s options with their values owned, so they can be edited.
+fn owned_options(split: &Split<'_>) -> Vec<(&'static str, String)> {
+    split
+        .options
+        .iter()
+        .map(|&(name, value)| (name, value.to_owned()))
+        .collect()
+}
+
+/// The `new` command line for `id` and `options`, quoted as needed.
+fn new_line(id: &str, options: &[(&'static str, String)]) -> String {
+    let mut line = format!("new {}", quote(id));
+    for (name, value) in options {
+        line.push_str(&format!(" --{name} {}", quote(value)));
+    }
+    line
+}
+
+/// Explains why `new` got more than one positional word, suggesting the
+/// line that was most likely meant when that is clear.
+fn explain_new_words(split: &Split<'_>, ctx: &mut Context<'_>) {
+    let words = &split.positional;
+    // `new my-game --name My New Game`: the ID comes first and every other
+    // word continues the value of the option before it.
+    if words[0].after.is_none() && words[1..].iter().all(|word| word.after.is_some()) {
+        let mut options = owned_options(split);
+        for word in &words[1..] {
+            if let Some(index) = word.after {
+                let value = &mut options[index].1;
+                value.push(' ');
+                value.push_str(word.word);
+            }
+        }
+        ctx.suggest(
+            "Values with spaces need quotes",
+            new_line(words[0].word, &options),
+        );
+        return;
+    }
+    // `new My Game`: a display name typed where the ID goes.
+    if split.options.is_empty() {
+        let typed = words
+            .iter()
+            .map(|word| word.word)
+            .collect::<Vec<_>>()
+            .join(" ");
+        if let Some(id) = cartridge_template::suggest_id(&typed) {
+            let mut options = Vec::new();
+            if typed != cartridge_template::display_name(&id) {
+                options.push(("name", typed));
+            }
+            ctx.suggest(
+                "The id must be one word, without spaces",
+                new_line(&id, &options),
+            );
+            return;
+        }
+    }
+    ctx.usage_error(
+        "Too many arguments; values with spaces need quotes",
+        NEW_USAGE,
+    );
 }
 
 /// Validates the cartridge in the directory at `<path>` and asks for it to
@@ -491,9 +667,16 @@ fn parse_channel(arg: &str, ctx: &mut Context<'_>) -> Option<usize> {
 fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let args = &invocation.args;
     if args[0].eq_ignore_ascii_case("off") {
-        if args.len() > 1 {
-            ctx.error(usage(TONE_OFF_USAGE));
-            return;
+        match &args[1..] {
+            [] => {}
+            [channel] => {
+                ctx.suggest("The channel goes before off", format!("tone {channel} off"));
+                return;
+            }
+            _ => {
+                ctx.usage_error("Too many arguments", TONE_OFF_USAGE);
+                return;
+            }
         }
         for voice in ctx.voices.iter_mut() {
             voice.tone = None;
@@ -506,12 +689,12 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         return;
     };
     let Some(arg) = args.get(1) else {
-        ctx.error(usage(TONE_USAGE));
+        ctx.usage_error("Missing <hz>", TONE_USAGE);
         return;
     };
     if arg.eq_ignore_ascii_case("off") {
         if args.len() > 2 {
-            ctx.error(usage(TONE_OFF_USAGE));
+            ctx.usage_error("Too many arguments", TONE_OFF_USAGE);
             return;
         }
         let voice = &mut ctx.voices[channel];
@@ -600,7 +783,10 @@ fn gate(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     } else if args[1].eq_ignore_ascii_case("off") {
         false
     } else {
-        ctx.error(usage(GATE_USAGE));
+        ctx.suggest(
+            format!("Gate must be on or off, not {}", args[1]),
+            format!("gate {channel} on"),
+        );
         return;
     };
     ctx.voices[channel].gate = open;
@@ -690,6 +876,11 @@ mod tests {
 
     fn error(line: &str) -> Vec<Entry> {
         vec![Entry::Error(line.into())]
+    }
+
+    /// An error explaining `problem`, followed by `hint` on how to fix it.
+    fn hinted(problem: &str, hint: &str) -> Vec<Entry> {
+        vec![Entry::Error(problem.into()), Entry::Output(hint.into())]
     }
 
     #[test]
@@ -819,25 +1010,60 @@ mod tests {
     }
 
     #[test]
-    fn extra_arguments_are_usage_errors() {
-        assert_eq!(run("clear now"), error("Usage: clear"));
-        assert_eq!(run("info x"), error("Usage: info"));
-        assert_eq!(run("version x"), error("Usage: version"));
-        assert_eq!(run("help a b"), error("Usage: help [<command>]"));
-        assert_eq!(run("pwd x"), error("Usage: pwd"));
-        assert_eq!(run("ls a b"), error("Usage: ls [<path>]"));
-        assert_eq!(run("cd a b"), error("Usage: cd [<path>]"));
-        assert_eq!(run("load a b"), error("Usage: load <path>"));
-        assert_eq!(run("unload x"), error("Usage: unload"));
-        assert_eq!(run("run x"), error("Usage: run"));
-        assert_eq!(run("resume x"), error("Usage: resume"));
-        assert_eq!(run("stop x"), error("Usage: stop"));
+    fn arguments_to_commands_without_any_are_refused() {
+        for name in [
+            "clear", "info", "version", "pwd", "unload", "run", "resume", "stop",
+        ] {
+            assert_eq!(
+                run(&format!("{name} x")),
+                error(&format!("{name} doesn't take any arguments")),
+                "{name}"
+            );
+        }
+        assert_eq!(run("CLS now"), error("clear doesn't take any arguments"));
     }
 
     #[test]
-    fn missing_arguments_are_usage_errors() {
-        assert_eq!(run("load"), error("Usage: load <path>"));
-        assert_eq!(run("new"), error(&format!("Usage: {NEW_USAGE}")));
+    fn unquoted_paths_with_spaces_get_a_quoted_suggestion() {
+        assert_eq!(
+            run("load my games/pong"),
+            hinted(
+                "Paths with spaces need quotes",
+                r#"Try: load "my games/pong""#
+            )
+        );
+        assert_eq!(
+            run("cd  My  Games  "),
+            hinted("Paths with spaces need quotes", r#"Try: cd "My  Games""#)
+        );
+        assert_eq!(
+            run("dir a b"),
+            hinted("Paths with spaces need quotes", r#"Try: ls "a b""#)
+        );
+        // With quotes already typed, the intended split is unclear.
+        assert_eq!(
+            run(r#"load "my games" pong"#),
+            hinted("Too many arguments", "Usage: load <path>")
+        );
+    }
+
+    #[test]
+    fn other_extra_arguments_show_the_usage() {
+        assert_eq!(
+            run("help a b"),
+            hinted("Too many arguments", "Usage: help [<command>]")
+        );
+    }
+
+    #[test]
+    fn missing_arguments_are_named() {
+        assert_eq!(run("load"), hinted("Missing <path>", "Usage: load <path>"));
+        assert_eq!(
+            run("new"),
+            hinted("Missing <id>", &format!("Usage: {NEW_USAGE}"))
+        );
+        assert_eq!(missing_argument("x <a> [<b>] <c>", 1), "Missing <c>");
+        assert_eq!(missing_argument("x <a>", 5), "Missing an argument");
     }
 
     #[test]
@@ -980,7 +1206,8 @@ mod tests {
             "new games",
             "new Bad",
         ] {
-            assert_eq!(run_load(line, &mut fs, &mut loaded).len(), 1, "{line}");
+            let entries = run_load(line, &mut fs, &mut loaded);
+            assert!(matches!(entries.first(), Some(Entry::Error(_))), "{line}");
             assert_eq!(loaded, pong, "{line}");
         }
         assert!(
@@ -1223,30 +1450,128 @@ mod tests {
     fn new_errors_create_nothing() {
         let fixture = Fixture::new("cmd-new-errors");
         let before = host_listing(&fixture.root());
-        let new_usage = format!("Usage: {NEW_USAGE}");
         for (line, message) in [
             (
-                "new My-Game",
-                "Invalid cartridge id 'My-Game': use lowercase letters, digits and dashes, like my-game",
-            ),
-            (
                 "new a --version 1.0",
-                "Invalid version '1.0': use semver, like 1.2.0",
+                error("Invalid version '1.0': use semver, like 1.2.0"),
             ),
-            (r#"new a --name """#, "The name must not be empty"),
-            ("new a --name", "Option --name needs a value"),
-            ("new a --color red", "Unknown option: --color"),
+            (r#"new a --name """#, error("The name must not be empty")),
+            ("new a --name", error("Option --name needs a value")),
+            (
+                "new a --color red",
+                hinted(
+                    "Unknown option: --color",
+                    "Options: --name, --version, --author",
+                ),
+            ),
             (
                 "new a --name x --name=y",
-                "Option --name given more than once",
+                error("Option --name given more than once"),
             ),
-            ("new a b", new_usage.as_str()),
-            ("new --name x", new_usage.as_str()),
-            ("new games", "/games already exists"),
+            ("new games", error("/games already exists")),
         ] {
-            assert_eq!(run_new(&fixture, line), (error(message), None), "{line}");
+            assert_eq!(run_new(&fixture, line), (message, None), "{line}");
         }
         assert_eq!(host_listing(&fixture.root()), before);
+    }
+
+    /// What `new` printed for `line`, which must create nothing.
+    fn new_diagnostic(fixture: &Fixture, line: &str) -> Vec<Entry> {
+        let before = host_listing(&fixture.root());
+        let (entries, created) = run_new(fixture, line);
+        assert!(created.is_none(), "{line}");
+        assert_eq!(host_listing(&fixture.root()), before, "{line}");
+        entries
+    }
+
+    #[test]
+    fn new_suggests_quoting_values_with_spaces() {
+        let fixture = Fixture::new("cmd-new-quotes");
+        let quotes = "Values with spaces need quotes";
+        for (line, suggestion) in [
+            (
+                "new my-game --name My New Game",
+                r#"Try: new my-game --name "My New Game""#,
+            ),
+            (
+                "new my-game --name=My New Game",
+                r#"Try: new my-game --name "My New Game""#,
+            ),
+            (
+                "new my-game --name Space Owl --author Ana Ruiz --version 1.0.0",
+                r#"Try: new my-game --name "Space Owl" --author "Ana Ruiz" --version 1.0.0"#,
+            ),
+            (
+                r#"new my-game --name "Say" Hi"#,
+                r#"Try: new my-game --name "Say Hi""#,
+            ),
+            (
+                r#"new my-game --name 'Say "Hi"' Now"#,
+                r#"Try: new my-game --name "Say \"Hi\" Now""#,
+            ),
+            ("new --name My Game", r#"Try: new my-game --name "My Game""#),
+            (
+                "new --author Ana Ruiz",
+                r#"Try: new my-game --author "Ana Ruiz""#,
+            ),
+        ] {
+            assert_eq!(
+                new_diagnostic(&fixture, line),
+                hinted(quotes, suggestion),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn new_suggests_an_id_for_a_name_typed_in_its_place() {
+        let fixture = Fixture::new("cmd-new-id");
+        let one_word = "The id must be one word, without spaces";
+        for (line, expected) in [
+            ("new My Game", hinted(one_word, "Try: new my-game")),
+            (
+                "new my game",
+                hinted(one_word, r#"Try: new my-game --name "my game""#),
+            ),
+            (
+                "new My-Game",
+                hinted(
+                    "Invalid cartridge id 'My-Game': use lowercase letters, digits and dashes, like my-game",
+                    "Try: new my-game",
+                ),
+            ),
+            (
+                "new Space_Owl --name Owl",
+                hinted(
+                    "Invalid cartridge id 'Space_Owl': use lowercase letters, digits and dashes, like my-game",
+                    "Try: new space-owl --name Owl",
+                ),
+            ),
+            (
+                "new --name Owl",
+                hinted("Missing <id>", "Try: new my-game --name Owl"),
+            ),
+        ] {
+            assert_eq!(new_diagnostic(&fixture, line), expected, "{line}");
+        }
+    }
+
+    #[test]
+    fn unclear_extra_words_for_new_show_the_usage() {
+        let fixture = Fixture::new("cmd-new-unclear");
+        let unclear = hinted(
+            "Too many arguments; values with spaces need quotes",
+            &format!("Usage: {NEW_USAGE}"),
+        );
+        for line in ["new my game --name Owl", "new Ñandú Quest"] {
+            assert_eq!(new_diagnostic(&fixture, line), unclear, "{line}");
+        }
+        // Positional words may still come anywhere when there is only one.
+        let (_, created) = run_new(&fixture, r#"new --name "Late Id" late-id"#);
+        assert_eq!(
+            created.map(|c| c.manifest().cartridge.name.clone()),
+            Some("Late Id".into())
+        );
     }
 
     /// Runs `line` with `voices` as the shell's voices and returns what it
@@ -1369,38 +1694,43 @@ mod tests {
         let mut before = silent();
         before[1].tone = tone(Waveform::Triangle, 440, 8);
         before[1].gate = true;
+        let tone_usage = "Usage: tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off";
         for (line, message) in [
-            ("tone 440", "Channel must be 0-3"),
-            ("tone 4 440", "Channel must be 0-3"),
-            ("tone x 440", "Channel must be 0-3"),
-            ("tone -1 off", "Channel must be 0-3"),
-            (
-                "tone 1",
-                "Usage: tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off",
-            ),
-            ("tone 1 0", "Frequency must be 1-24000 Hz"),
-            ("tone 1 24001", "Frequency must be 1-24000 Hz"),
-            ("tone 1 loud", "Frequency must be 1-24000 Hz"),
-            ("tone 1 -5", "Frequency must be 1-24000 Hz"),
-            ("tone 1 440 16", "Volume must be 0-15"),
-            ("tone 1 440 x", "Volume must be 0-15"),
+            ("tone 440", error("Channel must be 0-3")),
+            ("tone 4 440", error("Channel must be 0-3")),
+            ("tone x 440", error("Channel must be 0-3")),
+            ("tone -1 off", error("Channel must be 0-3")),
+            ("tone 1", hinted("Missing <hz>", tone_usage)),
+            ("tone 1 0", error("Frequency must be 1-24000 Hz")),
+            ("tone 1 24001", error("Frequency must be 1-24000 Hz")),
+            ("tone 1 loud", error("Frequency must be 1-24000 Hz")),
+            ("tone 1 -5", error("Frequency must be 1-24000 Hz")),
+            ("tone 1 440 16", error("Volume must be 0-15")),
+            ("tone 1 440 x", error("Volume must be 0-15")),
             (
                 "tone 1 440 8 sine",
-                "Wave must be square, triangle, saw or noise",
+                error("Wave must be square, triangle, saw or noise"),
             ),
-            ("tone off 3", "Usage: tone [<ch>] off"),
-            ("tone 1 off 3", "Usage: tone [<ch>] off"),
             (
-                "tone",
-                "Usage: tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off",
+                "tone off 3",
+                hinted("The channel goes before off", "Try: tone 3 off"),
             ),
+            (
+                "tone off 3 4",
+                hinted("Too many arguments", "Usage: tone [<ch>] off"),
+            ),
+            (
+                "tone 1 off 3",
+                hinted("Too many arguments", "Usage: tone [<ch>] off"),
+            ),
+            ("tone", hinted("Missing <ch>", tone_usage)),
             (
                 "tone 1 440 8 saw x",
-                "Usage: tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off",
+                hinted("Too many arguments", tone_usage),
             ),
         ] {
             let mut voices = before;
-            assert_eq!(run_voice(line, &mut voices), error(message), "{line}");
+            assert_eq!(run_voice(line, &mut voices), message, "{line}");
             assert_eq!(voices, before, "{line}");
         }
     }
@@ -1470,19 +1800,23 @@ mod tests {
     #[test]
     fn env_rejects_bad_arguments_and_keeps_the_voices() {
         let before = silent();
+        let env_usage = "Usage: env <ch> <a> <d> <s> <r>";
         for (line, message) in [
-            ("env 4 10 80 8 200", "Channel must be 0-3"),
-            ("env x 10 80 8 200", "Channel must be 0-3"),
-            ("env 0 10001 80 8 200", "Time must be 0-10000 ms"),
-            ("env 0 10 -1 8 200", "Time must be 0-10000 ms"),
-            ("env 0 10 80 8 slow", "Time must be 0-10000 ms"),
-            ("env 0 10 80 16 200", "Sustain must be 0-15"),
-            ("env 0 10 80 x 200", "Sustain must be 0-15"),
-            ("env 0 10 80 8", "Usage: env <ch> <a> <d> <s> <r>"),
-            ("env 0 10 80 8 200 1", "Usage: env <ch> <a> <d> <s> <r>"),
+            ("env 4 10 80 8 200", error("Channel must be 0-3")),
+            ("env x 10 80 8 200", error("Channel must be 0-3")),
+            ("env 0 10001 80 8 200", error("Time must be 0-10000 ms")),
+            ("env 0 10 -1 8 200", error("Time must be 0-10000 ms")),
+            ("env 0 10 80 8 slow", error("Time must be 0-10000 ms")),
+            ("env 0 10 80 16 200", error("Sustain must be 0-15")),
+            ("env 0 10 80 x 200", error("Sustain must be 0-15")),
+            ("env 0 10 80 8", hinted("Missing <r>", env_usage)),
+            (
+                "env 0 10 80 8 200 1",
+                hinted("Too many arguments", env_usage),
+            ),
         ] {
             let mut voices = before;
-            assert_eq!(run_voice(line, &mut voices), error(message), "{line}");
+            assert_eq!(run_voice(line, &mut voices), message, "{line}");
             assert_eq!(voices, before, "{line}");
         }
     }
@@ -1503,15 +1837,19 @@ mod tests {
     #[test]
     fn gate_rejects_bad_arguments_and_keeps_the_voices() {
         let before = silent();
+        let gate_usage = "Usage: gate <ch> on|off";
         for (line, message) in [
-            ("gate 4 on", "Channel must be 0-3"),
-            ("gate on 0", "Channel must be 0-3"),
-            ("gate 0 open", "Usage: gate <ch> on|off"),
-            ("gate 0", "Usage: gate <ch> on|off"),
-            ("gate 0 on now", "Usage: gate <ch> on|off"),
+            ("gate 4 on", error("Channel must be 0-3")),
+            ("gate on 0", error("Channel must be 0-3")),
+            (
+                "gate 0 open",
+                hinted("Gate must be on or off, not open", "Try: gate 0 on"),
+            ),
+            ("gate 0", hinted("Missing an argument", gate_usage)),
+            ("gate 0 on now", hinted("Too many arguments", gate_usage)),
         ] {
             let mut voices = before;
-            assert_eq!(run_voice(line, &mut voices), error(message), "{line}");
+            assert_eq!(run_voice(line, &mut voices), message, "{line}");
             assert_eq!(voices, before, "{line}");
         }
     }

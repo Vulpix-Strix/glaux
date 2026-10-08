@@ -197,8 +197,29 @@ fn is_valid_id(id: &str) -> bool {
         && !RESERVED_IDS.contains(&id)
 }
 
-/// `my-first-game` as `My First Game`.
-fn display_name(id: &str) -> String {
+/// An ID for a cartridge described by free text such as a display name,
+/// as in `My New Game` → `my-new-game`, when one that follows the ID rules
+/// can be made from its ASCII letters and digits.
+pub fn suggest_id(text: &str) -> Option<String> {
+    // Dropping other letters would turn `Ñandú` into `and`.
+    if text
+        .chars()
+        .any(|c| c.is_alphanumeric() && !c.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    let id = text
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join("-");
+    is_valid_id(&id).then_some(id)
+}
+
+/// The display name a cartridge gets by default: `my-first-game` as
+/// `My First Game`.
+pub fn display_name(id: &str) -> String {
     id.split('-')
         .map(|word| {
             let mut chars = word.chars();
@@ -277,6 +298,21 @@ mod tests {
         }
         for id in ["a", "pong", "my-game-2", "x1-y2", &"a".repeat(MAX_ID_LEN)] {
             assert!(NewCartridge::new(id, None, None, None).is_ok(), "{id:?}");
+        }
+    }
+
+    #[test]
+    fn ids_are_suggested_from_free_text() {
+        for (text, id) in [
+            ("My New Game", Some("my-new-game")),
+            ("my-game", Some("my-game")),
+            ("  Space   Adventure 2! ", Some("space-adventure-2")),
+            ("Ñandú Quest", None),
+            ("2048", None),
+            ("!!", None),
+            ("con", None),
+        ] {
+            assert_eq!(suggest_id(text).as_deref(), id, "{text:?}");
         }
     }
 
