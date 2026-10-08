@@ -1,6 +1,6 @@
 //! Development cartridges. A directory holding a `cartridge.ron` manifest
-//! and the entry script it names, plus optional binary assets such as
-//! `sprites.bin`.
+//! and the entry script it names, plus optional binary assets: `sprites.bin`,
+//! `objattr.bin`, `obp.bin` and `palette.bin`.
 //!
 //! Loading only validates the cartridge; its entry script runs only when
 //! asked to, through [`LoadedCartridge::entry_source`].
@@ -25,6 +25,15 @@ const FORMAT: u32 = 1;
 
 /// Optional native object-tile data from the cartridge root.
 const OBJ_TILES: &str = "/sprites.bin";
+
+/// Optional per-tile object attributes from the cartridge root.
+const OBJ_ATTRIBUTES: &str = "/objattr.bin";
+
+/// Optional object palette banks from the cartridge root.
+const OBJ_PALETTES: &str = "/obp.bin";
+
+/// Optional RGB888 master palette from the cartridge root.
+const MASTER_PALETTE: &str = "/palette.bin";
 
 /// Suffix an entry script's file name must have.
 const ENTRY_EXTENSION: &str = ".luau";
@@ -85,6 +94,18 @@ pub enum CartridgeError {
     ObjTilesNotAFile,
     #[error("CANNOT READ SPRITES.BIN")]
     ObjTilesUnreadable,
+    #[error("OBJATTR.BIN IS NOT A FILE")]
+    ObjAttributesNotAFile,
+    #[error("CANNOT READ OBJATTR.BIN")]
+    ObjAttributesUnreadable,
+    #[error("OBP.BIN IS NOT A FILE")]
+    ObjPalettesNotAFile,
+    #[error("CANNOT READ OBP.BIN")]
+    ObjPalettesUnreadable,
+    #[error("PALETTE.BIN IS NOT A FILE")]
+    PaletteNotAFile,
+    #[error("CANNOT READ PALETTE.BIN")]
+    PaletteUnreadable,
 }
 
 /// The validated contents of `cartridge.ron`.
@@ -383,17 +404,57 @@ impl LoadedCartridge {
 
     /// Current native object-tile bytes, if the optional `sprites.bin` exists.
     ///
-    /// The file is read on every call so a fresh cartridge run observes edits
-    /// made since the cartridge was loaded. Format validation belongs to the
-    /// machine representation constructed by the caller.
+    /// Like every optional asset, the file is read on every call so a fresh
+    /// cartridge run observes edits made since the cartridge was loaded.
+    /// Format validation belongs to the machine representation constructed
+    /// by the caller.
     pub fn read_obj_tiles(&self) -> Result<Option<Vec<u8>>, CartridgeError> {
-        match self.files.read_file(OBJ_TILES) {
+        self.read_optional(
+            OBJ_TILES,
+            CartridgeError::ObjTilesNotAFile,
+            CartridgeError::ObjTilesUnreadable,
+        )
+    }
+
+    /// Current per-tile object attribute bytes, if `objattr.bin` exists.
+    pub fn read_obj_attributes(&self) -> Result<Option<Vec<u8>>, CartridgeError> {
+        self.read_optional(
+            OBJ_ATTRIBUTES,
+            CartridgeError::ObjAttributesNotAFile,
+            CartridgeError::ObjAttributesUnreadable,
+        )
+    }
+
+    /// Current object palette bank bytes, if `obp.bin` exists.
+    pub fn read_obj_palettes(&self) -> Result<Option<Vec<u8>>, CartridgeError> {
+        self.read_optional(
+            OBJ_PALETTES,
+            CartridgeError::ObjPalettesNotAFile,
+            CartridgeError::ObjPalettesUnreadable,
+        )
+    }
+
+    /// Current RGB888 master palette bytes, if `palette.bin` exists.
+    pub fn read_master_palette(&self) -> Result<Option<Vec<u8>>, CartridgeError> {
+        self.read_optional(
+            MASTER_PALETTE,
+            CartridgeError::PaletteNotAFile,
+            CartridgeError::PaletteUnreadable,
+        )
+    }
+
+    /// Reads an optional root file: `None` when it does not exist.
+    fn read_optional(
+        &self,
+        path: &str,
+        not_a_file: CartridgeError,
+        unreadable: CartridgeError,
+    ) -> Result<Option<Vec<u8>>, CartridgeError> {
+        match self.files.read_file(path) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => Ok(None),
-            Err(FsError::NotAFile(_)) => Err(CartridgeError::ObjTilesNotAFile),
-            Err(FsError::Unreadable(_) | FsError::Unavailable) => {
-                Err(CartridgeError::ObjTilesUnreadable)
-            }
+            Err(FsError::NotAFile(_)) => Err(not_a_file),
+            Err(FsError::Unreadable(_) | FsError::Unavailable) => Err(unreadable),
         }
     }
 }
@@ -966,6 +1027,48 @@ mod tests {
     }
 
     #[test]
+    fn palette_assets_are_optional_and_read_fresh() {
+        let fixture = Fixture::new("load-palette-assets");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+        type Reader = fn(&LoadedCartridge) -> Result<Option<Vec<u8>>, CartridgeError>;
+        let readers: [(&str, Reader); 3] = [
+            ("objattr.bin", LoadedCartridge::read_obj_attributes),
+            ("obp.bin", LoadedCartridge::read_obj_palettes),
+            ("palette.bin", LoadedCartridge::read_master_palette),
+        ];
+        for (name, read) in readers {
+            assert_eq!(read(&cartridge), Ok(None), "{name}");
+            fs::write(dir.join(name), [1, 2, 3]).unwrap();
+            assert_eq!(read(&cartridge), Ok(Some(vec![1, 2, 3])), "{name}");
+        }
+    }
+
+    #[test]
+    fn palette_assets_must_be_regular_files() {
+        let fixture = Fixture::new("load-palette-assets-file");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        for name in ["objattr.bin", "obp.bin", "palette.bin"] {
+            fs::create_dir(dir.join(name)).unwrap();
+        }
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+        assert_eq!(
+            cartridge.read_obj_attributes(),
+            Err(CartridgeError::ObjAttributesNotAFile)
+        );
+        assert_eq!(
+            cartridge.read_obj_palettes(),
+            Err(CartridgeError::ObjPalettesNotAFile)
+        );
+        assert_eq!(
+            cartridge.read_master_palette(),
+            Err(CartridgeError::PaletteNotAFile)
+        );
+    }
+
+    #[test]
     fn object_tiles_must_be_a_regular_readable_file() {
         let fixture = Fixture::new("load-obj-tiles-file");
         let dir = fixture.root().join("pong");
@@ -1104,7 +1207,7 @@ mod tests {
         let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
         let root = fs::canonicalize(examples).unwrap();
         let storage = CartridgeStorage::Available(CartridgeFs::new(root));
-        for example in ["sprites", "tile-viewer", "signal-lost"] {
+        for example in ["sprites", "tile-viewer", "signal-lost", "palettes"] {
             let cartridge = LoadedCartridge::load(&storage, example).unwrap();
             assert_eq!(
                 cartridge.manifest().runtime.entry,

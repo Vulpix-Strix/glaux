@@ -4,6 +4,7 @@ use glaux_audio::sfx::Sfx;
 use semver::Version;
 
 use crate::font::BitmapFont;
+use crate::obj_palette::ObjPalettes;
 use crate::palette::Palette;
 
 /// A sound the System ROM plays.
@@ -33,8 +34,8 @@ impl SystemSounds {
 }
 
 /// Built-in data the machine is created with: the ROM version, its
-/// copyright notice, the system palette, the system font and the system
-/// sounds.
+/// copyright notice, the system palette, the system font, the system
+/// sounds and the object palette banks cartridges start with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemRom {
     version: Version,
@@ -42,6 +43,7 @@ pub struct SystemRom {
     palette: Palette,
     font: BitmapFont,
     sounds: SystemSounds,
+    obj_palettes: ObjPalettes,
 }
 
 impl SystemRom {
@@ -52,12 +54,20 @@ impl SystemRom {
             palette,
             font,
             sounds: SystemSounds::default(),
+            obj_palettes: ObjPalettes::linear(),
         }
     }
 
     /// This ROM with `sounds` in place of its sound effects.
     pub fn with_sounds(mut self, sounds: SystemSounds) -> Self {
         self.sounds = sounds;
+        self
+    }
+
+    /// This ROM with `obj_palettes` as the object palette banks cartridges
+    /// start with.
+    pub fn with_obj_palettes(mut self, obj_palettes: ObjPalettes) -> Self {
+        self.obj_palettes = obj_palettes;
         self
     }
 
@@ -85,6 +95,12 @@ impl SystemRom {
     /// The system sound effects.
     pub fn sounds(&self) -> &SystemSounds {
         &self.sounds
+    }
+
+    /// The object palette banks a cartridge starts with unless it supplies
+    /// its own.
+    pub fn obj_palettes(&self) -> &ObjPalettes {
+        &self.obj_palettes
     }
 }
 

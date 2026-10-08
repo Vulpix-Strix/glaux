@@ -1,6 +1,7 @@
 //! Drawing functions and frame publication.
 
 use super::*;
+use glaux_machine::obj_palette::ObjBank;
 use pretty_assertions::assert_eq;
 
 fn pixel(x: i32, y: i32, color: u8) -> DrawCommand {
@@ -42,6 +43,20 @@ fn sprite_flipped(
         height,
         flip_x,
         flip_y,
+        palette: None,
+    }
+}
+
+fn sprite_with_palette(tile: u16, width: u8, palette: u8) -> DrawCommand {
+    DrawCommand::Sprite {
+        tile,
+        x: 0,
+        y: 0,
+        width,
+        height: 1,
+        flip_x: false,
+        flip_y: false,
+        palette: ObjBank::new(palette),
     }
 }
 
@@ -492,6 +507,50 @@ fn sprite_flips_must_be_booleans() {
         (
             "spr(0, 0, 0, nil, nil, true, Button.A)",
             "#7 to 'spr' (boolean expected, got Button)",
+        ),
+    ] {
+        assert_eq!(
+            draw_error(call),
+            format!("main.luau:1: bad argument {detail}"),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn sprite_palettes_default_to_each_tiles_bank() {
+    assert_eq!(
+        drawn("spr(3, 0, 0, 1, 1, false, false, nil)"),
+        [sprite(3, 0, 0)]
+    );
+}
+
+#[test]
+fn sprite_palettes_are_recorded_for_every_bank() {
+    assert_eq!(
+        drawn("spr(3, 0, 0, 1, 1, false, false, 0) spr(4, 0, 0, 2, 1, nil, nil, 7)"),
+        [sprite_with_palette(3, 1, 0), sprite_with_palette(4, 2, 7)]
+    );
+}
+
+#[test]
+fn sprite_palettes_must_be_banks() {
+    for (call, detail) in [
+        (
+            "spr(0, 0, 0, 1, 1, false, false, 8)",
+            "#8 to 'spr' (object palette bank 0-7 expected, got 8)",
+        ),
+        (
+            "spr(0, 0, 0, 1, 1, false, false, -1)",
+            "#8 to 'spr' (object palette bank 0-7 expected, got -1)",
+        ),
+        (
+            "spr(0, 0, 0, 1, 1, false, false, 1.5)",
+            "#8 to 'spr' (object palette bank 0-7 expected, got 1.5)",
+        ),
+        (
+            r#"spr(0, 0, 0, 1, 1, false, false, "2")"#,
+            "#8 to 'spr' (number expected, got string)",
         ),
     ] {
         assert_eq!(

@@ -22,7 +22,7 @@ use glaux_machine::machine::Machine;
 use glaux_machine::psg::{SAMPLE_RATE, SAMPLES_PER_TICK};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
 use platform::SessionKind;
-use system::{System, SystemInfo};
+use system::{CartridgeVideoDefaults, System, SystemInfo};
 
 /// Window size, as a multiple of the logical resolution, when no saved
 /// state applies.
@@ -112,6 +112,7 @@ fn run(
             rom_version: rom.version().clone(),
         },
         rom.sounds().clone(),
+        CartridgeVideoDefaults::from_rom(&rom),
         cartridges,
     );
 
@@ -158,7 +159,10 @@ fn run(
         }
 
         system.render(machine.framebuffer_mut(), &rom);
-        host.present(&IndexedFrame::new(machine.framebuffer(), rom.palette()))?;
+        host.present(&IndexedFrame::new(
+            machine.framebuffer(),
+            system.frame_palette(&rom),
+        ))?;
         pending.extend(host.poll_input(system.input_mode()));
 
         let now = Instant::now();

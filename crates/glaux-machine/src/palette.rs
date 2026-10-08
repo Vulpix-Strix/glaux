@@ -3,6 +3,16 @@
 /// Number of entries in the master palette.
 pub const PALETTE_LEN: usize = 256;
 
+/// Size of a master palette in its native RGB888 byte form.
+pub const PALETTE_RGB888_BYTES: usize = PALETTE_LEN * 3;
+
+/// A failure to construct a palette from RGB888 bytes.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("palette data must be exactly {PALETTE_RGB888_BYTES} bytes, got {length}")]
+pub struct PaletteBytesError {
+    pub length: usize,
+}
+
 /// An 8-bit-per-channel RGB color.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Rgb {
@@ -91,6 +101,31 @@ impl Palette {
     pub fn entries(&self) -> &[Rgb; PALETTE_LEN] {
         &self.entries
     }
+
+    /// Decodes 256 colors stored as consecutive `R, G, B` bytes in index
+    /// order.
+    pub fn from_rgb888(bytes: &[u8]) -> Result<Self, PaletteBytesError> {
+        let (triples, rest) = bytes.as_chunks::<3>();
+        if triples.len() != PALETTE_LEN || !rest.is_empty() {
+            return Err(PaletteBytesError {
+                length: bytes.len(),
+            });
+        }
+        let mut entries = [Rgb::from_hex(0); PALETTE_LEN];
+        for (entry, &[r, g, b]) in entries.iter_mut().zip(triples) {
+            *entry = Rgb { r, g, b };
+        }
+        Ok(Self::new(entries))
+    }
+
+    /// Encodes the palette as consecutive `R, G, B` bytes in index order.
+    pub fn to_rgb888(&self) -> [u8; PALETTE_RGB888_BYTES] {
+        let mut bytes = [0; PALETTE_RGB888_BYTES];
+        for (out, color) in bytes.as_chunks_mut::<3>().0.iter_mut().zip(&self.entries) {
+            *out = [color.r, color.g, color.b];
+        }
+        bytes
+    }
 }
 
 #[cfg(test)]
@@ -107,6 +142,24 @@ mod tests {
         let palette = Palette::new(entries);
         assert_eq!(palette.entries(), &entries);
         assert_eq!(palette.get(7), Rgb::from_hex(0x070e15));
+    }
+
+    #[test]
+    fn rgb888_round_trips_in_channel_order() {
+        let palette = Palette::provisional();
+        let bytes = palette.to_rgb888();
+        assert_eq!(bytes[..3], [0x47, 0x2d, 0x3c]);
+        assert_eq!(Palette::from_rgb888(&bytes), Ok(palette));
+    }
+
+    #[test]
+    fn rgb888_rejects_wrong_lengths() {
+        for length in [0, PALETTE_RGB888_BYTES - 1, PALETTE_RGB888_BYTES + 1] {
+            assert_eq!(
+                Palette::from_rgb888(&vec![0; length]),
+                Err(PaletteBytesError { length })
+            );
+        }
     }
 
     #[test]

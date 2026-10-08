@@ -37,7 +37,7 @@ directory are not followed.
 
 ```sh
 mkdir -p ~/.local/share/glaux/cartridges/signal-lost
-cp -r examples/signal-lost/{cartridge.ron,code,sprites.bin} ~/.local/share/glaux/cartridges/signal-lost/
+cp -r examples/signal-lost/{cartridge.ron,code,sprites.bin,objattr.bin,obp.bin,palette.bin} ~/.local/share/glaux/cartridges/signal-lost/
 mise run glaux
 ```
 
@@ -120,39 +120,32 @@ Source files used, all from `0x72_DungeonTilesetII_v1.7/frames/`:
 | Wall            | `wall_mid.png`, `wall_top_mid.png`                             | —                                                              |
 | Floor           | `floor_1.png` … `floor_8.png`                                  | —                                                              |
 
-No pixels were redrawn. The only edits are cropping, padding and the palette
-remap below. Every sprite is stored facing right; left-facing characters and
-the axe's spin are drawn with `spr`'s `flip_x`.
+No pixels were redrawn and no colors were changed. The only edits are
+cropping and padding. Every sprite is stored facing right; left-facing
+characters and the axe's spin are drawn with `spr`'s `flip_x`.
 
-### Palette adaptation
+### Colors
 
-On G1, object-tile index 0 is transparent and indices 1–15 are written
-straight to the framebuffer as master-palette indices: there are no OBJ
-palette banks yet, and the PNG's own palette is ignored by the converter.
-Every sprite is therefore drawn with Zughy 32 entries 1–15 (browns, skin
-tones, greens, grays). The art was chosen to survive that: the wizard, demons
-and blue flasks were rejected because they lose their identity without blue
-or a saturated red.
+The sheet keeps the pack's own colors. `glaux import sprites` puts the 21
+colors the sprites use into the cartridge's master palette (entries 32–52)
+and packs them into two object palettes: the characters and the flask share
+OBP0, and the items, walls, floor, coin and skull share OBP1. Every sprite is
+one sprite group, covering all of its animation frames, so drawing it with
+an explicit palette recolors the whole animation.
 
-`tools/build_sheet.py` maps each source color to the nearest of those 15
-entries (redmean-weighted RGB distance). Three overrides are pinned by hand
-because nearest-match collapses them:
+The first version of the game predates object palettes: sprites were drawn
+with Zughy 32 entries 1–15, and the sheet builder mapped every source color to
+the nearest of them, with three overrides pinned by hand. That remap, and the
+choice of art that could survive it, are what object palettes replaced.
 
-| Source    | Nearest | Pinned to   | Why                                                 |
-|-----------|---------|-------------|-----------------------------------------------------|
-| `#5c7a56` | 9       | 8 `#71aa34` | the goblin's two greens merged                      |
-| `#facb3e` | 5       | 6 `#f4cca1` | the coin's highlight merged with its body           |
-| `#da4e38` | 3       | 5 `#eea160` | the full heart was nearly the same as the empty one |
-
-The full source → index table is printed every time the sheet is built.
-
-### Rebuilding the sheet and `sprites.bin`
+### Rebuilding the sheet and the sprite assets
 
 `tools/build_sheet.py` packs every sprite on the 16-column object-tile grid,
 in bands of equal height so that no multi-tile sprite crosses a grid row. It
 writes:
 
-- `sprites.png`: a 4-bit indexed PNG whose palette is Zughy entries 0–15, so it previews correctly, with index 0 transparent;
+- `sprites.png`: an RGBA sheet in the source colors; source pixels with alpha below 128 become transparent;
+- `sprites.sprites.ron`: one sprite group per sprite, covering all its frames;
 - `code/sheet.luau`: each sprite's top-left tile index and size.
 
 Python and `uv` are declared in `mise.toml`, and `uv` installs Pillow from the
@@ -161,12 +154,13 @@ script's inline metadata. From the repository root:
 ```sh
 mise install
 mise run signal-lost-sheet -- "/path/to/0x72_DungeonTilesetII_v1.7/frames"
-mise run glaux -- convert sprites examples/signal-lost/sprites.png
+mise run glaux -- import sprites examples/signal-lost/sprites.png
 ```
 
-The last command writes `examples/signal-lost/sprites.bin` (272 tiles,
-8 704 bytes). Both steps are deterministic: rebuilding from the same pack
-reproduces all three files byte for byte.
+The import writes `sprites.bin` (272 tiles, 8 704 bytes), `objattr.bin`,
+`obp.bin`, `palette.bin` and the import record `sprites.import.ron`. Every
+step is deterministic: rebuilding from the same pack reproduces all of them
+byte for byte.
 
 ## Development notes
 
@@ -190,7 +184,8 @@ the sprite flip it asked for have since been added, as `rectfill()` and
   `audio.tone` updates give pitch sweeps without any sequencer.
 - **`glaux convert sprites`.** Its contract is simple and strict (indexed
   PNG, multiple of 8, ≤ 16×64 tiles), which made it easy to target from an
-  external script.
+  external script. The sheet now goes through `glaux import sprites`
+  instead, which keeps the source colors.
 - **`RunningCartridge` as a test harness.** It exercises the real loader,
   module source and object-tile validation with no window.
 
@@ -232,9 +227,12 @@ the sprite flip it asked for have since been added, as `rectfill()` and
 
 These limitations were demonstrated while building the game:
 
-- **OBJ palette banks.** Sprites are fixed to master indices 1–15, which
-  forced the palette remap above, ruled out half the asset pack, and makes
-  hit flashes impossible.
+- **OBJ palette banks (resolved).** Sprites used to be fixed to master
+  indices 1–15, which forced a lossy palette remap, ruled out half the asset
+  pack, and made hit flashes impossible. G1 now has eight object palettes,
+  and `glaux import sprites` keeps the sheet's colors; the whole sheet needs
+  two of them. Hit flashes still need palette changes at run time, which do
+  not exist yet.
 - **Sprite flip (resolved).** Every character and the axe used to be stored
   twice, once mirrored: 156 of the sheet's 384 tile slots held mirrored
   copies. `spr(tile, x, y, [w], [h], [flip_x], [flip_y])` now mirrors a whole

@@ -4,11 +4,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use glaux_machine::obj_palette::ObjBank;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH};
 use mlua::{Function, Lua, Value};
 
 use crate::args::{
-    color_arg, coordinate_arg, flag_arg, located, size_arg, tile_arg, tile_span_arg, to_text,
+    color_arg, coordinate_arg, flag_arg, located, obj_bank_arg, size_arg, tile_arg, tile_span_arg,
+    to_text,
 };
 
 /// Draw cost one `draw()` call may spend: each `cls`, `pset` or `rectfill`
@@ -48,11 +50,13 @@ pub enum DrawCommand {
         height: i32,
         color: u8,
     },
-    /// `spr(tile, x, y, w, h, flip_x, flip_y)`: draw a `width`x`height`
-    /// block of object tiles from the object-tile grid, `tile` at its
-    /// top-left, with `(x, y)` as its top-left corner. The block is
-    /// validated to fit the grid. `flip_x` and `flip_y` mirror the whole
-    /// composed block, not each tile in place.
+    /// `spr(tile, x, y, w, h, flip_x, flip_y, palette)`: draw a
+    /// `width`x`height` block of object tiles from the object-tile grid,
+    /// `tile` at its top-left, with `(x, y)` as its top-left corner. The
+    /// block is validated to fit the grid. `flip_x` and `flip_y` mirror the
+    /// whole composed block, not each tile in place. `palette` is the object
+    /// palette bank for every tile of the block; `None` lets each tile use
+    /// its default bank.
     Sprite {
         tile: u16,
         x: i32,
@@ -61,6 +65,7 @@ pub enum DrawCommand {
         height: u8,
         flip_x: bool,
         flip_y: bool,
+        palette: Option<ObjBank>,
     },
     /// `print(text, x, y, color)`: draw text with `(x, y)` as the top-left
     /// corner of its first character cell.
@@ -131,7 +136,8 @@ pub(crate) fn install(
     let pending = Rc::clone(pending_frame);
     let spr = lua.create_function(
         move |lua,
-              (tile, x, y, w, h, flip_x, flip_y): (
+              (tile, x, y, w, h, flip_x, flip_y, palette): (
+            Value,
             Value,
             Value,
             Value,
@@ -156,6 +162,7 @@ pub(crate) fn install(
                 height,
                 flip_x: flag_arg(lua, "spr", 6, &flip_x)?,
                 flip_y: flag_arg(lua, "spr", 7, &flip_y)?,
+                palette: obj_bank_arg(lua, "spr", 8, &palette)?,
             };
             record(lua, &pending, "spr", command)
         },

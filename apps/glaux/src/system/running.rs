@@ -4,9 +4,16 @@ use glaux_input::{InputEvent, InputLatch};
 use glaux_luau::{Budget, DrawCommand, LogEntry, Runtime, RuntimeError, StartFailure};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
+use glaux_machine::obj_palette::{ObjPalettes, ObjPalettesError};
+use glaux_machine::palette::{Palette, PaletteBytesError};
 use glaux_machine::psg::Psg;
-use glaux_machine::sprite::{ObjTileBank, ObjTileBankError};
-use glaux_video::draw::{clear, draw_obj_sprite, draw_text, fill_rect, pixel};
+use glaux_machine::sprite::{
+    ObjTileAttributes, ObjTileAttributesError, ObjTileBank, ObjTileBankError, ObjVram,
+};
+use glaux_machine::system_rom::SystemRom;
+use glaux_video::draw::{
+    ObjPaletteChoice, ObjSprite, clear, draw_obj_sprite, draw_text, fill_rect, pixel,
+};
 
 use super::audio;
 use crate::cartridge::{CartridgeError, LoadedCartridge};
@@ -16,10 +23,92 @@ use crate::cartridge::{CartridgeError, LoadedCartridge};
 pub enum StartError {
     /// The entry script could not be read.
     Cartridge(CartridgeError),
-    /// `sprites.bin` was not valid native object-tile data.
-    ObjTiles(ObjTileBankError),
+    /// A video asset was not valid native data.
+    Video(VideoAssetError),
     /// The entry chunk or `boot()` failed.
     Script(StartFailure),
+}
+
+/// A cartridge video asset that is not valid native G1 data.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum VideoAssetError {
+    #[error("INVALID SPRITES.BIN: {0}")]
+    ObjTiles(#[from] ObjTileBankError),
+    #[error("INVALID OBJATTR.BIN: {0}")]
+    ObjAttributes(#[from] ObjTileAttributesError),
+    #[error("INVALID OBP.BIN: {0}")]
+    ObjPalettes(#[from] ObjPalettesError),
+    #[error("INVALID PALETTE.BIN: {0}")]
+    Palette(#[from] PaletteBytesError),
+}
+
+/// The video state a cartridge starts with for each asset it does not
+/// supply, taken from the System ROM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CartridgeVideoDefaults {
+    palette: Palette,
+    obj_palettes: ObjPalettes,
+}
+
+impl CartridgeVideoDefaults {
+    pub fn from_rom(rom: &SystemRom) -> Self {
+        Self {
+            palette: rom.palette().clone(),
+            obj_palettes: rom.obj_palettes().clone(),
+        }
+    }
+}
+
+/// A cartridge's video state, loaded once when it starts and unchanged for
+/// the whole run, so replaying a frame always resolves the same colors.
+#[derive(Debug)]
+struct CartridgeVideo {
+    /// The master palette the cartridge's frames are presented with.
+    palette: Palette,
+    obj: ObjVram,
+}
+
+impl CartridgeVideo {
+    /// Reads the cartridge's optional video assets, falling back to
+    /// `defaults` for those it lacks.
+    fn load(
+        cartridge: &LoadedCartridge,
+        defaults: &CartridgeVideoDefaults,
+    ) -> Result<Self, StartError> {
+        let tiles = match cartridge.read_obj_tiles().map_err(StartError::Cartridge)? {
+            Some(bytes) => ObjTileBank::from_bytes(&bytes).map_err(video_error)?,
+            None => ObjTileBank::new(),
+        };
+        let attributes = match cartridge
+            .read_obj_attributes()
+            .map_err(StartError::Cartridge)?
+        {
+            Some(bytes) => ObjTileAttributes::from_bytes(&bytes).map_err(video_error)?,
+            None => ObjTileAttributes::new(),
+        };
+        let palettes = match cartridge
+            .read_obj_palettes()
+            .map_err(StartError::Cartridge)?
+        {
+            Some(bytes) => ObjPalettes::from_bytes(&bytes).map_err(video_error)?,
+            None => defaults.obj_palettes.clone(),
+        };
+        let palette = match cartridge
+            .read_master_palette()
+            .map_err(StartError::Cartridge)?
+        {
+            Some(bytes) => Palette::from_rgb888(&bytes).map_err(video_error)?,
+            None => defaults.palette.clone(),
+        };
+        Ok(Self {
+            palette,
+            obj: ObjVram::new(tiles, attributes, palettes),
+        })
+    }
+}
+
+fn video_error(err: impl Into<VideoAssetError>) -> StartError {
+    StartError::Video(err.into())
 }
 
 /// A cartridge that could not start, handed back still loaded.
@@ -34,7 +123,7 @@ pub struct FailedStart {
 pub struct RunningCartridge {
     cartridge: LoadedCartridge,
     runtime: Runtime,
-    obj_tiles: ObjTileBank,
+    video: CartridgeVideo,
     /// Starts with every button and key released, so nothing held during a
     /// previous run reaches this one, and is reset whenever the system
     /// resumes the cartridge from a pause.
@@ -43,29 +132,27 @@ pub struct RunningCartridge {
 
 impl RunningCartridge {
     /// Creates a fresh VM for `cartridge` and runs its entry script and
-    /// `boot()`. On failure the cartridge is handed back, still loaded.
-    pub fn start(cartridge: LoadedCartridge) -> Result<Self, Box<FailedStart>> {
+    /// `boot()`, with `defaults` standing in for video assets the cartridge
+    /// does not supply. On failure the cartridge is handed back, still
+    /// loaded.
+    pub fn start(
+        cartridge: LoadedCartridge,
+        defaults: &CartridgeVideoDefaults,
+    ) -> Result<Self, Box<FailedStart>> {
         let source = match cartridge.entry_source() {
             Ok(source) => source,
             Err(err) => return Err(failed(cartridge, StartError::Cartridge(err))),
         };
-        let obj_bytes = match cartridge.read_obj_tiles() {
-            Ok(bytes) => bytes,
-            Err(err) => return Err(failed(cartridge, StartError::Cartridge(err))),
-        };
-        let obj_tiles = match obj_bytes {
-            Some(bytes) => match ObjTileBank::from_bytes(&bytes) {
-                Ok(tiles) => tiles,
-                Err(err) => return Err(failed(cartridge, StartError::ObjTiles(err))),
-            },
-            None => ObjTileBank::new(),
+        let video = match CartridgeVideo::load(&cartridge, defaults) {
+            Ok(video) => video,
+            Err(err) => return Err(failed(cartridge, err)),
         };
         let entry = &cartridge.manifest().runtime.entry;
         match Runtime::start(entry, &source, cartridge.modules(), Budget::default()) {
             Ok(runtime) => Ok(Self {
                 cartridge,
                 runtime,
-                obj_tiles,
+                video,
                 input: InputLatch::new(),
             }),
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
@@ -74,6 +161,11 @@ impl RunningCartridge {
 
     pub fn cartridge(&self) -> &LoadedCartridge {
         &self.cartridge
+    }
+
+    /// The master palette the cartridge's frames resolve to.
+    pub fn palette(&self) -> &Palette {
+        &self.video.palette
     }
 
     /// Advances the cartridge by one logical tick, applying the button and
@@ -117,16 +209,21 @@ impl RunningCartridge {
                     height,
                     flip_x,
                     flip_y,
+                    palette,
                 } => draw_obj_sprite(
                     framebuffer,
-                    &self.obj_tiles,
-                    usize::from(tile),
-                    x,
-                    y,
-                    usize::from(width),
-                    usize::from(height),
-                    flip_x,
-                    flip_y,
+                    &self.video.obj,
+                    &ObjSprite {
+                        first: usize::from(tile),
+                        x,
+                        y,
+                        width: usize::from(width),
+                        height: usize::from(height),
+                        flip_x,
+                        flip_y,
+                        palette: palette
+                            .map_or(ObjPaletteChoice::TileDefault, ObjPaletteChoice::Bank),
+                    },
                 ),
                 DrawCommand::Text {
                     ref text,
@@ -158,12 +255,18 @@ fn failed(cartridge: LoadedCartridge, error: StartError) -> Box<FailedStart> {
 mod tests {
     use std::fs;
 
+    use std::path::Path;
+
     use glaux_luau::ScriptError;
     use pretty_assertions::assert_eq;
 
     use super::*;
     use crate::cartridge::fixture::write_cartridge;
     use crate::cartridge_fs::fixture::Fixture;
+
+    fn defaults() -> CartridgeVideoDefaults {
+        CartridgeVideoDefaults::from_rom(&crate::rom::load().unwrap())
+    }
 
     fn texts(entries: Vec<LogEntry>) -> Vec<String> {
         entries.into_iter().map(|entry| entry.text).collect()
@@ -190,7 +293,7 @@ mod tests {
         .unwrap();
         let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
-        let mut running = RunningCartridge::start(cartridge).unwrap();
+        let mut running = RunningCartridge::start(cartridge, &defaults()).unwrap();
         assert_eq!(texts(running.take_output()), ["enemies loaded"]);
         running.tick(&[]).unwrap();
         running.tick(&[]).unwrap();
@@ -206,7 +309,7 @@ mod tests {
         fs::write(dir.join("code/boom.luau"), "\nerror(\"x\")").unwrap();
         let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
-        let failed = RunningCartridge::start(cartridge).unwrap_err();
+        let failed = RunningCartridge::start(cartridge, &defaults()).unwrap_err();
         let StartError::Script(failure) = failed.error else {
             panic!("expected a script error, got {:?}", failed.error);
         };
@@ -216,7 +319,7 @@ mod tests {
         );
 
         fs::write(dir.join("code/main.luau"), r#"require("nope")"#).unwrap();
-        let failed = RunningCartridge::start(failed.cartridge).unwrap_err();
+        let failed = RunningCartridge::start(failed.cartridge, &defaults()).unwrap_err();
         let StartError::Script(failure) = failed.error else {
             panic!("expected a script error, got {:?}", failed.error);
         };
@@ -224,6 +327,95 @@ mod tests {
             failure.error.to_string(),
             "MODULE NOT FOUND: code/nope.luau (code/main.luau:1)"
         );
+    }
+
+    #[test]
+    fn sprites_resolve_through_the_cartridge_palette_assets() {
+        let fixture = Fixture::new("running-video-assets");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        fs::write(
+            dir.join("code/main.luau"),
+            "function draw() spr(0, 0, 0) spr(0, 8, 0, 1, 1, false, false, 0) end",
+        )
+        .unwrap();
+        // Tile 0 is solid local index 3 and defaults to OBP2, which maps it
+        // to master index 200.
+        fs::write(dir.join("sprites.bin"), [0x33; 32]).unwrap();
+        fs::write(dir.join("objattr.bin"), [2]).unwrap();
+        let mut obp = *ObjPalettes::linear().as_bytes();
+        obp[2 * 16 + 3] = 200;
+        fs::write(dir.join("obp.bin"), obp).unwrap();
+        let mut palette = *Palette::provisional().entries();
+        palette[200] = glaux_machine::palette::Rgb::from_hex(0x123456);
+        let palette = Palette::new(palette);
+        fs::write(dir.join("palette.bin"), palette.to_rgb888()).unwrap();
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+
+        let mut running = RunningCartridge::start(cartridge, &defaults()).unwrap();
+        running.tick(&[]).unwrap();
+        let rom = crate::rom::load().unwrap();
+        let mut framebuffer = Framebuffer::new();
+        running.render(&mut framebuffer, rom.font());
+
+        assert_eq!(framebuffer.pixel(0, 0), Some(200));
+        assert_eq!(framebuffer.pixel(8, 0), Some(3));
+        assert_eq!(running.palette(), &palette);
+    }
+
+    #[test]
+    fn missing_video_assets_fall_back_to_the_rom() {
+        let fixture = Fixture::new("running-video-defaults");
+        let dir = fixture.root().join("pong");
+        write_cartridge(&dir, "Pong");
+        let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+        let rom = crate::rom::load().unwrap();
+        let running = RunningCartridge::start(cartridge, &defaults()).unwrap();
+        assert_eq!(running.palette(), rom.palette());
+        assert_eq!(running.video.obj.palettes(), rom.obj_palettes());
+    }
+
+    /// The imported example (`examples/palettes`) shows every opaque pixel
+    /// of its PNG in the PNG's own color once its frame is resolved through
+    /// the cartridge palette.
+    #[test]
+    fn the_imported_example_shows_its_png_colors() {
+        let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+        let root = fs::canonicalize(examples).unwrap();
+        let storage = crate::cartridge_fs::CartridgeStorage::Available(
+            crate::cartridge_fs::CartridgeFs::new(root.clone()),
+        );
+        let cartridge = LoadedCartridge::load(&storage, "palettes").unwrap();
+        let mut running = RunningCartridge::start(cartridge, &defaults()).unwrap();
+        running.tick(&[]).unwrap();
+        let rom = crate::rom::load().unwrap();
+        let mut framebuffer = Framebuffer::new();
+        running.render(&mut framebuffer, rom.font());
+
+        let file = fs::File::open(root.join("palettes/sprites.png")).unwrap();
+        let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+            .read_info()
+            .unwrap();
+        let mut rgba = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut rgba).unwrap();
+        assert_eq!(info.color_type, png::ColorType::Rgba);
+        let width = info.width as usize;
+        let (sheet_x, sheet_y) = (8, 24);
+        let mut opaque = 0;
+        for (offset, &[r, g, b, alpha]) in rgba.as_chunks::<4>().0.iter().enumerate() {
+            if alpha == 0 {
+                continue;
+            }
+            let (x, y) = ((offset % width) as i32, (offset / width) as i32);
+            let index = framebuffer.pixel(sheet_x + x, sheet_y + y).unwrap();
+            assert_eq!(
+                running.palette().get(index),
+                glaux_machine::palette::Rgb { r, g, b },
+                "sheet pixel ({x}, {y})"
+            );
+            opaque += 1;
+        }
+        assert!(opaque > 300, "{opaque} opaque pixels");
     }
 
     /// Signal Lost (`examples/signal-lost`), driven through the real loader,
@@ -247,7 +439,7 @@ mod tests {
             let root = fs::canonicalize(examples).unwrap();
             let storage = CartridgeStorage::Available(CartridgeFs::new(root));
             let cartridge = LoadedCartridge::load(&storage, "signal-lost").unwrap();
-            RunningCartridge::start(cartridge).unwrap()
+            RunningCartridge::start(cartridge, &defaults()).unwrap()
         }
 
         fn down(button: Button) -> InputEvent {

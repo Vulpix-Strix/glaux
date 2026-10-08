@@ -3,6 +3,7 @@
 
 use glaux_audio::{CHANNELS, Waveform};
 use glaux_input::{Button, Key};
+use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, ObjBank};
 use mlua::{Function, Lua, Value};
 
 use crate::api::input::{ButtonValue, KeyValue};
@@ -201,6 +202,22 @@ pub(crate) fn bounded_arg(
             &format!("{what} 0-{max} expected, got {n}"),
         ))
     }
+}
+
+/// An optional object palette bank: `nil` means each tile's default bank.
+pub(crate) fn obj_bank_arg(
+    lua: &Lua,
+    function: &str,
+    position: usize,
+    value: &Value,
+) -> mlua::Result<Option<ObjBank>> {
+    if value.is_nil() {
+        return Ok(None);
+    }
+    let max = OBJ_PALETTE_BANKS as u32 - 1;
+    let bank = bounded_arg(lua, function, position, value, "object palette bank", max)?;
+    // `bounded_arg` keeps `bank` below OBJ_PALETTE_BANKS, so it is a valid bank.
+    Ok(ObjBank::new(bank as u8))
 }
 
 /// An audio channel: the first argument of every `audio` function.

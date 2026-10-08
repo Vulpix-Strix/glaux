@@ -21,6 +21,15 @@ pub fn shade_table(palette: &Palette, keep_percent: u8) -> [u8; PALETTE_LEN] {
     table
 }
 
+/// Index of the entry of `palette` nearest to `color`: the smallest squared
+/// RGB distance, with ties going to the lowest index.
+pub fn nearest_index(palette: &Palette, color: Rgb) -> u8 {
+    nearest(
+        palette.entries(),
+        [color.r, color.g, color.b].map(u32::from),
+    )
+}
+
 /// Index of the first entry with the smallest squared distance to `target`.
 fn nearest(entries: &[Rgb; PALETTE_LEN], target: [u32; 3]) -> u8 {
     let distance = |color: &Rgb| {
@@ -87,6 +96,14 @@ mod tests {
         assert_eq!(table[..4], [0, 1, 2, 3]);
         // The white entries all resolve to the first white.
         assert!(table[4..].iter().all(|&index| index == 4));
+    }
+
+    #[test]
+    fn nearest_index_prefers_exact_then_lowest_matches() {
+        let palette = palette(&[0x000000, 0x123456, 0x123456, 0xfefefe]);
+        assert_eq!(nearest_index(&palette, Rgb::from_hex(0x123456)), 1);
+        assert_eq!(nearest_index(&palette, Rgb::from_hex(0x010101)), 0);
+        assert_eq!(nearest_index(&palette, Rgb::from_hex(0xfdfdfd)), 3);
     }
 
     #[test]

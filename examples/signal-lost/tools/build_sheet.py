@@ -8,17 +8,18 @@ Usage:
     mise run signal-lost-sheet -- <path to 0x72_DungeonTilesetII_v1.7/frames>
 
 Writes, next to this script's parent directory:
-    sprites.png       4-bit indexed sheet for `glaux convert sprites`
-    code/sheet.luau   object-tile indices of every sprite in the sheet
+    sprites.png          RGBA sheet in the source colors, for `glaux import sprites`
+    sprites.sprites.ron  one sprite group per sprite, covering all its frames
+    code/sheet.luau      object-tile indices of every sprite in the sheet
 
 The sheet is packed on G1's 16-column object-tile grid in bands of equal
 height, so no multi-tile sprite crosses a grid row. Each sprite is stored
 once, facing right; the game draws the left-facing versions with `spr`'s
 `flip_x`.
 
-G1 writes object-tile indices 1-15 straight to the framebuffer as master
-palette indices, so every source color is mapped to the closest of Zughy 32
-entries 1-15 (the system ROM's first entries). Index 0 is transparent.
+Source pixels with alpha of at least 128 become opaque in their own color,
+the rest transparent. `glaux import sprites` then assigns the colors to
+palettes; each sprite group shares one palette.
 """
 
 import sys
@@ -28,39 +29,6 @@ from PIL import Image
 
 TILE = 8
 GRID_COLUMNS = 16
-
-# Zughy 32 entries 0-15, as in rom/palette/system.hex. Entry 0 only appears
-# in the PNG palette so the sheet previews sensibly; it is never drawn.
-ZUGHY = [
-    0x472D3C, 0x5E3643, 0x7A444A, 0xA05B53, 0xBF7958, 0xEEA160, 0xF4CCA1, 0xB6D53C,
-    0x71AA34, 0x397B44, 0x3C5956, 0x302C2E, 0x5A5353, 0x7D7071, 0xA0938E, 0xCFC6B8,
-]
-RGB = [((c >> 16) & 255, (c >> 8) & 255, c & 255) for c in ZUGHY]
-
-# Source colors whose nearest match reads badly in context, pinned by hand.
-# Without them the goblin's two greens and the coin's two golds each collapse
-# into one entry, and the heart red lands on a brown too close to the empty
-# heart's interior.
-OVERRIDES: dict[tuple[int, int, int], int] = {
-    (0x5C, 0x7A, 0x56): 8,
-    (0xFA, 0xCB, 0x3E): 6,
-    (0xDA, 0x4E, 0x38): 5,
-}
-
-
-def nearest(color):
-    """Closest palette entry 1-15 by the "redmean" weighted RGB distance."""
-    if color in OVERRIDES:
-        return OVERRIDES[color]
-    r1, g1, b1 = color
-
-    def distance(index):
-        r2, g2, b2 = RGB[index]
-        mean = (r1 + r2) / 2
-        dr, dg, db = r1 - r2, g1 - g2, b1 - b2
-        return (2 + mean / 256) * dr * dr + 4 * dg * dg + (2 + (255 - mean) / 256) * db * db
-
-    return min(range(1, 16), key=distance)
 
 
 class Frame:
@@ -108,12 +76,13 @@ BANDS = [
 ]
 
 
-def render(src_dir, frame, width, height, mapping):
-    """The frame as palette indices in a width x height pixel cell."""
+def render(src_dir, frame, width, height):
+    """The frame as RGBA pixels, or None for transparent ones, in a width x
+    height pixel cell."""
     image = Image.open(src_dir / frame.file).convert("RGBA")
     if frame.crop:
         image = image.crop(frame.crop)
-    cell = [[0] * width for _ in range(height)]
+    cell = [[None] * width for _ in range(height)]
     ax, ay = frame.at
     if ax + image.width > width or ay + image.height > height:
         sys.exit(f"{frame.file}: {image.size} at {frame.at} does not fit {width}x{height}")
@@ -121,9 +90,7 @@ def render(src_dir, frame, width, height, mapping):
         for x in range(image.width):
             r, g, b, a = image.getpixel((x, y))
             if a >= 128:
-                index = nearest((r, g, b))
-                mapping.setdefault((r, g, b), index)
-                cell[ay + y][ax + x] = index
+                cell[ay + y][ax + x] = (r, g, b, 255)
     return cell
 
 
@@ -134,30 +101,37 @@ def main():
     out_dir = Path(__file__).resolve().parent.parent
 
     rows = sum(height for height, _ in BANDS)
-    sheet = Image.new("P", (GRID_COLUMNS * TILE, rows * TILE), 0)
-    palette = [channel for rgb in RGB for channel in rgb]
-    sheet.putpalette(palette)
+    sheet = Image.new("RGBA", (GRID_COLUMNS * TILE, rows * TILE), (0, 0, 0, 0))
 
-    mapping = {}
     entries = []
+    groups_out = []
     top = 0
     for height, groups in BANDS:
         column = 0
         for name, width, group in groups:
+            first_column = column
             tiles = []
             for frame in group:
                 if column + width > GRID_COLUMNS:
                     sys.exit(f"band at tile row {top} overflows the 16-column grid at {name}")
-                cell = render(src_dir, frame, width * TILE, height * TILE, mapping)
+                cell = render(src_dir, frame, width * TILE, height * TILE)
                 for y, row in enumerate(cell):
-                    for x, index in enumerate(row):
-                        sheet.putpixel((column * TILE + x, top * TILE + y), index)
+                    for x, pixel in enumerate(row):
+                        if pixel:
+                            sheet.putpixel((column * TILE + x, top * TILE + y), pixel)
                 tiles.append(top * GRID_COLUMNS + column)
                 column += width
             entries.append((name, width, height, tiles))
+            groups_out.append((name, (first_column, top), (column - first_column, height)))
         top += height
 
-    sheet.save(out_dir / "sprites.png", bits=4, transparency=0, optimize=False)
+    sheet.save(out_dir / "sprites.png", optimize=False)
+
+    group_lines = ["(groups: ["]
+    for name, (x, y), (w, h) in groups_out:
+        group_lines.append(f'    (name: "{name}", tile: ({x}, {y}), size: ({w}, {h})),')
+    group_lines.append("])")
+    (out_dir / "sprites.sprites.ron").write_text("\n".join(group_lines) + "\n")
 
     lines = [
         "-- Generated by tools/build_sheet.py; do not edit by hand.",
@@ -172,9 +146,6 @@ def main():
 
     for name, width, height, tiles in entries:
         print(f"{name:14} {width}x{height} tiles {tiles}")
-    print("color mapping (source -> Zughy index):")
-    for color, index in sorted(mapping.items(), key=lambda item: item[1]):
-        print(f"  #{color[0]:02x}{color[1]:02x}{color[2]:02x} -> {index:2} #{ZUGHY[index]:06x}")
 
 
 if __name__ == "__main__":

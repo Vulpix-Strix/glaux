@@ -1,5 +1,7 @@
 //! Native G1 object-sprite tile encoding.
 
+use crate::obj_palette::{ObjBank, ObjPalettes};
+
 /// Width of one object tile in pixels.
 pub const OBJ_TILE_WIDTH: usize = 8;
 /// Height of one object tile in pixels.
@@ -102,6 +104,113 @@ impl ObjTileBank {
 impl Default for ObjTileBank {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Size of the complete native object-tile attribute table in bytes.
+pub const OBJ_TILE_ATTRIBUTES_BYTES: usize = OBJ_TILE_CAPACITY;
+
+/// Attribute bits that select a tile's default object palette bank.
+const ATTRIBUTE_BANK_MASK: u8 = 0b0000_0111;
+
+/// A failure to construct object-tile attributes from native G1 bytes.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ObjTileAttributesError {
+    #[error(
+        "object tile attribute data is too large: got {length} bytes, maximum is {OBJ_TILE_ATTRIBUTES_BYTES}"
+    )]
+    TooLarge { length: usize },
+    #[error(
+        "object tile {tile} attribute {value:#04x} sets reserved bits; only bits 0-2 are defined"
+    )]
+    ReservedBits { tile: usize, value: u8 },
+}
+
+/// Per-tile attributes of the object-tile bank: one byte per tile.
+///
+/// Bits 0–2 select the object palette bank a tile is drawn with when the
+/// draw call does not choose one. Bits 3–7 are reserved and always 0.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjTileAttributes {
+    bytes: Box<[u8; OBJ_TILE_ATTRIBUTES_BYTES]>,
+}
+
+impl ObjTileAttributes {
+    /// Attributes with every tile defaulting to OBP0.
+    pub fn new() -> Self {
+        Self {
+            bytes: Box::new([0; OBJ_TILE_ATTRIBUTES_BYTES]),
+        }
+    }
+
+    /// Loads attributes for the first `bytes.len()` tiles; the remaining
+    /// tiles default to OBP0.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ObjTileAttributesError> {
+        if bytes.len() > OBJ_TILE_ATTRIBUTES_BYTES {
+            return Err(ObjTileAttributesError::TooLarge {
+                length: bytes.len(),
+            });
+        }
+        if let Some((tile, &value)) = bytes
+            .iter()
+            .enumerate()
+            .find(|&(_, &value)| value & !ATTRIBUTE_BANK_MASK != 0)
+        {
+            return Err(ObjTileAttributesError::ReservedBits { tile, value });
+        }
+        let mut attributes = Self::new();
+        attributes.bytes[..bytes.len()].copy_from_slice(bytes);
+        Ok(attributes)
+    }
+
+    /// The default palette bank of `tile`; OBP0 for tiles past the bank.
+    pub fn bank(&self, tile: usize) -> ObjBank {
+        self.bytes
+            .get(tile)
+            .and_then(|&value| ObjBank::new(value & ATTRIBUTE_BANK_MASK))
+            .unwrap_or(ObjBank::ZERO)
+    }
+
+    /// Returns the complete native byte representation of the attributes.
+    pub fn as_bytes(&self) -> &[u8; OBJ_TILE_ATTRIBUTES_BYTES] {
+        &self.bytes
+    }
+}
+
+impl Default for ObjTileAttributes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The object-related video state of a cartridge: tiles, their attributes
+/// and the object palette banks they resolve through.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ObjVram {
+    tiles: ObjTileBank,
+    attributes: ObjTileAttributes,
+    palettes: ObjPalettes,
+}
+
+impl ObjVram {
+    pub fn new(tiles: ObjTileBank, attributes: ObjTileAttributes, palettes: ObjPalettes) -> Self {
+        Self {
+            tiles,
+            attributes,
+            palettes,
+        }
+    }
+
+    pub fn tiles(&self) -> &ObjTileBank {
+        &self.tiles
+    }
+
+    pub fn attributes(&self) -> &ObjTileAttributes {
+        &self.attributes
+    }
+
+    pub fn palettes(&self) -> &ObjPalettes {
+        &self.palettes
     }
 }
 
@@ -379,6 +488,32 @@ mod tests {
         assert_eq!(obj_grid_tile(1023, 0, 1), None);
         assert_eq!(obj_grid_tile(OBJ_TILE_CAPACITY, 0, 0), None);
         assert_eq!(obj_grid_tile(0, usize::MAX, usize::MAX), None);
+    }
+
+    #[test]
+    fn short_attribute_data_defaults_remaining_tiles_to_bank_zero() {
+        let attributes = ObjTileAttributes::from_bytes(&[3, 0, 7]).unwrap();
+        assert_eq!(attributes.bank(0).get(), 3);
+        assert_eq!(attributes.bank(2).get(), 7);
+        assert_eq!(attributes.bank(3), ObjBank::ZERO);
+        assert_eq!(attributes.bank(OBJ_TILE_CAPACITY), ObjBank::ZERO);
+    }
+
+    #[test]
+    fn attributes_reject_reserved_bits_and_oversized_data() {
+        assert_eq!(
+            ObjTileAttributes::from_bytes(&[1, 0x09]),
+            Err(ObjTileAttributesError::ReservedBits {
+                tile: 1,
+                value: 0x09
+            })
+        );
+        assert_eq!(
+            ObjTileAttributes::from_bytes(&vec![0; OBJ_TILE_ATTRIBUTES_BYTES + 1]),
+            Err(ObjTileAttributesError::TooLarge {
+                length: OBJ_TILE_ATTRIBUTES_BYTES + 1
+            })
+        );
     }
 
     #[test]

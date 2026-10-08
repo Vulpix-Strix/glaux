@@ -2,16 +2,15 @@
 //! under a pause indicator drawn by Glaux itself.
 //!
 //! The overlay is composed into the same indexed framebuffer as the frozen
-//! cartridge frame. It reads the cartridge's indices as colors of the System
-//! ROM palette and draws system palette indices next to them. That holds
-//! only because the cartridge and the system are presented with one shared
-//! palette; system UI over a cartridge with palettes of its own would have to
-//! be composed separately before presentation.
+//! cartridge frame, which is presented with the cartridge's own master
+//! palette. The overlay's colors are system palette colors, so each is drawn
+//! with the index of the nearest color in the cartridge palette; a cartridge
+//! palette without anything close to them shows the indicator approximately.
 
 use glaux_machine::framebuffer::{Framebuffer, WIDTH};
 use glaux_machine::palette::Palette;
 use glaux_video::draw::{fill_rect, remap};
-use glaux_video::shade::shade_table;
+use glaux_video::shade::{nearest_index, shade_table};
 
 use super::{BACKGROUND, DIM, PALE, TEXT};
 
@@ -52,22 +51,29 @@ impl PauseOverlay {
     }
 
     /// Darkens the cartridge frame already in `framebuffer`, read through
-    /// `palette`, then draws the pause indicator in the upper-right corner.
+    /// `palette`, then draws the pause indicator in the upper-right corner
+    /// in the colors of `system` resolved to `palette`.
     ///
-    /// `palette` must be the palette `framebuffer` is presented with; see the
-    /// module documentation for why this is a property of the current
-    /// representation.
-    pub fn render(&self, framebuffer: &mut Framebuffer, palette: &Palette) {
+    /// `palette` must be the palette `framebuffer` is presented with.
+    pub fn render(&self, framebuffer: &mut Framebuffer, palette: &Palette, system: &Palette) {
         remap(framebuffer, &shade_table(palette, KEEP_PERCENT));
+        let color = |index| nearest_index(palette, system.get(index));
 
         let (x, y) = PLATE_ORIGIN;
-        fill_rect(framebuffer, x, y, PLATE, PLATE, DIM);
-        fill_rect(framebuffer, x + 1, y + 1, PLATE - 2, PLATE - 2, BACKGROUND);
-        let bars = if (self.ticks / PULSE_TICKS).is_multiple_of(2) {
+        fill_rect(framebuffer, x, y, PLATE, PLATE, color(DIM));
+        fill_rect(
+            framebuffer,
+            x + 1,
+            y + 1,
+            PLATE - 2,
+            PLATE - 2,
+            color(BACKGROUND),
+        );
+        let bars = color(if (self.ticks / PULSE_TICKS).is_multiple_of(2) {
             TEXT
         } else {
             PALE
-        };
+        });
         for bar_x in BAR_XS {
             fill_rect(
                 framebuffer,
@@ -90,7 +96,7 @@ mod tests {
     fn rendered(overlay: &PauseOverlay, color: u8) -> Framebuffer {
         let mut fb = Framebuffer::new();
         clear(&mut fb, color);
-        overlay.render(&mut fb, &Palette::provisional());
+        overlay.render(&mut fb, &Palette::provisional(), &Palette::provisional());
         fb
     }
 

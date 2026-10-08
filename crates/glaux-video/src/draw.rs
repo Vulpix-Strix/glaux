@@ -5,8 +5,9 @@
 
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
+use glaux_machine::obj_palette::ObjBank;
 use glaux_machine::palette::PALETTE_LEN;
-use glaux_machine::sprite::{OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjTileBank, obj_grid_tile};
+use glaux_machine::sprite::{OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjVram, obj_grid_tile};
 
 /// Fills the whole framebuffer with a palette index.
 pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
@@ -18,102 +19,123 @@ pub fn pixel(framebuffer: &mut Framebuffer, x: i32, y: i32, color: u8) {
     framebuffer.set_pixel(x, y, color);
 }
 
-/// Draws one native 8x8 object tile at `(x, y)`.
-///
-/// Tile-local index 0 is transparent. Indices 1 through 15 are unresolved
-/// object-local values; without an active OBJ palette bank, this renderer
-/// writes them directly as framebuffer palette indices.
-pub fn draw_obj_tile(
-    framebuffer: &mut Framebuffer,
-    tiles: &ObjTileBank,
-    tile: usize,
-    x: i32,
-    y: i32,
-) {
-    blit_obj_tile(
-        framebuffer,
-        tiles,
-        tile,
-        i64::from(x),
-        i64::from(y),
-        false,
-        false,
-    );
+/// Which object palette bank a sprite resolves its tile-local indices
+/// through.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ObjPaletteChoice {
+    /// Each tile uses the default bank stored in its attributes.
+    #[default]
+    TileDefault,
+    /// Every tile of the sprite uses this bank.
+    Bank(ObjBank),
 }
 
-/// Draws a `width`x`height` block of object tiles from the object-tile grid
-/// with `first` at its top-left and `(x, y)` as its top-left corner.
-///
-/// Tiles are placed at 8-pixel offsets and drawn like [`draw_obj_tile`].
-/// Block positions that fall outside the grid (see [`obj_grid_tile`]) are
-/// skipped.
-///
-/// `flip_x` mirrors the whole composed block horizontally: the order of its
-/// tile columns and the pixels within each tile are both reversed. `flip_y`
-/// does the same vertically. The tile bank itself is never modified.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "takes spr()'s arguments one to one"
-)]
-pub fn draw_obj_sprite(
-    framebuffer: &mut Framebuffer,
-    tiles: &ObjTileBank,
-    first: usize,
-    x: i32,
-    y: i32,
-    width: usize,
-    height: usize,
-    flip_x: bool,
-    flip_y: bool,
-) {
-    for row in 0..height {
-        for column in 0..width {
-            let Some(tile) = obj_grid_tile(first, column, row) else {
-                continue;
-            };
-            let dest_column = if flip_x { width - 1 - column } else { column };
-            let dest_row = if flip_y { height - 1 - row } else { row };
-            let tile_x = i64::from(x) + (dest_column * OBJ_TILE_WIDTH) as i64;
-            let tile_y = i64::from(y) + (dest_row * OBJ_TILE_HEIGHT) as i64;
-            blit_obj_tile(framebuffer, tiles, tile, tile_x, tile_y, flip_x, flip_y);
+/// A `width`x`height` block of object tiles from the object-tile grid with
+/// `first` at its top-left and `(x, y)` as its top-left corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ObjSprite {
+    pub first: usize,
+    pub x: i32,
+    pub y: i32,
+    pub width: usize,
+    pub height: usize,
+    /// Mirrors the whole composed block horizontally: the order of its tile
+    /// columns and the pixels within each tile are both reversed.
+    pub flip_x: bool,
+    /// Mirrors the whole composed block vertically.
+    pub flip_y: bool,
+    pub palette: ObjPaletteChoice,
+}
+
+impl ObjSprite {
+    /// A single unflipped tile drawn with its default palette bank.
+    pub fn tile(tile: usize, x: i32, y: i32) -> Self {
+        Self {
+            first: tile,
+            x,
+            y,
+            width: 1,
+            height: 1,
+            flip_x: false,
+            flip_y: false,
+            palette: ObjPaletteChoice::TileDefault,
         }
     }
 }
 
-/// Draws one object tile, mirrored on the flagged axes, whose top-left
-/// corner may lie outside the `i32` range, as the far tiles of a block near
-/// `i32::MAX` do.
+/// Draws one native 8x8 object tile at `(x, y)` with its default palette
+/// bank.
+pub fn draw_obj_tile(framebuffer: &mut Framebuffer, vram: &ObjVram, tile: usize, x: i32, y: i32) {
+    draw_obj_sprite(framebuffer, vram, &ObjSprite::tile(tile, x, y));
+}
+
+/// Draws `sprite` from `vram`.
+///
+/// Tiles are placed at 8-pixel offsets. Block positions that fall outside
+/// the grid (see [`obj_grid_tile`]) are skipped. Tile-local index 0 is
+/// transparent; every other local index is written as the master index its
+/// tile's bank maps it to. The bank is chosen per tile by
+/// [`ObjPaletteChoice`]. The tile bank itself is never modified.
+pub fn draw_obj_sprite(framebuffer: &mut Framebuffer, vram: &ObjVram, sprite: &ObjSprite) {
+    for row in 0..sprite.height {
+        for column in 0..sprite.width {
+            let Some(tile) = obj_grid_tile(sprite.first, column, row) else {
+                continue;
+            };
+            let dest_column = if sprite.flip_x {
+                sprite.width - 1 - column
+            } else {
+                column
+            };
+            let dest_row = if sprite.flip_y {
+                sprite.height - 1 - row
+            } else {
+                row
+            };
+            let bank = match sprite.palette {
+                ObjPaletteChoice::TileDefault => vram.attributes().bank(tile),
+                ObjPaletteChoice::Bank(bank) => bank,
+            };
+            let tile_x = i64::from(sprite.x) + (dest_column * OBJ_TILE_WIDTH) as i64;
+            let tile_y = i64::from(sprite.y) + (dest_row * OBJ_TILE_HEIGHT) as i64;
+            blit_obj_tile(framebuffer, vram, tile, bank, (tile_x, tile_y), sprite);
+        }
+    }
+}
+
+/// Draws one object tile through `bank`, mirrored on the axes `sprite`
+/// flags, with its top-left corner at `origin`. The corner may lie outside
+/// the `i32` range, as the far tiles of a block near `i32::MAX` do.
 fn blit_obj_tile(
     framebuffer: &mut Framebuffer,
-    tiles: &ObjTileBank,
+    vram: &ObjVram,
     tile: usize,
-    x: i64,
-    y: i64,
-    flip_x: bool,
-    flip_y: bool,
+    bank: ObjBank,
+    (x, y): (i64, i64),
+    sprite: &ObjSprite,
 ) {
     for local_y in 0..OBJ_TILE_HEIGHT {
         for local_x in 0..OBJ_TILE_WIDTH {
-            let source_x = if flip_x {
+            let source_x = if sprite.flip_x {
                 OBJ_TILE_WIDTH - 1 - local_x
             } else {
                 local_x
             };
-            let source_y = if flip_y {
+            let source_y = if sprite.flip_y {
                 OBJ_TILE_HEIGHT - 1 - local_y
             } else {
                 local_y
             };
-            let Some(index) = tiles.pixel(tile, source_x, source_y) else {
+            let Some(local) = vram.tiles().pixel(tile, source_x, source_y) else {
                 return;
             };
-            if index == 0 {
+            let Some(color) = vram.palettes().resolve(bank, local) else {
                 continue;
-            }
+            };
             let px = x + local_x as i64;
             let py = y + local_y as i64;
             if let (Ok(px), Ok(py)) = (i32::try_from(px), i32::try_from(py)) {
-                framebuffer.set_pixel(px, py, index);
+                framebuffer.set_pixel(px, py, color);
             }
         }
     }
@@ -245,7 +267,10 @@ fn glyph_visible(pen_x: i64, pen_y: i64, glyph_width: u8, glyph_height: u8, scal
 mod tests {
     use super::*;
     use glaux_machine::font::FontMetrics;
-    use glaux_machine::sprite::{OBJ_TILE_BYTES, OBJ_TILE_CAPACITY};
+    use glaux_machine::obj_palette::{OBJ_PALETTES_BYTES, ObjPalettes};
+    use glaux_machine::sprite::{
+        OBJ_TILE_BYTES, OBJ_TILE_CAPACITY, ObjTileAttributes, ObjTileBank,
+    };
     use pretty_assertions::assert_eq;
 
     const INK: u8 = 7;
@@ -330,7 +355,7 @@ mod tests {
         let tiles = ObjTileBank::from_bytes(&bytes).unwrap();
         let mut fb = filled(9);
 
-        draw_obj_tile(&mut fb, &tiles, 0, 10, 20);
+        draw_tile(&mut fb, &tiles, 0, 10, 20);
 
         let expected_row = [9, 1, 2, 3, 4, 9, 5, 6];
         for y in 20..28 {
@@ -355,7 +380,7 @@ mod tests {
         ];
         for ((x, y), expected) in cases {
             let mut fb = Framebuffer::new();
-            draw_obj_tile(&mut fb, &tiles, 0, x, y);
+            draw_tile(&mut fb, &tiles, 0, x, y);
             assert_eq!(
                 fb.as_bytes().iter().filter(|&&index| index == 7).count(),
                 usize::from(expected.is_some()),
@@ -376,9 +401,49 @@ mod tests {
             (0, i32::MAX, i32::MAX),
             (OBJ_TILE_CAPACITY, 0, 0),
         ] {
-            draw_obj_tile(&mut fb, &tiles, tile, x, y);
+            draw_tile(&mut fb, &tiles, tile, x, y);
         }
         assert_eq!(fb, Framebuffer::new());
+    }
+
+    /// Draws one tile from `tiles` with default attributes and linear
+    /// palettes, under which local indices resolve to themselves.
+    fn draw_tile(fb: &mut Framebuffer, tiles: &ObjTileBank, tile: usize, x: i32, y: i32) {
+        draw_obj_tile(fb, &linear_vram(tiles), tile, x, y);
+    }
+
+    /// Draws a block like [`draw_tile`] does a tile.
+    #[expect(clippy::too_many_arguments, reason = "mirrors spr()'s arguments")]
+    fn draw_block(
+        fb: &mut Framebuffer,
+        tiles: &ObjTileBank,
+        first: usize,
+        x: i32,
+        y: i32,
+        width: usize,
+        height: usize,
+        flip_x: bool,
+        flip_y: bool,
+    ) {
+        let sprite = ObjSprite {
+            first,
+            x,
+            y,
+            width,
+            height,
+            flip_x,
+            flip_y,
+            palette: ObjPaletteChoice::TileDefault,
+        };
+        draw_obj_sprite(fb, &linear_vram(tiles), &sprite);
+    }
+
+    fn linear_vram(tiles: &ObjTileBank) -> ObjVram {
+        ObjVram::new(
+            tiles.clone(),
+            ObjTileAttributes::new(),
+            ObjPalettes::linear(),
+        )
     }
 
     /// A bank whose tile `n` is solid index `color` for each `(n, color)`.
@@ -404,7 +469,7 @@ mod tests {
         let tiles = solid_tiles(&[(24, 1), (25, 2), (40, 3), (41, 4), (26, 9), (27, 9)]);
         let mut fb = Framebuffer::new();
 
-        draw_obj_sprite(&mut fb, &tiles, 24, 10, 20, 2, 2, false, false);
+        draw_block(&mut fb, &tiles, 24, 10, 20, 2, 2, false, false);
 
         assert_eq!(cell(&fb, 10, 20), Some(1));
         assert_eq!(cell(&fb, 18, 20), Some(2));
@@ -421,7 +486,7 @@ mod tests {
         let tiles = solid_tiles(&[(5, 1), (6, 2), (7, 3), (21, 4), (22, 5), (23, 6)]);
         let mut fb = Framebuffer::new();
 
-        draw_obj_sprite(&mut fb, &tiles, 5, 0, 0, 3, 2, false, false);
+        draw_block(&mut fb, &tiles, 5, 0, 0, 3, 2, false, false);
 
         for (index, expected) in (1..=6).enumerate() {
             let (column, row) = ((index % 3) as i32, (index / 3) as i32);
@@ -442,8 +507,8 @@ mod tests {
         let tiles = ObjTileBank::from_bytes(&bytes).unwrap();
         let (mut single, mut block) = (filled(9), filled(9));
 
-        draw_obj_tile(&mut single, &tiles, 0, -3, 5);
-        draw_obj_sprite(&mut block, &tiles, 0, -3, 5, 1, 1, false, false);
+        draw_tile(&mut single, &tiles, 0, -3, 5);
+        draw_block(&mut block, &tiles, 0, -3, 5, 1, 1, false, false);
 
         assert_eq!(single, block);
     }
@@ -454,7 +519,7 @@ mod tests {
         let tiles = solid_tiles(&[(0, 5), (16, 6), (17, 7)]);
         let mut fb = filled(9);
 
-        draw_obj_sprite(&mut fb, &tiles, 0, 0, 0, 2, 2, false, false);
+        draw_block(&mut fb, &tiles, 0, 0, 0, 2, 2, false, false);
 
         assert_eq!(cell(&fb, 0, 0), Some(5));
         assert_eq!(cell(&fb, 8, 0), Some(9));
@@ -478,7 +543,7 @@ mod tests {
         ];
         for ((x, y), count, inside) in cases {
             let mut fb = Framebuffer::new();
-            draw_obj_sprite(&mut fb, &tiles, 0, x, y, 2, 2, false, false);
+            draw_block(&mut fb, &tiles, 0, x, y, 2, 2, false, false);
             assert_eq!(
                 fb.as_bytes().iter().filter(|&&index| index == 7).count(),
                 count,
@@ -494,13 +559,13 @@ mod tests {
     fn sprite_blocks_handle_extreme_coordinates_and_off_grid_tiles() {
         let tiles = solid_tiles(&[(15, 7), (1023, 7)]);
         let mut fb = Framebuffer::new();
-        draw_obj_sprite(&mut fb, &tiles, 0, i32::MAX, i32::MAX, 16, 64, false, false);
-        draw_obj_sprite(&mut fb, &tiles, 0, i32::MIN, i32::MIN, 16, 64, false, false);
+        draw_block(&mut fb, &tiles, 0, i32::MAX, i32::MAX, 16, 64, false, false);
+        draw_block(&mut fb, &tiles, 0, i32::MIN, i32::MIN, 16, 64, false, false);
         assert_eq!(fb, Framebuffer::new());
 
         // Positions past the grid's right or bottom edge draw nothing.
-        draw_obj_sprite(&mut fb, &tiles, 15, 0, 0, 2, 1, false, false);
-        draw_obj_sprite(&mut fb, &tiles, 1023, 100, 100, 1, 2, false, false);
+        draw_block(&mut fb, &tiles, 15, 0, 0, 2, 1, false, false);
+        draw_block(&mut fb, &tiles, 1023, 100, 100, 1, 2, false, false);
         assert_eq!(
             fb.as_bytes().iter().filter(|&&index| index == 7).count(),
             128
@@ -546,7 +611,7 @@ mod tests {
                 .zip([(11, 20), (16, 20), (11, 27), (16, 27)])
         {
             let mut fb = Framebuffer::new();
-            draw_obj_sprite(&mut fb, &tiles, 0, 10, 20, 1, 1, flip_x, flip_y);
+            draw_block(&mut fb, &tiles, 0, 10, 20, 1, 1, flip_x, flip_y);
             assert_eq!(ink(&fb), [(expected, 5)], "flip ({flip_x}, {flip_y})");
         }
     }
@@ -562,7 +627,7 @@ mod tests {
         ];
         for ((flip_x, flip_y), rows) in cases {
             let mut fb = Framebuffer::new();
-            draw_obj_sprite(&mut fb, &tiles, 5, 0, 0, 3, 2, flip_x, flip_y);
+            draw_block(&mut fb, &tiles, 5, 0, 0, 3, 2, flip_x, flip_y);
             for (row, colors) in rows.into_iter().enumerate() {
                 for (column, color) in colors.into_iter().enumerate() {
                     assert_eq!(
@@ -582,11 +647,11 @@ mod tests {
         let (x, y) = (40, 50);
         for (first, columns, rows) in [(18, 1, 1), (18, 3, 2)] {
             let mut plain = filled(9);
-            draw_obj_sprite(&mut plain, &tiles, first, x, y, columns, rows, false, false);
+            draw_block(&mut plain, &tiles, first, x, y, columns, rows, false, false);
             let (w, h) = (columns as i32 * 8, rows as i32 * 8);
             for (flip_x, flip_y) in FLIPS {
                 let mut flipped = filled(9);
-                draw_obj_sprite(
+                draw_block(
                     &mut flipped,
                     &tiles,
                     first,
@@ -628,15 +693,15 @@ mod tests {
         // Only the tile's left column is set.
         let tiles = bank_from(|tile, x, _| u8::from(tile == 0 && x == 0) * 7);
         let mut fb = Framebuffer::new();
-        draw_obj_sprite(&mut fb, &tiles, 0, -4, 0, 1, 1, false, false);
+        draw_block(&mut fb, &tiles, 0, -4, 0, 1, 1, false, false);
         assert_eq!(ink(&fb), []);
 
-        draw_obj_sprite(&mut fb, &tiles, 0, -4, 0, 1, 1, true, false);
+        draw_block(&mut fb, &tiles, 0, -4, 0, 1, 1, true, false);
         assert_eq!(ink(&fb), (0..8).map(|y| ((3, y), 7)).collect::<Vec<_>>());
 
         // In a 2-wide block, a flip moves the left tile to the right half.
         let mut fb = Framebuffer::new();
-        draw_obj_sprite(&mut fb, &tiles, 0, -8, 0, 2, 1, true, true);
+        draw_block(&mut fb, &tiles, 0, -8, 0, 2, 1, true, true);
         assert_eq!(ink(&fb), (0..8).map(|y| ((7, y), 7)).collect::<Vec<_>>());
     }
 
@@ -645,7 +710,7 @@ mod tests {
         let tiles = solid_tiles(&[(0, 7)]);
         let mut fb = Framebuffer::new();
         for (flip_x, flip_y) in FLIPS {
-            draw_obj_sprite(
+            draw_block(
                 &mut fb,
                 &tiles,
                 0,
@@ -656,7 +721,7 @@ mod tests {
                 flip_x,
                 flip_y,
             );
-            draw_obj_sprite(
+            draw_block(
                 &mut fb,
                 &tiles,
                 0,
@@ -669,6 +734,104 @@ mod tests {
             );
         }
         assert_eq!(fb, Framebuffer::new());
+    }
+
+    /// Palettes where bank `n` maps every local index to master `100 + n`,
+    /// so a pixel's value names the bank that drew it.
+    fn bank_marking_palettes() -> ObjPalettes {
+        let mut bytes = [0; OBJ_PALETTES_BYTES];
+        for (offset, byte) in bytes.iter_mut().enumerate() {
+            if offset % 16 != 0 {
+                *byte = 100 + (offset / 16) as u8;
+            }
+        }
+        ObjPalettes::from_bytes(&bytes).unwrap()
+    }
+
+    /// Solid tiles 0, 1, 16 and 17 (a 2x2 block at tile 0), local index 3,
+    /// with default banks 2, 5, 0 and 7.
+    fn mixed_bank_vram() -> ObjVram {
+        let tiles = solid_tiles(&[(0, 3), (1, 3), (16, 3), (17, 3)]);
+        let mut attributes = [0; 18];
+        attributes[0] = 2;
+        attributes[1] = 5;
+        attributes[17] = 7;
+        ObjVram::new(
+            tiles,
+            ObjTileAttributes::from_bytes(&attributes).unwrap(),
+            bank_marking_palettes(),
+        )
+    }
+
+    fn block_2x2(palette: ObjPaletteChoice, flip_x: bool) -> ObjSprite {
+        ObjSprite {
+            first: 0,
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 2,
+            flip_x,
+            flip_y: false,
+            palette,
+        }
+    }
+
+    #[test]
+    fn tile_default_palettes_resolve_per_tile() {
+        let mut fb = Framebuffer::new();
+        draw_obj_sprite(
+            &mut fb,
+            &mixed_bank_vram(),
+            &block_2x2(ObjPaletteChoice::TileDefault, false),
+        );
+        assert_eq!(cell(&fb, 0, 0), Some(102));
+        assert_eq!(cell(&fb, 8, 0), Some(105));
+        assert_eq!(cell(&fb, 0, 8), Some(100));
+        assert_eq!(cell(&fb, 8, 8), Some(107));
+    }
+
+    #[test]
+    fn an_explicit_bank_overrides_every_tile_of_the_block() {
+        let bank = ObjBank::new(4).unwrap();
+        let mut fb = Framebuffer::new();
+        draw_obj_sprite(
+            &mut fb,
+            &mixed_bank_vram(),
+            &block_2x2(ObjPaletteChoice::Bank(bank), false),
+        );
+        for (x, y) in [(0, 0), (8, 0), (0, 8), (8, 8)] {
+            assert_eq!(cell(&fb, x, y), Some(104), "cell ({x}, {y})");
+        }
+    }
+
+    #[test]
+    fn a_tile_keeps_its_default_bank_when_flipped_into_another_position() {
+        let mut fb = Framebuffer::new();
+        draw_obj_sprite(
+            &mut fb,
+            &mixed_bank_vram(),
+            &block_2x2(ObjPaletteChoice::TileDefault, true),
+        );
+        assert_eq!(cell(&fb, 0, 0), Some(105));
+        assert_eq!(cell(&fb, 8, 0), Some(102));
+        assert_eq!(cell(&fb, 0, 8), Some(107));
+        assert_eq!(cell(&fb, 8, 8), Some(100));
+    }
+
+    #[test]
+    fn local_zero_stays_transparent_whatever_the_bank() {
+        let tiles = bank_from(|_, x, _| if x < 4 { 0 } else { 9 });
+        let vram = ObjVram::new(tiles, ObjTileAttributes::new(), bank_marking_palettes());
+        for bank in 0..8 {
+            let mut fb = filled(1);
+            let sprite = ObjSprite {
+                palette: ObjPaletteChoice::Bank(ObjBank::new(bank).unwrap()),
+                ..ObjSprite::tile(0, 0, 0)
+            };
+            draw_obj_sprite(&mut fb, &vram, &sprite);
+            assert_eq!(fb.pixel(3, 0), Some(1), "bank {bank}");
+            assert_eq!(fb.pixel(4, 0), Some(100 + bank), "bank {bank}");
+        }
     }
 
     #[test]

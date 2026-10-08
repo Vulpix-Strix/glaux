@@ -13,12 +13,14 @@ mod sfx;
 mod shell;
 
 pub use boot::Boot;
+pub use running::CartridgeVideoDefaults;
 pub use shell::Shell;
 
 use glaux_input::{InputEvent, InputMode};
 use glaux_luau::RuntimeError;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
+use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
 use glaux_machine::system_rom::{SystemRom, SystemSounds};
 use glaux_video::draw::{clear, draw_text, fill_rect};
@@ -122,12 +124,20 @@ pub struct System {
     /// The source that last wrote the PSG.
     audio_source: AudioSource,
     sound: SystemSound,
+    /// Video state for the assets a started cartridge does not supply.
+    video_defaults: CartridgeVideoDefaults,
 }
 
 impl System {
     /// Starts at frame 0 of the boot sequence, which plays the System ROM's
-    /// `sounds`. The shell that follows navigates `cartridges`.
-    pub fn new(info: SystemInfo, sounds: SystemSounds, cartridges: CartridgeStorage) -> Self {
+    /// `sounds`. The shell that follows navigates `cartridges`, and
+    /// cartridges it starts fall back to `video_defaults`.
+    pub fn new(
+        info: SystemInfo,
+        sounds: SystemSounds,
+        video_defaults: CartridgeVideoDefaults,
+        cartridges: CartridgeStorage,
+    ) -> Self {
         Self {
             state: SystemState::Boot {
                 boot: Boot::new(),
@@ -136,6 +146,7 @@ impl System {
             info,
             audio_source: AudioSource::Silent,
             sound: SystemSound::new(sounds),
+            video_defaults,
         }
     }
 
@@ -167,6 +178,7 @@ impl System {
             info,
             audio_source,
             mut sound,
+            video_defaults,
         } = self;
         let state = match state {
             SystemState::Boot {
@@ -187,7 +199,9 @@ impl System {
                     SystemState::Boot { boot, cartridges }
                 }
             }
-            SystemState::Shell { shell, loaded } => shell_tick(shell, loaded, input),
+            SystemState::Shell { shell, loaded } => {
+                shell_tick(shell, loaded, input, &video_defaults)
+            }
             SystemState::Running { shell, running } => running_tick(shell, running, input),
             SystemState::Paused {
                 shell,
@@ -206,6 +220,7 @@ impl System {
             info,
             audio_source,
             sound,
+            video_defaults,
         }
     }
 
@@ -263,6 +278,26 @@ impl System {
 
     /// Redraws the whole framebuffer for the current state using the ROM's
     /// font.
+    /// The master palette the frame drawn by [`render`](Self::render)
+    /// resolves to: the cartridge's own while its frame is on screen, the
+    /// System ROM palette otherwise.
+    pub fn frame_palette<'a>(&'a self, rom: &'a SystemRom) -> &'a Palette {
+        match &self.state {
+            SystemState::Running { running, .. }
+            | SystemState::Paused {
+                running,
+                view: PausedView::Game(_),
+                ..
+            } => running.palette(),
+            SystemState::Boot { .. }
+            | SystemState::Shell { .. }
+            | SystemState::Paused {
+                view: PausedView::Shell,
+                ..
+            } => rom.palette(),
+        }
+    }
+
     pub fn render(&self, framebuffer: &mut Framebuffer, rom: &SystemRom) {
         let font = rom.font();
         let metrics = font.metrics();
@@ -293,7 +328,7 @@ impl System {
                 ..
             } => {
                 running.render(framebuffer, font);
-                overlay.render(framebuffer, rom.palette());
+                overlay.render(framebuffer, running.palette(), rom.palette());
                 return;
             }
         };
@@ -349,6 +384,7 @@ fn shell_tick(
     mut shell: Box<Shell>,
     mut loaded: Option<LoadedCartridge>,
     input: &[InputEvent],
+    video_defaults: &CartridgeVideoDefaults,
 ) -> SystemState {
     // Ticking before the input lets this tick's input restart the blink.
     shell.tick();
@@ -371,9 +407,9 @@ fn shell_tick(
                 let Some(cartridge) = loaded else {
                     unreachable!("RUN was requested without a loaded cartridge");
                 };
-                return match start(shell, cartridge) {
+                return match start(shell, cartridge, video_defaults) {
                     SystemState::Shell { shell, loaded } => {
-                        shell_tick(shell, loaded, &input[index + 1..])
+                        shell_tick(shell, loaded, &input[index + 1..], video_defaults)
                     }
                     state => state,
                 };
@@ -388,9 +424,13 @@ fn shell_tick(
 
 /// Starts `cartridge`, reporting its start or failure and what it logged.
 /// A cartridge that fails to start stays loaded in the shell.
-fn start(mut shell: Box<Shell>, cartridge: LoadedCartridge) -> SystemState {
+fn start(
+    mut shell: Box<Shell>,
+    cartridge: LoadedCartridge,
+    video_defaults: &CartridgeVideoDefaults,
+) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
-    match RunningCartridge::start(cartridge) {
+    match RunningCartridge::start(cartridge, video_defaults) {
         Ok(mut running) => {
             tracing::info!(cartridge = %identity, "cartridge started");
             shell.report(format!("RUNNING {identity}"));
@@ -401,9 +441,7 @@ fn start(mut shell: Box<Shell>, cartridge: LoadedCartridge) -> SystemState {
             let FailedStart { cartridge, error } = *failed;
             match error {
                 StartError::Cartridge(err) => shell.report_error(err.to_string()),
-                StartError::ObjTiles(err) => {
-                    shell.report_error(format!("INVALID SPRITES.BIN: {err}"));
-                }
+                StartError::Video(err) => shell.report_error(err.to_string()),
                 StartError::Script(failure) => {
                     tracing::info!(
                         cartridge = %identity,
@@ -622,6 +660,10 @@ mod tests {
         )
     }
 
+    fn video_defaults() -> CartridgeVideoDefaults {
+        CartridgeVideoDefaults::from_rom(&fake_rom())
+    }
+
     fn info() -> SystemInfo {
         SystemInfo {
             rom_version: Version::new(0, 1, 0),
@@ -637,7 +679,7 @@ mod tests {
     }
 
     fn new_system() -> System {
-        System::new(info(), sounds(), cartridges())
+        System::new(info(), sounds(), video_defaults(), cartridges())
     }
 
     fn render(system: &System) -> Framebuffer {
@@ -1017,7 +1059,7 @@ mod tests {
         let dir = fixture.root().join("pong");
         write_cartridge(&dir, "Pong");
         std::fs::write(dir.join("code/main.luau"), script).unwrap();
-        let mut system = System::new(info(), sounds(), fixture.storage());
+        let mut system = System::new(info(), sounds(), video_defaults(), fixture.storage());
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
         }
@@ -1307,7 +1349,7 @@ mod tests {
         std::fs::write(dir.join("save.dat"), b"kept").unwrap();
         let manifest = std::fs::read(dir.join("cartridge.ron")).unwrap();
 
-        let mut system = System::new(info(), sounds(), fixture.storage());
+        let mut system = System::new(info(), sounds(), video_defaults(), fixture.storage());
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
         }
@@ -1361,6 +1403,78 @@ mod tests {
             );
             assert_eq!(loaded_name(&system), Some("Pong"));
         }
+    }
+
+    #[test]
+    fn malformed_palette_assets_prevent_startup() {
+        let cases = [
+            (
+                "obp.bin",
+                vec![0; 5],
+                "! INVALID OBP.BIN: object palette data must be exactly 128 bytes, got 5",
+            ),
+            (
+                "palette.bin",
+                vec![0; 3],
+                "! INVALID PALETTE.BIN: palette data must be exactly 768 bytes, got 3",
+            ),
+            (
+                "objattr.bin",
+                vec![0, 0x80],
+                "! INVALID OBJATTR.BIN: object tile 1 attribute 0x80 sets reserved bits; only bits 0-2 are defined",
+            ),
+        ];
+        for (name, bytes, expected) in cases {
+            let fixture = Fixture::new(&format!("sys-run-bad-{name}"));
+            let system = shell_with_cartridge(&fixture, "");
+            std::fs::write(fixture.root().join("pong").join(name), bytes).unwrap();
+            let system = enter(enter(system, "load pong"), "run");
+            assert_eq!(after(&system, "> run"), [expected], "{name}");
+            assert_eq!(loaded_name(&system), Some("Pong"), "{name}");
+        }
+    }
+
+    /// The fake ROM's palette in reverse order, so every system color sits
+    /// at a different index of the cartridge palette.
+    fn reversed_rom_palette() -> Palette {
+        let mut entries = *fake_rom().palette().entries();
+        entries.reverse();
+        Palette::new(entries)
+    }
+
+    fn started_with_palette(fixture: &Fixture, script: &str, palette: &Palette) -> System {
+        let system = shell_with_cartridge(fixture, script);
+        std::fs::write(fixture.root().join("pong/palette.bin"), palette.to_rgb888()).unwrap();
+        enter(enter(system, "load pong"), "run")
+    }
+
+    #[test]
+    fn the_cartridge_palette_is_presented_only_with_its_frame() {
+        let fixture = Fixture::new("sys-frame-palette");
+        let rom = fake_rom();
+        let cartridge = reversed_rom_palette();
+        assert_eq!(new_system().frame_palette(&rom), rom.palette());
+
+        let system = ticks(started_with_palette(&fixture, COUNTER, &cartridge), 1);
+        assert_eq!(system.frame_palette(&rom), &cartridge);
+        let system = press_break(system);
+        assert_eq!(system.frame_palette(&rom), &cartridge);
+        let system = open_shell(system);
+        assert_eq!(system.frame_palette(&rom), rom.palette());
+    }
+
+    #[test]
+    fn the_pause_indicator_keeps_its_colors_under_a_cartridge_palette() {
+        let fixture = Fixture::new("sys-pause-palette");
+        let script = "function draw() cls(1) end";
+        let system = ticks(
+            started_with_palette(&fixture, script, &reversed_rom_palette()),
+            1,
+        );
+        let fb = render(&press_break(system));
+        let (x, y) = pause::PLATE_ORIGIN;
+        assert_eq!(fb.pixel(x + 1, y + 1), Some(255 - BACKGROUND));
+        assert_eq!(fb.pixel(x + 5, y + 5), Some(255 - TEXT));
     }
 
     #[test]
@@ -2117,7 +2231,12 @@ mod tests {
 
     #[test]
     fn a_rom_without_sounds_boots_silent() {
-        let system = System::new(info(), SystemSounds::default(), cartridges());
+        let system = System::new(
+            info(),
+            SystemSounds::default(),
+            video_defaults(),
+            cartridges(),
+        );
         let (_, ticks) = boot_audio(system, &mut Psg::new());
         assert!(ticks.iter().all(|samples| quiet(samples)));
     }
@@ -2148,6 +2267,7 @@ mod tests {
             info: info(),
             audio_source: AudioSource::Silent,
             sound,
+            video_defaults: video_defaults(),
         };
         system = system.update(&[]);
         system.audio(&mut psg);
