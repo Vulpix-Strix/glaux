@@ -17,6 +17,8 @@ out vec4 finalColor;
 
 // Barrel distortion. X bends with vertical position and Y with horizontal
 // position; kept low so text in the one-cell margin stays inside the tube.
+// Pointer hit-testing mirrors `warp` and this value (`CRT_CURVATURE` in
+// pointer.rs); change them together.
 const vec2 CURVATURE = vec2(0.025, 0.035);
 // Brightness lost between logical rows, at full depth for dark pixels.
 const float SCANLINE_DEPTH = 0.30;

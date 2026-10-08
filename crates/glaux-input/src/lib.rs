@@ -3,9 +3,10 @@
 //! Hosts translate their native keyboard handling into these events; the
 //! system never sees host key codes or keyboard state.
 //!
-//! Three kinds of input stay separate: typed text and editing events for the
-//! shell, virtual [`Button`]s for portable game controls, and physical
-//! [`Key`]s for cartridges that need a specific key.
+//! Four kinds of input stay separate: typed text and editing events for the
+//! shell, virtual [`Button`]s for portable game controls, physical [`Key`]s
+//! for cartridges that need a specific key, and pointer events for the
+//! system's workspace. Pointer input never reaches cartridges.
 
 /// A semantic input event: text editing, a game button or a physical key.
 ///
@@ -51,13 +52,86 @@ pub enum InputEvent {
     KeyDown(Key),
     /// A physical key went from pressed to released.
     KeyUp(Key),
+    /// Switch to the next view of the active context (Ctrl+Tab on desktop).
+    NextView,
+    /// Switch to the previous view of the active context (Ctrl+Shift+Tab on
+    /// desktop).
+    PreviousView,
+    /// The logical pixel under the pointer changed. `None` means the pointer
+    /// is outside the logical viewport and no button is captured.
+    ///
+    /// While a button is captured (see [`PointerDown`](Self::PointerDown)),
+    /// the position is clamped to the viewport edge instead of becoming
+    /// `None`. Hosts report at most one move per host frame, and only when
+    /// the logical pixel changes.
+    PointerMove(Option<Point>),
+    /// A pointer button was pressed inside the logical viewport.
+    ///
+    /// The press captures the pointer until the matching
+    /// [`PointerUp`](Self::PointerUp), which is always delivered, at the
+    /// clamped position if the button is released outside the viewport.
+    /// Presses that start outside the viewport, such as on the bars around
+    /// it, are not reported, and neither are their releases.
+    PointerDown {
+        button: PointerButton,
+        at: Point,
+    },
+    /// A captured pointer button was released.
+    PointerUp {
+        button: PointerButton,
+        at: Point,
+    },
+    /// The scroll wheel moved by whole notches; positive is away from the
+    /// user. Hosts report at most one wheel event per host frame.
+    Wheel {
+        delta: i8,
+    },
+}
+
+impl InputEvent {
+    /// Whether this is a pointer event, which only the workspace consumes.
+    pub fn is_pointer(&self) -> bool {
+        matches!(
+            self,
+            Self::PointerMove(_)
+                | Self::PointerDown { .. }
+                | Self::PointerUp { .. }
+                | Self::Wheel { .. }
+        )
+    }
+}
+
+/// A pixel of the logical framebuffer, always inside it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Point {
+    pub x: u16,
+    pub y: u16,
+}
+
+impl Point {
+    pub const fn new(x: u16, y: u16) -> Self {
+        Self { x, y }
+    }
+}
+
+/// A pointer button. Which physical button drives each is up to the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerButton {
+    Primary,
+    Secondary,
+    Middle,
+}
+
+impl PointerButton {
+    pub const ALL: [Self; 3] = [Self::Primary, Self::Secondary, Self::Middle];
 }
 
 /// Which kind of input the active system context consumes.
 ///
 /// Hosts emit only the events of the current mode, plus
-/// [`InputEvent::Break`] in both, so one physical key never acts as a game
-/// input and an editing key at the same time.
+/// [`InputEvent::Break`] in every mode, so one physical key never acts as a
+/// game input and an editing key at the same time, and pointer input exists
+/// only in [`Workspace`](Self::Workspace).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum InputMode {
     /// Text and editing events, for the shell.
@@ -65,6 +139,9 @@ pub enum InputMode {
     Text,
     /// Button and key transitions, for a running cartridge.
     Game,
+    /// Text and editing events, view switching and pointer events, for the
+    /// system's editor workspace.
+    Workspace,
 }
 
 /// A virtual Glaux G1 controller button. Which physical input drives each
@@ -472,6 +549,26 @@ mod tests {
         let tick = latch.advance(&[ButtonUp(A), KeyUp(Key::LeftShift)]);
         assert_eq!(tick.buttons, state(&[Left], &[]));
         assert_eq!(tick.keys, keys(&[Key::Z], &[]));
+    }
+
+    #[test]
+    fn pointer_and_view_events_never_reach_the_latch() {
+        let mut latch = InputLatch::new();
+        let at = Point::new(10, 20);
+        let tick = latch.advance(&[
+            InputEvent::PointerMove(Some(at)),
+            InputEvent::PointerDown {
+                button: PointerButton::Primary,
+                at,
+            },
+            InputEvent::Wheel { delta: 1 },
+            InputEvent::NextView,
+            InputEvent::PointerUp {
+                button: PointerButton::Primary,
+                at,
+            },
+        ]);
+        assert_eq!(tick, InputState::default());
     }
 
     #[test]

@@ -115,6 +115,7 @@ fn run(
         rom.sounds().clone(),
         CartridgeVideoDefaults::from_rom(&rom),
         cartridges,
+        rom.font().metrics(),
     );
 
     let saved = config_dir.and_then(window_state::load);
@@ -164,6 +165,9 @@ fn run(
             machine.framebuffer(),
             system.frame_palette(&rom),
         ))?;
+        // Follows every state change, Escape transitions included, before
+        // the input for the new state is polled.
+        host.set_pointer_visible(system.pointer_visible());
         pending.extend(host.poll_input(system.input_mode()));
 
         let now = Instant::now();

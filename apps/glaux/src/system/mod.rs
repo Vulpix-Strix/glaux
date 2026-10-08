@@ -1,5 +1,5 @@
-//! System software: the boot sequence, the shell that follows it, and the
-//! cartridge runtime the shell starts.
+//! System software: the boot sequence, the shell that follows it, the
+//! editor workspace beside it, and the cartridge runtime the shell starts.
 //!
 //! The system advances one step per logical tick and redraws the whole
 //! framebuffer from its current state on every frame.
@@ -11,13 +11,16 @@ mod pause;
 mod running;
 mod sfx;
 mod shell;
+mod workspace;
 
 pub use boot::Boot;
 pub use running::CartridgeVideoDefaults;
 pub use shell::Shell;
+use workspace::Workspace;
 
 use glaux_input::{InputEvent, InputMode};
 use glaux_luau::RuntimeError;
+use glaux_machine::font::FontMetrics;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::palette::Palette;
@@ -55,9 +58,17 @@ pub enum SystemState {
         cartridges: CartridgeStorage,
     },
     /// The shell is the active UI, with or without a loaded cartridge.
+    /// Break opens the workspace on a loaded cartridge.
     Shell {
         shell: Box<Shell>,
         loaded: Option<LoadedCartridge>,
+    },
+    /// The editor workspace is the active UI, working on the loaded
+    /// cartridge without starting it. The shell keeps its state, taking no
+    /// input, and Break returns to it.
+    Workspace {
+        shell: Box<Shell>,
+        cartridge: LoadedCartridge,
     },
     /// A cartridge runs and receives the logical ticks. The shell keeps its
     /// state, collecting logged output, but takes no input. The break key
@@ -87,6 +98,10 @@ pub enum PausedView {
 
 /// Shown when the shell opens over a paused cartridge.
 const PAUSED_SHELL_HINT: &str = "Type 'resume' to continue or 'stop' to end.";
+
+/// Shown when Break asks for the workspace with no cartridge loaded. Fits
+/// one shell row.
+const NO_CARTRIDGE_HINT: &str = "Nothing to edit. Try 'new <id>' or 'load <path>'.";
 
 /// Facts about the running system that the shell reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,17 +144,22 @@ pub struct System {
     sound: SystemSound,
     /// Video state for the assets a started cartridge does not supply.
     video_defaults: CartridgeVideoDefaults,
+    /// Kept across visits, so the workspace reopens on the tab it was left
+    /// on.
+    workspace: Workspace,
 }
 
 impl System {
     /// Starts at frame 0 of the boot sequence, which plays the System ROM's
     /// `sounds`. The shell that follows navigates `cartridges`, and
-    /// cartridges it starts fall back to `video_defaults`.
+    /// cartridges it starts fall back to `video_defaults`. The workspace is
+    /// laid out for the System ROM font's `font` metrics.
     pub fn new(
         info: SystemInfo,
         sounds: SystemSounds,
         video_defaults: CartridgeVideoDefaults,
         cartridges: CartridgeStorage,
+        font: FontMetrics,
     ) -> Self {
         Self {
             state: SystemState::Boot {
@@ -150,6 +170,7 @@ impl System {
             audio_source: AudioSource::Silent,
             sound: SystemSound::new(sounds),
             video_defaults,
+            workspace: Workspace::new(font),
         }
     }
 
@@ -159,22 +180,32 @@ impl System {
     }
 
     /// The kind of input the current state consumes: game buttons while a
-    /// cartridge runs, text everywhere else, including while one is paused.
+    /// cartridge runs, text and the pointer in the workspace, and text
+    /// everywhere else, including while a cartridge is paused.
     pub fn input_mode(&self) -> InputMode {
         match self.state {
             SystemState::Running { .. } => InputMode::Game,
+            SystemState::Workspace { .. } => InputMode::Workspace,
             SystemState::Boot { .. } | SystemState::Shell { .. } | SystemState::Paused { .. } => {
                 InputMode::Text
             }
         }
     }
 
+    /// Whether the host should show its mouse cursor: only while the
+    /// workspace, the one pointer-driven state, is active.
+    pub fn pointer_visible(&self) -> bool {
+        matches!(self.state, SystemState::Workspace { .. })
+    }
+
     /// Advances the system by one logical tick, applying the tick's `input`.
     ///
-    /// Input is ignored during the boot sequence. While a cartridge runs,
-    /// [`InputEvent::Break`] pauses it and button events reach its `btn` and
-    /// `btnp`; anything else is ignored. On the pause screen, Break resumes
-    /// the cartridge and Enter opens the shell with it still paused.
+    /// Input is ignored during the boot sequence. In the shell,
+    /// [`InputEvent::Break`] opens the workspace on the loaded cartridge,
+    /// and in the workspace it returns to the shell. While a cartridge runs,
+    /// Break pauses it and button events reach its `btn` and `btnp`;
+    /// anything else is ignored. On the pause screen, Break resumes the
+    /// cartridge and Enter opens the shell with it still paused.
     pub fn update(self, input: &[InputEvent]) -> Self {
         let Self {
             state,
@@ -182,6 +213,7 @@ impl System {
             audio_source,
             mut sound,
             video_defaults,
+            mut workspace,
         } = self;
         let state = match state {
             SystemState::Boot {
@@ -203,7 +235,10 @@ impl System {
                 }
             }
             SystemState::Shell { shell, loaded } => {
-                shell_tick(shell, loaded, input, &video_defaults)
+                shell_tick(shell, loaded, input, &video_defaults, &mut workspace)
+            }
+            SystemState::Workspace { shell, cartridge } => {
+                workspace_tick(shell, cartridge, &mut workspace, input)
             }
             SystemState::Running { shell, running } => running_tick(shell, running, input),
             SystemState::Paused {
@@ -224,6 +259,7 @@ impl System {
             audio_source,
             sound,
             video_defaults,
+            workspace,
         }
     }
 
@@ -231,7 +267,8 @@ impl System {
     ///
     /// The boot sequence plays System ROM sound effects, the shell's
     /// diagnostic voices play while the shell is the active view, and a
-    /// running cartridge plays its own audio. The pause screen is silent.
+    /// running cartridge plays its own audio. The pause screen and the
+    /// workspace are silent.
     /// Whenever the source changes, `psg` is reset first, so the System ROM,
     /// the shell and a cartridge never share oscillator or envelope state,
     /// every run starts from the same PSG state, and pausing or stopping a
@@ -256,7 +293,8 @@ impl System {
             SystemState::Paused {
                 view: PausedView::Game(_),
                 ..
-            } => AudioSource::Silent,
+            }
+            | SystemState::Workspace { .. } => AudioSource::Silent,
         };
         let fresh = source != self.audio_source;
         if fresh {
@@ -275,7 +313,8 @@ impl System {
             SystemState::Paused {
                 view: PausedView::Game(_),
                 ..
-            } => {}
+            }
+            | SystemState::Workspace { .. } => {}
         }
     }
 
@@ -294,6 +333,7 @@ impl System {
             } => running.palette(),
             SystemState::Boot { .. }
             | SystemState::Shell { .. }
+            | SystemState::Workspace { .. }
             | SystemState::Paused {
                 view: PausedView::Shell,
                 ..
@@ -321,6 +361,10 @@ impl System {
                 view: PausedView::Shell,
                 ..
             } => shell.lines(text_columns(cell_w), text_rows(cell_h)),
+            SystemState::Workspace { cartridge, .. } => {
+                self.workspace.render(framebuffer, font, cartridge);
+                return;
+            }
             SystemState::Running { running, .. } => {
                 running.render(framebuffer, font);
                 return;
@@ -379,21 +423,34 @@ fn shell_audio(shell: &Shell, psg: &mut Psg) {
 }
 
 /// Feeds `input` to the shell and carries out the cartridge requests its
-/// commands make.
+/// commands make. Break opens the workspace on the loaded cartridge, or
+/// explains how to get one.
 ///
 /// A started cartridge does not take input, so events that follow a
-/// successful `run` in the same tick are dropped.
+/// successful `run` in the same tick are dropped. So are events after a
+/// Break that opens the workspace, so keys meant for the shell never act
+/// on it.
 fn shell_tick(
     mut shell: Box<Shell>,
     mut loaded: Option<LoadedCartridge>,
     input: &[InputEvent],
     video_defaults: &CartridgeVideoDefaults,
+    workspace: &mut Workspace,
 ) -> SystemState {
     // Ticking before the input lets this tick's input restart the blink.
     shell.tick();
     // Input is deliberately not logged: user input stays out of
     // application logs.
     for (index, &event) in input.iter().enumerate() {
+        if event == InputEvent::Break {
+            match loaded {
+                Some(cartridge) => return open_workspace(shell, cartridge, workspace),
+                None => {
+                    shell.report(NO_CARTRIDGE_HINT);
+                    continue;
+                }
+            }
+        }
         match shell.handle_input(event, CartridgeSlot::loaded(loaded.as_ref())) {
             None => {}
             Some(ShellRequest::Load { cartridge, origin }) => {
@@ -414,9 +471,13 @@ fn shell_tick(
                     unreachable!("RUN was requested without a loaded cartridge");
                 };
                 return match start(shell, cartridge, video_defaults) {
-                    SystemState::Shell { shell, loaded } => {
-                        shell_tick(shell, loaded, &input[index + 1..], video_defaults)
-                    }
+                    SystemState::Shell { shell, loaded } => shell_tick(
+                        shell,
+                        loaded,
+                        &input[index + 1..],
+                        video_defaults,
+                        workspace,
+                    ),
                     state => state,
                 };
             }
@@ -426,6 +487,42 @@ fn shell_tick(
         }
     }
     SystemState::Shell { shell, loaded }
+}
+
+/// Makes the workspace the active UI on `cartridge`, with no pointer state
+/// carried in from a previous visit.
+fn open_workspace(
+    shell: Box<Shell>,
+    cartridge: LoadedCartridge,
+    workspace: &mut Workspace,
+) -> SystemState {
+    workspace.reset_pointer();
+    let identity = cartridge_identity(cartridge.manifest());
+    tracing::info!(cartridge = %identity, tab = ?workspace.tab(), "workspace opened");
+    SystemState::Workspace { shell, cartridge }
+}
+
+/// Feeds `input` to the workspace. Break returns to the shell with the
+/// cartridge still loaded; events after it in the same tick are dropped,
+/// so nothing meant for the workspace reaches the shell.
+fn workspace_tick(
+    shell: Box<Shell>,
+    cartridge: LoadedCartridge,
+    workspace: &mut Workspace,
+    input: &[InputEvent],
+) -> SystemState {
+    for &event in input {
+        if event == InputEvent::Break {
+            workspace.reset_pointer();
+            tracing::info!("workspace closed");
+            return SystemState::Shell {
+                shell,
+                loaded: Some(cartridge),
+            };
+        }
+        workspace.handle_input(event);
+    }
+    SystemState::Workspace { shell, cartridge }
 }
 
 /// Starts `cartridge`, reporting its start or failure and what it logged.
@@ -687,7 +784,13 @@ mod tests {
     }
 
     fn new_system() -> System {
-        System::new(info(), sounds(), video_defaults(), cartridges())
+        System::new(
+            info(),
+            sounds(),
+            video_defaults(),
+            cartridges(),
+            fake_rom().font().metrics(),
+        )
     }
 
     fn render(system: &System) -> Framebuffer {
@@ -1067,7 +1170,13 @@ mod tests {
         let dir = fixture.root().join("pong");
         write_cartridge(&dir, "Pong");
         std::fs::write(dir.join("code/main.luau"), script).unwrap();
-        let mut system = System::new(info(), sounds(), video_defaults(), fixture.storage());
+        let mut system = System::new(
+            info(),
+            sounds(),
+            video_defaults(),
+            fixture.storage(),
+            fake_rom().font().metrics(),
+        );
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
         }
@@ -1144,6 +1253,7 @@ mod tests {
     fn transcript(system: &System) -> Vec<String> {
         match system.state() {
             SystemState::Shell { shell, .. }
+            | SystemState::Workspace { shell, .. }
             | SystemState::Running { shell, .. }
             | SystemState::Paused { shell, .. } => shell.transcript(),
             other => panic!("expected a shell, got {other:?}"),
@@ -1220,13 +1330,13 @@ mod tests {
     }
 
     #[test]
-    fn break_in_the_shell_is_ignored() {
-        let fixture = Fixture::new("sys-shell-break");
-        let system = enter(shell_with_cartridge(&fixture, ""), "load pong");
+    fn break_in_the_paused_shell_is_ignored() {
+        let fixture = Fixture::new("sys-paused-shell-break");
+        let system = open_shell(press_break(started(&fixture, "")));
         let before = transcript(&system);
         let system = press_break(system);
+        assert!(is_paused_shell(&system));
         assert_eq!(transcript(&system), before);
-        assert_eq!(loaded_name(&system), Some("Pong"));
     }
 
     #[test]
@@ -1357,7 +1467,13 @@ mod tests {
         std::fs::write(dir.join("save.dat"), b"kept").unwrap();
         let manifest = std::fs::read(dir.join("cartridge.ron")).unwrap();
 
-        let mut system = System::new(info(), sounds(), video_defaults(), fixture.storage());
+        let mut system = System::new(
+            info(),
+            sounds(),
+            video_defaults(),
+            fixture.storage(),
+            fake_rom().font().metrics(),
+        );
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
         }
@@ -2244,6 +2360,7 @@ mod tests {
             SystemSounds::default(),
             video_defaults(),
             cartridges(),
+            fake_rom().font().metrics(),
         );
         let (_, ticks) = boot_audio(system, &mut Psg::new());
         assert!(ticks.iter().all(|samples| quiet(samples)));
@@ -2276,6 +2393,7 @@ mod tests {
             audio_source: AudioSource::Silent,
             sound,
             video_defaults: video_defaults(),
+            workspace: Workspace::new(fake_rom().font().metrics()),
         };
         system = system.update(&[]);
         system.audio(&mut psg);
@@ -2835,5 +2953,283 @@ mod tests {
         let once = starter_frame("sys-starter-a-once", &taps(Button::A, &[0], 150));
         let twice = starter_frame("sys-starter-a-twice", &taps(Button::A, &[0, 4], 150));
         assert!(differing_columns(&once, &twice).is_some());
+    }
+
+    // Workspace.
+
+    use glaux_input::{Point, PointerButton};
+    use workspace::Tab;
+
+    fn is_workspace(system: &System) -> bool {
+        matches!(system.state(), SystemState::Workspace { .. })
+    }
+
+    fn workspace_tab(system: &System) -> Tab {
+        system.workspace.tab()
+    }
+
+    /// A system in the shell with the `Pong` cartridge loaded.
+    fn loaded(fixture: &Fixture) -> System {
+        enter(shell_with_cartridge(fixture, ""), "load pong")
+    }
+
+    /// The point at the middle of `tab` in the workspace's tab bar.
+    fn tab_centre(tab: Tab) -> Point {
+        let layout = workspace::tests_support::tab_rect(tab, fake_rom().font().metrics());
+        Point::new(
+            (layout.x + layout.width / 2) as u16,
+            (layout.y + layout.height / 2) as u16,
+        )
+    }
+
+    fn click(at: Point) -> [InputEvent; 2] {
+        let button = PointerButton::Primary;
+        [
+            InputEvent::PointerDown { button, at },
+            InputEvent::PointerUp { button, at },
+        ]
+    }
+
+    #[test]
+    fn break_opens_the_workspace_and_returns_to_the_shell() {
+        let fixture = Fixture::new("sys-ws-toggle");
+        let system = press_break(loaded(&fixture));
+        assert!(is_workspace(&system));
+        assert_eq!(system.input_mode(), InputMode::Workspace);
+        let system = press_break(system);
+        assert_eq!(loaded_name(&system), Some("Pong"));
+        assert_eq!(system.input_mode(), InputMode::Text);
+    }
+
+    #[test]
+    fn break_without_a_cartridge_explains_how_to_get_one() {
+        let fixture = Fixture::new("sys-ws-empty");
+        let system = press_break(shell_with_cartridge(&fixture, ""));
+        assert_eq!(loaded_name(&system), None);
+        assert_eq!(transcript(&system).last().unwrap(), NO_CARTRIDGE_HINT);
+        assert!(NO_CARTRIDGE_HINT.len() <= text_columns(6));
+        assert!(!system.pointer_visible());
+        // Input after the hint in the same tick still reaches the shell.
+        let mut input = vec![InputEvent::Break];
+        input.extend("pwd".chars().map(InputEvent::Text));
+        input.push(InputEvent::Enter);
+        let system = system.update(&input);
+        assert_eq!(after(&system, NO_CARTRIDGE_HINT), ["> pwd", "/"]);
+    }
+
+    #[test]
+    fn a_round_trip_preserves_the_cartridge_and_the_shell() {
+        let fixture = Fixture::new("sys-ws-preserve");
+        std::fs::create_dir_all(fixture.root().join("games")).unwrap();
+        let system = enter(enter(loaded(&fixture), "cd games"), "info");
+        let system = system.update(&[InputEvent::Text('h')]);
+        let mut expected = shell_of(&system).clone();
+        // The shell ticks on the update that opens the workspace, then
+        // stays untouched until it is back.
+        expected.tick();
+
+        let system = press_break(press_break(system));
+        assert_eq!(shell_of(&system), &expected);
+        assert_eq!(loaded_name(&system), Some("Pong"));
+
+        // History, the draft line and the directory carry on as before.
+        let system = system.update(&[InputEvent::Backspace, InputEvent::Up, InputEvent::Enter]);
+        let runs = transcript(&system)
+            .iter()
+            .filter(|l| *l == "> info")
+            .count();
+        assert_eq!(runs, 2);
+        let system = enter(system, "pwd");
+        assert_eq!(transcript(&system).last().unwrap(), "/games");
+    }
+
+    #[test]
+    fn events_after_a_break_in_the_same_tick_are_dropped() {
+        let fixture = Fixture::new("sys-ws-consume");
+        let system = loaded(&fixture);
+        let before = shell_of(&system).clone();
+        let mut input = vec![
+            InputEvent::Break,
+            InputEvent::Text('x'),
+            InputEvent::NextView,
+        ];
+        input.extend(click(tab_centre(Tab::Music)));
+        let system = system.update(&input);
+        assert!(is_workspace(&system));
+        assert_eq!(workspace_tab(&system), Tab::Code);
+
+        // Leaving drops what follows too: nothing is typed into the shell.
+        let system = system.update(&[InputEvent::Break, InputEvent::Text('x'), InputEvent::Enter]);
+        assert_eq!(shell_of(&system).transcript(), before.transcript());
+        let system = enter(system, "pwd");
+        assert_eq!(after(&system, "> load pong")[1..], ["> pwd", "/"]);
+    }
+
+    #[test]
+    fn the_pointer_is_visible_only_in_the_workspace() {
+        let fixture = Fixture::new("sys-ws-pointer");
+        let mut system = System::new(
+            info(),
+            sounds(),
+            video_defaults(),
+            fixture.storage(),
+            fake_rom().font().metrics(),
+        );
+        assert!(!system.pointer_visible(), "boot");
+        while matches!(system.state(), SystemState::Boot { .. }) {
+            system = system.update(&[]);
+        }
+        write_cartridge(&fixture.root().join("pong"), "Pong");
+        let system = enter(system, "load pong");
+        assert!(!system.pointer_visible(), "shell");
+        let system = press_break(system);
+        assert!(system.pointer_visible(), "workspace");
+        let system = enter(press_break(system), "run");
+        assert!(is_running(&system));
+        assert!(!system.pointer_visible(), "running");
+        let system = press_break(system);
+        assert!(!system.pointer_visible(), "paused");
+        let system = open_shell(system);
+        assert!(!system.pointer_visible(), "paused shell");
+    }
+
+    #[test]
+    fn clicking_a_tab_selects_it() {
+        let fixture = Fixture::new("sys-ws-click");
+        let mut system = press_break(loaded(&fixture));
+        for tab in [Tab::Music, Tab::Sprites, Tab::Sfx, Tab::Map, Tab::Code] {
+            system = system.update(&click(tab_centre(tab)));
+            assert_eq!(workspace_tab(&system), tab);
+        }
+        // Secondary presses and presses below the bar select nothing.
+        let at = tab_centre(Tab::Music);
+        system = system.update(&[InputEvent::PointerDown {
+            button: PointerButton::Secondary,
+            at,
+        }]);
+        system = system.update(&click(Point::new(at.x, 120)));
+        assert_eq!(workspace_tab(&system), Tab::Code);
+    }
+
+    #[test]
+    fn ctrl_tab_cycles_tabs_but_plain_tab_does_not() {
+        let fixture = Fixture::new("sys-ws-keys");
+        let system = press_break(loaded(&fixture));
+        let system = system.update(&[InputEvent::Tab, InputEvent::Tab]);
+        assert_eq!(workspace_tab(&system), Tab::Code);
+        let system = system.update(&[InputEvent::NextView, InputEvent::NextView]);
+        assert_eq!(workspace_tab(&system), Tab::Map);
+        let system = system.update(&[InputEvent::PreviousView; 3]);
+        assert_eq!(workspace_tab(&system), Tab::Music);
+        let system = system.update(&[InputEvent::NextView]);
+        assert_eq!(workspace_tab(&system), Tab::Code);
+    }
+
+    #[test]
+    fn the_selected_tab_survives_trips_to_the_shell() {
+        let fixture = Fixture::new("sys-ws-keep-tab");
+        let system = press_break(loaded(&fixture)).update(&click(tab_centre(Tab::Sfx)));
+        let system = press_break(enter(press_break(system), "info"));
+        assert!(is_workspace(&system));
+        assert_eq!(workspace_tab(&system), Tab::Sfx);
+    }
+
+    #[test]
+    fn view_and_pointer_events_do_nothing_in_the_shell() {
+        let fixture = Fixture::new("sys-ws-shell-isolation");
+        let system = loaded(&fixture);
+        let mut expected = shell_of(&system).clone();
+        let mut input = vec![
+            InputEvent::NextView,
+            InputEvent::PointerMove(Some(Point::new(3, 3))),
+            InputEvent::Wheel { delta: 2 },
+        ];
+        input.extend(click(tab_centre(Tab::Map)));
+        let system = system.update(&input);
+        expected.tick();
+        assert_eq!(shell_of(&system), &expected);
+        assert_eq!(workspace_tab(&system), Tab::Code);
+    }
+
+    #[test]
+    fn pointer_events_never_reach_a_cartridge() {
+        let fixture = Fixture::new("sys-ws-cartridge-isolation");
+        let at = Point::new(10, 10);
+        let pointer: &[InputEvent] = &[
+            InputEvent::PointerMove(Some(at)),
+            InputEvent::PointerDown {
+                button: PointerButton::Primary,
+                at,
+            },
+            InputEvent::Wheel { delta: 1 },
+            InputEvent::NextView,
+            InputEvent::PointerUp {
+                button: PointerButton::Primary,
+                at,
+            },
+        ];
+        let (system, lines) = logged_per_tick(started(&fixture, UP_STATE), &[pointer, &[]]);
+        assert_eq!(lines, ["false   false", "false   false"]);
+        assert!(is_running(&system));
+        // Nor do they unpause or leave the pause screen.
+        let system = press_break(system).update(pointer);
+        assert!(is_paused_game(&system));
+        assert_eq!(workspace_tab(&system), Tab::Code);
+    }
+
+    #[test]
+    fn the_workspace_is_silent_and_drawn_in_system_colors() {
+        let fixture = Fixture::new("sys-ws-present");
+        let rom = fake_rom();
+        let system = started_with_palette(&fixture, "", &reversed_rom_palette());
+        let mut system = press_break(stop_cartridge(system));
+        assert!(is_workspace(&system));
+        assert_eq!(system.frame_palette(&rom), rom.palette());
+        let mut psg = Psg::new();
+        for _ in 0..5 {
+            system = system.update(&[]);
+            system.audio(&mut psg);
+            let mut samples = [0; SAMPLES_PER_TICK];
+            psg.render(&mut samples);
+            assert!(samples.iter().all(|&s| s == samples[0]));
+        }
+    }
+
+    #[test]
+    fn the_workspace_draws_the_active_tab_and_redraws_from_scratch() {
+        let fixture = Fixture::new("sys-ws-render");
+        let system = press_break(loaded(&fixture)).update(&click(tab_centre(Tab::Map)));
+        let fb = render(&system);
+        let rect = workspace::tests_support::tab_rect(Tab::Map, fake_rom().font().metrics());
+        assert_eq!(fb.pixel(rect.x + 1, rect.y), Some(ACCENT));
+        assert_eq!(
+            fb.pixel(rect.x + 1, rect.y + rect.height - 1),
+            Some(BACKGROUND)
+        );
+        let other = workspace::tests_support::tab_rect(Tab::Code, fake_rom().font().metrics());
+        assert_ne!(fb.pixel(other.x + 1, other.y), Some(ACCENT));
+
+        let mut dirty = Framebuffer::new();
+        dirty.clear(200);
+        system.render(&mut dirty, &fake_rom());
+        assert_eq!(dirty, fb);
+    }
+
+    #[test]
+    fn a_long_cartridge_name_never_draws_over_the_tabs() {
+        let fixture = Fixture::new("sys-ws-long-name");
+        let dir = fixture.root().join("long");
+        write_cartridge(&dir, &"W".repeat(120));
+        let system = enter(shell_with_cartridge(&fixture, ""), "load long");
+        let long = render(&press_break(system));
+        let short = render(&press_break(loaded(&fixture)));
+        let metrics = fake_rom().font().metrics();
+        let tabs = Tab::ALL.map(|tab| workspace::tests_support::tab_rect(tab, metrics));
+        let last = tabs[tabs.len() - 1];
+        for x in 0..last.x + last.width + 4 {
+            for y in 0..last.height {
+                assert_eq!(long.pixel(x, y), short.pixel(x, y), "({x}, {y})");
+            }
+        }
     }
 }

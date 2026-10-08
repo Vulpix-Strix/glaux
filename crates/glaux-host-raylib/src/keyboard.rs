@@ -22,8 +22,15 @@ const REPEAT_DELAY: Duration = Duration::from_millis(500);
 /// Time between repeats once a held key is repeating.
 const REPEAT_INTERVAL: Duration = Duration::from_millis(33);
 
-/// Builds the event for a key, given whether Shift is held.
-type KeyEvent = fn(bool) -> InputEvent;
+/// Modifier keys held while an editing key fires.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Modifiers {
+    pub(crate) shift: bool,
+    pub(crate) ctrl: bool,
+}
+
+/// Builds the event for a key, given the modifiers held.
+type KeyEvent = fn(Modifiers) -> InputEvent;
 
 /// An editing key, the event it produces and whether holding it repeats.
 struct EditKey {
@@ -35,22 +42,22 @@ struct EditKey {
 const EDIT_KEYS: [EditKey; 12] = [
     EditKey {
         key: KeyboardKey::KEY_LEFT,
-        event: |select| InputEvent::Left { select },
+        event: |m| InputEvent::Left { select: m.shift },
         repeats: true,
     },
     EditKey {
         key: KeyboardKey::KEY_RIGHT,
-        event: |select| InputEvent::Right { select },
+        event: |m| InputEvent::Right { select: m.shift },
         repeats: true,
     },
     EditKey {
         key: KeyboardKey::KEY_HOME,
-        event: |select| InputEvent::Home { select },
+        event: |m| InputEvent::Home { select: m.shift },
         repeats: true,
     },
     EditKey {
         key: KeyboardKey::KEY_END,
-        event: |select| InputEvent::End { select },
+        event: |m| InputEvent::End { select: m.shift },
         repeats: true,
     },
     EditKey {
@@ -86,9 +93,15 @@ const EDIT_KEYS: [EditKey; 12] = [
         event: |_| InputEvent::Down,
         repeats: false,
     },
+    // Ctrl+Tab switches views, leaving plain Tab free for completion and
+    // indentation.
     EditKey {
         key: KeyboardKey::KEY_TAB,
-        event: |_| InputEvent::Tab,
+        event: |m| match (m.ctrl, m.shift) {
+            (false, _) => InputEvent::Tab,
+            (true, false) => InputEvent::NextView,
+            (true, true) => InputEvent::PreviousView,
+        },
         repeats: false,
     },
     EditKey {
@@ -151,7 +164,7 @@ impl EditKeys {
     pub(crate) fn events(
         &mut self,
         state: impl Fn(KeyboardKey) -> KeyState,
-        shift: bool,
+        modifiers: Modifiers,
         elapsed: Duration,
         out: &mut Vec<InputEvent>,
     ) {
@@ -167,7 +180,7 @@ impl EditKeys {
                 false
             };
             if fire {
-                out.push((edit.event)(shift));
+                out.push((edit.event)(modifiers));
             }
         }
     }
@@ -415,7 +428,8 @@ impl GameKeys {
 }
 
 /// Drops the events `mode` does not consume. [`InputEvent::Break`] is kept
-/// in every mode.
+/// in every mode; view switching and pointer events only in
+/// [`InputMode::Workspace`].
 pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
     events.retain(|event| {
         let game = matches!(
@@ -425,9 +439,12 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                 | InputEvent::KeyDown(_)
                 | InputEvent::KeyUp(_)
         );
+        let workspace =
+            event.is_pointer() || matches!(event, InputEvent::NextView | InputEvent::PreviousView);
         match mode {
-            InputMode::Text => !game,
+            InputMode::Text => !game && !workspace,
             InputMode::Game => game || *event == InputEvent::Break,
+            InputMode::Workspace => !game,
         }
     });
 }
@@ -474,7 +491,7 @@ mod tests {
                     KeyState::default()
                 }
             },
-            shift,
+            Modifiers { shift, ctrl: false },
             elapsed,
             &mut out,
         );
@@ -545,6 +562,61 @@ mod tests {
         ];
         assert_eq!(press(&keys, false), expected);
         assert_eq!(press(&keys, true), expected);
+    }
+
+    #[test]
+    fn ctrl_tab_switches_views_instead_of_tabbing() {
+        let press_with = |shift, ctrl| {
+            let mut out = Vec::new();
+            EditKeys::default().events(
+                |key| {
+                    if key == KEY_TAB {
+                        PRESSED
+                    } else {
+                        KeyState::default()
+                    }
+                },
+                Modifiers { shift, ctrl },
+                FRAME,
+                &mut out,
+            );
+            out
+        };
+        assert_eq!(press_with(false, false), [InputEvent::Tab]);
+        assert_eq!(press_with(true, false), [InputEvent::Tab]);
+        assert_eq!(press_with(false, true), [InputEvent::NextView]);
+        assert_eq!(press_with(true, true), [InputEvent::PreviousView]);
+    }
+
+    #[test]
+    fn view_and_pointer_events_are_kept_only_in_workspace_mode() {
+        let at = glaux_input::Point::new(1, 2);
+        let all = [
+            InputEvent::Text('a'),
+            InputEvent::Break,
+            InputEvent::NextView,
+            InputEvent::PointerMove(Some(at)),
+            InputEvent::PointerDown {
+                button: glaux_input::PointerButton::Primary,
+                at,
+            },
+            InputEvent::Wheel { delta: -1 },
+            InputEvent::ButtonDown(Button::A),
+        ];
+        let kept = |mode| {
+            let mut events = all.to_vec();
+            retain_for_mode(mode, &mut events);
+            events
+        };
+        assert_eq!(
+            kept(InputMode::Text),
+            [InputEvent::Text('a'), InputEvent::Break]
+        );
+        assert_eq!(
+            kept(InputMode::Game),
+            [InputEvent::Break, InputEvent::ButtonDown(Button::A)]
+        );
+        assert_eq!(kept(InputMode::Workspace), all[..6]);
     }
 
     #[test]
@@ -1039,7 +1111,7 @@ mod tests {
                     KeyState::default()
                 }
             },
-            false,
+            Modifiers::default(),
             FRAME,
             &mut out,
         );
@@ -1094,7 +1166,7 @@ mod tests {
 
     #[test]
     fn break_reaches_every_mode() {
-        for mode in [InputMode::Text, InputMode::Game] {
+        for mode in [InputMode::Text, InputMode::Game, InputMode::Workspace] {
             assert_eq!(
                 translated(mode, &[KEY_ESCAPE], ""),
                 [InputEvent::Break],

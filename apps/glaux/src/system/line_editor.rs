@@ -101,7 +101,13 @@ impl LineEditor {
             | InputEvent::ButtonDown(_)
             | InputEvent::ButtonUp(_)
             | InputEvent::KeyDown(_)
-            | InputEvent::KeyUp(_) => {}
+            | InputEvent::KeyUp(_)
+            | InputEvent::NextView
+            | InputEvent::PreviousView
+            | InputEvent::PointerMove(_)
+            | InputEvent::PointerDown { .. }
+            | InputEvent::PointerUp { .. }
+            | InputEvent::Wheel { .. } => {}
         }
         None
     }

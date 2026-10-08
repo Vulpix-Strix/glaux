@@ -163,7 +163,10 @@ impl Shell {
                 | InputEvent::ButtonUp(_)
                 | InputEvent::KeyDown(_)
                 | InputEvent::KeyUp(_)
-        ) {
+                | InputEvent::NextView
+                | InputEvent::PreviousView
+        ) && !event.is_pointer()
+        {
             self.blink = 0;
         }
         match event {
@@ -196,15 +199,22 @@ impl Shell {
             | InputEvent::End { .. } => {
                 self.editor.apply(event);
             }
-            // No cartridge runs while the shell is active, so there is
-            // nothing to interrupt. A paused cartridge is left with the
-            // RESUME and STOP commands.
+            // The system handles Break around the shell: it opens the
+            // workspace from the idle shell, and a paused cartridge is left
+            // with the RESUME and STOP commands.
             InputEvent::Break => {}
-            // Game buttons and keys belong to a running cartridge.
+            // Game buttons and keys belong to a running cartridge; views and
+            // the pointer belong to the workspace.
             InputEvent::ButtonDown(_)
             | InputEvent::ButtonUp(_)
             | InputEvent::KeyDown(_)
-            | InputEvent::KeyUp(_) => {}
+            | InputEvent::KeyUp(_)
+            | InputEvent::NextView
+            | InputEvent::PreviousView
+            | InputEvent::PointerMove(_)
+            | InputEvent::PointerDown { .. }
+            | InputEvent::PointerUp { .. }
+            | InputEvent::Wheel { .. } => {}
         }
         None
     }

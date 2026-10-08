@@ -3,6 +3,7 @@
 mod audio;
 mod crt;
 mod keyboard;
+mod pointer;
 
 use std::time::Duration;
 
@@ -10,7 +11,8 @@ pub use audio::{AudioDevice, AudioError, AudioOutput};
 use crt::CrtPass;
 use glaux_input::{InputEvent, InputMode};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
-use keyboard::{EditKeys, GameKeys, KeyState, TextKeys, retain_for_mode};
+use keyboard::{EditKeys, GameKeys, KeyState, Modifiers, TextKeys, retain_for_mode};
+use pointer::{ButtonFrame, PointerFrame, PointerTracker};
 use raylib::core::error::{LoadTextureError, UpdateTextureError};
 use raylib::core::input::key_from_i32;
 use raylib::prelude::*;
@@ -86,6 +88,9 @@ pub struct RaylibHost {
     edit_keys: EditKeys,
     text_keys: TextKeys,
     game_keys: GameKeys,
+    pointer: PointerTracker,
+    /// Whether the system mouse cursor is shown over the window.
+    pointer_visible: bool,
     rl: RaylibHandle,
     thread: RaylibThread,
 }
@@ -114,6 +119,8 @@ impl RaylibHost {
         rl.set_window_min_size(width, height);
         // Esc is Glaux's break key; raylib would otherwise close the window.
         rl.set_exit_key(None);
+        // The cursor is shown only where the system asks for it.
+        rl.hide_cursor();
 
         tracing::info!(
             width = window_width,
@@ -158,6 +165,8 @@ impl RaylibHost {
             edit_keys: EditKeys::default(),
             text_keys: TextKeys::default(),
             game_keys: GameKeys::default(),
+            pointer: PointerTracker::default(),
+            pointer_visible: false,
             rl,
             thread,
         })
@@ -233,6 +242,20 @@ impl RaylibHost {
         self.rl.set_window_focused();
     }
 
+    /// Shows or hides the system mouse cursor over the window.
+    pub fn set_pointer_visible(&mut self, visible: bool) {
+        if visible == self.pointer_visible {
+            return;
+        }
+        self.pointer_visible = visible;
+        if visible {
+            self.rl.show_cursor();
+        } else {
+            self.rl.hide_cursor();
+        }
+        tracing::debug!(visible, "pointer visibility changed");
+    }
+
     /// Returns `true` once the user has asked to close the window.
     pub fn should_close(&self) -> bool {
         self.rl.window_should_close()
@@ -277,7 +300,9 @@ impl RaylibHost {
     ///
     /// Every translator runs whatever the mode, so their held-key state
     /// stays current: a key already down when the mode changes does not
-    /// report a fresh press in the new mode.
+    /// report a fresh press in the new mode. Pointer events are produced
+    /// only in [`InputMode::Workspace`], mapped to logical pixels through
+    /// the current window size and presentation.
     pub fn poll_input(&mut self, mode: InputMode) -> Vec<InputEvent> {
         let chars: Vec<char> = std::iter::from_fn(|| self.rl.get_char_pressed()).collect();
         // Codes raylib-rs has no `KeyboardKey` for are skipped rather than
@@ -297,21 +322,54 @@ impl RaylibHost {
             &mut events,
         );
 
-        let shift = rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
-            || rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT);
+        let modifiers = Modifiers {
+            shift: rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                || rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT),
+            ctrl: rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL)
+                || rl.is_key_down(KeyboardKey::KEY_RIGHT_CONTROL),
+        };
         self.edit_keys.events(
             |key| KeyState {
                 pressed: rl.is_key_pressed(key),
                 down: rl.is_key_down(key),
             },
-            shift,
+            modifiers,
             elapsed,
             &mut events,
         );
         self.game_keys
             .events(&pressed, |key| rl.is_key_down(key), &mut events);
         retain_for_mode(mode, &mut events);
+        self.pointer.events(
+            self.pointer_frame(),
+            mode == InputMode::Workspace,
+            &mut events,
+        );
         events
+    }
+
+    /// The mouse state raylib collected for the frame just presented.
+    fn pointer_frame(&self) -> PointerFrame {
+        let rl = &self.rl;
+        let position = rl.get_mouse_position();
+        let button = |button| ButtonFrame {
+            pressed: rl.is_mouse_button_pressed(button),
+            released: rl.is_mouse_button_released(button),
+            down: rl.is_mouse_button_down(button),
+        };
+        PointerFrame {
+            position: (position.x, position.y),
+            on_window: rl.is_cursor_on_screen(),
+            window: (rl.get_screen_width(), rl.get_screen_height()),
+            curved: self.crt.is_some(),
+            // In the order of `PointerButton::ALL`.
+            buttons: [
+                button(MouseButton::MOUSE_BUTTON_LEFT),
+                button(MouseButton::MOUSE_BUTTON_RIGHT),
+                button(MouseButton::MOUSE_BUTTON_MIDDLE),
+            ],
+            wheel: rl.get_mouse_wheel_move(),
+        }
     }
 }
 
