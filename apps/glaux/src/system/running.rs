@@ -32,13 +32,13 @@ pub enum StartError {
 /// A cartridge video asset that is not valid native G1 data.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VideoAssetError {
-    #[error("INVALID SPRITES.BIN: {0}")]
+    #[error("Invalid sprites.bin: {0}")]
     ObjTiles(#[from] ObjTileBankError),
-    #[error("INVALID OBJATTR.BIN: {0}")]
+    #[error("Invalid objattr.bin: {0}")]
     ObjAttributes(#[from] ObjTileAttributesError),
-    #[error("INVALID OBP.BIN: {0}")]
+    #[error("Invalid obp.bin: {0}")]
     ObjPalettes(#[from] ObjPalettesError),
-    #[error("INVALID PALETTE.BIN: {0}")]
+    #[error("Invalid palette.bin: {0}")]
     Palette(#[from] PaletteBytesError),
 }
 
@@ -325,7 +325,7 @@ mod tests {
         };
         assert_eq!(
             failure.error.to_string(),
-            "MODULE NOT FOUND: code/nope.luau (code/main.luau:1)"
+            "Module not found: code/nope.luau (code/main.luau:1)"
         );
     }
 

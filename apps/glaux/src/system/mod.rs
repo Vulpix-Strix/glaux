@@ -85,6 +85,9 @@ pub enum PausedView {
     Shell,
 }
 
+/// Shown when the shell opens over a paused cartridge.
+const PAUSED_SHELL_HINT: &str = "Type 'resume' to continue or 'stop' to end.";
+
 /// Facts about the running system that the shell reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemInfo {
@@ -393,14 +396,17 @@ fn shell_tick(
     for (index, &event) in input.iter().enumerate() {
         match shell.handle_input(event, CartridgeSlot::loaded(loaded.as_ref())) {
             None => {}
-            Some(ShellRequest::Load(cartridge)) => loaded = Some(*cartridge),
+            Some(ShellRequest::Load { cartridge, origin }) => {
+                let cartridge = loaded.insert(*cartridge);
+                shell.announce_loaded(cartridge.manifest(), origin);
+            }
             Some(ShellRequest::Unload) => {
                 let Some(cartridge) = loaded.take() else {
                     unreachable!("UNLOAD was requested without a loaded cartridge");
                 };
                 let identity = cartridge_identity(cartridge.manifest());
                 tracing::info!(cartridge = %identity, "cartridge unloaded");
-                shell.report(format!("UNLOADED {identity}"));
+                shell.report(format!("Unloaded {identity}"));
             }
             Some(ShellRequest::Run) => {
                 // `run` only asks to start when a cartridge is loaded.
@@ -433,7 +439,7 @@ fn start(
     match RunningCartridge::start(cartridge, video_defaults) {
         Ok(mut running) => {
             tracing::info!(cartridge = %identity, "cartridge started");
-            shell.report(format!("RUNNING {identity}"));
+            shell.report(format!("Running {identity}"));
             shell.log(running.take_output());
             SystemState::Running { shell, running }
         }
@@ -484,7 +490,7 @@ fn pause(mut shell: Box<Shell>, mut running: RunningCartridge) -> SystemState {
     shell.log(running.take_output());
     let identity = cartridge_identity(running.cartridge().manifest());
     tracing::info!(cartridge = %identity, "cartridge paused");
-    shell.report(format!("PAUSED {identity}"));
+    shell.report(format!("Paused {identity}"));
     SystemState::Paused {
         shell,
         running,
@@ -507,7 +513,7 @@ fn paused_game_tick(
             InputEvent::Enter => {
                 let identity = cartridge_identity(running.cartridge().manifest());
                 tracing::info!(cartridge = %identity, "shell opened with the cartridge paused");
-                shell.report("TYPE RESUME TO CONTINUE OR STOP TO END");
+                shell.report(PAUSED_SHELL_HINT);
                 return paused_shell_tick(shell, running, &input[index + 1..]);
             }
             _ => {}
@@ -536,7 +542,9 @@ fn paused_shell_tick(
             Some(ShellRequest::Resume) => return resume(shell, running),
             Some(ShellRequest::Stop) => return stop(shell, running, StopReason::Stopped),
             // `load`, `unload` and `run` refuse to replace a paused cartridge.
-            Some(_request @ (ShellRequest::Load(_) | ShellRequest::Unload | ShellRequest::Run)) => {
+            Some(
+                _request @ (ShellRequest::Load { .. } | ShellRequest::Unload | ShellRequest::Run),
+            ) => {
                 unreachable!("{_request:?} was requested while a cartridge is paused")
             }
         }
@@ -555,7 +563,7 @@ fn resume(mut shell: Box<Shell>, mut running: RunningCartridge) -> SystemState {
     running.reset_input();
     let identity = cartridge_identity(running.cartridge().manifest());
     tracing::info!(cartridge = %identity, "cartridge resumed");
-    shell.report(format!("RESUMED {identity}"));
+    shell.report(format!("Resumed {identity}"));
     SystemState::Running { shell, running }
 }
 
@@ -568,7 +576,7 @@ fn stop(mut shell: Box<Shell>, mut running: RunningCartridge, reason: StopReason
     match reason {
         StopReason::Stopped => {
             tracing::info!(cartridge = %identity, "cartridge stopped");
-            shell.report(format!("STOPPED {identity}"));
+            shell.report(format!("Stopped {identity}"));
         }
         StopReason::Failed(err) => {
             tracing::info!(cartridge = %identity, error = %err, "cartridge failed");
@@ -1164,14 +1172,14 @@ mod tests {
         assert!(is_running(&system));
         assert_eq!(
             after(&system, "> run"),
-            ["RUNNING Pong 0.1.0", "entry", "boot"]
+            ["Running Pong 0.1.0", "entry", "boot"]
         );
 
         let system = stop_cartridge(ticks(system, 3));
         assert_eq!(
             after(&system, "> run"),
             [
-                "RUNNING Pong 0.1.0",
+                "Running Pong 0.1.0",
                 "entry",
                 "boot",
                 "tick    1",
@@ -1180,10 +1188,10 @@ mod tests {
                 "draw    2",
                 "tick    3",
                 "draw    3",
-                "PAUSED Pong 0.1.0",
-                "TYPE RESUME TO CONTINUE OR STOP TO END",
+                "Paused Pong 0.1.0",
+                "Type 'resume' to continue or 'stop' to end.",
                 "> stop",
-                "STOPPED Pong 0.1.0",
+                "Stopped Pong 0.1.0",
             ]
         );
         assert_eq!(loaded_name(&system), Some("Pong"));
@@ -1198,16 +1206,16 @@ mod tests {
         assert_eq!(
             after(&system, "> run"),
             [
-                "RUNNING Pong 0.1.0",
-                "PAUSED Pong 0.1.0",
-                "TYPE RESUME TO CONTINUE OR STOP TO END"
+                "Running Pong 0.1.0",
+                "Paused Pong 0.1.0",
+                "Type 'resume' to continue or 'stop' to end."
             ]
         );
         // Nothing typed while running reached the command line.
         let system = system.update(&[InputEvent::Enter]);
         assert_eq!(
             transcript(&system).last().unwrap(),
-            "TYPE RESUME TO CONTINUE OR STOP TO END"
+            "Type 'resume' to continue or 'stop' to end."
         );
     }
 
@@ -1230,12 +1238,12 @@ mod tests {
         assert_eq!(
             after(&system, "> run"),
             [
-                "RUNNING Pong 0.1.0",
+                "Running Pong 0.1.0",
                 "1",
-                "PAUSED Pong 0.1.0",
-                "TYPE RESUME TO CONTINUE OR STOP TO END",
+                "Paused Pong 0.1.0",
+                "Type 'resume' to continue or 'stop' to end.",
                 "> stop",
-                "STOPPED Pong 0.1.0"
+                "Stopped Pong 0.1.0"
             ]
         );
         assert!(transcript(&system).contains(&"2".to_owned()));
@@ -1247,17 +1255,17 @@ mod tests {
         for (script, expected) in [
             (
                 r#"log.info("x") error("boom")"#,
-                vec!["x", "! RUNTIME ERROR: code/main.luau:1: boom"],
+                vec!["x", "! Runtime error: code/main.luau:1: boom"],
             ),
             (
                 r#"log.info("e") function boot() log.info("b") error("no") end"#,
-                vec!["e", "b", "! RUNTIME ERROR IN BOOT: code/main.luau:1: no"],
+                vec!["e", "b", "! Runtime error in boot: code/main.luau:1: no"],
             ),
             (
                 "function boot() while true do end end",
-                vec!["! EXECUTION LIMIT EXCEEDED IN BOOT"],
+                vec!["! Execution limit exceeded in boot"],
             ),
-            ("while true do end", vec!["! EXECUTION LIMIT EXCEEDED"]),
+            ("while true do end", vec!["! Execution limit exceeded"]),
         ] {
             let system = started(&fixture, script);
             assert_eq!(after(&system, "> run"), expected, "{script}");
@@ -1267,7 +1275,7 @@ mod tests {
         let system = started(&fixture, "local = 1");
         let lines = after(&system, "> run");
         assert!(
-            matches!(lines.as_slice(), [only] if only.starts_with("! SYNTAX ERROR: code/main.luau:1:")),
+            matches!(lines.as_slice(), [only] if only.starts_with("! Syntax error: code/main.luau:1:")),
             "{lines:?}"
         );
         assert_eq!(loaded_name(&system), Some("Pong"));
@@ -1279,26 +1287,26 @@ mod tests {
         for (script, error) in [
             (
                 r#"function tick() log.info("t") error("boom") end"#,
-                "! RUNTIME ERROR IN TICK: code/main.luau:1: boom",
+                "! Runtime error in tick: code/main.luau:1: boom",
             ),
             (
                 r#"function tick() log.info("t") end function draw() error("bad") end"#,
-                "! RUNTIME ERROR IN DRAW: code/main.luau:1: bad",
+                "! Runtime error in draw: code/main.luau:1: bad",
             ),
             (
                 r#"function tick() log.info("t") while true do end end"#,
-                "! EXECUTION LIMIT EXCEEDED IN TICK",
+                "! Execution limit exceeded in tick",
             ),
             (
                 r#"function tick() log.info("t") end
                    function draw() pcall(function() while true do end end) end"#,
-                "! EXECUTION LIMIT EXCEEDED IN DRAW",
+                "! Execution limit exceeded in draw",
             ),
         ] {
             let system = ticks(started(&fixture, script), 1);
             assert_eq!(
                 after(&system, "> run"),
-                ["RUNNING Pong 0.1.0", "t", error],
+                ["Running Pong 0.1.0", "t", error],
                 "{script}"
             );
             assert_eq!(loaded_name(&system), Some("Pong"), "{script}");
@@ -1331,7 +1339,7 @@ mod tests {
         let system = enter(shell_with_cartridge(&fixture, ""), "load pong");
         let system = enter(system, "unload");
         assert_eq!(loaded_name(&system), None);
-        assert_eq!(after(&system, "> unload"), ["UNLOADED Pong 0.1.0"]);
+        assert_eq!(after(&system, "> unload"), ["Unloaded Pong 0.1.0"]);
 
         let system = enter(system, "info");
         let lines = after(&system, "> info");
@@ -1365,7 +1373,7 @@ mod tests {
     fn unload_without_a_cartridge_reports_an_error() {
         let fixture = Fixture::new("sys-unload-empty");
         let system = enter(shell_with_cartridge(&fixture, ""), "unload");
-        assert_eq!(after(&system, "> unload"), ["! NO CARTRIDGE LOADED"]);
+        assert_eq!(after(&system, "> unload"), ["! No cartridge loaded"]);
         assert_eq!(loaded_name(&system), None);
     }
 
@@ -1377,7 +1385,7 @@ mod tests {
         let system = enter(system, "run");
         assert_eq!(
             after(&system, "> run"),
-            ["! ENTRY NOT FOUND: code/main.luau"]
+            ["! Entry not found: code/main.luau"]
         );
         assert_eq!(loaded_name(&system), Some("Pong"));
     }
@@ -1398,7 +1406,7 @@ mod tests {
             let system = enter(enter(system, "load pong"), "run");
             let lines = after(&system, "> run");
             assert!(
-                matches!(lines.as_slice(), [only] if only.starts_with("! INVALID SPRITES.BIN:") && only.contains(expected)),
+                matches!(lines.as_slice(), [only] if only.starts_with("! Invalid sprites.bin:") && only.contains(expected)),
                 "{lines:?}"
             );
             assert_eq!(loaded_name(&system), Some("Pong"));
@@ -1411,17 +1419,17 @@ mod tests {
             (
                 "obp.bin",
                 vec![0; 5],
-                "! INVALID OBP.BIN: object palette data must be exactly 128 bytes, got 5",
+                "! Invalid obp.bin: object palette data must be exactly 128 bytes, got 5",
             ),
             (
                 "palette.bin",
                 vec![0; 3],
-                "! INVALID PALETTE.BIN: palette data must be exactly 768 bytes, got 3",
+                "! Invalid palette.bin: palette data must be exactly 768 bytes, got 3",
             ),
             (
                 "objattr.bin",
                 vec![0, 0x80],
-                "! INVALID OBJATTR.BIN: object tile 1 attribute 0x80 sets reserved bits; only bits 0-2 are defined",
+                "! Invalid objattr.bin: object tile 1 attribute 0x80 sets reserved bits; only bits 0-2 are defined",
             ),
         ];
         for (name, bytes, expected) in cases {
@@ -1689,8 +1697,8 @@ mod tests {
         assert_eq!(
             after(&system, "> run"),
             [
-                "RUNNING Pong 0.1.0",
-                "! RUNTIME ERROR IN DRAW: code/main.luau:1: bad argument #3 to 'pset' \
+                "Running Pong 0.1.0",
+                "! Runtime error in draw: code/main.luau:1: bad argument #3 to 'pset' \
                  (palette index 0-255 expected, got 999)",
             ]
         );
@@ -1703,8 +1711,8 @@ mod tests {
         assert_eq!(
             after(&system, "> run"),
             [
-                "RUNNING Pong 0.1.0",
-                "! RUNTIME ERROR IN TICK: code/main.luau:1: 'cls' can only be called during draw()",
+                "Running Pong 0.1.0",
+                "! Runtime error in tick: code/main.luau:1: 'cls' can only be called during draw()",
             ]
         );
     }
@@ -1716,7 +1724,7 @@ mod tests {
         let system = press_break(ticks(started(&fixture, script), 1));
         assert_eq!(
             after(&system, "> run"),
-            ["RUNNING Pong 0.1.0", "t", "w", "PAUSED Pong 0.1.0"]
+            ["Running Pong 0.1.0", "t", "w", "Paused Pong 0.1.0"]
         );
     }
 
@@ -1841,7 +1849,7 @@ mod tests {
         assert!(is_paused_game(&system));
         assert_eq!(
             after(&system, "> run"),
-            ["RUNNING Pong 0.1.0", "PAUSED Pong 0.1.0"]
+            ["Running Pong 0.1.0", "Paused Pong 0.1.0"]
         );
     }
 
@@ -1895,7 +1903,7 @@ mod tests {
         let fixture = Fixture::new("sys-pause");
         let system = press_break(ticks(started(&fixture, COUNTER), 3));
         assert!(is_paused_game(&system));
-        assert_eq!(transcript(&system).last().unwrap(), "PAUSED Pong 0.1.0");
+        assert_eq!(transcript(&system).last().unwrap(), "Paused Pong 0.1.0");
         let (system, lines) = logged_ticks(system, 5);
         assert_eq!(
             lines,
@@ -1910,7 +1918,7 @@ mod tests {
         let fixture = Fixture::new("sys-pause-resume");
         let system = press_break(press_break(ticks(started(&fixture, COUNTER), 3)));
         assert!(is_running(&system));
-        assert_eq!(transcript(&system).last().unwrap(), "RESUMED Pong 0.1.0");
+        assert_eq!(transcript(&system).last().unwrap(), "Resumed Pong 0.1.0");
         let (system, lines) = logged_ticks(system, 1);
         assert_eq!(lines, ["tick    4"]);
         assert_eq!(
@@ -1977,7 +1985,7 @@ mod tests {
         assert_eq!(system.input_mode(), InputMode::Text);
         assert_eq!(
             transcript(&system).last().unwrap(),
-            "TYPE RESUME TO CONTINUE OR STOP TO END"
+            "Type 'resume' to continue or 'stop' to end."
         );
         assert!(row_has_ink(&render(&system), 0), "the shell is drawn");
 
@@ -2003,7 +2011,7 @@ mod tests {
         let system = open_shell(press_break(ticks(started(&fixture, COUNTER), 2)));
         let system = enter(system, "resume");
         assert!(is_running(&system));
-        assert_eq!(after(&system, "> resume"), ["RESUMED Pong 0.1.0"]);
+        assert_eq!(after(&system, "> resume"), ["Resumed Pong 0.1.0"]);
         let (_, lines) = logged_ticks(system, 1);
         assert_eq!(lines, ["tick    3"]);
     }
@@ -2013,12 +2021,12 @@ mod tests {
         let fixture = Fixture::new("sys-pause-stop");
         let system = stop_cartridge(ticks(started(&fixture, COUNTER), 2));
         assert_eq!(loaded_name(&system), Some("Pong"));
-        assert_eq!(after(&system, "> stop"), ["STOPPED Pong 0.1.0"]);
+        assert_eq!(after(&system, "> stop"), ["Stopped Pong 0.1.0"]);
 
         let system = enter(system, "run");
         assert_eq!(
             after(&system, "> run"),
-            ["RUNNING Pong 0.1.0", "entry", "boot"]
+            ["Running Pong 0.1.0", "entry", "boot"]
         );
         let (_, lines) = logged_ticks(system, 1);
         assert_eq!(lines, ["tick    1"]);
@@ -2033,9 +2041,9 @@ mod tests {
         assert_eq!(
             after(&system, "> load pong"),
             [
-                "! CARTRIDGE PAUSED: RESUME OR STOP IT FIRST",
+                "! Cartridge paused: resume or stop it first",
                 "> run",
-                "! CARTRIDGE PAUSED: RESUME OR STOP IT FIRST",
+                "! Cartridge paused: resume or stop it first",
             ]
         );
         let (_, lines) = logged_ticks(enter(system, "resume"), 1);
@@ -2050,7 +2058,7 @@ mod tests {
         assert!(is_paused_shell(&system));
         assert_eq!(
             after(&system, "> unload"),
-            ["! CARTRIDGE PAUSED: RESUME OR STOP IT FIRST"]
+            ["! Cartridge paused: resume or stop it first"]
         );
 
         let (_, lines) = logged_ticks(enter(system, "resume"), 1);
@@ -2066,10 +2074,10 @@ mod tests {
         assert_eq!(loaded_name(&system), Some("Pong"));
         assert_eq!(
             transcript(&system).last().unwrap(),
-            "! RUNTIME ERROR IN TICK: code/main.luau:1: boom"
+            "! Runtime error in tick: code/main.luau:1: boom"
         );
         let system = enter(system, "resume");
-        assert_eq!(after(&system, "> resume"), ["! NO PAUSED CARTRIDGE"]);
+        assert_eq!(after(&system, "> resume"), ["! No paused cartridge"]);
         assert_eq!(loaded_name(&system), Some("Pong"));
     }
 
@@ -2698,5 +2706,134 @@ mod tests {
             run(&Fixture::new("sys-audio-determinism-c"), true),
             (samples, psg)
         );
+    }
+
+    // Creating cartridges.
+
+    const WELCOME: [&str; 7] = [
+        "Your new cartridge is ready!",
+        "My Game",
+        "",
+        "Every great game starts somewhere.",
+        "This one starts with you.",
+        "",
+        "Try 'run' to see your first creation.",
+    ];
+
+    #[test]
+    fn new_loads_the_created_cartridge_without_running_it() {
+        let fixture = Fixture::new("sys-new");
+        let system = enter(shell_with_cartridge(&fixture, ""), "new my-game");
+        assert!(matches!(system.state(), SystemState::Shell { .. }));
+        assert_eq!(loaded_name(&system), Some("My Game"));
+        assert_eq!(after(&system, "> new my-game"), WELCOME);
+
+        let system = enter(system, "info");
+        assert_eq!(transcript(&system).last().unwrap(), "STATE       LOADED");
+    }
+
+    #[test]
+    fn a_failed_new_announces_nothing_and_keeps_the_loaded_cartridge() {
+        let fixture = Fixture::new("sys-new-fail");
+        let system = enter(shell_with_cartridge(&fixture, ""), "load pong");
+        assert_eq!(after(&system, "> load pong"), ["Loaded Pong 0.1.0"]);
+        let system = enter(system, "new pong");
+        assert_eq!(after(&system, "> new pong"), ["! /pong already exists"]);
+        assert_eq!(loaded_name(&system), Some("Pong"));
+    }
+
+    #[test]
+    fn new_then_run_starts_the_starter_cartridge() {
+        let fixture = Fixture::new("sys-new-run");
+        let system = enter(
+            enter(shell_with_cartridge(&fixture, ""), "new my-game"),
+            "run",
+        );
+        assert!(is_running(&system));
+        let system = ticks(system, 120);
+        assert!(is_running(&system));
+        assert_eq!(after(&system, "> run"), ["Running My Game 0.1.0"]);
+    }
+
+    /// Per-tick input that presses `button` on the first tick, releases it
+    /// after `held` ticks, and lasts `total` ticks.
+    fn hold(button: Button, held: usize, total: usize) -> Vec<Vec<InputEvent>> {
+        let mut inputs = vec![Vec::new(); total];
+        inputs[0].push(InputEvent::ButtonDown(button));
+        if held < total {
+            inputs[held].push(InputEvent::ButtonUp(button));
+        }
+        inputs
+    }
+
+    /// Per-tick input that taps `button` (pressed for one tick) at each of
+    /// `at`, lasting `total` ticks.
+    fn taps(button: Button, at: &[usize], total: usize) -> Vec<Vec<InputEvent>> {
+        let mut inputs = vec![Vec::new(); total];
+        for &tick in at {
+            inputs[tick].push(InputEvent::ButtonDown(button));
+            inputs[tick + 1].push(InputEvent::ButtonUp(button));
+        }
+        inputs
+    }
+
+    /// The frame a freshly created and started starter cartridge shows after
+    /// one tick per entry of `inputs`. `name` keeps each run's storage apart.
+    ///
+    /// Runs compared with each other last the same number of ticks, so
+    /// anything the starter animates by time alone matches between them.
+    fn starter_frame(name: &str, inputs: &[Vec<InputEvent>]) -> Framebuffer {
+        let fixture = Fixture::new(name);
+        let mut system = enter(enter(shell_with_cartridge(&fixture, ""), "new owl"), "run");
+        for input in inputs {
+            system = system.update(input);
+        }
+        assert!(is_running(&system), "{:?}", transcript(&system));
+        render(&system)
+    }
+
+    /// The leftmost and rightmost columns where `a` and `b` differ.
+    fn differing_columns(a: &Framebuffer, b: &Framebuffer) -> Option<(i32, i32)> {
+        let columns: Vec<i32> = (0..WIDTH as i32)
+            .filter(|&x| (0..HEIGHT as i32).any(|y| a.pixel(x, y) != b.pixel(x, y)))
+            .collect();
+        Some((*columns.first()?, *columns.last()?))
+    }
+
+    #[test]
+    fn the_starter_owl_follows_the_arrows() {
+        let idle = starter_frame("sys-starter-idle", &vec![Vec::new(); 30]);
+        let right = starter_frame("sys-starter-right", &hold(Button::Right, 20, 30));
+        let left = starter_frame("sys-starter-left", &hold(Button::Left, 20, 30));
+        let (right_min, right_max) = differing_columns(&idle, &right).unwrap();
+        let (left_min, left_max) = differing_columns(&idle, &left).unwrap();
+        assert!(
+            right_min + right_max > left_min + left_max,
+            "right {right_min}..{right_max}, left {left_min}..{left_max}"
+        );
+    }
+
+    #[test]
+    fn the_starter_owl_stays_on_screen() {
+        let stopped = starter_frame("sys-starter-stop", &hold(Button::Left, 300, 600));
+        let held = starter_frame("sys-starter-held", &hold(Button::Left, 600, 600));
+        assert!(stopped == held, "holding Left longer moved the owl further");
+
+        let idle = starter_frame("sys-starter-idle-long", &vec![Vec::new(); 600]);
+        let (min, _) = differing_columns(&idle, &held).unwrap();
+        assert_eq!(min, 0, "the owl rests against the left edge");
+    }
+
+    #[test]
+    fn the_starter_owl_reacts_to_a() {
+        let idle = starter_frame("sys-starter-a-idle", &vec![Vec::new(); 10]);
+        let pressed = starter_frame("sys-starter-a-press", &taps(Button::A, &[0], 10));
+        assert!(differing_columns(&idle, &pressed).is_some());
+
+        // Long after the hop and the speech bubble, the message still shows
+        // how many times the owl was greeted.
+        let once = starter_frame("sys-starter-a-once", &taps(Button::A, &[0], 150));
+        let twice = starter_frame("sys-starter-a-twice", &taps(Button::A, &[0, 4], 150));
+        assert!(differing_columns(&once, &twice).is_some());
     }
 }

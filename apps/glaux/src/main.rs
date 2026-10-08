@@ -1,6 +1,7 @@
 mod app_dirs;
 mod cartridge;
 mod cartridge_fs;
+mod cartridge_template;
 mod clock;
 mod desktop;
 mod logging;

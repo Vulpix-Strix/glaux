@@ -12,15 +12,15 @@ use crate::runtime::Phase;
 /// paths, as in `code/game/enemies.luau:3: boom`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ScriptError {
-    #[error("SYNTAX ERROR: {0}")]
+    #[error("Syntax error: {0}")]
     Syntax(String),
-    #[error("RUNTIME ERROR: {0}")]
+    #[error("Runtime error: {0}")]
     Runtime(String),
-    #[error("EXECUTION LIMIT EXCEEDED")]
+    #[error("Execution limit exceeded")]
     LimitExceeded,
     /// The budget ran out while the top-level code of the module at this
     /// path was running.
-    #[error("EXECUTION LIMIT EXCEEDED IN {0}")]
+    #[error("Execution limit exceeded in {0}")]
     ModuleLimitExceeded(String),
     #[error("{0}")]
     Require(Box<RequireFailure>),
@@ -43,10 +43,10 @@ pub enum RequireError {
 impl RequireError {
     fn headline(&self) -> &'static str {
         match self {
-            Self::InvalidName { .. } => "INVALID MODULE NAME",
-            Self::NotFound(_) => "MODULE NOT FOUND",
-            Self::Unreadable(_) => "CANNOT READ MODULE",
-            Self::Cycle(_) => "CYCLIC REQUIRE",
+            Self::InvalidName { .. } => "Invalid module name",
+            Self::NotFound(_) => "Module not found",
+            Self::Unreadable(_) => "Cannot read module",
+            Self::Cycle(_) => "Cyclic require",
         }
     }
 
@@ -68,12 +68,12 @@ pub struct RequireFailure {
 }
 
 impl RequireFailure {
-    /// The message, naming `callback` (uppercase) when it failed in one, as
-    /// in `MODULE NOT FOUND IN TICK: code/x.luau (code/main.luau:3)`.
+    /// The message, naming `callback` when it failed in one, as in
+    /// `Module not found in tick: code/x.luau (code/main.luau:3)`.
     fn message(&self, callback: Option<&str>) -> String {
         let mut text = self.error.headline().to_owned();
         if let Some(callback) = callback {
-            text.push_str(" IN ");
+            text.push_str(" in ");
             text.push_str(callback);
         }
         text.push_str(": ");
@@ -96,7 +96,7 @@ impl std::error::Error for RequireFailure {}
 /// A [`ScriptError`] and the phase it happened in.
 ///
 /// Errors outside the entry chunk name the callback, as in
-/// `RUNTIME ERROR IN TICK: main.luau:3: boom`.
+/// `Runtime error in tick: main.luau:3: boom`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeError {
     pub phase: Phase,
@@ -108,15 +108,14 @@ impl fmt::Display for RuntimeError {
         let Some(callback) = self.phase.callback() else {
             return self.error.fmt(f);
         };
-        let callback = callback.to_uppercase();
         match &self.error {
-            ScriptError::Syntax(message) => write!(f, "SYNTAX ERROR IN {callback}: {message}"),
-            ScriptError::Runtime(message) => write!(f, "RUNTIME ERROR IN {callback}: {message}"),
-            ScriptError::LimitExceeded => write!(f, "EXECUTION LIMIT EXCEEDED IN {callback}"),
+            ScriptError::Syntax(message) => write!(f, "Syntax error in {callback}: {message}"),
+            ScriptError::Runtime(message) => write!(f, "Runtime error in {callback}: {message}"),
+            ScriptError::LimitExceeded => write!(f, "Execution limit exceeded in {callback}"),
             ScriptError::ModuleLimitExceeded(path) => {
-                write!(f, "EXECUTION LIMIT EXCEEDED IN {callback}: {path}")
+                write!(f, "Execution limit exceeded in {callback}: {path}")
             }
-            ScriptError::Require(failure) => f.write_str(&failure.message(Some(&callback))),
+            ScriptError::Require(failure) => f.write_str(&failure.message(Some(callback))),
         }
     }
 }

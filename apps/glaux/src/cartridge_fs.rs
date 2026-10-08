@@ -6,9 +6,11 @@
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
-use std::fs;
-use std::io::{self, ErrorKind};
+use std::fs::{self, OpenOptions};
+use std::io::{self, ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
 
 use anyhow::Context as _;
 
@@ -18,6 +20,14 @@ const CARTRIDGE_DIR: &str = "cartridges";
 /// Symlinks followed while locating one path before giving up, as with
 /// POSIX `MAXSYMLINKS`. Bounds link cycles.
 const MAX_SYMLINK_HOPS: usize = 40;
+
+/// Name prefix of the directories new trees are built in before they are
+/// published. Listings hide them.
+const STAGING_PREFIX: &str = ".glaux-staging-";
+
+/// A staging directory untouched for this long was left behind by an
+/// interrupted creation and is removed by the next creation beside it.
+const STALE_STAGING: Duration = Duration::from_secs(60 * 60);
 
 /// Kind of a directory entry. Directories order first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -37,16 +47,35 @@ pub struct DirEntry {
 /// show in the shell.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FsError {
-    #[error("NO SUCH FILE OR DIRECTORY: {0}")]
+    #[error("No such file or directory: {0}")]
     NotFound(String),
-    #[error("NOT A DIRECTORY: {0}")]
+    #[error("Not a directory: {0}")]
     NotADirectory(String),
-    #[error("NOT A FILE: {0}")]
+    #[error("Not a file: {0}")]
     NotAFile(String),
-    #[error("CANNOT READ {0}")]
+    #[error("Cannot read {0}")]
     Unreadable(String),
-    #[error("CARTRIDGE STORAGE UNAVAILABLE")]
+    /// Something already exists where a new entry was to be published.
+    #[error("Already exists: {0}")]
+    AlreadyExists(String),
+    #[error("Cannot write {0}")]
+    Unwritable(String),
+    #[error("Cartridge storage unavailable")]
     Unavailable,
+}
+
+/// A failed [`CartridgeFs::create_dir_with`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CreateDirError<E> {
+    Fs(FsError),
+    /// The validation callback rejected the staged tree.
+    Invalid(E),
+}
+
+impl<E> From<FsError> for CreateDirError<E> {
+    fn from(err: FsError) -> Self {
+        Self::Fs(err)
+    }
 }
 
 /// Cartridge storage as the shell sees it.
@@ -100,6 +129,16 @@ impl CartridgeStorage {
     /// See [`CartridgeFs::subdir`].
     pub fn subdir(&self, path: &str) -> Result<(String, CartridgeFs), FsError> {
         self.fs()?.subdir(path)
+    }
+
+    /// See [`CartridgeFs::create_dir_with`].
+    pub fn create_dir_with<E>(
+        &self,
+        name: &str,
+        files: &[(&str, &[u8])],
+        validate: impl FnOnce(&CartridgeFs) -> Result<(), E>,
+    ) -> Result<String, CreateDirError<E>> {
+        self.fs()?.create_dir_with(name, files, validate)
     }
 
     fn fs(&self) -> Result<&CartridgeFs, FsError> {
@@ -186,7 +225,12 @@ impl CartridgeFs {
         let mut listing = Vec::new();
         for entry in entries {
             let entry = entry.map_err(|err| io_failure(err, &target))?;
-            let Some(name) = entry.file_name().into_string().ok().filter(|n| is_name(n)) else {
+            let Some(name) = entry
+                .file_name()
+                .into_string()
+                .ok()
+                .filter(|n| is_name(n) && !n.starts_with(STAGING_PREFIX))
+            else {
                 continue;
             };
             let mut components = target.clone();
@@ -270,6 +314,60 @@ impl CartridgeFs {
         let target = self.resolve(path)?;
         let file = self.regular_file(&target)?;
         fs::read(&file).map_err(|err| io_failure(err, &target))
+    }
+
+    /// Creates the directory `name` in the current directory holding
+    /// `files`, given as `/`-separated paths relative to it, and returns its
+    /// virtual path.
+    ///
+    /// The tree is built in a uniquely named staging directory beside the
+    /// destination and handed to `validate` as a filesystem of its own. Only
+    /// a tree that passes is published under `name`, and publishing never
+    /// replaces anything: if an entry of that name exists, or appears while
+    /// the tree is built, the result is [`FsError::AlreadyExists`]. On any
+    /// failure the staging directory is removed, so `name` either holds the
+    /// complete tree or was never created.
+    ///
+    /// Staging directories left behind by an interrupted creation are
+    /// removed once they are an hour old.
+    pub fn create_dir_with<E>(
+        &self,
+        name: &str,
+        files: &[(&str, &[u8])],
+        validate: impl FnOnce(&CartridgeFs) -> Result<(), E>,
+    ) -> Result<String, CreateDirError<E>> {
+        let mut components = self.cwd.clone();
+        components.push(name.to_owned());
+        if !is_name(name) || name.starts_with(STAGING_PREFIX) {
+            return Err(FsError::Unwritable(virtual_path(&components)).into());
+        }
+        if files.iter().any(|(path, _)| !path.split('/').all(is_name)) {
+            return Err(FsError::Unwritable(virtual_path(&components)).into());
+        }
+
+        let parent = self.directory(&self.cwd)?;
+        sweep_stale_staging(&parent);
+        let target = parent.join(name);
+        match fs::symlink_metadata(&target) {
+            Ok(_) => return Err(FsError::AlreadyExists(virtual_path(&components)).into()),
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => return Err(io_failure(err, &components).into()),
+        }
+
+        let staging =
+            create_staging(&parent, name).map_err(|err| write_failure(err, &components))?;
+        let result = stage_and_publish(&staging, &target, &components, files, validate);
+        if result.is_err()
+            && let Err(err) = fs::remove_dir_all(&staging)
+            && err.kind() != ErrorKind::NotFound
+        {
+            tracing::warn!(
+                staging = %staging.display(),
+                error = %err,
+                "failed to remove a staging directory"
+            );
+        }
+        result.map(|()| virtual_path(&components))
     }
 
     /// Resolves `path` lexically into components below `/`. `..` at `/`
@@ -373,6 +471,141 @@ impl CartridgeFs {
         }
         Ok((current, kind))
     }
+}
+
+/// Writes `files` into `staging`, validates the result and publishes it as
+/// `target`. `components` is the virtual path of `target`, for errors.
+fn stage_and_publish<E>(
+    staging: &Path,
+    target: &Path,
+    components: &[String],
+    files: &[(&str, &[u8])],
+    validate: impl FnOnce(&CartridgeFs) -> Result<(), E>,
+) -> Result<(), CreateDirError<E>> {
+    for (path, contents) in files {
+        let host = path
+            .split('/')
+            .fold(staging.to_path_buf(), |dir, part| dir.join(part));
+        write_new_file(&host, contents).map_err(|err| write_failure(err, components))?;
+    }
+    // `staging` is a plain name inside a canonical directory, so it is
+    // canonical itself.
+    validate(&CartridgeFs::new(staging.to_path_buf())).map_err(CreateDirError::Invalid)?;
+    publish_dir(staging, target).map_err(|err| match err.kind() {
+        ErrorKind::AlreadyExists | ErrorKind::DirectoryNotEmpty => {
+            FsError::AlreadyExists(virtual_path(components))
+        }
+        _ => write_failure(err, components),
+    })?;
+    Ok(())
+}
+
+/// Creates `path` and the directories above it, failing if the file exists.
+fn write_new_file(path: &Path, contents: &[u8]) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(contents)?;
+    file.sync_all()
+}
+
+/// Creates a fresh staging directory for `name` inside `parent`.
+fn create_staging(parent: &Path, name: &str) -> io::Result<PathBuf> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(
+            "{STAGING_PREFIX}{name}-{}-{nanos}-{count}",
+            std::process::id()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// Removes staging directories in `parent` that an interrupted creation
+/// left behind. Failures are only logged.
+fn sweep_stale_staging(parent: &Path) {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let staged = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(STAGING_PREFIX));
+        // `DirEntry::file_type` does not follow symlinks, so a link is
+        // never mistaken for a staging directory.
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age >= STALE_STAGING);
+        if !(staged && is_dir && stale) {
+            continue;
+        }
+        match fs::remove_dir_all(entry.path()) {
+            Ok(()) => {
+                tracing::info!(path = %entry.path().display(), "removed a stale staging directory")
+            }
+            Err(err) => tracing::warn!(
+                path = %entry.path().display(),
+                error = %err,
+                "failed to remove a stale staging directory"
+            ),
+        }
+    }
+}
+
+/// Renames the directory `staging` to `target`, failing instead of
+/// replacing anything already at `target`.
+#[cfg(unix)]
+fn publish_dir(staging: &Path, target: &Path) -> io::Result<()> {
+    // Claiming the name first makes the rename replace only this call's own
+    // empty placeholder: POSIX rename atomically replaces an empty directory
+    // and refuses a non-empty one, so content that appears at `target` in
+    // between is never overwritten.
+    fs::create_dir(target)?;
+    fs::rename(staging, target).inspect_err(|_| {
+        // Fails, leaving it in place, once anything else is inside.
+        let _ = fs::remove_dir(target);
+    })
+}
+
+/// Renames the directory `staging` to `target`, failing instead of
+/// replacing anything already at `target`.
+#[cfg(windows)]
+fn publish_dir(staging: &Path, target: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let wide = |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain([0]).collect() };
+    let (from, to) = (wide(staging), wide(target));
+    // SAFETY: `from` and `to` are NUL-terminated UTF-16 strings that outlive
+    // the call. Without MOVEFILE_REPLACE_EXISTING the move fails if `target`
+    // exists.
+    let moved = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) };
+    if moved == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// Logs `err` and reports a failed write against the virtual path only.
+fn write_failure(err: io::Error, components: &[String]) -> FsError {
+    let path = virtual_path(components);
+    tracing::warn!(path = %path, error = %err, "cartridge directory write failed");
+    FsError::Unwritable(path)
 }
 
 /// Whether `name` is a single plain path component on the host, so joining
@@ -564,7 +797,7 @@ mod tests {
         assert_eq!(storage.change_dir("/"), Err(FsError::Unavailable));
         assert_eq!(
             FsError::Unavailable.to_string(),
-            "CARTRIDGE STORAGE UNAVAILABLE"
+            "Cartridge storage unavailable"
         );
     }
 
@@ -681,9 +914,9 @@ mod tests {
     #[test]
     fn errors_show_virtual_paths() {
         let err = FsError::NotFound("/games/nope".into());
-        assert_eq!(err.to_string(), "NO SUCH FILE OR DIRECTORY: /games/nope");
+        assert_eq!(err.to_string(), "No such file or directory: /games/nope");
         let err = FsError::NotADirectory("/b.txt".into());
-        assert_eq!(err.to_string(), "NOT A DIRECTORY: /b.txt");
+        assert_eq!(err.to_string(), "Not a directory: /b.txt");
     }
 
     #[test]
@@ -749,8 +982,154 @@ mod tests {
         assert_eq!(fs.read_file("/"), Err(FsError::NotAFile("/".into())));
         assert_eq!(fs.read_file("tools/nope"), Err(not_found("/tools/nope")));
         assert_eq!(fs.ensure_file("b.txt/x"), Err(not_found("/b.txt/x")));
-        assert_eq!(not_found("/x").to_string(), "NO SUCH FILE OR DIRECTORY: /x");
-        assert_eq!(FsError::NotAFile("/x".into()).to_string(), "NOT A FILE: /x");
+        assert_eq!(not_found("/x").to_string(), "No such file or directory: /x");
+        assert_eq!(FsError::NotAFile("/x".into()).to_string(), "Not a file: /x");
+    }
+
+    const TREE: &[(&str, &[u8])] = &[("top.txt", b"top"), ("code/main.luau", b"main")];
+
+    /// Creates `name` holding [`TREE`] in `fs`, accepting it unchecked.
+    fn create(fs: &CartridgeFs, name: &str) -> Result<String, CreateDirError<()>> {
+        fs.create_dir_with(name, TREE, |_| Ok(()))
+    }
+
+    /// Every entry name directly in the host directory `dir`, sorted.
+    fn host_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn create_dir_with_publishes_the_tree_in_the_current_directory() {
+        let fixture = Fixture::new("create-dir");
+        let mut fs = fixture.open();
+        fs.change_dir("games").unwrap();
+        let mut seen = None;
+        let created = fs.create_dir_with("new", TREE, |staged| {
+            seen = Some(staged.read_file("/code/main.luau"));
+            Ok::<(), ()>(())
+        });
+        assert_eq!(created, Ok("/games/new".into()));
+        assert_eq!(seen, Some(Ok(b"main".to_vec())));
+        assert_eq!(fs.read_file("new/top.txt"), Ok(b"top".to_vec()));
+        assert_eq!(fs.read_file("new/code/main.luau"), Ok(b"main".to_vec()));
+        assert_eq!(host_names(&fixture.root().join("games")), ["new", "owl"]);
+    }
+
+    #[test]
+    fn create_dir_with_never_replaces_an_entry() {
+        let fixture = Fixture::new("create-dir-exists");
+        let fs = fixture.open();
+        fs::write(fixture.root().join("games/owl/keep"), "kept").unwrap();
+        for name in ["games", "b.txt"] {
+            assert_eq!(
+                create(&fs, name),
+                Err(CreateDirError::Fs(FsError::AlreadyExists(format!(
+                    "/{name}"
+                ))))
+            );
+        }
+        assert_eq!(
+            fs::read(fixture.root().join("games/owl/keep")).unwrap(),
+            b"kept"
+        );
+        assert_eq!(fs::read(fixture.root().join("b.txt")).unwrap(), b"");
+        assert_eq!(host_names(&fixture.root().join("games")), ["owl"]);
+    }
+
+    #[test]
+    fn an_entry_appearing_during_creation_is_kept() {
+        let fixture = Fixture::new("create-dir-race");
+        let fs = fixture.open();
+        let target = fixture.root().join("new");
+        // Another creator takes the name while the tree is being staged.
+        let created = fs.create_dir_with("new", TREE, |_| {
+            fs::create_dir(&target).unwrap();
+            fs::write(target.join("theirs"), "theirs").unwrap();
+            Ok::<(), ()>(())
+        });
+        assert_eq!(
+            created,
+            Err(CreateDirError::Fs(FsError::AlreadyExists("/new".into())))
+        );
+        assert_eq!(host_names(&target), ["theirs"]);
+        assert_eq!(fs::read(target.join("theirs")).unwrap(), b"theirs");
+        assert!(
+            !host_names(&fixture.root())
+                .iter()
+                .any(|n| n.starts_with(STAGING_PREFIX))
+        );
+    }
+
+    #[test]
+    fn failed_creations_leave_nothing_behind() {
+        let fixture = Fixture::new("create-dir-fail");
+        let fs = fixture.open();
+        let before = host_names(&fixture.root());
+
+        let rejected = fs.create_dir_with("new", TREE, |_| Err("bad"));
+        assert_eq!(rejected, Err(CreateDirError::Invalid("bad")));
+
+        // `code` is written as a file, so `code/main.luau` cannot be.
+        let clash: &[(&str, &[u8])] = &[("code", b""), ("code/main.luau", b"")];
+        assert_eq!(
+            fs.create_dir_with("new", clash, |_| Ok::<(), ()>(())),
+            Err(CreateDirError::Fs(FsError::Unwritable("/new".into())))
+        );
+        assert_eq!(host_names(&fixture.root()), before);
+    }
+
+    #[test]
+    fn create_dir_with_rejects_names_that_are_not_one_component() {
+        let fixture = Fixture::new("create-dir-names");
+        let fs = fixture.open();
+        for name in ["", ".", "..", "a/b", r"a\b", ".glaux-staging-x"] {
+            assert!(
+                matches!(
+                    create(&fs, name),
+                    Err(CreateDirError::Fs(FsError::Unwritable(_)))
+                ),
+                "{name:?}"
+            );
+        }
+        let escaping: &[(&str, &[u8])] = &[("../out", b"")];
+        assert!(matches!(
+            fs.create_dir_with("new", escaping, |_| Ok::<(), ()>(())),
+            Err(CreateDirError::Fs(FsError::Unwritable(_)))
+        ));
+        assert!(!fixture.root().join("new").exists());
+        assert!(!fixture.root().join("../out").exists());
+        assert_eq!(
+            CartridgeStorage::Unavailable.create_dir_with("new", TREE, |_| Ok::<(), ()>(())),
+            Err(CreateDirError::Fs(FsError::Unavailable))
+        );
+    }
+
+    #[test]
+    fn staging_directories_are_hidden_and_stale_ones_are_swept() {
+        let fixture = Fixture::new("create-dir-stale");
+        let fs = fixture.open();
+        let stale = fixture.root().join(format!("{STAGING_PREFIX}old-1-2-3"));
+        let fresh = fixture.root().join(format!("{STAGING_PREFIX}busy-1-2-3"));
+        fs::create_dir_all(stale.join("code")).unwrap();
+        fs::create_dir(&fresh).unwrap();
+        let old = SystemTime::now() - STALE_STAGING - Duration::from_secs(60);
+        fs::File::open(&stale).unwrap().set_modified(old).unwrap();
+        assert_eq!(
+            ls(&fs, None),
+            ["games/", "tools/", "Zeta/", "A.txt", "b.txt", "readme"]
+        );
+
+        create(&fs, "new").unwrap();
+        assert!(!stale.exists());
+        assert!(
+            fresh.exists(),
+            "a recent staging directory may still be in use"
+        );
     }
 
     #[cfg(unix)]
@@ -758,6 +1137,29 @@ mod tests {
         use super::*;
         use pretty_assertions::assert_eq;
         use std::os::unix::fs::symlink;
+
+        #[test]
+        fn creation_never_replaces_a_link() {
+            let fixture = Fixture::new("create-dir-link");
+            let root = fixture.root();
+            symlink(fixture.outside(), root.join("out")).unwrap();
+            symlink("missing", root.join("dangling")).unwrap();
+            let fs = fixture.open();
+            for name in ["out", "dangling"] {
+                assert_eq!(
+                    create(&fs, name),
+                    Err(CreateDirError::Fs(FsError::AlreadyExists(format!(
+                        "/{name}"
+                    ))))
+                );
+            }
+            assert_eq!(host_names(&fixture.outside()), ["secret"]);
+            assert!(
+                fs::symlink_metadata(root.join("dangling"))
+                    .unwrap()
+                    .is_symlink()
+            );
+        }
 
         #[test]
         fn links_leaving_the_root_are_hidden_and_unreachable() {

@@ -21,7 +21,7 @@ const MANIFEST: &str = "/cartridge.ron";
 const LEGACY_MANIFEST: &str = "/cart.json";
 
 /// The only manifest format this Glaux understands.
-const FORMAT: u32 = 1;
+pub(crate) const FORMAT: u32 = 1;
 
 /// Optional native object-tile data from the cartridge root.
 const OBJ_TILES: &str = "/sprites.bin";
@@ -45,66 +45,66 @@ pub enum CartridgeError {
     /// The cartridge directory itself could not be reached.
     #[error(transparent)]
     Fs(#[from] FsError),
-    #[error("NO CARTRIDGE.RON IN {0}")]
+    #[error("No cartridge.ron in {0}")]
     MissingManifest(String),
     /// The directory only has the retired `cart.json` manifest.
-    #[error("CART.JSON IS NO LONGER SUPPORTED; USE CARTRIDGE.RON")]
+    #[error("cart.json is no longer supported; use cartridge.ron")]
     LegacyManifest,
-    #[error("CARTRIDGE.RON IS NOT A FILE")]
+    #[error("cartridge.ron is not a file")]
     ManifestNotAFile,
-    #[error("CANNOT READ CARTRIDGE.RON")]
+    #[error("Cannot read cartridge.ron")]
     ManifestUnreadable,
     /// Syntax or shape errors reported by the RON parser.
-    #[error("CARTRIDGE.RON LINE {line}: {reason}")]
+    #[error("cartridge.ron line {line}: {reason}")]
     Malformed { line: usize, reason: String },
-    #[error("CARTRIDGE.RON: UNSUPPORTED FORMAT {0}")]
+    #[error("cartridge.ron: unsupported format {0}")]
     UnsupportedFormat(u32),
     /// A required field is absent; holds its dotted path, as in
     /// `cartridge.version`.
-    #[error("CARTRIDGE.RON: MISSING {0}")]
+    #[error("cartridge.ron: missing {0}")]
     MissingField(String),
     /// A field the v1 schema does not define; holds its dotted path.
-    #[error("CARTRIDGE.RON: UNKNOWN FIELD {0}")]
+    #[error("cartridge.ron: unknown field {0}")]
     UnknownField(String),
-    #[error("CARTRIDGE.RON: UNSUPPORTED LANGUAGE {0}")]
+    #[error("cartridge.ron: unsupported language {0}")]
     UnsupportedLanguage(String),
-    #[error("CARTRIDGE.RON: UNSUPPORTED HARDWARE MODEL {0}")]
+    #[error("cartridge.ron: unsupported hardware model {0}")]
     UnsupportedModel(String),
-    #[error("CARTRIDGE.RON: UNSUPPORTED GRAPHICS PROFILE {0}")]
+    #[error("cartridge.ron: unsupported graphics profile {0}")]
     UnsupportedGraphics(String),
-    #[error("CARTRIDGE.RON: cartridge.name IS EMPTY")]
+    #[error("cartridge.ron: cartridge.name is empty")]
     EmptyName,
-    #[error("CARTRIDGE.RON: cartridge.version IS NOT SEMVER")]
+    #[error("cartridge.ron: cartridge.version is not semver")]
     InvalidVersion,
-    #[error("CARTRIDGE.RON: compatibility.min_glaux IS NOT SEMVER")]
+    #[error("cartridge.ron: compatibility.min_glaux is not semver")]
     InvalidMinGlaux,
-    #[error("CARTRIDGE REQUIRES GLAUX {required} (THIS IS {running})")]
+    #[error("Cartridge requires Glaux {required} (this is {running})")]
     RequiresGlaux { required: Version, running: Version },
-    #[error("CARTRIDGE.RON: runtime.entry MUST BE A RELATIVE PATH")]
+    #[error("cartridge.ron: runtime.entry must be a relative path")]
     InvalidEntryPath,
-    #[error("CARTRIDGE.RON: runtime.entry MUST BE A .luau FILE")]
+    #[error("cartridge.ron: runtime.entry must be a .luau file")]
     EntryNotLuau,
-    #[error("ENTRY NOT FOUND: {0}")]
+    #[error("Entry not found: {0}")]
     EntryNotFound(String),
-    #[error("ENTRY IS NOT A FILE: {0}")]
+    #[error("Entry is not a file: {0}")]
     EntryNotAFile(String),
-    #[error("CANNOT READ ENTRY: {0}")]
+    #[error("Cannot read entry: {0}")]
     EntryUnreadable(String),
-    #[error("SPRITES.BIN IS NOT A FILE")]
+    #[error("sprites.bin is not a file")]
     ObjTilesNotAFile,
-    #[error("CANNOT READ SPRITES.BIN")]
+    #[error("Cannot read sprites.bin")]
     ObjTilesUnreadable,
-    #[error("OBJATTR.BIN IS NOT A FILE")]
+    #[error("objattr.bin is not a file")]
     ObjAttributesNotAFile,
-    #[error("CANNOT READ OBJATTR.BIN")]
+    #[error("Cannot read objattr.bin")]
     ObjAttributesUnreadable,
-    #[error("OBP.BIN IS NOT A FILE")]
+    #[error("obp.bin is not a file")]
     ObjPalettesNotAFile,
-    #[error("CANNOT READ OBP.BIN")]
+    #[error("Cannot read obp.bin")]
     ObjPalettesUnreadable,
-    #[error("PALETTE.BIN IS NOT A FILE")]
+    #[error("palette.bin is not a file")]
     PaletteNotAFile,
-    #[error("CANNOT READ PALETTE.BIN")]
+    #[error("Cannot read palette.bin")]
     PaletteUnreadable,
 }
 
@@ -175,26 +175,28 @@ pub enum GraphicsProfile {
 /// is reported against its own field instead of as an anonymous serde error.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ManifestFile {
-    format: u32,
-    cartridge: CartridgeFile,
-    runtime: RuntimeSpec,
-    hardware: HardwareSpec,
-    compatibility: CompatibilityFile,
+pub(crate) struct ManifestFile {
+    pub(crate) format: u32,
+    pub(crate) cartridge: CartridgeFile,
+    pub(crate) runtime: RuntimeSpec,
+    pub(crate) hardware: HardwareSpec,
+    pub(crate) compatibility: CompatibilityFile,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CartridgeFile {
-    name: String,
-    version: String,
-    author: Option<String>,
+pub(crate) struct CartridgeFile {
+    pub(crate) name: String,
+    pub(crate) version: String,
+    /// Left out of written manifests when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) author: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CompatibilityFile {
-    min_glaux: String,
+pub(crate) struct CompatibilityFile {
+    pub(crate) min_glaux: String,
 }
 
 /// Reads only `format`, so a manifest from another format version is
@@ -303,7 +305,7 @@ fn field_path(outer: Option<&str>, field: &str) -> String {
 }
 
 /// Version of the running Glaux, the one `min_glaux` is checked against.
-fn glaux_version() -> &'static Version {
+pub(crate) fn glaux_version() -> &'static Version {
     static VERSION: OnceLock<Version> = OnceLock::new();
     VERSION.get_or_init(|| {
         Version::parse(env!("CARGO_PKG_VERSION")).expect("the crate version is semver")
@@ -352,6 +354,13 @@ impl LoadedCartridge {
     /// A cartridge requiring a newer Glaux than this one is rejected.
     pub fn load(storage: &CartridgeStorage, path: &str) -> Result<Self, CartridgeError> {
         let (location, files) = storage.subdir(path)?;
+        Self::open(location, files)
+    }
+
+    /// Validates the cartridge whose directory is `files`, which `location`
+    /// names in errors and logs. What [`load`](Self::load) does once the
+    /// directory is located.
+    pub(crate) fn open(location: String, files: CartridgeFs) -> Result<Self, CartridgeError> {
         let manifest = match files.read_file(MANIFEST) {
             Ok(bytes) => CartridgeManifest::parse(&bytes)?,
             Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => {
@@ -361,7 +370,12 @@ impl LoadedCartridge {
                 return Err(CartridgeError::MissingManifest(location));
             }
             Err(FsError::NotAFile(_)) => return Err(CartridgeError::ManifestNotAFile),
-            Err(FsError::Unreadable(_) | FsError::Unavailable) => {
+            Err(
+                FsError::Unreadable(_)
+                | FsError::AlreadyExists(_)
+                | FsError::Unwritable(_)
+                | FsError::Unavailable,
+            ) => {
                 return Err(CartridgeError::ManifestUnreadable);
             }
         };
@@ -454,7 +468,12 @@ impl LoadedCartridge {
             Ok(bytes) => Ok(Some(bytes)),
             Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => Ok(None),
             Err(FsError::NotAFile(_)) => Err(not_a_file),
-            Err(FsError::Unreadable(_) | FsError::Unavailable) => Err(unreadable),
+            Err(
+                FsError::Unreadable(_)
+                | FsError::AlreadyExists(_)
+                | FsError::Unwritable(_)
+                | FsError::Unavailable,
+            ) => Err(unreadable),
         }
     }
 }
@@ -479,9 +498,11 @@ impl ModuleSource for CartridgeModules {
             .and_then(|code| code.read_file(path.in_root()));
         read.map_err(|err| match err {
             FsError::NotFound(_) | FsError::NotADirectory(_) => ModuleLoadError::NotFound,
-            FsError::NotAFile(_) | FsError::Unreadable(_) | FsError::Unavailable => {
-                ModuleLoadError::Unreadable
-            }
+            FsError::NotAFile(_)
+            | FsError::Unreadable(_)
+            | FsError::AlreadyExists(_)
+            | FsError::Unwritable(_)
+            | FsError::Unavailable => ModuleLoadError::Unreadable,
         })
     }
 }
@@ -493,9 +514,10 @@ fn entry_error(err: FsError, entry: &str) -> CartridgeError {
             CartridgeError::EntryNotFound(entry.to_owned())
         }
         FsError::NotAFile(_) => CartridgeError::EntryNotAFile(entry.to_owned()),
-        FsError::Unreadable(_) | FsError::Unavailable => {
-            CartridgeError::EntryUnreadable(entry.to_owned())
-        }
+        FsError::Unreadable(_)
+        | FsError::AlreadyExists(_)
+        | FsError::Unwritable(_)
+        | FsError::Unavailable => CartridgeError::EntryUnreadable(entry.to_owned()),
     }
 }
 
@@ -669,7 +691,7 @@ mod tests {
         };
         assert_eq!(
             shown.to_string(),
-            "CARTRIDGE.RON LINE 3: Expected closing `)`"
+            "cartridge.ron line 3: Expected closing `)`"
         );
     }
 
@@ -691,7 +713,7 @@ mod tests {
         );
         assert_eq!(
             CartridgeError::UnsupportedFormat(2).to_string(),
-            "CARTRIDGE.RON: UNSUPPORTED FORMAT 2"
+            "cartridge.ron: unsupported format 2"
         );
     }
 
@@ -722,7 +744,7 @@ mod tests {
         );
         assert_eq!(
             CartridgeError::MissingField("runtime.entry".into()).to_string(),
-            "CARTRIDGE.RON: MISSING runtime.entry"
+            "cartridge.ron: missing runtime.entry"
         );
     }
 
@@ -742,7 +764,7 @@ mod tests {
         );
         assert_eq!(
             CartridgeError::UnsupportedLanguage("Rhai".into()).to_string(),
-            "CARTRIDGE.RON: UNSUPPORTED LANGUAGE Rhai"
+            "cartridge.ron: unsupported language Rhai"
         );
     }
 
@@ -794,7 +816,7 @@ mod tests {
                 .check_compatible(&Version::new(0, 1, 9))
                 .unwrap_err()
                 .to_string(),
-            "CARTRIDGE REQUIRES GLAUX 0.2.0 (THIS IS 0.1.9)"
+            "Cartridge requires Glaux 0.2.0 (this is 0.1.9)"
         );
     }
 
@@ -1082,7 +1104,7 @@ mod tests {
         );
         assert_eq!(
             CartridgeError::ObjTilesNotAFile.to_string(),
-            "SPRITES.BIN IS NOT A FILE"
+            "sprites.bin is not a file"
         );
     }
 
@@ -1104,7 +1126,7 @@ mod tests {
         );
         assert_eq!(
             CartridgeError::Fs(FsError::Unavailable).to_string(),
-            "CARTRIDGE STORAGE UNAVAILABLE"
+            "Cartridge storage unavailable"
         );
     }
 
@@ -1118,7 +1140,7 @@ mod tests {
         );
         assert_eq!(
             CartridgeError::MissingManifest("/games/owl".into()).to_string(),
-            "NO CARTRIDGE.RON IN /games/owl"
+            "No cartridge.ron in /games/owl"
         );
         fs::create_dir(fixture.root().join("games/owl/cartridge.ron")).unwrap();
         assert_eq!(
@@ -1198,7 +1220,7 @@ mod tests {
         );
         assert_eq!(
             CartridgeError::EntryNotAFile("code/main.luau".into()).to_string(),
-            "ENTRY IS NOT A FILE: code/main.luau"
+            "Entry is not a file: code/main.luau"
         );
     }
 

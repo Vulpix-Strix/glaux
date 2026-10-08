@@ -63,18 +63,18 @@ fn errors_name_their_phase() {
     let shown = |phase, error| self::error(phase, error).to_string();
     assert_eq!(
         shown(Phase::Entry, ScriptError::Runtime("main.luau:1: x".into())),
-        "RUNTIME ERROR: main.luau:1: x"
+        "Runtime error: main.luau:1: x"
     );
     assert_eq!(
         shown(Phase::Tick, ScriptError::Runtime("main.luau:1: x".into())),
-        "RUNTIME ERROR IN TICK: main.luau:1: x"
+        "Runtime error in tick: main.luau:1: x"
     );
     assert_eq!(
         shown(Phase::Draw, ScriptError::LimitExceeded),
-        "EXECUTION LIMIT EXCEEDED IN DRAW"
+        "Execution limit exceeded in draw"
     );
     assert_eq!(
         shown(Phase::Boot, ScriptError::LimitExceeded),
-        "EXECUTION LIMIT EXCEEDED IN BOOT"
+        "Execution limit exceeded in boot"
     );
 }

@@ -84,7 +84,7 @@ fn cyclic_requires_fail_with_the_chain() {
     );
     assert_eq!(
         failure.error.to_string(),
-        "CYCLIC REQUIRE: code/a.luau -> code/b.luau -> code/a.luau (code/b.luau:1)"
+        "Cyclic require: code/a.luau -> code/b.luau -> code/a.luau (code/b.luau:1)"
     );
 
     let files = Files::new(&[("code/me.luau", r#"return require("me")"#)]);
@@ -105,7 +105,7 @@ fn missing_and_unreadable_modules_name_their_path_and_caller() {
     );
     assert_eq!(
         failure.error.to_string(),
-        "MODULE NOT FOUND: code/nope.luau (main.luau:2)"
+        "Module not found: code/nope.luau (main.luau:2)"
     );
 
     let mut files = Files::new(&[("code/locked.luau", "return 1")]);
@@ -113,7 +113,7 @@ fn missing_and_unreadable_modules_name_their_path_and_caller() {
     let failure = start_failure_with(r#"require("locked")"#, files);
     assert_eq!(
         failure.error.to_string(),
-        "CANNOT READ MODULE: code/locked.luau (main.luau:1)"
+        "Cannot read module: code/locked.luau (main.luau:1)"
     );
 }
 
@@ -266,7 +266,7 @@ fn runaway_modules_hit_the_budget_of_the_requiring_call() {
     }
     assert_eq!(
         error(Phase::Entry, in_module.clone()).to_string(),
-        "EXECUTION LIMIT EXCEEDED IN code/slow.luau"
+        "Execution limit exceeded in code/slow.luau"
     );
 
     let mut runtime = started_with(r#"function tick() require("slow") end"#, files());
@@ -274,7 +274,7 @@ fn runaway_modules_hit_the_budget_of_the_requiring_call() {
     assert_eq!(tick, error(Phase::Tick, in_module));
     assert_eq!(
         tick.to_string(),
-        "EXECUTION LIMIT EXCEEDED IN TICK: code/slow.luau"
+        "Execution limit exceeded in tick: code/slow.luau"
     );
 
     // Exhausted before the module started: the limit is the caller's.
@@ -316,7 +316,7 @@ fn invalid_module_names_are_rejected_before_loading() {
         .error
         .to_string();
     assert!(
-        message.starts_with(r#"INVALID MODULE NAME: "player.luau" - "#)
+        message.starts_with(r#"Invalid module name: "player.luau" - "#)
             && message.contains(r#"use "player""#)
             && message.ends_with("(main.luau:1)"),
         "{message}"
@@ -372,6 +372,6 @@ fn module_errors_in_callbacks_name_the_callback() {
     let mut runtime = started_with(r#"function tick() require("nope") end"#, Files::default());
     assert_eq!(
         runtime.tick(NO_INPUT).unwrap_err().to_string(),
-        "MODULE NOT FOUND IN TICK: code/nope.luau (main.luau:1)"
+        "Module not found in tick: code/nope.luau (main.luau:1)"
     );
 }

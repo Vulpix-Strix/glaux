@@ -12,7 +12,7 @@ use glaux_machine::psg::{Adsr, CHANNELS, Waveform};
 
 use super::line_editor::LineEditor;
 use super::{ACCENT, BACKGROUND, DIM, ERROR, Line, SystemInfo, TEXT, TRACE, WARN};
-use crate::cartridge::LoadedCartridge;
+use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::CartridgeStorage;
 use commands::{COMMANDS, Context};
 
@@ -48,7 +48,7 @@ pub struct Voice {
     pub gate: bool,
 }
 
-const BANNER: &str = "READY. TYPE HELP FOR HELP";
+const BANNER: &str = "Ready. Type 'help' for a list of commands.";
 const PROMPT: &str = "> ";
 /// Shell ticks the cursor spends in each blink phase: 600 ms at 60 Hz.
 pub(super) const BLINK_TICKS: u32 = 36;
@@ -57,8 +57,12 @@ pub(super) const BLINK_TICKS: u32 = 36;
 /// out by the system.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellRequest {
-    /// Make this validated cartridge the loaded one, replacing any other.
-    Load(Box<LoadedCartridge>),
+    /// Make this validated cartridge the loaded one, replacing any other,
+    /// then announce it with [`Shell::announce_loaded`].
+    Load {
+        cartridge: Box<LoadedCartridge>,
+        origin: LoadOrigin,
+    },
     /// Start the loaded cartridge.
     Run,
     /// Remove the loaded cartridge from the shell.
@@ -67,6 +71,16 @@ pub enum ShellRequest {
     Resume,
     /// Dispose of the paused cartridge's VM, keeping the cartridge loaded.
     Stop,
+}
+
+/// Where a cartridge asked to be loaded comes from, which decides how its
+/// loading is announced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadOrigin {
+    /// A cartridge that already existed in storage.
+    Existing,
+    /// A cartridge the shell has just created.
+    Created,
 }
 
 /// The cartridge the system holds, as the shell sees it.
@@ -210,6 +224,30 @@ impl Shell {
         self.scrollback.push(Entry::Output(line.into()));
     }
 
+    /// Reports that the cartridge described by `manifest` has become the
+    /// loaded cartridge. The system calls this only once the change has
+    /// happened, so success is never reported early.
+    pub(super) fn announce_loaded(&mut self, manifest: &CartridgeManifest, origin: LoadOrigin) {
+        match origin {
+            LoadOrigin::Existing => {
+                self.report(format!("Loaded {}", cartridge_identity(manifest)));
+            }
+            LoadOrigin::Created => {
+                for line in [
+                    "Your new cartridge is ready!",
+                    manifest.cartridge.name.as_str(),
+                    "",
+                    "Every great game starts somewhere.",
+                    "This one starts with you.",
+                    "",
+                    "Try 'run' to see your first creation.",
+                ] {
+                    self.report(line);
+                }
+            }
+        }
+    }
+
     /// Adds a system error line to the scrollback.
     pub(super) fn report_error(&mut self, line: impl Into<String>) {
         self.scrollback.push(Entry::Error(line.into()));
@@ -277,7 +315,6 @@ impl Shell {
             Completion::Unique(name) => name.to_owned(),
             Completion::Extend(common) => common,
             Completion::Ambiguous(names) => {
-                let names: Vec<String> = names.iter().map(|name| name.to_uppercase()).collect();
                 self.scrollback.push(Entry::Command(self.editor.text()));
                 self.scrollback.push(Entry::Output(names.join("  ")));
                 return;
@@ -735,21 +772,22 @@ mod tests {
             [
                 banner(),
                 command("help"),
-                output("HELP     SHOW AVAILABLE COMMANDS"),
-                output("CLEAR    CLEAR THE CONSOLE"),
-                output("INFO     SHOW SYSTEM INFORMATION"),
-                output("VERSION  SHOW THE SYSTEM ROM VERSION"),
-                output("PWD      SHOW THE CURRENT DIRECTORY"),
-                output("LS       LIST A DIRECTORY"),
-                output("CD       CHANGE THE CURRENT DIRECTORY"),
-                output("LOAD     LOAD A CARTRIDGE"),
-                output("UNLOAD   UNLOAD THE LOADED CARTRIDGE"),
-                output("RUN      RUN THE LOADED CARTRIDGE"),
-                output("RESUME   RESUME THE PAUSED CARTRIDGE"),
-                output("STOP     STOP THE PAUSED CARTRIDGE"),
-                output("TONE     PLAY A TEST TONE"),
-                output("ENV      SET A CHANNEL ENVELOPE"),
-                output("GATE     OPEN OR CLOSE A CHANNEL GATE"),
+                output("help     Show available commands"),
+                output("clear    Clear the console"),
+                output("info     Show system information"),
+                output("version  Show the System ROM version"),
+                output("pwd      Show the current directory"),
+                output("ls       List a directory"),
+                output("cd       Change the current directory"),
+                output("new      Create a new cartridge"),
+                output("load     Load a cartridge"),
+                output("unload   Unload the loaded cartridge"),
+                output("run      Run the loaded cartridge"),
+                output("resume   Resume the paused cartridge"),
+                output("stop     Stop the paused cartridge"),
+                output("tone     Play a test tone"),
+                output("env      Set a channel envelope"),
+                output("gate     Open or close a channel gate"),
             ]
         );
         assert_eq!(shell.editor, LineEditor::default());
@@ -759,25 +797,25 @@ mod tests {
         );
         assert_eq!(
             editor_lines(&shell, COLUMNS),
-            [Line::new(0, 17, "> ", TEXT), cursor(2, 17, " ")]
+            [Line::new(0, 18, "> ", TEXT), cursor(2, 18, " ")]
         );
     }
 
     #[test]
     fn unknown_command_is_an_error_entry() {
         let mut shell = new_shell();
-        run(&mut shell, "unknown");
+        run(&mut shell, "Unknown");
         assert_eq!(
             entries(&shell),
             [
                 banner(),
-                command("unknown"),
-                error("UNKNOWN COMMAND: UNKNOWN")
+                command("Unknown"),
+                error("Unknown command: Unknown")
             ]
         );
         assert_eq!(
             shell.lines(COLUMNS, ROWS)[3],
-            Line::new(0, 2, "UNKNOWN COMMAND: UNKNOWN", ERROR)
+            Line::new(0, 2, "Unknown command: Unknown", ERROR)
         );
     }
 
@@ -790,7 +828,7 @@ mod tests {
             [
                 banner(),
                 command("new \"Super Owl"),
-                error("UNTERMINATED \" QUOTE")
+                error("Unterminated \" quote")
             ]
         );
     }
@@ -862,10 +900,10 @@ mod tests {
             [
                 (0, "> "),
                 (0, "c8"),
-                (1, "UNKNOWN COMMAND: C8"),
+                (1, "Unknown command: c8"),
                 (2, "> "),
                 (2, "c9"),
-                (3, "UNKNOWN COMMAND: C9"),
+                (3, "Unknown command: c9"),
                 (4, "> "),
                 (4, "x"),
                 (4, " "),
@@ -939,14 +977,17 @@ mod tests {
             "load /games/owl",
             "load /nope",
             "load /b.txt",
+            "cd /games",
+            "new pong",
+            "new Pong",
         ] {
             run(&mut shell, line);
         }
         let entries = entries(&shell);
         assert!(entries.contains(&output("/games")));
-        assert!(entries.contains(&error("NO SUCH FILE OR DIRECTORY: /games/nope")));
-        assert!(entries.contains(&output("LOADED Pong 0.1.0")));
-        assert!(entries.contains(&error("NO CARTRIDGE.RON IN /games/owl")));
+        assert!(entries.contains(&error("No such file or directory: /games/nope")));
+        assert!(entries.contains(&error("No cartridge.ron in /games/owl")));
+        assert!(entries.contains(&error("/games/pong already exists")));
 
         let host_paths = [
             fixture.root().display().to_string(),
@@ -975,9 +1016,9 @@ mod tests {
             entries(&shell),
             [
                 command("pwd"),
-                error("CARTRIDGE STORAGE UNAVAILABLE"),
+                error("Cartridge storage unavailable"),
                 command("cd games"),
-                error("CARTRIDGE STORAGE UNAVAILABLE"),
+                error("Cartridge storage unavailable"),
                 command("version"),
                 output("GLAUX G1  SYSTEM ROM 0.1.0"),
             ]
@@ -1053,7 +1094,8 @@ mod tests {
             fixture.storage(),
         );
         send(&mut shell, &typed("load pong"));
-        let Some(ShellRequest::Load(cartridge)) = shell.handle_input(Enter, CartridgeSlot::Empty)
+        let Some(ShellRequest::Load { cartridge, .. }) =
+            shell.handle_input(Enter, CartridgeSlot::Empty)
         else {
             panic!("expected a load request");
         };
@@ -1066,7 +1108,36 @@ mod tests {
         );
         send(&mut shell, &typed("run"));
         assert_eq!(shell.handle_input(Enter, CartridgeSlot::Empty), None);
-        assert_eq!(entries(&shell).last(), Some(&error("NO CARTRIDGE LOADED")));
+        assert_eq!(entries(&shell).last(), Some(&error("No cartridge loaded")));
+    }
+
+    #[test]
+    fn loads_are_announced_by_origin() {
+        let (_fixture, pong) = {
+            let fixture = Fixture::new("shell-announce");
+            write_cartridge(&fixture.root().join("pong"), "Pong");
+            let pong = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+            (fixture, pong)
+        };
+        let mut shell = new_shell();
+        shell.scrollback.clear();
+        shell.announce_loaded(pong.manifest(), LoadOrigin::Existing);
+        assert_eq!(entries(&shell), [output("Loaded Pong 0.1.0")]);
+
+        shell.scrollback.clear();
+        shell.announce_loaded(pong.manifest(), LoadOrigin::Created);
+        assert_eq!(
+            shell.transcript(),
+            [
+                "Your new cartridge is ready!",
+                "Pong",
+                "",
+                "Every great game starts somewhere.",
+                "This one starts with you.",
+                "",
+                "Try 'run' to see your first creation.",
+            ]
+        );
     }
 
     // History navigation.
@@ -1139,6 +1210,13 @@ mod tests {
     }
 
     #[test]
+    fn tab_completes_new() {
+        let mut shell = shell_with(&typed("Ne"));
+        send(&mut shell, &[Tab]);
+        assert_eq!(shell.editor.text(), "new ");
+    }
+
+    #[test]
     fn tab_replaces_only_the_name_under_the_cursor() {
         let mut events = typed("hexx foo");
         events.extend([InputEvent::Home { select: false }]);
@@ -1169,7 +1247,7 @@ mod tests {
                 banner(),
                 command(""),
                 output(
-                    "HELP  CLEAR  INFO  VERSION  PWD  LS  CD  LOAD  UNLOAD  RUN  RESUME  STOP  TONE  ENV  GATE"
+                    "help  clear  info  version  pwd  ls  cd  new  load  unload  run  resume  stop  tone  env  gate"
                 )
             ]
         );

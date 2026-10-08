@@ -23,8 +23,59 @@ pub(super) struct Invocation<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(super) enum ParseError {
     /// A quote opened at char index `start` is never closed.
-    #[error("UNTERMINATED {quote} QUOTE")]
+    #[error("Unterminated {quote} quote")]
     UnterminatedQuote { quote: char, start: usize },
+}
+
+/// A malformed `--option` among a command's arguments.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(super) enum OptionError {
+    #[error("Unknown option: {0}")]
+    Unknown(String),
+    #[error("Option --{0} needs a value")]
+    MissingValue(&'static str),
+    #[error("Option --{0} given more than once")]
+    Repeated(&'static str),
+}
+
+/// Options given to a command, by name without the leading `--`.
+pub(super) type Options<'a> = Vec<(&'static str, &'a str)>;
+
+/// Separates `args` into positional arguments and the `known` options, each
+/// written `--name value` or `--name=value`. Option names are matched
+/// exactly; every option takes a value and may be given once.
+///
+/// Works on unquoted words, so `--name "Space Adventure"` has the value
+/// `Space Adventure`, and a word that starts with `--` is always an option,
+/// quoted or not, except where it is an option's value.
+pub(super) fn split_options<'a>(
+    args: &'a [String],
+    known: &[&'static str],
+) -> Result<(Vec<&'a str>, Options<'a>), OptionError> {
+    let mut positional = Vec::new();
+    let mut options: Options<'a> = Vec::new();
+    let mut words = args.iter().map(String::as_str);
+    while let Some(word) = words.next() {
+        let Some(option) = word.strip_prefix("--") else {
+            positional.push(word);
+            continue;
+        };
+        let (name, inline) = match option.split_once('=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (option, None),
+        };
+        let Some(&name) = known.iter().find(|&&known| known == name) else {
+            return Err(OptionError::Unknown(format!("--{name}")));
+        };
+        let value = inline
+            .or_else(|| words.next())
+            .ok_or(OptionError::MissingValue(name))?;
+        if options.iter().any(|&(seen, _)| seen == name) {
+            return Err(OptionError::Repeated(name));
+        }
+        options.push((name, value));
+    }
+    Ok((positional, options))
 }
 
 /// Parses `line` into a command invocation. Returns `None` for a line with
@@ -227,9 +278,52 @@ mod tests {
         );
     }
 
+    fn split<'a>(args: &'a [String]) -> Result<(Vec<&'a str>, Options<'a>), OptionError> {
+        split_options(args, &["name", "version"])
+    }
+
+    #[test]
+    fn options_take_the_next_word_or_an_inline_value() {
+        let args = parse(r#"new owl --name "Super Owl" --version=1.2.0"#)
+            .unwrap()
+            .unwrap()
+            .args;
+        assert_eq!(
+            split(&args),
+            Ok((
+                vec!["owl"],
+                vec![("name", "Super Owl"), ("version", "1.2.0")]
+            ))
+        );
+        let args = owned(&["--name", "--odd", "x", "--version="]);
+        assert_eq!(
+            split(&args),
+            Ok((vec!["x"], vec![("name", "--odd"), ("version", "")]))
+        );
+    }
+
+    #[test]
+    fn malformed_options_are_errors() {
+        for (args, error) in [
+            (
+                &["--author", "x"][..],
+                OptionError::Unknown("--author".into()),
+            ),
+            (&["--Name", "x"], OptionError::Unknown("--Name".into())),
+            (&["a", "--name"], OptionError::MissingValue("name")),
+            (&["--name", "a", "--name=b"], OptionError::Repeated("name")),
+        ] {
+            assert_eq!(split(&owned(args)), Err(error.clone()), "{args:?}");
+        }
+        assert_eq!(
+            OptionError::MissingValue("name").to_string(),
+            "Option --name needs a value"
+        );
+    }
+
     #[test]
     fn error_message_names_the_quote() {
         let err = parse("say 'x").unwrap_err();
-        assert_eq!(err.to_string(), "UNTERMINATED ' QUOTE");
+        assert_eq!(err.to_string(), "Unterminated ' quote");
     }
 }

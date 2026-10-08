@@ -9,11 +9,12 @@ use glaux_machine::psg::{
 };
 
 use super::super::{SystemInfo, identity_line};
-use super::parser::Invocation;
+use super::parser::{Invocation, split_options};
 use super::scrollback::{Entry, Scrollback};
-use super::{CartridgeSlot, ShellRequest, Tone, Voice};
+use super::{CartridgeSlot, LoadOrigin, ShellRequest, Tone, Voice};
 use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::{CartridgeStorage, EntryKind};
+use crate::cartridge_template::{self, NewCartridge};
 
 /// What a command can see and change while it runs.
 pub(super) struct Context<'a> {
@@ -43,7 +44,7 @@ type Handler = fn(&Invocation<'_>, &mut Context<'_>);
 /// A built-in command and the metadata `help` and completion use.
 #[derive(Debug)]
 pub(super) struct Command {
-    /// Lowercase name, matched case-insensitively and shown uppercase.
+    /// Lowercase name, matched case-insensitively and shown as is.
     pub(super) name: &'static str,
     /// Other names that run the command, matched like `name`.
     pub(super) aliases: &'static [&'static str],
@@ -61,8 +62,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "help",
         aliases: &["?"],
-        usage: "HELP [COMMAND]",
-        description: "SHOW AVAILABLE COMMANDS",
+        usage: "help [<command>]",
+        description: "Show available commands",
         min_args: 0,
         max_args: 1,
         handler: help,
@@ -70,8 +71,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "clear",
         aliases: &["cls"],
-        usage: "CLEAR",
-        description: "CLEAR THE CONSOLE",
+        usage: "clear",
+        description: "Clear the console",
         min_args: 0,
         max_args: 0,
         handler: clear,
@@ -79,8 +80,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "info",
         aliases: &[],
-        usage: "INFO",
-        description: "SHOW SYSTEM INFORMATION",
+        usage: "info",
+        description: "Show system information",
         min_args: 0,
         max_args: 0,
         handler: info,
@@ -88,8 +89,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "version",
         aliases: &["ver"],
-        usage: "VERSION",
-        description: "SHOW THE SYSTEM ROM VERSION",
+        usage: "version",
+        description: "Show the System ROM version",
         min_args: 0,
         max_args: 0,
         handler: version,
@@ -97,8 +98,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "pwd",
         aliases: &[],
-        usage: "PWD",
-        description: "SHOW THE CURRENT DIRECTORY",
+        usage: "pwd",
+        description: "Show the current directory",
         min_args: 0,
         max_args: 0,
         handler: pwd,
@@ -106,8 +107,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "ls",
         aliases: &["dir"],
-        usage: "LS [PATH]",
-        description: "LIST A DIRECTORY",
+        usage: "ls [<path>]",
+        description: "List a directory",
         min_args: 0,
         max_args: 1,
         handler: ls,
@@ -115,17 +116,26 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "cd",
         aliases: &[],
-        usage: "CD [PATH]",
-        description: "CHANGE THE CURRENT DIRECTORY",
+        usage: "cd [<path>]",
+        description: "Change the current directory",
         min_args: 0,
         max_args: 1,
         handler: cd,
     },
     Command {
+        name: "new",
+        aliases: &[],
+        usage: NEW_USAGE,
+        description: "Create a new cartridge",
+        min_args: 1,
+        max_args: 7,
+        handler: new,
+    },
+    Command {
         name: "load",
         aliases: &[],
-        usage: "LOAD PATH",
-        description: "LOAD A CARTRIDGE",
+        usage: "load <path>",
+        description: "Load a cartridge",
         min_args: 1,
         max_args: 1,
         handler: load,
@@ -133,8 +143,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "unload",
         aliases: &[],
-        usage: "UNLOAD",
-        description: "UNLOAD THE LOADED CARTRIDGE",
+        usage: "unload",
+        description: "Unload the loaded cartridge",
         min_args: 0,
         max_args: 0,
         handler: unload,
@@ -142,8 +152,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "run",
         aliases: &[],
-        usage: "RUN",
-        description: "RUN THE LOADED CARTRIDGE",
+        usage: "run",
+        description: "Run the loaded cartridge",
         min_args: 0,
         max_args: 0,
         handler: run,
@@ -151,8 +161,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "resume",
         aliases: &[],
-        usage: "RESUME",
-        description: "RESUME THE PAUSED CARTRIDGE",
+        usage: "resume",
+        description: "Resume the paused cartridge",
         min_args: 0,
         max_args: 0,
         handler: resume,
@@ -160,8 +170,8 @@ pub(super) static COMMANDS: &[Command] = &[
     Command {
         name: "stop",
         aliases: &[],
-        usage: "STOP",
-        description: "STOP THE PAUSED CARTRIDGE",
+        usage: "stop",
+        description: "Stop the paused cartridge",
         min_args: 0,
         max_args: 0,
         handler: stop,
@@ -170,7 +180,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "tone",
         aliases: &[],
         usage: TONE_USAGE,
-        description: "PLAY A TEST TONE",
+        description: "Play a test tone",
         min_args: 1,
         max_args: 4,
         handler: tone,
@@ -179,7 +189,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "env",
         aliases: &[],
         usage: ENV_USAGE,
-        description: "SET A CHANNEL ENVELOPE",
+        description: "Set a channel envelope",
         min_args: 5,
         max_args: 5,
         handler: env,
@@ -188,28 +198,38 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "gate",
         aliases: &[],
         usage: GATE_USAGE,
-        description: "OPEN OR CLOSE A CHANNEL GATE",
+        description: "Open or close a channel gate",
         min_args: 2,
         max_args: 2,
         handler: gate,
     },
 ];
 
-const TONE_USAGE: &str = "TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF";
+const NEW_USAGE: &str = "new <id> [--name <name>] [--version <semver>] [--author <author>]";
+
+/// Options `new` accepts, by name without the leading `--`.
+const NEW_OPTIONS: &[&str] = &["name", "version", "author"];
+
+const TONE_USAGE: &str = "tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off";
+
+const TONE_OFF_USAGE: &str = "tone [<ch>] off";
 
 /// A, D and R are milliseconds; S uses the PSG's 0-15 sustain scale.
-const ENV_USAGE: &str = "ENV CH A D S R";
+const ENV_USAGE: &str = "env <ch> <a> <d> <s> <r>";
 
-const GATE_USAGE: &str = "GATE CH ON|OFF";
+const GATE_USAGE: &str = "gate <ch> on|off";
 
 /// Volume TONE uses when none is given.
 const DEFAULT_TONE_VOLUME: u8 = 8;
 
 /// Reported by commands that would replace or restart a paused cartridge.
-const PAUSED_ERROR: &str = "CARTRIDGE PAUSED: RESUME OR STOP IT FIRST";
+const PAUSED_ERROR: &str = "Cartridge paused: resume or stop it first";
 
 /// Reported by commands that act on a paused cartridge when there is none.
-const NOT_PAUSED_ERROR: &str = "NO PAUSED CARTRIDGE";
+const NOT_PAUSED_ERROR: &str = "No paused cartridge";
+
+/// Reported by commands that act on the loaded cartridge when there is none.
+const NOT_LOADED_ERROR: &str = "No cartridge loaded";
 
 /// The command called `name` or one of its aliases, ignoring ASCII case.
 pub(super) fn find(name: &str) -> Option<&'static Command> {
@@ -230,14 +250,18 @@ pub(super) fn execute(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         return;
     };
     if !(command.min_args..=command.max_args).contains(&invocation.args.len()) {
-        ctx.error(format!("USAGE: {}", command.usage));
+        ctx.error(usage(command.usage));
         return;
     }
     (command.handler)(invocation, ctx);
 }
 
 fn unknown_command(name: &str) -> String {
-    format!("UNKNOWN COMMAND: {}", name.to_uppercase())
+    format!("Unknown command: {name}")
+}
+
+fn usage(usage: &str) -> String {
+    format!("Usage: {usage}")
 }
 
 fn help(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
@@ -246,21 +270,17 @@ fn help(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
             ctx.error(unknown_command(name));
             return;
         };
-        ctx.output(format!("USAGE: {}", command.usage));
+        ctx.output(usage(command.usage));
         ctx.output(command.description);
         if !command.aliases.is_empty() {
-            ctx.output(format!(
-                "ALIASES: {}",
-                command.aliases.join(" ").to_uppercase()
-            ));
+            ctx.output(format!("Aliases: {}", command.aliases.join(" ")));
         }
         return;
     }
 
     let width = COMMANDS.iter().map(|c| c.name.len()).max().unwrap_or(0) + 2;
     for command in COMMANDS {
-        let name = command.name.to_uppercase();
-        ctx.output(format!("{name:<width$}{}", command.description));
+        ctx.output(format!("{:<width$}{}", command.name, command.description));
     }
 }
 
@@ -338,9 +358,48 @@ fn cd(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     }
 }
 
-/// Validates the cartridge in the directory at `PATH` and asks for it to
-/// become the loaded cartridge. A failed load keeps the cartridge loaded
-/// before it. Refused without looking at `PATH` while a cartridge is paused.
+/// Creates a cartridge named `<id>` in the current directory and asks for
+/// it to become the loaded cartridge, which the system announces. Nothing is
+/// created, and the loaded cartridge is kept, on any error. Refused while a
+/// cartridge is paused.
+fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
+    if matches!(ctx.slot, CartridgeSlot::Paused(_)) {
+        ctx.error(PAUSED_ERROR);
+        return;
+    }
+    let (positional, options) = match split_options(&invocation.args, NEW_OPTIONS) {
+        Ok(split) => split,
+        Err(err) => {
+            ctx.error(err.to_string());
+            return;
+        }
+    };
+    let [id] = positional[..] else {
+        ctx.error(usage(NEW_USAGE));
+        return;
+    };
+    let option = |name: &str| {
+        options
+            .iter()
+            .find_map(|&(option, value)| (option == name).then_some(value))
+    };
+    let created = NewCartridge::new(id, option("name"), option("version"), option("author"))
+        .and_then(|spec| cartridge_template::create(ctx.cartridges, &spec));
+    match created {
+        Ok(cartridge) => {
+            *ctx.request = Some(ShellRequest::Load {
+                cartridge: Box::new(cartridge),
+                origin: LoadOrigin::Created,
+            });
+        }
+        Err(err) => ctx.error(err.to_string()),
+    }
+}
+
+/// Validates the cartridge in the directory at `<path>` and asks for it to
+/// become the loaded cartridge, which the system announces. A failed load
+/// keeps the cartridge loaded before it. Refused without looking at
+/// `<path>` while a cartridge is paused.
 fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     if matches!(ctx.slot, CartridgeSlot::Paused(_)) {
         ctx.error(PAUSED_ERROR);
@@ -349,9 +408,10 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let path = &invocation.args[0];
     match LoadedCartridge::load(ctx.cartridges, path) {
         Ok(cartridge) => {
-            let line = format!("LOADED {}", cartridge_identity(cartridge.manifest()));
-            *ctx.request = Some(ShellRequest::Load(Box::new(cartridge)));
-            ctx.output(line);
+            *ctx.request = Some(ShellRequest::Load {
+                cartridge: Box::new(cartridge),
+                origin: LoadOrigin::Existing,
+            });
         }
         Err(err) => ctx.error(err.to_string()),
     }
@@ -360,7 +420,7 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
 /// Asks the system to remove the normally loaded cartridge.
 fn unload(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
-        CartridgeSlot::Empty => ctx.error("NO CARTRIDGE LOADED"),
+        CartridgeSlot::Empty => ctx.error(NOT_LOADED_ERROR),
         CartridgeSlot::Loaded(_) => *ctx.request = Some(ShellRequest::Unload),
         CartridgeSlot::Paused(_) => ctx.error(PAUSED_ERROR),
     }
@@ -370,7 +430,7 @@ fn unload(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 /// never restarted.
 fn run(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
-        CartridgeSlot::Empty => ctx.error("NO CARTRIDGE LOADED"),
+        CartridgeSlot::Empty => ctx.error(NOT_LOADED_ERROR),
         CartridgeSlot::Loaded(_) => *ctx.request = Some(ShellRequest::Run),
         CartridgeSlot::Paused(_) => ctx.error(PAUSED_ERROR),
     }
@@ -420,7 +480,7 @@ fn parse_channel(arg: &str, ctx: &mut Context<'_>) -> Option<usize> {
         .ok()
         .filter(|channel| *channel < CHANNELS);
     if channel.is_none() {
-        ctx.error(format!("CHANNEL MUST BE 0-{}", CHANNELS - 1));
+        ctx.error(format!("Channel must be 0-{}", CHANNELS - 1));
     }
     channel
 }
@@ -432,7 +492,7 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let args = &invocation.args;
     if args[0].eq_ignore_ascii_case("off") {
         if args.len() > 1 {
-            ctx.error("USAGE: TONE [CH] OFF");
+            ctx.error(usage(TONE_OFF_USAGE));
             return;
         }
         for voice in ctx.voices.iter_mut() {
@@ -446,12 +506,12 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         return;
     };
     let Some(arg) = args.get(1) else {
-        ctx.error(format!("USAGE: {TONE_USAGE}"));
+        ctx.error(usage(TONE_USAGE));
         return;
     };
     if arg.eq_ignore_ascii_case("off") {
         if args.len() > 2 {
-            ctx.error("USAGE: TONE [CH] OFF");
+            ctx.error(usage(TONE_OFF_USAGE));
             return;
         }
         let voice = &mut ctx.voices[channel];
@@ -465,7 +525,7 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         .ok()
         .filter(|hz| (1..=MAX_FREQUENCY).contains(hz))
     else {
-        ctx.error(format!("FREQUENCY MUST BE 1-{MAX_FREQUENCY} HZ"));
+        ctx.error(format!("Frequency must be 1-{MAX_FREQUENCY} Hz"));
         return;
     };
     let volume = match args.get(2) {
@@ -473,7 +533,7 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         Some(arg) => match arg.parse::<u8>().ok().filter(|v| *v <= MAX_VOLUME) {
             Some(volume) => volume,
             None => {
-                ctx.error(format!("VOLUME MUST BE 0-{MAX_VOLUME}"));
+                ctx.error(format!("Volume must be 0-{MAX_VOLUME}"));
                 return;
             }
         },
@@ -483,7 +543,7 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         Some(arg) => match parse_waveform(arg) {
             Some(waveform) => waveform,
             None => {
-                ctx.error("WAVE MUST BE SQUARE, TRIANGLE, SAW OR NOISE");
+                ctx.error("Wave must be square, triangle, saw or noise");
                 return;
             }
         },
@@ -511,11 +571,11 @@ fn env(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let (Some(attack), Some(decay), Some(release)) =
         (parse_ms(&args[1]), parse_ms(&args[2]), parse_ms(&args[4]))
     else {
-        ctx.error(format!("TIME MUST BE 0-{MAX_ENVELOPE_MS} MS"));
+        ctx.error(format!("Time must be 0-{MAX_ENVELOPE_MS} ms"));
         return;
     };
     let Some(sustain) = args[3].parse::<u8>().ok().filter(|s| *s <= MAX_SUSTAIN) else {
-        ctx.error(format!("SUSTAIN MUST BE 0-{MAX_SUSTAIN}"));
+        ctx.error(format!("Sustain must be 0-{MAX_SUSTAIN}"));
         return;
     };
     ctx.voices[channel].adsr = Adsr {
@@ -540,7 +600,7 @@ fn gate(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     } else if args[1].eq_ignore_ascii_case("off") {
         false
     } else {
-        ctx.error(format!("USAGE: {GATE_USAGE}"));
+        ctx.error(usage(GATE_USAGE));
         return;
     };
     ctx.voices[channel].gate = open;
@@ -602,7 +662,7 @@ mod tests {
             cartridges,
             CartridgeSlot::loaded(loaded.as_ref()),
         );
-        if let Some(ShellRequest::Load(cartridge)) = request {
+        if let Some(ShellRequest::Load { cartridge, .. }) = request {
             *loaded = Some(*cartridge);
         }
         entries
@@ -663,21 +723,22 @@ mod tests {
         assert_eq!(
             run("help"),
             output(&[
-                "HELP     SHOW AVAILABLE COMMANDS",
-                "CLEAR    CLEAR THE CONSOLE",
-                "INFO     SHOW SYSTEM INFORMATION",
-                "VERSION  SHOW THE SYSTEM ROM VERSION",
-                "PWD      SHOW THE CURRENT DIRECTORY",
-                "LS       LIST A DIRECTORY",
-                "CD       CHANGE THE CURRENT DIRECTORY",
-                "LOAD     LOAD A CARTRIDGE",
-                "UNLOAD   UNLOAD THE LOADED CARTRIDGE",
-                "RUN      RUN THE LOADED CARTRIDGE",
-                "RESUME   RESUME THE PAUSED CARTRIDGE",
-                "STOP     STOP THE PAUSED CARTRIDGE",
-                "TONE     PLAY A TEST TONE",
-                "ENV      SET A CHANNEL ENVELOPE",
-                "GATE     OPEN OR CLOSE A CHANNEL GATE",
+                "help     Show available commands",
+                "clear    Clear the console",
+                "info     Show system information",
+                "version  Show the System ROM version",
+                "pwd      Show the current directory",
+                "ls       List a directory",
+                "cd       Change the current directory",
+                "new      Create a new cartridge",
+                "load     Load a cartridge",
+                "unload   Unload the loaded cartridge",
+                "run      Run the loaded cartridge",
+                "resume   Resume the paused cartridge",
+                "stop     Stop the paused cartridge",
+                "tone     Play a test tone",
+                "env      Set a channel envelope",
+                "gate     Open or close a channel gate",
             ])
         );
     }
@@ -686,17 +747,17 @@ mod tests {
     fn help_describes_one_command() {
         assert_eq!(
             run("help CLEAR"),
-            output(&["USAGE: CLEAR", "CLEAR THE CONSOLE", "ALIASES: CLS"])
+            output(&["Usage: clear", "Clear the console", "Aliases: cls"])
         );
         assert_eq!(
             run("? info"),
-            output(&["USAGE: INFO", "SHOW SYSTEM INFORMATION"])
+            output(&["Usage: info", "Show system information"])
         );
     }
 
     #[test]
     fn help_for_unknown_command_is_an_error() {
-        assert_eq!(run("help nope"), error("UNKNOWN COMMAND: NOPE"));
+        assert_eq!(run("help nOpe"), error("Unknown command: nOpe"));
     }
 
     #[test]
@@ -752,30 +813,31 @@ mod tests {
     }
 
     #[test]
-    fn unknown_command_is_reported_uppercase() {
-        assert_eq!(run("foo"), error("UNKNOWN COMMAND: FOO"));
-        assert_eq!(run("\"Super Owl\" x"), error("UNKNOWN COMMAND: SUPER OWL"));
+    fn unknown_command_keeps_the_typed_name() {
+        assert_eq!(run("Foo"), error("Unknown command: Foo"));
+        assert_eq!(run("\"Super Owl\" x"), error("Unknown command: Super Owl"));
     }
 
     #[test]
     fn extra_arguments_are_usage_errors() {
-        assert_eq!(run("clear now"), error("USAGE: CLEAR"));
-        assert_eq!(run("info x"), error("USAGE: INFO"));
-        assert_eq!(run("version x"), error("USAGE: VERSION"));
-        assert_eq!(run("help a b"), error("USAGE: HELP [COMMAND]"));
-        assert_eq!(run("pwd x"), error("USAGE: PWD"));
-        assert_eq!(run("ls a b"), error("USAGE: LS [PATH]"));
-        assert_eq!(run("cd a b"), error("USAGE: CD [PATH]"));
-        assert_eq!(run("load a b"), error("USAGE: LOAD PATH"));
-        assert_eq!(run("unload x"), error("USAGE: UNLOAD"));
-        assert_eq!(run("run x"), error("USAGE: RUN"));
-        assert_eq!(run("resume x"), error("USAGE: RESUME"));
-        assert_eq!(run("stop x"), error("USAGE: STOP"));
+        assert_eq!(run("clear now"), error("Usage: clear"));
+        assert_eq!(run("info x"), error("Usage: info"));
+        assert_eq!(run("version x"), error("Usage: version"));
+        assert_eq!(run("help a b"), error("Usage: help [<command>]"));
+        assert_eq!(run("pwd x"), error("Usage: pwd"));
+        assert_eq!(run("ls a b"), error("Usage: ls [<path>]"));
+        assert_eq!(run("cd a b"), error("Usage: cd [<path>]"));
+        assert_eq!(run("load a b"), error("Usage: load <path>"));
+        assert_eq!(run("unload x"), error("Usage: unload"));
+        assert_eq!(run("run x"), error("Usage: run"));
+        assert_eq!(run("resume x"), error("Usage: resume"));
+        assert_eq!(run("stop x"), error("Usage: stop"));
     }
 
     #[test]
     fn missing_arguments_are_usage_errors() {
-        assert_eq!(run("load"), error("USAGE: LOAD PATH"));
+        assert_eq!(run("load"), error("Usage: load <path>"));
+        assert_eq!(run("new"), error(&format!("Usage: {NEW_USAGE}")));
     }
 
     #[test]
@@ -794,8 +856,9 @@ mod tests {
             "cd",
             "cd games",
             "load games",
+            "new games",
         ] {
-            assert_eq!(run(line), error("CARTRIDGE STORAGE UNAVAILABLE"), "{line}");
+            assert_eq!(run(line), error("Cartridge storage unavailable"), "{line}");
         }
     }
 
@@ -818,11 +881,11 @@ mod tests {
         assert_eq!(run_fs("ls games/owl", &mut fs), []);
         assert_eq!(
             run_fs("ls nope", &mut fs),
-            error("NO SUCH FILE OR DIRECTORY: /nope")
+            error("No such file or directory: /nope")
         );
         assert_eq!(
             run_fs("ls b.txt", &mut fs),
-            error("NOT A DIRECTORY: /b.txt")
+            error("Not a directory: /b.txt")
         );
     }
 
@@ -845,11 +908,11 @@ mod tests {
         run_fs("cd games", &mut fs);
         assert_eq!(
             run_fs("cd nope", &mut fs),
-            error("NO SUCH FILE OR DIRECTORY: /games/nope")
+            error("No such file or directory: /games/nope")
         );
         assert_eq!(
             run_fs("cd /b.txt", &mut fs),
-            error("NOT A DIRECTORY: /b.txt")
+            error("Not a directory: /b.txt")
         );
         assert_eq!(run_fs("pwd", &mut fs), output(&["/games"]));
     }
@@ -879,10 +942,7 @@ mod tests {
             output(&["RUNTIME     NONE", "CARTRIDGE   NONE", "STATE       IDLE"])
         );
         run_load("cd games", &mut fs, &mut loaded);
-        assert_eq!(
-            run_load("load pong", &mut fs, &mut loaded),
-            output(&["LOADED Pong 0.1.0"])
-        );
+        assert_eq!(run_load("load pong", &mut fs, &mut loaded), []);
         assert_eq!(
             info_state(&run_load("info", &mut fs, &mut loaded)),
             output(&[
@@ -906,13 +966,20 @@ mod tests {
 
         assert_eq!(
             run_load("load games/owl", &mut fs, &mut loaded),
-            error("CARTRIDGE.RON: UNSUPPORTED FORMAT 2")
+            error("cartridge.ron: unsupported format 2")
         );
         assert_eq!(loaded, None);
 
         run_load("load /games/pong", &mut fs, &mut loaded);
         let pong = loaded.clone();
-        for line in ["load games/owl", "load nope", "load b.txt", "load tools"] {
+        for line in [
+            "load games/owl",
+            "load nope",
+            "load b.txt",
+            "load tools",
+            "new games",
+            "new Bad",
+        ] {
             assert_eq!(run_load(line, &mut fs, &mut loaded).len(), 1, "{line}");
             assert_eq!(loaded, pong, "{line}");
         }
@@ -930,10 +997,7 @@ mod tests {
         let mut fs = fixture.storage();
         let mut loaded = None;
         run_load("load pong", &mut fs, &mut loaded);
-        assert_eq!(
-            run_load("load owl", &mut fs, &mut loaded),
-            output(&["LOADED Owl 0.1.0"])
-        );
+        assert_eq!(run_load("load owl", &mut fs, &mut loaded), []);
         assert_eq!(
             loaded.map(|c| c.manifest().cartridge.name.clone()),
             Some("Owl".into())
@@ -942,7 +1006,7 @@ mod tests {
 
     #[test]
     fn run_needs_a_loaded_cartridge() {
-        assert_eq!(run("run"), error("NO CARTRIDGE LOADED"));
+        assert_eq!(run("run"), error("No cartridge loaded"));
         let fixture = Fixture::new("cmd-run-none");
         let (entries, request) = execute_line(
             "RUN",
@@ -950,7 +1014,7 @@ mod tests {
             &mut fixture.storage(),
             CartridgeSlot::Empty,
         );
-        assert_eq!((entries, request), (error("NO CARTRIDGE LOADED"), None));
+        assert_eq!((entries, request), (error("No cartridge loaded"), None));
     }
 
     #[test]
@@ -964,7 +1028,7 @@ mod tests {
                 &mut fixture.storage(),
                 CartridgeSlot::Empty,
             ),
-            (error("NO CARTRIDGE LOADED"), None)
+            (error("No cartridge loaded"), None)
         );
         assert_eq!(
             execute_line(
@@ -1003,9 +1067,13 @@ mod tests {
             &mut fixture.storage(),
             CartridgeSlot::Empty,
         );
-        assert_eq!(entries, output(&["LOADED Pong 0.1.0"]));
+        assert_eq!(entries, []);
         assert!(
-            matches!(&request, Some(ShellRequest::Load(c)) if c.manifest().cartridge.name == "Pong"),
+            matches!(
+                &request,
+                Some(ShellRequest::Load { cartridge, origin: LoadOrigin::Existing })
+                    if cartridge.manifest().cartridge.name == "Pong"
+            ),
             "{request:?}"
         );
     }
@@ -1065,7 +1133,7 @@ mod tests {
             for line in ["resume", "stop"] {
                 let result =
                     execute_line(line, Version::new(0, 3, 1), &mut fixture.storage(), slot);
-                assert_eq!(result, (error("NO PAUSED CARTRIDGE"), None), "{line}");
+                assert_eq!(result, (error("No paused cartridge"), None), "{line}");
             }
         }
     }
@@ -1073,13 +1141,112 @@ mod tests {
     #[test]
     fn load_and_run_refuse_to_replace_a_paused_cartridge() {
         let (fixture, pong) = pong("cmd-paused-refuse");
-        for line in ["run", "unload", "load pong", "load /does/not/exist"] {
+        for line in [
+            "run",
+            "unload",
+            "load pong",
+            "load /does/not/exist",
+            "new paused-game",
+        ] {
             assert_eq!(
                 execute_paused(line, &fixture, &pong),
-                (error("CARTRIDGE PAUSED: RESUME OR STOP IT FIRST"), None),
+                (error("Cartridge paused: resume or stop it first"), None),
                 "{line}"
             );
         }
+        assert!(!fixture.root().join("paused-game").exists());
+    }
+
+    /// Runs the `new` command `line` at the root of `fixture` and returns
+    /// what it printed and the cartridge it asked to load as created.
+    fn run_new(fixture: &Fixture, line: &str) -> (Vec<Entry>, Option<LoadedCartridge>) {
+        let (entries, request) = execute_line(
+            line,
+            Version::new(0, 3, 1),
+            &mut fixture.storage(),
+            CartridgeSlot::Empty,
+        );
+        let created = match request {
+            None => None,
+            Some(ShellRequest::Load {
+                cartridge,
+                origin: LoadOrigin::Created,
+            }) => Some(*cartridge),
+            Some(other) => panic!("unexpected request {other:?}"),
+        };
+        (entries, created)
+    }
+
+    /// Every entry name in the host directory `dir`, sorted.
+    fn host_listing(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn new_creates_a_cartridge_and_leaves_the_announcement_to_the_system() {
+        let fixture = Fixture::new("cmd-new");
+        for (line, id, name) in [
+            ("new my-first-game", "my-first-game", "My First Game"),
+            ("NEW other-game", "other-game", "Other Game"),
+        ] {
+            let (entries, created) = run_new(&fixture, line);
+            assert_eq!(entries, [], "{line}");
+            assert_eq!(
+                created.map(|c| c.manifest().cartridge.name.clone()),
+                Some(name.to_owned()),
+                "{line}"
+            );
+            assert!(fixture.root().join(id).join("cartridge.ron").is_file());
+        }
+    }
+
+    #[test]
+    fn new_takes_quoted_option_values() {
+        let fixture = Fixture::new("cmd-new-options");
+        let (entries, created) = run_new(
+            &fixture,
+            r#"new space-adventure --name "Space Adventure" --version 1.2.0 --author "Cuervolu""#,
+        );
+        assert_eq!(entries, []);
+        let manifest = created.unwrap().manifest().clone();
+        assert_eq!(manifest.cartridge.name, "Space Adventure");
+        assert_eq!(manifest.cartridge.version, Version::new(1, 2, 0));
+        assert_eq!(manifest.cartridge.author.as_deref(), Some("Cuervolu"));
+    }
+
+    #[test]
+    fn new_errors_create_nothing() {
+        let fixture = Fixture::new("cmd-new-errors");
+        let before = host_listing(&fixture.root());
+        let new_usage = format!("Usage: {NEW_USAGE}");
+        for (line, message) in [
+            (
+                "new My-Game",
+                "Invalid cartridge id 'My-Game': use lowercase letters, digits and dashes, like my-game",
+            ),
+            (
+                "new a --version 1.0",
+                "Invalid version '1.0': use semver, like 1.2.0",
+            ),
+            (r#"new a --name """#, "The name must not be empty"),
+            ("new a --name", "Option --name needs a value"),
+            ("new a --color red", "Unknown option: --color"),
+            (
+                "new a --name x --name=y",
+                "Option --name given more than once",
+            ),
+            ("new a b", new_usage.as_str()),
+            ("new --name x", new_usage.as_str()),
+            ("new games", "/games already exists"),
+        ] {
+            assert_eq!(run_new(&fixture, line), (error(message), None), "{line}");
+        }
+        assert_eq!(host_listing(&fixture.root()), before);
     }
 
     /// Runs `line` with `voices` as the shell's voices and returns what it
@@ -1203,27 +1370,33 @@ mod tests {
         before[1].tone = tone(Waveform::Triangle, 440, 8);
         before[1].gate = true;
         for (line, message) in [
-            ("tone 440", "CHANNEL MUST BE 0-3"),
-            ("tone 4 440", "CHANNEL MUST BE 0-3"),
-            ("tone x 440", "CHANNEL MUST BE 0-3"),
-            ("tone -1 off", "CHANNEL MUST BE 0-3"),
-            ("tone 1", "USAGE: TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF"),
-            ("tone 1 0", "FREQUENCY MUST BE 1-24000 HZ"),
-            ("tone 1 24001", "FREQUENCY MUST BE 1-24000 HZ"),
-            ("tone 1 loud", "FREQUENCY MUST BE 1-24000 HZ"),
-            ("tone 1 -5", "FREQUENCY MUST BE 1-24000 HZ"),
-            ("tone 1 440 16", "VOLUME MUST BE 0-15"),
-            ("tone 1 440 x", "VOLUME MUST BE 0-15"),
+            ("tone 440", "Channel must be 0-3"),
+            ("tone 4 440", "Channel must be 0-3"),
+            ("tone x 440", "Channel must be 0-3"),
+            ("tone -1 off", "Channel must be 0-3"),
+            (
+                "tone 1",
+                "Usage: tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off",
+            ),
+            ("tone 1 0", "Frequency must be 1-24000 Hz"),
+            ("tone 1 24001", "Frequency must be 1-24000 Hz"),
+            ("tone 1 loud", "Frequency must be 1-24000 Hz"),
+            ("tone 1 -5", "Frequency must be 1-24000 Hz"),
+            ("tone 1 440 16", "Volume must be 0-15"),
+            ("tone 1 440 x", "Volume must be 0-15"),
             (
                 "tone 1 440 8 sine",
-                "WAVE MUST BE SQUARE, TRIANGLE, SAW OR NOISE",
+                "Wave must be square, triangle, saw or noise",
             ),
-            ("tone off 3", "USAGE: TONE [CH] OFF"),
-            ("tone 1 off 3", "USAGE: TONE [CH] OFF"),
-            ("tone", "USAGE: TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF"),
+            ("tone off 3", "Usage: tone [<ch>] off"),
+            ("tone 1 off 3", "Usage: tone [<ch>] off"),
+            (
+                "tone",
+                "Usage: tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off",
+            ),
             (
                 "tone 1 440 8 saw x",
-                "USAGE: TONE CH HZ [VOL [WAVE]] | TONE [CH] OFF",
+                "Usage: tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off",
             ),
         ] {
             let mut voices = before;
@@ -1298,15 +1471,15 @@ mod tests {
     fn env_rejects_bad_arguments_and_keeps_the_voices() {
         let before = silent();
         for (line, message) in [
-            ("env 4 10 80 8 200", "CHANNEL MUST BE 0-3"),
-            ("env x 10 80 8 200", "CHANNEL MUST BE 0-3"),
-            ("env 0 10001 80 8 200", "TIME MUST BE 0-10000 MS"),
-            ("env 0 10 -1 8 200", "TIME MUST BE 0-10000 MS"),
-            ("env 0 10 80 8 slow", "TIME MUST BE 0-10000 MS"),
-            ("env 0 10 80 16 200", "SUSTAIN MUST BE 0-15"),
-            ("env 0 10 80 x 200", "SUSTAIN MUST BE 0-15"),
-            ("env 0 10 80 8", "USAGE: ENV CH A D S R"),
-            ("env 0 10 80 8 200 1", "USAGE: ENV CH A D S R"),
+            ("env 4 10 80 8 200", "Channel must be 0-3"),
+            ("env x 10 80 8 200", "Channel must be 0-3"),
+            ("env 0 10001 80 8 200", "Time must be 0-10000 ms"),
+            ("env 0 10 -1 8 200", "Time must be 0-10000 ms"),
+            ("env 0 10 80 8 slow", "Time must be 0-10000 ms"),
+            ("env 0 10 80 16 200", "Sustain must be 0-15"),
+            ("env 0 10 80 x 200", "Sustain must be 0-15"),
+            ("env 0 10 80 8", "Usage: env <ch> <a> <d> <s> <r>"),
+            ("env 0 10 80 8 200 1", "Usage: env <ch> <a> <d> <s> <r>"),
         ] {
             let mut voices = before;
             assert_eq!(run_voice(line, &mut voices), error(message), "{line}");
@@ -1331,11 +1504,11 @@ mod tests {
     fn gate_rejects_bad_arguments_and_keeps_the_voices() {
         let before = silent();
         for (line, message) in [
-            ("gate 4 on", "CHANNEL MUST BE 0-3"),
-            ("gate on 0", "CHANNEL MUST BE 0-3"),
-            ("gate 0 open", "USAGE: GATE CH ON|OFF"),
-            ("gate 0", "USAGE: GATE CH ON|OFF"),
-            ("gate 0 on now", "USAGE: GATE CH ON|OFF"),
+            ("gate 4 on", "Channel must be 0-3"),
+            ("gate on 0", "Channel must be 0-3"),
+            ("gate 0 open", "Usage: gate <ch> on|off"),
+            ("gate 0", "Usage: gate <ch> on|off"),
+            ("gate 0 on now", "Usage: gate <ch> on|off"),
         ] {
             let mut voices = before;
             assert_eq!(run_voice(line, &mut voices), error(message), "{line}");
