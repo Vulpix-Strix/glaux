@@ -11,6 +11,12 @@ function draw()
     -- A 16x16 sprite composed from tiles 36, 37 / 52, 53.
     spr(36, 120, 130, 2, 2)
 
+    -- The same sprite mirrored horizontally, vertically and on both axes.
+    -- The whole 2x2 block flips, so tile order reverses along with pixels.
+    spr(36, 120, 158, 2, 2, true)
+    spr(36, 140, 158, 2, 2, false, true)
+    spr(36, 160, 158, 2, 2, true, true)
+
     -- A 32x32 sprite composed from the sheet's top-left 4x4 block.
     spr(0, 156, 122, 4, 4)
 end

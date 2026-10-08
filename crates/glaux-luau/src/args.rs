@@ -160,6 +160,26 @@ pub(crate) fn tile_span_arg(
     Ok(n as u8)
 }
 
+/// An optional boolean flag: `nil` means `false`. Other types, including
+/// numbers, are rejected rather than tested for truthiness.
+pub(crate) fn flag_arg(
+    lua: &Lua,
+    function: &str,
+    position: usize,
+    value: &Value,
+) -> mlua::Result<bool> {
+    match *value {
+        Value::Nil => Ok(false),
+        Value::Boolean(flag) => Ok(flag),
+        ref other => Err(bad_argument(
+            lua,
+            function,
+            position,
+            &format!("boolean expected, got {}", script_type_name(other)),
+        )),
+    }
+}
+
 /// An integer argument in `0..=max`, never wrapped or clamped. `what` names
 /// the value in the error.
 pub(crate) fn bounded_arg(

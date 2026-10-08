@@ -30,7 +30,15 @@ pub fn draw_obj_tile(
     x: i32,
     y: i32,
 ) {
-    blit_obj_tile(framebuffer, tiles, tile, i64::from(x), i64::from(y));
+    blit_obj_tile(
+        framebuffer,
+        tiles,
+        tile,
+        i64::from(x),
+        i64::from(y),
+        false,
+        false,
+    );
 }
 
 /// Draws a `width`x`height` block of object tiles from the object-tile grid
@@ -39,6 +47,14 @@ pub fn draw_obj_tile(
 /// Tiles are placed at 8-pixel offsets and drawn like [`draw_obj_tile`].
 /// Block positions that fall outside the grid (see [`obj_grid_tile`]) are
 /// skipped.
+///
+/// `flip_x` mirrors the whole composed block horizontally: the order of its
+/// tile columns and the pixels within each tile are both reversed. `flip_y`
+/// does the same vertically. The tile bank itself is never modified.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes spr()'s arguments one to one"
+)]
 pub fn draw_obj_sprite(
     framebuffer: &mut Framebuffer,
     tiles: &ObjTileBank,
@@ -47,25 +63,48 @@ pub fn draw_obj_sprite(
     y: i32,
     width: usize,
     height: usize,
+    flip_x: bool,
+    flip_y: bool,
 ) {
     for row in 0..height {
         for column in 0..width {
             let Some(tile) = obj_grid_tile(first, column, row) else {
                 continue;
             };
-            let tile_x = i64::from(x) + (column * OBJ_TILE_WIDTH) as i64;
-            let tile_y = i64::from(y) + (row * OBJ_TILE_HEIGHT) as i64;
-            blit_obj_tile(framebuffer, tiles, tile, tile_x, tile_y);
+            let dest_column = if flip_x { width - 1 - column } else { column };
+            let dest_row = if flip_y { height - 1 - row } else { row };
+            let tile_x = i64::from(x) + (dest_column * OBJ_TILE_WIDTH) as i64;
+            let tile_y = i64::from(y) + (dest_row * OBJ_TILE_HEIGHT) as i64;
+            blit_obj_tile(framebuffer, tiles, tile, tile_x, tile_y, flip_x, flip_y);
         }
     }
 }
 
-/// Draws one object tile whose top-left corner may lie outside the `i32`
-/// range, as the far tiles of a block near `i32::MAX` do.
-fn blit_obj_tile(framebuffer: &mut Framebuffer, tiles: &ObjTileBank, tile: usize, x: i64, y: i64) {
+/// Draws one object tile, mirrored on the flagged axes, whose top-left
+/// corner may lie outside the `i32` range, as the far tiles of a block near
+/// `i32::MAX` do.
+fn blit_obj_tile(
+    framebuffer: &mut Framebuffer,
+    tiles: &ObjTileBank,
+    tile: usize,
+    x: i64,
+    y: i64,
+    flip_x: bool,
+    flip_y: bool,
+) {
     for local_y in 0..OBJ_TILE_HEIGHT {
         for local_x in 0..OBJ_TILE_WIDTH {
-            let Some(index) = tiles.pixel(tile, local_x, local_y) else {
+            let source_x = if flip_x {
+                OBJ_TILE_WIDTH - 1 - local_x
+            } else {
+                local_x
+            };
+            let source_y = if flip_y {
+                OBJ_TILE_HEIGHT - 1 - local_y
+            } else {
+                local_y
+            };
+            let Some(index) = tiles.pixel(tile, source_x, source_y) else {
                 return;
             };
             if index == 0 {
@@ -365,7 +404,7 @@ mod tests {
         let tiles = solid_tiles(&[(24, 1), (25, 2), (40, 3), (41, 4), (26, 9), (27, 9)]);
         let mut fb = Framebuffer::new();
 
-        draw_obj_sprite(&mut fb, &tiles, 24, 10, 20, 2, 2);
+        draw_obj_sprite(&mut fb, &tiles, 24, 10, 20, 2, 2, false, false);
 
         assert_eq!(cell(&fb, 10, 20), Some(1));
         assert_eq!(cell(&fb, 18, 20), Some(2));
@@ -382,7 +421,7 @@ mod tests {
         let tiles = solid_tiles(&[(5, 1), (6, 2), (7, 3), (21, 4), (22, 5), (23, 6)]);
         let mut fb = Framebuffer::new();
 
-        draw_obj_sprite(&mut fb, &tiles, 5, 0, 0, 3, 2);
+        draw_obj_sprite(&mut fb, &tiles, 5, 0, 0, 3, 2, false, false);
 
         for (index, expected) in (1..=6).enumerate() {
             let (column, row) = ((index % 3) as i32, (index / 3) as i32);
@@ -404,7 +443,7 @@ mod tests {
         let (mut single, mut block) = (filled(9), filled(9));
 
         draw_obj_tile(&mut single, &tiles, 0, -3, 5);
-        draw_obj_sprite(&mut block, &tiles, 0, -3, 5, 1, 1);
+        draw_obj_sprite(&mut block, &tiles, 0, -3, 5, 1, 1, false, false);
 
         assert_eq!(single, block);
     }
@@ -415,7 +454,7 @@ mod tests {
         let tiles = solid_tiles(&[(0, 5), (16, 6), (17, 7)]);
         let mut fb = filled(9);
 
-        draw_obj_sprite(&mut fb, &tiles, 0, 0, 0, 2, 2);
+        draw_obj_sprite(&mut fb, &tiles, 0, 0, 0, 2, 2, false, false);
 
         assert_eq!(cell(&fb, 0, 0), Some(5));
         assert_eq!(cell(&fb, 8, 0), Some(9));
@@ -439,7 +478,7 @@ mod tests {
         ];
         for ((x, y), count, inside) in cases {
             let mut fb = Framebuffer::new();
-            draw_obj_sprite(&mut fb, &tiles, 0, x, y, 2, 2);
+            draw_obj_sprite(&mut fb, &tiles, 0, x, y, 2, 2, false, false);
             assert_eq!(
                 fb.as_bytes().iter().filter(|&&index| index == 7).count(),
                 count,
@@ -455,17 +494,181 @@ mod tests {
     fn sprite_blocks_handle_extreme_coordinates_and_off_grid_tiles() {
         let tiles = solid_tiles(&[(15, 7), (1023, 7)]);
         let mut fb = Framebuffer::new();
-        draw_obj_sprite(&mut fb, &tiles, 0, i32::MAX, i32::MAX, 16, 64);
-        draw_obj_sprite(&mut fb, &tiles, 0, i32::MIN, i32::MIN, 16, 64);
+        draw_obj_sprite(&mut fb, &tiles, 0, i32::MAX, i32::MAX, 16, 64, false, false);
+        draw_obj_sprite(&mut fb, &tiles, 0, i32::MIN, i32::MIN, 16, 64, false, false);
         assert_eq!(fb, Framebuffer::new());
 
         // Positions past the grid's right or bottom edge draw nothing.
-        draw_obj_sprite(&mut fb, &tiles, 15, 0, 0, 2, 1);
-        draw_obj_sprite(&mut fb, &tiles, 1023, 100, 100, 1, 2);
+        draw_obj_sprite(&mut fb, &tiles, 15, 0, 0, 2, 1, false, false);
+        draw_obj_sprite(&mut fb, &tiles, 1023, 100, 100, 1, 2, false, false);
         assert_eq!(
             fb.as_bytes().iter().filter(|&&index| index == 7).count(),
             128
         );
+    }
+
+    /// Every `(flip_x, flip_y)` combination.
+    const FLIPS: [(bool, bool); 4] = [(false, false), (true, false), (false, true), (true, true)];
+
+    /// A full bank whose tile `t` has index `pixel(t, x, y)` at `(x, y)`.
+    fn bank_from(pixel: impl Fn(usize, usize, usize) -> u8) -> ObjTileBank {
+        let mut bytes = Vec::with_capacity(OBJ_TILE_CAPACITY * OBJ_TILE_BYTES);
+        for tile in 0..OBJ_TILE_CAPACITY {
+            for y in 0..8 {
+                for x in (0..8).step_by(2) {
+                    bytes.push((pixel(tile, x, y) << 4) | pixel(tile, x + 1, y));
+                }
+            }
+        }
+        ObjTileBank::from_bytes(&bytes).unwrap()
+    }
+
+    /// Tiles with no mirror symmetry, different from each other and with
+    /// transparent holes, so any wrong flip, tile order or skipped hole shows.
+    fn asymmetric_tiles() -> ObjTileBank {
+        bank_from(|tile, x, y| ((tile * 3 + x + 2 * y) % 16) as u8)
+    }
+
+    /// Nonzero pixels of `fb` as `((x, y), index)`.
+    fn ink(fb: &Framebuffer) -> Vec<((i32, i32), u8)> {
+        (0..HEIGHT as i32)
+            .flat_map(|y| (0..WIDTH as i32).map(move |x| (x, y)))
+            .filter_map(|(x, y)| fb.pixel(x, y).filter(|&i| i != 0).map(|i| ((x, y), i)))
+            .collect()
+    }
+
+    #[test]
+    fn flipping_a_tile_mirrors_its_pixels() {
+        let tiles = bank_from(|tile, x, y| u8::from(tile == 0 && (x, y) == (1, 0)) * 5);
+        for ((flip_x, flip_y), expected) in
+            FLIPS
+                .into_iter()
+                .zip([(11, 20), (16, 20), (11, 27), (16, 27)])
+        {
+            let mut fb = Framebuffer::new();
+            draw_obj_sprite(&mut fb, &tiles, 0, 10, 20, 1, 1, flip_x, flip_y);
+            assert_eq!(ink(&fb), [(expected, 5)], "flip ({flip_x}, {flip_y})");
+        }
+    }
+
+    #[test]
+    fn flipping_a_block_reverses_its_tile_order() {
+        let tiles = solid_tiles(&[(5, 1), (6, 2), (7, 3), (21, 4), (22, 5), (23, 6)]);
+        let cases = [
+            ((false, false), [[1, 2, 3], [4, 5, 6]]),
+            ((true, false), [[3, 2, 1], [6, 5, 4]]),
+            ((false, true), [[4, 5, 6], [1, 2, 3]]),
+            ((true, true), [[6, 5, 4], [3, 2, 1]]),
+        ];
+        for ((flip_x, flip_y), rows) in cases {
+            let mut fb = Framebuffer::new();
+            draw_obj_sprite(&mut fb, &tiles, 5, 0, 0, 3, 2, flip_x, flip_y);
+            for (row, colors) in rows.into_iter().enumerate() {
+                for (column, color) in colors.into_iter().enumerate() {
+                    assert_eq!(
+                        cell(&fb, column as i32 * 8, row as i32 * 8),
+                        Some(color),
+                        "flip ({flip_x}, {flip_y}) cell ({column}, {row})"
+                    );
+                }
+            }
+            assert_eq!(ink(&fb).len(), 6 * 64);
+        }
+    }
+
+    #[test]
+    fn flips_mirror_the_whole_composed_sprite() {
+        let tiles = asymmetric_tiles();
+        let (x, y) = (40, 50);
+        for (first, columns, rows) in [(18, 1, 1), (18, 3, 2)] {
+            let mut plain = filled(9);
+            draw_obj_sprite(&mut plain, &tiles, first, x, y, columns, rows, false, false);
+            let (w, h) = (columns as i32 * 8, rows as i32 * 8);
+            for (flip_x, flip_y) in FLIPS {
+                let mut flipped = filled(9);
+                draw_obj_sprite(
+                    &mut flipped,
+                    &tiles,
+                    first,
+                    x,
+                    y,
+                    columns,
+                    rows,
+                    flip_x,
+                    flip_y,
+                );
+                for dy in 0..h {
+                    for dx in 0..w {
+                        let sx = if flip_x { w - 1 - dx } else { dx };
+                        let sy = if flip_y { h - 1 - dy } else { dy };
+                        assert_eq!(
+                            flipped.pixel(x + dx, y + dy),
+                            plain.pixel(x + sx, y + sy),
+                            "{columns}x{rows} flip ({flip_x}, {flip_y}) at ({dx}, {dy})"
+                        );
+                    }
+                }
+                // Holes keep the background, and nothing lands outside the block.
+                let background =
+                    |fb: &Framebuffer| fb.as_bytes().iter().filter(|&&i| i == 9).count();
+                assert_eq!(
+                    background(&flipped),
+                    background(&plain),
+                    "{columns}x{rows} flip ({flip_x}, {flip_y})"
+                );
+                if flip_x || flip_y {
+                    assert_ne!(flipped, plain, "{columns}x{rows} flip ({flip_x}, {flip_y})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn flipping_happens_before_clipping() {
+        // Only the tile's left column is set.
+        let tiles = bank_from(|tile, x, _| u8::from(tile == 0 && x == 0) * 7);
+        let mut fb = Framebuffer::new();
+        draw_obj_sprite(&mut fb, &tiles, 0, -4, 0, 1, 1, false, false);
+        assert_eq!(ink(&fb), []);
+
+        draw_obj_sprite(&mut fb, &tiles, 0, -4, 0, 1, 1, true, false);
+        assert_eq!(ink(&fb), (0..8).map(|y| ((3, y), 7)).collect::<Vec<_>>());
+
+        // In a 2-wide block, a flip moves the left tile to the right half.
+        let mut fb = Framebuffer::new();
+        draw_obj_sprite(&mut fb, &tiles, 0, -8, 0, 2, 1, true, true);
+        assert_eq!(ink(&fb), (0..8).map(|y| ((7, y), 7)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn flipped_sprites_handle_extreme_coordinates() {
+        let tiles = solid_tiles(&[(0, 7)]);
+        let mut fb = Framebuffer::new();
+        for (flip_x, flip_y) in FLIPS {
+            draw_obj_sprite(
+                &mut fb,
+                &tiles,
+                0,
+                i32::MAX,
+                i32::MAX,
+                16,
+                64,
+                flip_x,
+                flip_y,
+            );
+            draw_obj_sprite(
+                &mut fb,
+                &tiles,
+                0,
+                i32::MIN,
+                i32::MIN,
+                16,
+                64,
+                flip_x,
+                flip_y,
+            );
+        }
+        assert_eq!(fb, Framebuffer::new());
     }
 
     #[test]

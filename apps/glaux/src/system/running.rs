@@ -115,6 +115,8 @@ impl RunningCartridge {
                     y,
                     width,
                     height,
+                    flip_x,
+                    flip_y,
                 } => draw_obj_sprite(
                     framebuffer,
                     &self.obj_tiles,
@@ -123,6 +125,8 @@ impl RunningCartridge {
                     y,
                     usize::from(width),
                     usize::from(height),
+                    flip_x,
+                    flip_y,
                 ),
                 DrawCommand::Text {
                     ref text,
@@ -324,6 +328,27 @@ mod tests {
             running.render(&mut framebuffer, rom.font());
             let first = framebuffer.as_bytes()[0];
             assert!(framebuffer.as_bytes().iter().any(|&index| index != first));
+        }
+
+        #[test]
+        fn the_title_knight_faces_left_by_flipping() {
+            let mut running = start();
+            idle(&mut running, 1);
+            let knight = running
+                .runtime
+                .frame()
+                .iter()
+                .find_map(|command| match *command {
+                    DrawCommand::Sprite {
+                        x: 196,
+                        y: 116,
+                        flip_x,
+                        flip_y,
+                        ..
+                    } => Some((flip_x, flip_y)),
+                    _ => None,
+                });
+            assert_eq!(knight, Some((true, false)));
         }
 
         #[test]

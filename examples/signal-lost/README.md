@@ -81,6 +81,7 @@ over between runs: the PRNG stream, the best score and the run counter.
   - `cls()` for the floor;
   - `spr()` single-tile for coins and skulls;
   - `spr(..., w, h)` multi-tile at 2×2 (goblins, axes, hearts, walls, floor), 2×3 (knight, orcs) and 4×4 (ogres);
+  - `spr(..., w, h, flip_x)` to face characters left and to spin thrown axes, so the sheet stores each sprite only once;
   - `rectfill()` for the dark HUD band, the dash recharge bar, the floor joint marks and the arena edge;
   - `pset()` for particles and spawn warnings;
   - `print()` for the HUD and screen text.
@@ -107,11 +108,11 @@ Source files used, all from `0x72_DungeonTilesetII_v1.7/frames/`:
 
 | Use             | Files                                                          | Adaptation                                                     |
 |-----------------|----------------------------------------------------------------|----------------------------------------------------------------|
-| Knight (player) | `knight_m_idle_anim_f0-3.png`, `knight_m_run_anim_f0-3.png`    | Crop the empty top 4 rows (16×28 → 16×24); add a mirrored copy |
-| Goblin          | `goblin_run_anim_f0-3.png`                                     | Mirrored copy                                                  |
-| Masked orc      | `masked_orc_run_anim_f0-3.png`                                 | Bottom-align 16×23 in 16×24; mirrored copy                     |
-| Ogre            | `ogre_run_anim_f0-3.png`                                       | Crop the empty top 4 rows (32×36 → 32×32); mirrored copy       |
-| Axe             | `weapon_throwing_axe.png`                                      | Center in 16×16; mirrored copy                                 |
+| Knight (player) | `knight_m_idle_anim_f0-3.png`, `knight_m_run_anim_f0-3.png`    | Crop the empty top 4 rows (16×28 → 16×24)                      |
+| Goblin          | `goblin_run_anim_f0-3.png`                                     | —                                                              |
+| Masked orc      | `masked_orc_run_anim_f0-3.png`                                 | Bottom-align 16×23 in 16×24                                    |
+| Ogre            | `ogre_run_anim_f0-3.png`                                       | Crop the empty top 4 rows (32×36 → 32×32)                      |
+| Axe             | `weapon_throwing_axe.png`                                      | Center in 16×16                                                |
 | Coin            | `coin_anim_f0-3.png`                                           | Center in 8×8                                                  |
 | Skull           | `skull.png`                                                    | Crop to its 6×6 content, center in 8×8                         |
 | Flask           | `flask_big_red.png`                                            | —                                                              |
@@ -119,8 +120,9 @@ Source files used, all from `0x72_DungeonTilesetII_v1.7/frames/`:
 | Wall            | `wall_mid.png`, `wall_top_mid.png`                             | —                                                              |
 | Floor           | `floor_1.png` … `floor_8.png`                                  | —                                                              |
 
-No pixels were redrawn. The only edits are cropping, padding, mirroring and
-the palette remap below.
+No pixels were redrawn. The only edits are cropping, padding and the palette
+remap below. Every sprite is stored facing right; left-facing characters and
+the axe's spin are drawn with `spr`'s `flip_x`.
 
 ### Palette adaptation
 
@@ -162,15 +164,16 @@ mise run signal-lost-sheet -- "/path/to/0x72_DungeonTilesetII_v1.7/frames"
 mise run glaux -- convert sprites examples/signal-lost/sprites.png
 ```
 
-The last command writes `examples/signal-lost/sprites.bin` (384 tiles,
-12 288 bytes). Both steps are deterministic: rebuilding from the same pack
+The last command writes `examples/signal-lost/sprites.bin` (272 tiles,
+8 704 bytes). Both steps are deterministic: rebuilding from the same pack
 reproduces all three files byte for byte.
 
 ## Development notes
 
 Signal Lost was first written against the APIs as they stood, with no engine
-changes. These are the notes it produced. The filled-rectangle primitive it
-asked for has since been added as `rectfill()`, and the game now uses it.
+changes. These are the notes it produced. The filled-rectangle primitive and
+the sprite flip it asked for have since been added, as `rectfill()` and
+`spr`'s `flip_x`/`flip_y` arguments, and the game now uses both.
 
 ### What worked well
 
@@ -232,8 +235,16 @@ These limitations were demonstrated while building the game:
 - **OBJ palette banks.** Sprites are fixed to master indices 1–15, which
   forced the palette remap above, ruled out half the asset pack, and makes
   hit flashes impossible.
-- **Sprite flip.** Every character and the axe are stored twice, mirrored.
-  That is 156 of the sheet's 384 tiles.
+- **Sprite flip (resolved).** Every character and the axe used to be stored
+  twice, once mirrored: 156 of the sheet's 384 tile slots held mirrored
+  copies. `spr(tile, x, y, [w], [h], [flip_x], [flip_y])` now mirrors a whole
+  composed sprite while drawing it, at the same draw cost, so the sheet keeps
+  one copy of each sprite. Dropping the 156 mirrored tiles shrinks the sheet
+  from 384 to 272 allocated slots, a net saving of 112 rather than 156: the
+  sheet is packed in equal-height bands, and the orc, goblin and item bands
+  that used to share rows with mirrored copies now leave 44 slots of padding.
+  The rebuilt sheet was checked pixel for pixel: every removed copy equals
+  its kept frame flipped horizontally.
 
 ### What should NOT be added yet
 

@@ -21,7 +21,8 @@
 //! - `log.trace(...)`, `log.debug(...)`, `log.info(...)` and `log.warn(...)`,
 //!   which record [`LogEntry`]s in any phase;
 //! - `cls(color)`, `pset(x, y, color)`, `rectfill(x, y, width, height,
-//!   color)`, `print(text, x, y, color)` and `spr(tile, x, y, [w, h])`,
+//!   color)`, `print(text, x, y, color)` and
+//!   `spr(tile, x, y, [w, h, flip_x, flip_y])`,
 //!   which record [`DrawCommand`]s and may only be called during `draw()`.
 //!   `rectfill` is a filled rectangle primitive: `(x, y)` is its top-left
 //!   corner and `width` and `height` are positive integer sizes in pixels,
@@ -30,7 +31,11 @@
 //!   `spr` draws a `w`x`h` block of 8x8 object
 //!   tiles (default 1x1) taken from the 16-column object-tile grid, with
 //!   `tile` at its top-left; the block may not run past the grid's right or
-//!   bottom edge. Transparent index 0 is skipped and indices 1 through 15
+//!   bottom edge. `flip_x` and `flip_y` are optional booleans (default
+//!   `false`) that mirror the whole composed block: `flip_x` reverses both
+//!   the order of its tile columns and the pixels within each tile, and
+//!   `flip_y` does the same for rows. Flipping does not change a sprite's
+//!   draw cost. Transparent index 0 is skipped and indices 1 through 15
 //!   currently map directly to framebuffer indices;
 //! - `Button` and `Key`, read-only tables of opaque constants: the virtual
 //!   G1 buttons (`Button.Up`, `Button.Down`, `Button.Left`, `Button.Right`,

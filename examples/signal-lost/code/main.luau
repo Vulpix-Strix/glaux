@@ -287,10 +287,10 @@ end
 local function draw_title(tick)
     -- A small cast lineup: the knight between the three enemy kinds.
     local step = (tick // 7) % 4 + 1
-    spr(sheet.ogre_run_r[step], 64, 108, 4, 4)
-    spr(sheet.orc_run_r[step], 108, 116, 2, 3)
-    spr(sheet.goblin_run_r[step], 132, 124, 2, 2)
-    spr(sheet.knight_idle_l[(tick // 8) % 4 + 1], 196, 116, 2, 3)
+    spr(sheet.ogre_run[step], 64, 108, 4, 4)
+    spr(sheet.orc_run[step], 108, 116, 2, 3)
+    spr(sheet.goblin_run[step], 132, 124, 2, 2)
+    spr(sheet.knight_idle[(tick // 8) % 4 + 1], 196, 116, 2, 3, true)
     spr(sheet.coin[(tick // 6) % 4 + 1], 176, 128)
 
     centered("SIGNAL LOST", 64, ORANGE)

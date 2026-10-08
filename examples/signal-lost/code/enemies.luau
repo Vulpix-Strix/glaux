@@ -11,15 +11,15 @@ local enemies = {}
 -- sprite as `{x, y, w, h}`. `knock` scales how far an axe pushes the enemy.
 enemies.KINDS = {
     goblin = {
-        w = 2, h = 2, right = sheet.goblin_run_r, left = sheet.goblin_run_l,
+        w = 2, h = 2, frames = sheet.goblin_run,
         hit = { 5, 6, 8, 9 }, speed = 0.62, hp = 1, damage = 1, score = 10, knock = 3,
     },
     orc = {
-        w = 2, h = 3, right = sheet.orc_run_r, left = sheet.orc_run_l,
+        w = 2, h = 3, frames = sheet.orc_run,
         hit = { 4, 9, 10, 13 }, speed = 0.5, hp = 3, damage = 2, score = 30, knock = 2,
     },
     ogre = {
-        w = 4, h = 4, right = sheet.ogre_run_r, left = sheet.ogre_run_l,
+        w = 4, h = 4, frames = sheet.ogre_run,
         hit = { 8, 10, 16, 20 }, speed = 0.33, hp = 14, damage = 3, score = 150, knock = 0.4,
     },
 }
@@ -242,8 +242,8 @@ function enemies.draw(state, tick)
         -- tinted without OBJ palette banks.
         if e.flash == 0 or (tick // 2) % 2 == 0 then
             local kind = enemies.KINDS[e.kind]
-            local frames = e.flip and kind.left or kind.right
-            spr(frames[((tick // 7) + e.phase) % #frames + 1], e.x, e.y, kind.w, kind.h)
+            local frames = kind.frames
+            spr(frames[((tick // 7) + e.phase) % #frames + 1], e.x, e.y, kind.w, kind.h, e.flip)
         end
     end
 end

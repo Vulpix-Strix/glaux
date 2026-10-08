@@ -7,7 +7,9 @@ use std::rc::Rc;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH};
 use mlua::{Function, Lua, Value};
 
-use crate::args::{color_arg, coordinate_arg, located, size_arg, tile_arg, tile_span_arg, to_text};
+use crate::args::{
+    color_arg, coordinate_arg, flag_arg, located, size_arg, tile_arg, tile_span_arg, to_text,
+};
 
 /// Draw cost one `draw()` call may spend: each `cls`, `pset` or `rectfill`
 /// costs one whatever area it covers, each `spr` costs the 64 pixels per tile
@@ -46,15 +48,19 @@ pub enum DrawCommand {
         height: i32,
         color: u8,
     },
-    /// `spr(tile, x, y, w, h)`: draw a `width`x`height` block of object
-    /// tiles from the object-tile grid, `tile` at its top-left, with `(x, y)`
-    /// as its top-left corner. The block is validated to fit the grid.
+    /// `spr(tile, x, y, w, h, flip_x, flip_y)`: draw a `width`x`height`
+    /// block of object tiles from the object-tile grid, `tile` at its
+    /// top-left, with `(x, y)` as its top-left corner. The block is
+    /// validated to fit the grid. `flip_x` and `flip_y` mirror the whole
+    /// composed block, not each tile in place.
     Sprite {
         tile: u16,
         x: i32,
         y: i32,
         width: u8,
         height: u8,
+        flip_x: bool,
+        flip_y: bool,
     },
     /// `print(text, x, y, color)`: draw text with `(x, y)` as the top-left
     /// corner of its first character cell.
@@ -124,7 +130,16 @@ pub(crate) fn install(
 
     let pending = Rc::clone(pending_frame);
     let spr = lua.create_function(
-        move |lua, (tile, x, y, w, h): (Value, Value, Value, Value, Value)| {
+        move |lua,
+              (tile, x, y, w, h, flip_x, flip_y): (
+            Value,
+            Value,
+            Value,
+            Value,
+            Value,
+            Value,
+            Value,
+        )| {
             expect_draw(lua, &pending, "spr")?;
             let tile = tile_arg(lua, "spr", 1, &tile)?;
             let x = coordinate_arg(lua, "spr", 2, &x)?;
@@ -139,6 +154,8 @@ pub(crate) fn install(
                 y,
                 width,
                 height,
+                flip_x: flag_arg(lua, "spr", 6, &flip_x)?,
+                flip_y: flag_arg(lua, "spr", 7, &flip_y)?,
             };
             record(lua, &pending, "spr", command)
         },

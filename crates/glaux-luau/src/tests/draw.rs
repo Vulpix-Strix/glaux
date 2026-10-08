@@ -22,12 +22,26 @@ fn sprite(tile: u16, x: i32, y: i32) -> DrawCommand {
 }
 
 fn sprite_block(tile: u16, x: i32, y: i32, width: u8, height: u8) -> DrawCommand {
+    sprite_flipped(tile, x, y, width, height, false, false)
+}
+
+fn sprite_flipped(
+    tile: u16,
+    x: i32,
+    y: i32,
+    width: u8,
+    height: u8,
+    flip_x: bool,
+    flip_y: bool,
+) -> DrawCommand {
     DrawCommand::Sprite {
         tile,
         x,
         y,
         width,
         height,
+        flip_x,
+        flip_y,
     }
 }
 
@@ -423,6 +437,86 @@ fn sprite_blocks_must_fit_the_object_tile_grid() {
             "{call}"
         );
     }
+}
+
+#[test]
+fn sprite_flips_default_to_false() {
+    assert_eq!(
+        drawn("spr(0, 0, 0) spr(0, 0, 0, nil, nil, nil, nil) spr(0, 0, 0, 2, 2, false)"),
+        [
+            sprite(0, 0, 0),
+            sprite(0, 0, 0),
+            sprite_block(0, 0, 0, 2, 2),
+        ]
+    );
+}
+
+#[test]
+fn sprite_flips_are_recorded_for_single_tiles_and_blocks() {
+    assert_eq!(
+        drawn(
+            "spr(3, 1, 2, nil, nil, true) spr(3, 1, 2, nil, nil, false, true) \
+             spr(3, 1, 2, 1, 1, true, true) spr(24, 7, 8, 2, 3, true, false) \
+             spr(24, 7, 8, 2, 3, false, true) spr(24, 7, 8, 2, 3, true, true)"
+        ),
+        [
+            sprite_flipped(3, 1, 2, 1, 1, true, false),
+            sprite_flipped(3, 1, 2, 1, 1, false, true),
+            sprite_flipped(3, 1, 2, 1, 1, true, true),
+            sprite_flipped(24, 7, 8, 2, 3, true, false),
+            sprite_flipped(24, 7, 8, 2, 3, false, true),
+            sprite_flipped(24, 7, 8, 2, 3, true, true),
+        ]
+    );
+}
+
+#[test]
+fn sprite_flips_must_be_booleans() {
+    for (call, detail) in [
+        (
+            "spr(0, 0, 0, 1, 1, 1)",
+            "#6 to 'spr' (boolean expected, got number)",
+        ),
+        (
+            r#"spr(0, 0, 0, 1, 1, "true")"#,
+            "#6 to 'spr' (boolean expected, got string)",
+        ),
+        (
+            "spr(0, 0, 0, 1, 1, {})",
+            "#6 to 'spr' (boolean expected, got table)",
+        ),
+        (
+            "spr(0, 0, 0, 1, 1, false, 0)",
+            "#7 to 'spr' (boolean expected, got number)",
+        ),
+        (
+            "spr(0, 0, 0, nil, nil, true, Button.A)",
+            "#7 to 'spr' (boolean expected, got Button)",
+        ),
+    ] {
+        assert_eq!(
+            draw_error(call),
+            format!("main.luau:1: bad argument {detail}"),
+            "{call}"
+        );
+    }
+}
+
+#[test]
+fn flipped_sprites_cost_the_same_as_unflipped_ones() {
+    const BLOCKS: usize = MAX_DRAW_COMMANDS / (4 * SPRITE_TILE_COST);
+    for flips in ["true, false", "false, true", "true, true"] {
+        let fits = format!("for i = 1, {BLOCKS} do spr(0, 0, 0, 2, 2, {flips}) end");
+        assert_eq!(drawn(&fits).len(), BLOCKS, "{flips}");
+        let over = format!("for i = 1, {BLOCKS} do spr(0, 0, 0, 2, 2, {flips}) end pset(0, 0, 1)");
+        assert!(
+            draw_error(&over).contains("too many draw commands"),
+            "{flips}"
+        );
+    }
+    assert!(
+        draw_error("spr(0, 0, 0, 16, 64, true, true) cls(0)").contains("too many draw commands")
+    );
 }
 
 #[test]

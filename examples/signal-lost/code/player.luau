@@ -146,14 +146,9 @@ function player.draw(p, tick)
     if p.hurt > 0 and (tick // 3) % 2 == 0 then
         return
     end
-    local frames
-    if p.moving or p.dash > 0 then
-        frames = p.flip and sheet.knight_run_l or sheet.knight_run_r
-    else
-        frames = p.flip and sheet.knight_idle_l or sheet.knight_idle_r
-    end
+    local frames = (p.moving or p.dash > 0) and sheet.knight_run or sheet.knight_idle
     local speed = p.dash > 0 and 3 or 6
-    spr(frames[(tick // speed) % #frames + 1], p.x, p.y, 2, 3)
+    spr(frames[(tick // speed) % #frames + 1], p.x, p.y, 2, 3, p.flip)
 end
 
 return player

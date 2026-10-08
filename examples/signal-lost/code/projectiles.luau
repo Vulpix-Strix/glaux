@@ -35,10 +35,10 @@ function projectiles.update(list)
 end
 
 function projectiles.draw(list, tick)
-    -- Alternating the mirrored copy reads as a spin; G1 cannot flip sprites.
-    local tile = sheet.axe[(tick // 4) % 2 + 1]
+    -- Alternating between the axe and its mirror image reads as a spin.
+    local flip = (tick // 4) % 2 == 1
     for _, axe in list do
-        spr(tile, axe.x, axe.y, 2, 2)
+        spr(sheet.axe, axe.x, axe.y, 2, 2, flip)
     end
 end
 

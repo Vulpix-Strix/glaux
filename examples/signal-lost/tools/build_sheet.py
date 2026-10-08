@@ -12,7 +12,9 @@ Writes, next to this script's parent directory:
     code/sheet.luau   object-tile indices of every sprite in the sheet
 
 The sheet is packed on G1's 16-column object-tile grid in bands of equal
-height, so no multi-tile sprite crosses a grid row.
+height, so no multi-tile sprite crosses a grid row. Each sprite is stored
+once, facing right; the game draws the left-facing versions with `spr`'s
+`flip_x`.
 
 G1 writes object-tile indices 1-15 straight to the framebuffer as master
 palette indices, so every source color is mapped to the closest of Zughy 32
@@ -64,19 +66,12 @@ def nearest(color):
 class Frame:
     """One source PNG, optionally cropped, pasted at `at` in a w x h tile cell."""
 
-    def __init__(self, file, crop=None, at=(0, 0), mirror=False):
-        self.file, self.crop, self.at, self.mirror = file, crop, at, mirror
-
-    def mirrored(self):
-        return Frame(self.file, self.crop, self.at, True)
+    def __init__(self, file, crop=None, at=(0, 0)):
+        self.file, self.crop, self.at = file, crop, at
 
 
 def frames(stem, count, **kw):
     return [Frame(f"{stem}{i}.png", **kw) for i in range(count)]
-
-
-def mirrored(frame_list):
-    return [f.mirrored() for f in frame_list]
 
 
 KNIGHT = dict(crop=(0, 4, 16, 28))  # 16x28 with empty top rows -> 16x24
@@ -92,12 +87,11 @@ axe = Frame("weapon_throwing_axe.png", at=(3, 1))
 # Bands of (tile height, [(name, tile width, frames)]). A name with one frame
 # becomes a number in sheet.luau; several frames become a list.
 BANDS = [
-    (3, [("knight_idle_r", 2, knight_idle), ("knight_run_r", 2, knight_run)]),
-    (3, [("knight_idle_l", 2, mirrored(knight_idle)), ("knight_run_l", 2, mirrored(knight_run))]),
-    (3, [("orc_run_r", 2, orc_run), ("orc_run_l", 2, mirrored(orc_run))]),
-    (2, [("goblin_run_r", 2, goblin_run), ("goblin_run_l", 2, mirrored(goblin_run))]),
+    (3, [("knight_idle", 2, knight_idle), ("knight_run", 2, knight_run)]),
+    (3, [("orc_run", 2, orc_run)]),
+    (2, [("goblin_run", 2, goblin_run)]),
     (2, [
-        ("axe", 2, [axe, axe.mirrored()]),
+        ("axe", 2, [axe]),
         ("heart_full", 2, [Frame("ui_heart_full.png", at=(1, 2))]),
         ("heart_half", 2, [Frame("ui_heart_half.png", at=(1, 2))]),
         ("heart_empty", 2, [Frame("ui_heart_empty.png", at=(1, 2))]),
@@ -106,8 +100,7 @@ BANDS = [
         ("wall_top", 2, [Frame("wall_top_mid.png")]),
     ]),
     (2, [("floor", 2, [Frame(f"floor_{i}.png") for i in range(1, 9)])]),
-    (4, [("ogre_run_r", 4, ogre_run)]),
-    (4, [("ogre_run_l", 4, mirrored(ogre_run))]),
+    (4, [("ogre_run", 4, ogre_run)]),
     (1, [
         ("coin", 1, [Frame(f"coin_anim_f{i}.png", at=(1, 1)) for i in range(4)]),
         ("skull", 1, [Frame("skull.png", crop=(5, 7, 11, 13), at=(1, 1))]),
@@ -131,8 +124,6 @@ def render(src_dir, frame, width, height, mapping):
                 index = nearest((r, g, b))
                 mapping.setdefault((r, g, b), index)
                 cell[ay + y][ax + x] = index
-    if frame.mirror:
-        cell = [row[::-1] for row in cell]
     return cell
 
 
