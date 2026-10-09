@@ -39,6 +39,7 @@ const ICON_PNGS: [(&str, &[u8]); SystemIcon::COUNT] = [
     embed!("ui/icons/music.png"),
     embed!("ui/icons/eraser.png"),
     embed!("ui/icons/eyedropper.png"),
+    embed!("ui/icons/fill.png"),
 ];
 
 /// Side of a view icon, in pixels.
@@ -652,6 +653,7 @@ mod tests {
             SystemIcon::Music,
             SystemIcon::Eraser,
             SystemIcon::Eyedropper,
+            SystemIcon::Fill,
         ] {
             let image = ui.icon(icon);
             assert_eq!((image.width(), image.height()), (ICON_SIZE, ICON_SIZE));

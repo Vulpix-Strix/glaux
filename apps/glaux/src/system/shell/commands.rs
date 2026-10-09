@@ -71,6 +71,10 @@ pub(super) struct Command {
     /// Whether the one argument is a path, so extra words are most likely
     /// the rest of a path with spaces that was not quoted.
     takes_path: bool,
+    /// Valueless `--flags` the command accepts anywhere among its
+    /// arguments, by name without the leading `--`. They are taken out
+    /// before arguments are counted.
+    flags: &'static [&'static str],
 }
 
 /// Every built-in command, in the order `help` lists them.
@@ -84,6 +88,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 1,
         handler: help,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "clear",
@@ -94,6 +99,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 0,
         handler: clear,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "info",
@@ -104,6 +110,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 0,
         handler: info,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "version",
@@ -114,6 +121,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 0,
         handler: version,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "pwd",
@@ -124,6 +132,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 0,
         handler: pwd,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "ls",
@@ -134,6 +143,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 1,
         handler: ls,
         takes_path: true,
+        flags: &[],
     },
     Command {
         name: "cd",
@@ -144,6 +154,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 1,
         handler: cd,
         takes_path: true,
+        flags: &[],
     },
     Command {
         name: "new",
@@ -155,26 +166,29 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: usize::MAX,
         handler: new,
         takes_path: false,
+        flags: DISCARD_FLAGS,
     },
     Command {
         name: "load",
         aliases: &[],
-        usage: "load <path>",
+        usage: "load <path> [--discard]",
         description: "Load a cartridge",
         min_args: 1,
         max_args: 1,
         handler: load,
         takes_path: true,
+        flags: DISCARD_FLAGS,
     },
     Command {
         name: "unload",
         aliases: &[],
-        usage: "unload",
+        usage: "unload [--discard]",
         description: "Unload the loaded cartridge",
         min_args: 0,
         max_args: 0,
         handler: unload,
         takes_path: false,
+        flags: DISCARD_FLAGS,
     },
     Command {
         name: "run",
@@ -185,6 +199,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 0,
         handler: run,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "resume",
@@ -195,6 +210,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 0,
         handler: resume,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "stop",
@@ -205,6 +221,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 0,
         handler: stop,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "tone",
@@ -215,6 +232,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 4,
         handler: tone,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "env",
@@ -225,6 +243,7 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 5,
         handler: env,
         takes_path: false,
+        flags: &[],
     },
     Command {
         name: "gate",
@@ -235,10 +254,15 @@ pub(super) static COMMANDS: &[Command] = &[
         max_args: 2,
         handler: gate,
         takes_path: false,
+        flags: &[],
     },
 ];
 
-const NEW_USAGE: &str = "new <id> [--name <name>] [--version <semver>] [--author <author>]";
+const NEW_USAGE: &str =
+    "new <id> [--name <name>] [--version <semver>] [--author <author>] [--discard]";
+
+/// Flags of the commands that replace the loaded cartridge.
+const DISCARD_FLAGS: &[&str] = &["discard"];
 
 /// Options `new` accepts, by name without the leading `--`.
 const NEW_OPTIONS: &[&str] = &["name", "version", "author"];
@@ -264,6 +288,33 @@ const NOT_PAUSED_ERROR: &str = "No paused cartridge";
 /// Reported by commands that act on the loaded cartridge when there is none.
 const NOT_LOADED_ERROR: &str = "No cartridge loaded";
 
+/// Refuses, with the line that would proceed, when the command in
+/// `invocation` would replace a loaded cartridge whose edits are unsaved
+/// and `--discard` was not given. Returns whether it refused.
+fn refuse_unsaved(invocation: &Invocation<'_>, ctx: &mut Context<'_>) -> bool {
+    let CartridgeSlot::Loaded {
+        cartridge,
+        unsaved: true,
+    } = ctx.slot
+    else {
+        return false;
+    };
+    if invocation.flags.contains(&"discard") {
+        return false;
+    }
+    let identity = cartridge_identity(cartridge.manifest());
+    let mut line = format!("{} --discard", invocation.name.to_ascii_lowercase());
+    for arg in &invocation.args {
+        line.push(' ');
+        line.push_str(&quote(arg));
+    }
+    ctx.suggest(
+        format!("{identity} has unsaved sprite edits; --discard drops them"),
+        line,
+    );
+    true
+}
+
 /// The command called `name` or one of its aliases, ignoring ASCII case.
 pub(super) fn find(name: &str) -> Option<&'static Command> {
     COMMANDS.iter().find(|command| {
@@ -282,6 +333,13 @@ pub(super) fn execute(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         ctx.error(unknown_command(&invocation.name));
         return;
     };
+    let flagged;
+    let invocation = if command.flags.is_empty() {
+        invocation
+    } else {
+        flagged = take_flags(invocation, command.flags);
+        &flagged
+    };
     let given = invocation.args.len();
     if given < command.min_args {
         ctx.usage_error(missing_argument(command.usage, given), command.usage);
@@ -292,6 +350,24 @@ pub(super) fn execute(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         return;
     }
     (command.handler)(invocation, ctx);
+}
+
+/// `invocation` with the words naming one of `flags` taken out of its
+/// arguments and recorded in [`Invocation::flags`].
+fn take_flags<'a>(invocation: &Invocation<'a>, flags: &[&'static str]) -> Invocation<'a> {
+    let mut taken = invocation.clone();
+    taken.args.retain(|arg| {
+        let flag = arg
+            .strip_prefix("--")
+            .and_then(|name| flags.iter().find(|&&flag| flag == name));
+        if let Some(&flag) = flag
+            && !taken.flags.contains(&flag)
+        {
+            taken.flags.push(flag);
+        }
+        flag.is_none()
+    });
+    taken
 }
 
 /// Names the first argument missing when `given` were given, from the
@@ -319,9 +395,20 @@ fn too_many_arguments(command: &Command, invocation: &Invocation<'_>, ctx: &mut 
     // unquoted path gets a corrected line.
     let raw = invocation.raw_args.trim_end();
     if command.takes_path && !raw.contains(['"', '\'']) {
+        // Taken flags lose the spacing typed between the other words.
+        let path = if invocation.flags.is_empty() {
+            raw.to_owned()
+        } else {
+            invocation.args.join(" ")
+        };
+        let flags: String = invocation
+            .flags
+            .iter()
+            .map(|flag| format!(" --{flag}"))
+            .collect();
         ctx.suggest(
             "Paths with spaces need quotes",
-            format!("{} {}", command.name, quote(raw)),
+            format!("{}{flags} {}", command.name, quote(&path)),
         );
         return;
     }
@@ -366,7 +453,9 @@ fn clear(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 fn info(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     let (runtime, cartridge, state) = match ctx.slot {
         CartridgeSlot::Empty => ("NONE", "NONE".into(), "IDLE"),
-        CartridgeSlot::Loaded(loaded) => ("LUAU", cartridge_identity(loaded.manifest()), "LOADED"),
+        CartridgeSlot::Loaded { cartridge, .. } => {
+            ("LUAU", cartridge_identity(cartridge.manifest()), "LOADED")
+        }
         CartridgeSlot::Paused(paused) => ("LUAU", cartridge_identity(paused.manifest()), "PAUSED"),
     };
     let rows = [
@@ -439,12 +528,15 @@ fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         ctx.error(PAUSED_ERROR);
         return;
     }
+    if refuse_unsaved(invocation, ctx) {
+        return;
+    }
     let split = match split_options(&invocation.args, NEW_OPTIONS) {
         Ok(split) => split,
         Err(err) => {
             ctx.error(err.to_string());
             if let OptionError::Unknown(_) = err {
-                ctx.output("Options: --name, --version, --author");
+                ctx.output("Options: --name, --version, --author, --discard");
             }
             return;
         }
@@ -581,6 +673,9 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         ctx.error(PAUSED_ERROR);
         return;
     }
+    if refuse_unsaved(invocation, ctx) {
+        return;
+    }
     let path = &invocation.args[0];
     match LoadedCartridge::load(ctx.cartridges, path) {
         Ok(cartridge) => {
@@ -593,11 +688,16 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     }
 }
 
-/// Asks the system to remove the normally loaded cartridge.
-fn unload(_: &Invocation<'_>, ctx: &mut Context<'_>) {
+/// Asks the system to remove the normally loaded cartridge. Refused while
+/// its edits are unsaved, unless `--discard` is given.
+fn unload(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
         CartridgeSlot::Empty => ctx.error(NOT_LOADED_ERROR),
-        CartridgeSlot::Loaded(_) => *ctx.request = Some(ShellRequest::Unload),
+        CartridgeSlot::Loaded { .. } => {
+            if !refuse_unsaved(invocation, ctx) {
+                *ctx.request = Some(ShellRequest::Unload);
+            }
+        }
         CartridgeSlot::Paused(_) => ctx.error(PAUSED_ERROR),
     }
 }
@@ -607,7 +707,7 @@ fn unload(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 fn run(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
         CartridgeSlot::Empty => ctx.error(NOT_LOADED_ERROR),
-        CartridgeSlot::Loaded(_) => *ctx.request = Some(ShellRequest::Run),
+        CartridgeSlot::Loaded { .. } => *ctx.request = Some(ShellRequest::Run),
         CartridgeSlot::Paused(_) => ctx.error(PAUSED_ERROR),
     }
 }
@@ -616,7 +716,7 @@ fn run(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 fn resume(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
         CartridgeSlot::Paused(_) => *ctx.request = Some(ShellRequest::Resume),
-        CartridgeSlot::Empty | CartridgeSlot::Loaded(_) => ctx.error(NOT_PAUSED_ERROR),
+        CartridgeSlot::Empty | CartridgeSlot::Loaded { .. } => ctx.error(NOT_PAUSED_ERROR),
     }
 }
 
@@ -624,7 +724,7 @@ fn resume(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 fn stop(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
         CartridgeSlot::Paused(_) => *ctx.request = Some(ShellRequest::Stop),
-        CartridgeSlot::Empty | CartridgeSlot::Loaded(_) => ctx.error(NOT_PAUSED_ERROR),
+        CartridgeSlot::Empty | CartridgeSlot::Loaded { .. } => ctx.error(NOT_PAUSED_ERROR),
     }
 }
 
@@ -846,7 +946,7 @@ mod tests {
             line,
             rom_version,
             cartridges,
-            CartridgeSlot::loaded(loaded.as_ref()),
+            CartridgeSlot::loaded(loaded.as_ref(), false),
         );
         if let Some(ShellRequest::Load { cartridge, .. }) = request {
             *loaded = Some(*cartridge);
@@ -1043,7 +1143,15 @@ mod tests {
         // With quotes already typed, the intended split is unclear.
         assert_eq!(
             run(r#"load "my games" pong"#),
-            hinted("Too many arguments", "Usage: load <path>")
+            hinted("Too many arguments", "Usage: load <path> [--discard]")
+        );
+        // Flags keep their place in front of the quoted path.
+        assert_eq!(
+            run("load --discard my games/pong"),
+            hinted(
+                "Paths with spaces need quotes",
+                r#"Try: load --discard "my games/pong""#
+            )
         );
     }
 
@@ -1057,7 +1165,10 @@ mod tests {
 
     #[test]
     fn missing_arguments_are_named() {
-        assert_eq!(run("load"), hinted("Missing <path>", "Usage: load <path>"));
+        assert_eq!(
+            run("load"),
+            hinted("Missing <path>", "Usage: load <path> [--discard]")
+        );
         assert_eq!(
             run("new"),
             hinted("Missing <id>", &format!("Usage: {NEW_USAGE}"))
@@ -1262,7 +1373,10 @@ mod tests {
                 "UNLOAD",
                 Version::new(0, 3, 1),
                 &mut fixture.storage(),
-                CartridgeSlot::Loaded(&pong),
+                CartridgeSlot::Loaded {
+                    cartridge: &pong,
+                    unsaved: false,
+                },
             ),
             (vec![], Some(ShellRequest::Unload))
         );
@@ -1279,7 +1393,7 @@ mod tests {
             "run",
             Version::new(0, 3, 1),
             &mut fs,
-            CartridgeSlot::loaded(loaded.as_ref()),
+            CartridgeSlot::loaded(loaded.as_ref(), false),
         );
         assert_eq!((entries, request), (vec![], Some(ShellRequest::Run)));
     }
@@ -1356,7 +1470,13 @@ mod tests {
     #[test]
     fn resume_and_stop_need_a_paused_cartridge() {
         let (fixture, pong) = pong("cmd-resume-stop-none");
-        for slot in [CartridgeSlot::Empty, CartridgeSlot::Loaded(&pong)] {
+        for slot in [
+            CartridgeSlot::Empty,
+            CartridgeSlot::Loaded {
+                cartridge: &pong,
+                unsaved: false,
+            },
+        ] {
             for line in ["resume", "stop"] {
                 let result =
                     execute_line(line, Version::new(0, 3, 1), &mut fixture.storage(), slot);
@@ -1461,7 +1581,7 @@ mod tests {
                 "new a --color red",
                 hinted(
                     "Unknown option: --color",
-                    "Options: --name, --version, --author",
+                    "Options: --name, --version, --author, --discard",
                 ),
             ),
             (

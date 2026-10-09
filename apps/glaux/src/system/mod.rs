@@ -11,11 +11,13 @@ mod pause;
 mod running;
 mod sfx;
 mod shell;
+mod sprite_document;
 mod video;
 mod workspace;
 
 pub use boot::Boot;
 pub use shell::Shell;
+use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
 use workspace::{Workspace, WorkspaceVideo};
 
@@ -70,7 +72,8 @@ pub enum SystemState {
     Workspace {
         shell: Box<Shell>,
         cartridge: LoadedCartridge,
-        /// The cartridge's video assets, read when the workspace opened.
+        /// How the workspace shows the cartridge's colors, prepared when it
+        /// opened.
         video: WorkspaceVideo,
     },
     /// A cartridge runs and receives the logical ticks. The shell keeps its
@@ -150,6 +153,11 @@ pub struct System {
     /// Kept across visits, so the workspace reopens on the tab it was left
     /// on.
     workspace: Workspace,
+    /// The loaded cartridge's video state as the editors changed it. When
+    /// present it always belongs to the cartridge that is loaded, running
+    /// or paused: it is dropped whenever that cartridge is replaced or
+    /// unloaded, which the shell refuses while it holds unsaved edits.
+    sprites: Option<SpriteDocument>,
 }
 
 impl System {
@@ -176,6 +184,7 @@ impl System {
             sound: SystemSound::new(sounds),
             video_defaults,
             workspace: Workspace::new(font, palette),
+            sprites: None,
         }
     }
 
@@ -232,6 +241,7 @@ impl System {
             mut sound,
             video_defaults,
             mut workspace,
+            mut sprites,
         } = self;
         let state = match state {
             SystemState::Boot {
@@ -252,14 +262,19 @@ impl System {
                     SystemState::Boot { boot, cartridges }
                 }
             }
-            SystemState::Shell { shell, loaded } => {
-                shell_tick(shell, loaded, input, &video_defaults, &mut workspace)
-            }
+            SystemState::Shell { shell, loaded } => shell_tick(
+                shell,
+                loaded,
+                input,
+                &video_defaults,
+                &mut workspace,
+                &mut sprites,
+            ),
             SystemState::Workspace {
                 shell,
                 cartridge,
                 video,
-            } => workspace_tick(shell, cartridge, video, &mut workspace, input),
+            } => workspace_tick(shell, cartridge, video, &mut workspace, &mut sprites, input),
             SystemState::Running { shell, running } => running_tick(shell, running, input),
             SystemState::Paused {
                 shell,
@@ -280,6 +295,7 @@ impl System {
             sound,
             video_defaults,
             workspace,
+            sprites,
         }
     }
 
@@ -386,8 +402,14 @@ impl System {
             SystemState::Workspace {
                 cartridge, video, ..
             } => {
-                self.workspace
-                    .render(framebuffer, font, rom.ui(), cartridge, video, pointer);
+                self.workspace.render(
+                    framebuffer,
+                    font,
+                    rom.ui(),
+                    cartridge,
+                    video.source(self.sprites.as_ref()),
+                    pointer,
+                );
                 return;
             }
             SystemState::Running { running, .. } => {
@@ -455,12 +477,16 @@ fn shell_audio(shell: &Shell, psg: &mut Psg) {
 /// successful `run` in the same tick are dropped. So are events after a
 /// Break that opens the workspace, so keys meant for the shell never act
 /// on it.
+///
+/// Replacing or unloading the cartridge drops `sprites`; the shell refuses
+/// to while it holds unsaved edits unless told to discard them.
 fn shell_tick(
     mut shell: Box<Shell>,
     mut loaded: Option<LoadedCartridge>,
     input: &[InputEvent],
     video_defaults: &CartridgeVideoDefaults,
     workspace: &mut Workspace,
+    sprites: &mut Option<SpriteDocument>,
 ) -> SystemState {
     // Ticking before the input lets this tick's input restart the blink.
     shell.tick();
@@ -470,7 +496,7 @@ fn shell_tick(
         if event == InputEvent::Break {
             match loaded {
                 Some(cartridge) => {
-                    return open_workspace(shell, cartridge, workspace, video_defaults);
+                    return open_workspace(shell, cartridge, workspace, sprites, video_defaults);
                 }
                 None => {
                     shell.report(NO_CARTRIDGE_HINT);
@@ -478,9 +504,11 @@ fn shell_tick(
                 }
             }
         }
-        match shell.handle_input(event, CartridgeSlot::loaded(loaded.as_ref())) {
+        let unsaved = sprites.as_ref().is_some_and(SpriteDocument::is_modified);
+        match shell.handle_input(event, CartridgeSlot::loaded(loaded.as_ref(), unsaved)) {
             None => {}
             Some(ShellRequest::Load { cartridge, origin }) => {
+                discard_sprites(sprites);
                 let cartridge = loaded.insert(*cartridge);
                 shell.announce_loaded(cartridge.manifest(), origin);
             }
@@ -488,6 +516,7 @@ fn shell_tick(
                 let Some(cartridge) = loaded.take() else {
                     unreachable!("UNLOAD was requested without a loaded cartridge");
                 };
+                discard_sprites(sprites);
                 let identity = cartridge_identity(cartridge.manifest());
                 tracing::info!(cartridge = %identity, "cartridge unloaded");
                 shell.report(format!("Unloaded {identity}"));
@@ -497,13 +526,14 @@ fn shell_tick(
                 let Some(cartridge) = loaded else {
                     unreachable!("RUN was requested without a loaded cartridge");
                 };
-                return match start(shell, cartridge, video_defaults) {
+                return match start(shell, cartridge, video_defaults, sprites.as_ref()) {
                     SystemState::Shell { shell, loaded } => shell_tick(
                         shell,
                         loaded,
                         &input[index + 1..],
                         video_defaults,
                         workspace,
+                        sprites,
                     ),
                     state => state,
                 };
@@ -516,17 +546,37 @@ fn shell_tick(
     SystemState::Shell { shell, loaded }
 }
 
-/// Makes the workspace the active UI on `cartridge`, reading its video
-/// assets afresh so the editors show the files as they are now.
+/// Drops the document of a cartridge that is being replaced or unloaded.
+fn discard_sprites(sprites: &mut Option<SpriteDocument>) {
+    if sprites
+        .take()
+        .is_some_and(|document| document.is_modified())
+    {
+        tracing::info!("unsaved sprite edits discarded");
+    }
+}
+
+/// Makes the workspace the active UI on `cartridge`. A document with
+/// unsaved edits is kept as it is; otherwise the video assets are read
+/// afresh, so the editors show the files as they are now.
 fn open_workspace(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
-    workspace: &Workspace,
+    workspace: &mut Workspace,
+    sprites: &mut Option<SpriteDocument>,
     video_defaults: &CartridgeVideoDefaults,
 ) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
     tracing::info!(cartridge = %identity, tab = ?workspace.tab(), "workspace opened");
-    let video = workspace.load_video(&cartridge, video_defaults);
+    workspace.end_stroke();
+    let document = match sprites.take() {
+        Some(document) if document.is_modified() => Ok(document),
+        _ => SpriteDocument::load(&cartridge, video_defaults).map_err(|err| err.to_string()),
+    };
+    let video = match document {
+        Ok(document) => workspace.prepare_video(sprites.insert(document)),
+        Err(message) => WorkspaceVideo::unavailable(message),
+    };
     SystemState::Workspace {
         shell,
         cartridge,
@@ -542,17 +592,21 @@ fn workspace_tick(
     cartridge: LoadedCartridge,
     video: WorkspaceVideo,
     workspace: &mut Workspace,
+    sprites: &mut Option<SpriteDocument>,
     input: &[InputEvent],
 ) -> SystemState {
     for &event in input {
         if event == InputEvent::Break {
+            workspace.end_stroke();
             tracing::info!("workspace closed");
             return SystemState::Shell {
                 shell,
                 loaded: Some(cartridge),
             };
         }
-        workspace.handle_input(event);
+        // The editors only change what they can show.
+        let document = sprites.as_mut().filter(|_| video.is_ready());
+        workspace.handle_input(event, document);
     }
     SystemState::Workspace {
         shell,
@@ -562,17 +616,27 @@ fn workspace_tick(
 }
 
 /// Starts `cartridge`, reporting its start or failure and what it logged.
-/// A cartridge that fails to start stays loaded in the shell.
+/// A cartridge that fails to start stays loaded in the shell. When
+/// `sprites` holds unsaved edits, the cartridge runs with them instead of
+/// its tile file.
 fn start(
     mut shell: Box<Shell>,
     cartridge: LoadedCartridge,
     video_defaults: &CartridgeVideoDefaults,
+    sprites: Option<&SpriteDocument>,
 ) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
-    match RunningCartridge::start(cartridge, video_defaults) {
+    let edited = sprites
+        .filter(|document| document.is_modified())
+        .map(SpriteDocument::tiles);
+    match RunningCartridge::start(cartridge, video_defaults, edited) {
         Ok(mut running) => {
-            tracing::info!(cartridge = %identity, "cartridge started");
-            shell.report(format!("Running {identity}"));
+            tracing::info!(cartridge = %identity, edited = edited.is_some(), "cartridge started");
+            if edited.is_some() {
+                shell.report(format!("Running {identity} with unsaved sprite edits"));
+            } else {
+                shell.report(format!("Running {identity}"));
+            }
             shell.log(running.take_output());
             SystemState::Running { shell, running }
         }
@@ -2459,6 +2523,7 @@ mod tests {
             sound,
             video_defaults: video_defaults(),
             workspace: Workspace::new(fake_rom().font().metrics(), fake_rom().palette().clone()),
+            sprites: None,
         };
         system = system.update(&[]);
         system.audio(&mut psg);
@@ -3532,8 +3597,188 @@ mod tests {
         out
     }
 
+    /// Clicks tile pixel `(x, y)` on the sprite editor's canvas.
+    fn click_pixel(system: System, x: i32, y: i32) -> System {
+        let at = workspace::tests_support::sprite_pixel(&system.workspace, x, y);
+        system.update(&click(at))
+    }
+
+    fn document(system: &System) -> &SpriteDocument {
+        system.sprites.as_ref().expect("a sprite document")
+    }
+
+    /// Opens the sprite editor on assets from `write_video_assets` and
+    /// draws local 1, the starting color, over pixel (0, 0) of tile 0.
+    fn edited(fixture: &Fixture) -> System {
+        let system = click_pixel(open_sprites(with_video_assets(fixture)), 0, 0);
+        assert!(document(&system).is_modified());
+        system
+    }
+
     #[test]
-    fn browsing_sprites_never_writes_the_cartridge() {
+    fn sprite_edits_show_at_once_and_survive_tab_switches_and_shell_trips() {
+        let fixture = Fixture::new("sys-sprites-edit-keep");
+        let rom = fake_rom();
+        let system = edited(&fixture);
+        let canvas = workspace::tests_support::sprite_canvas(&system.workspace);
+        let shown = |system: &System| {
+            let pixel = render(system).pixel(canvas.x + 5, canvas.y + 5).unwrap();
+            system.frame_palette(&rom).get(pixel)
+        };
+        assert_eq!(shown(&system), distinct_palette().get(101));
+
+        let system = system.update(&[InputEvent::NextView]);
+        let system = system.update(&click(tab_centre(Tab::Sprites)));
+        let system = press_break(enter(press_break(system), "info"));
+        assert!(is_workspace(&system));
+        assert_eq!(document(&system).pixel(0, 0, 0), Some(1));
+        assert_eq!(document(&system).pixel(0, 1, 0), Some(3));
+        assert_eq!(shown(&system), distinct_palette().get(101));
+    }
+
+    #[test]
+    fn reopening_keeps_unsaved_edits_over_the_files() {
+        let fixture = Fixture::new("sys-sprites-edit-reopen");
+        let system = press_break(edited(&fixture));
+        std::fs::write(fixture.root().join("pong/sprites.bin"), [0x77; 32]).unwrap();
+        let system = press_break(system);
+        assert_eq!(document(&system).pixel(0, 0, 0), Some(1));
+        assert_eq!(document(&system).pixel(0, 1, 0), Some(3));
+    }
+
+    #[test]
+    fn restoring_every_edit_rereads_the_files_and_unblocks_load() {
+        let fixture = Fixture::new("sys-sprites-edit-restore");
+        let system = edited(&fixture);
+        // Pick local 3 from a neighbour and paint it back.
+        let system = system.update(&[InputEvent::Text('i')]);
+        let system = click_pixel(system, 1, 0);
+        let system = system.update(&[InputEvent::Text('p')]);
+        let system = click_pixel(system, 0, 0);
+        assert!(!document(&system).is_modified());
+
+        let system = press_break(system);
+        std::fs::write(fixture.root().join("pong/sprites.bin"), [0x77; 32]).unwrap();
+        let system = press_break(system);
+        assert_eq!(document(&system).pixel(0, 0, 0), Some(7));
+
+        let system = enter(press_break(system), "load pong");
+        assert_eq!(after(&system, "> load pong"), ["Loaded Pong 0.1.0"]);
+    }
+
+    #[test]
+    fn unsaved_edits_block_load_new_and_unload_without_discard() {
+        let fixture = Fixture::new("sys-sprites-edit-guard");
+        let system = press_break(edited(&fixture));
+        let before = snapshot(&fixture.root());
+
+        let system = enter(system, "load pong");
+        assert_eq!(
+            after(&system, "> load pong"),
+            [
+                "! Pong 0.1.0 has unsaved sprite edits; --discard drops them",
+                "Try: load --discard pong",
+            ]
+        );
+        let system = enter(system, "new other --name Other");
+        assert_eq!(
+            after(&system, "> new other --name Other"),
+            [
+                "! Pong 0.1.0 has unsaved sprite edits; --discard drops them",
+                "Try: new --discard other --name Other",
+            ]
+        );
+        let system = enter(system, "unload");
+        assert_eq!(
+            after(&system, "> unload"),
+            [
+                "! Pong 0.1.0 has unsaved sprite edits; --discard drops them",
+                "Try: unload --discard",
+            ]
+        );
+        assert_eq!(snapshot(&fixture.root()), before, "new created nothing");
+        assert!(document(&system).is_modified());
+
+        let system = enter(system, "load --discard pong");
+        assert_eq!(
+            after(&system, "> load --discard pong"),
+            ["Loaded Pong 0.1.0"]
+        );
+        assert!(system.sprites.is_none());
+        let system = press_break(system);
+        assert_eq!(document(&system).pixel(0, 0, 0), Some(3));
+    }
+
+    #[test]
+    fn unload_and_new_with_discard_drop_the_edits() {
+        let fixture = Fixture::new("sys-sprites-edit-discard");
+        let system = enter(press_break(edited(&fixture)), "unload --discard");
+        assert_eq!(
+            after(&system, "> unload --discard"),
+            ["Unloaded Pong 0.1.0"]
+        );
+        assert!(system.sprites.is_none());
+
+        let fixture = Fixture::new("sys-sprites-edit-discard-new");
+        let system = enter(press_break(edited(&fixture)), "new other --discard");
+        assert!(system.sprites.is_none());
+        assert!(fixture.root().join("other").is_dir());
+    }
+
+    #[test]
+    fn run_uses_unsaved_edits_and_they_survive_the_run() {
+        let fixture = Fixture::new("sys-sprites-edit-run");
+        let dir = fixture.root().join("pong");
+        let system = shell_with_cartridge(&fixture, "function draw() cls(0) spr(0, 10, 10) end");
+        std::fs::write(dir.join("sprites.bin"), [0x11; 32]).unwrap();
+        let before = snapshot(&dir);
+        let system = open_sprites(enter(system, "load pong"));
+        let system = click_pixel(system.update(&[InputEvent::Text('e')]), 0, 0);
+
+        let system = ticks(enter(press_break(system), "run"), 1);
+        assert_eq!(
+            after(&system, "> run"),
+            ["Running Pong 0.1.0 with unsaved sprite edits"]
+        );
+        let fb = render(&system);
+        assert_eq!(fb.pixel(10, 10), Some(0), "the erased pixel");
+        assert_eq!(fb.pixel(11, 10), Some(1));
+
+        let system = stop_cartridge(system);
+        assert!(document(&system).is_modified());
+        assert_eq!(document(&system).pixel(0, 0, 0), Some(0));
+        assert_eq!(snapshot(&dir), before);
+    }
+
+    #[test]
+    fn a_cancelled_or_abandoned_drag_never_resumes() {
+        let fixture = Fixture::new("sys-sprites-edit-cancel");
+        let system = open_sprites(with_video_assets(&fixture));
+        let pixel =
+            |system: &System, x, y| workspace::tests_support::sprite_pixel(&system.workspace, x, y);
+        let button = PointerButton::Primary;
+
+        let at = pixel(&system, 0, 7);
+        let system = system.update(&[
+            InputEvent::PointerDown { button, at },
+            InputEvent::PointerCancel,
+        ]);
+        let to = pixel(&system, 7, 7);
+        let system = system.update(&[InputEvent::PointerMove(Some(to))]);
+        assert_eq!(document(&system).pixel(0, 0, 7), Some(1));
+        assert_eq!(document(&system).pixel(0, 1, 7), Some(3));
+
+        // The release of a drag left by closing the workspace never comes.
+        let at = pixel(&system, 0, 6);
+        let system = press_break(system.update(&[InputEvent::PointerDown { button, at }]));
+        let to = pixel(&system, 7, 6);
+        let system = press_break(system).update(&[InputEvent::PointerMove(Some(to))]);
+        assert_eq!(document(&system).pixel(0, 0, 6), Some(1));
+        assert_eq!(document(&system).pixel(0, 1, 6), Some(3));
+    }
+
+    #[test]
+    fn using_the_sprite_editor_never_writes_the_cartridge() {
         let fixture = Fixture::new("sys-sprites-readonly");
         let system = with_video_assets(&fixture);
         let before = snapshot(&fixture.root().join("pong"));

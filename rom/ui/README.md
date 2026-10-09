@@ -34,6 +34,7 @@ copied unmodified and renamed. Each is 16×16 with a black outline
 | `icons/music.png`      | `Media_Musical_Note_Beam.png`                                                |
 | `icons/eraser.png`     | `Tools_Crafting_Graphic_Design_Eraser.png`                                   |
 | `icons/eyedropper.png` | `Tools_Crafting_Graphic_Design_Eyedropper_Color_Picker.png`                  |
+| `icons/fill.png`       | `Tools_Crafting_Graphic_Design_Paint_Bucket_Fill.png`                        |
 
 The sprite editor's pencil tool reuses `icons/sprites.png`.
 

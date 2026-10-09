@@ -51,6 +51,28 @@ impl CartridgeVideoDefaults {
     }
 }
 
+/// The raw bytes of a cartridge's optional video asset files, each `None`
+/// when the cartridge does not supply it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VideoFiles {
+    pub obj_tiles: Option<Vec<u8>>,
+    pub obj_attributes: Option<Vec<u8>>,
+    pub obj_palettes: Option<Vec<u8>>,
+    pub master_palette: Option<Vec<u8>>,
+}
+
+impl VideoFiles {
+    /// Reads the cartridge's video asset files. They are only read.
+    pub fn read(cartridge: &LoadedCartridge) -> Result<Self, CartridgeError> {
+        Ok(Self {
+            obj_tiles: cartridge.read_obj_tiles()?,
+            obj_attributes: cartridge.read_obj_attributes()?,
+            obj_palettes: cartridge.read_obj_palettes()?,
+            master_palette: cartridge.read_master_palette()?,
+        })
+    }
+}
+
 /// A cartridge's video state, read from its asset files at one moment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CartridgeVideo {
@@ -66,23 +88,30 @@ impl CartridgeVideo {
         cartridge: &LoadedCartridge,
         defaults: &CartridgeVideoDefaults,
     ) -> Result<Self, VideoLoadError> {
-        let read = |result: Result<Option<Vec<u8>>, CartridgeError>| {
-            result.map_err(VideoLoadError::Cartridge)
-        };
-        let tiles = match read(cartridge.read_obj_tiles())? {
-            Some(bytes) => ObjTileBank::from_bytes(&bytes).map_err(VideoAssetError::from)?,
+        let files = VideoFiles::read(cartridge).map_err(VideoLoadError::Cartridge)?;
+        Ok(Self::decode(&files, defaults)?)
+    }
+
+    /// Decodes `files` as native G1 data, falling back to `defaults` for
+    /// the assets they lack.
+    pub fn decode(
+        files: &VideoFiles,
+        defaults: &CartridgeVideoDefaults,
+    ) -> Result<Self, VideoAssetError> {
+        let tiles = match &files.obj_tiles {
+            Some(bytes) => ObjTileBank::from_bytes(bytes)?,
             None => ObjTileBank::new(),
         };
-        let attributes = match read(cartridge.read_obj_attributes())? {
-            Some(bytes) => ObjTileAttributes::from_bytes(&bytes).map_err(VideoAssetError::from)?,
+        let attributes = match &files.obj_attributes {
+            Some(bytes) => ObjTileAttributes::from_bytes(bytes)?,
             None => ObjTileAttributes::new(),
         };
-        let palettes = match read(cartridge.read_obj_palettes())? {
-            Some(bytes) => ObjPalettes::from_bytes(&bytes).map_err(VideoAssetError::from)?,
+        let palettes = match &files.obj_palettes {
+            Some(bytes) => ObjPalettes::from_bytes(bytes)?,
             None => defaults.obj_palettes.clone(),
         };
-        let palette = match read(cartridge.read_master_palette())? {
-            Some(bytes) => Palette::from_rgb888(&bytes).map_err(VideoAssetError::from)?,
+        let palette = match &files.master_palette {
+            Some(bytes) => Palette::from_rgb888(bytes)?,
             None => defaults.palette.clone(),
         };
         Ok(Self {

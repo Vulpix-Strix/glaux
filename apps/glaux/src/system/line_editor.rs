@@ -107,6 +107,7 @@ impl LineEditor {
             | InputEvent::PointerMove(_)
             | InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }
+            | InputEvent::PointerCancel
             | InputEvent::Wheel { .. }
             | InputEvent::WheelHorizontal { .. } => {}
         }

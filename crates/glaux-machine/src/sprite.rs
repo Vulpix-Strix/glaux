@@ -95,6 +95,25 @@ impl ObjTileBank {
         })
     }
 
+    /// Writes one tile-local palette index and returns the index it
+    /// replaced.
+    ///
+    /// `None` means the tile index, local coordinate or palette index
+    /// (above 15) is invalid; nothing is written then.
+    pub fn set_pixel(&mut self, tile_index: usize, x: usize, y: usize, index: u8) -> Option<u8> {
+        if index > 0x0f {
+            return None;
+        }
+        let previous = self.pixel(tile_index, x, y)?;
+        let byte = &mut self.bytes[tile_index * OBJ_TILE_BYTES + y * (OBJ_TILE_WIDTH / 2) + x / 2];
+        *byte = if x.is_multiple_of(2) {
+            (*byte & 0x0f) | (index << 4)
+        } else {
+            (*byte & 0xf0) | index
+        };
+        Some(previous)
+    }
+
     /// Returns the complete native byte representation of the bank.
     pub fn as_bytes(&self) -> &[u8; OBJ_TILE_BANK_BYTES] {
         &self.bytes
@@ -203,6 +222,12 @@ impl ObjVram {
 
     pub fn tiles(&self) -> &ObjTileBank {
         &self.tiles
+    }
+
+    /// The tile bank, for writing pixels. Attributes and palettes have no
+    /// mutable access.
+    pub fn tiles_mut(&mut self) -> &mut ObjTileBank {
+        &mut self.tiles
     }
 
     pub fn attributes(&self) -> &ObjTileAttributes {
@@ -377,6 +402,32 @@ mod tests {
         assert_eq!(bank.pixel(OBJ_TILE_CAPACITY, 0, 0), None);
         assert_eq!(bank.pixel(0, OBJ_TILE_WIDTH, 0), None);
         assert_eq!(bank.pixel(0, 0, OBJ_TILE_HEIGHT), None);
+    }
+
+    #[test]
+    fn set_pixel_writes_one_nibble_and_returns_the_old_index() {
+        let mut bytes = [0; OBJ_TILE_BYTES];
+        bytes[0] = 0x3c;
+        let mut bank = ObjTileBank::from_bytes(&bytes).unwrap();
+
+        assert_eq!(bank.set_pixel(0, 0, 0, 0xa), Some(3));
+        assert_eq!(bank.as_bytes()[0], 0xac, "the right pixel is kept");
+        assert_eq!(bank.set_pixel(0, 1, 0, 0x5), Some(12));
+        assert_eq!(bank.as_bytes()[0], 0xa5, "the left pixel is kept");
+
+        assert_eq!(bank.set_pixel(OBJ_TILE_CAPACITY - 1, 7, 7, 15), Some(0));
+        assert_eq!(bank.pixel(OBJ_TILE_CAPACITY - 1, 7, 7), Some(15));
+        assert_eq!(bank.as_bytes()[OBJ_TILE_BANK_BYTES - 1], 0x0f);
+    }
+
+    #[test]
+    fn set_pixel_rejects_invalid_input_without_writing() {
+        let mut bank = ObjTileBank::new();
+        assert_eq!(bank.set_pixel(OBJ_TILE_CAPACITY, 0, 0, 1), None);
+        assert_eq!(bank.set_pixel(0, OBJ_TILE_WIDTH, 0, 1), None);
+        assert_eq!(bank.set_pixel(0, 0, OBJ_TILE_HEIGHT, 1), None);
+        assert_eq!(bank.set_pixel(0, 0, 0, 16), None);
+        assert_eq!(bank, ObjTileBank::new());
     }
 
     #[test]

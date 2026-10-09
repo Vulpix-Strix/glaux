@@ -17,7 +17,7 @@ use super::layout::{ADVANCED_LABELS, CANVAS_ZOOM, Hit, SCROLLBAR, SpriteLayout, 
 use super::sheet::{SheetView, Visible, grid_position};
 use super::{SpriteEditor, SpriteSource};
 use crate::rom::ICON_SIZE;
-use crate::system::workspace::{BAR, OUTLINE, Rect};
+use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 
 /// The two colors of the checkerboard behind transparent pixels.
@@ -27,11 +27,13 @@ const CHECK_LIGHT: u8 = 13;
 const FRAME: u8 = DIM;
 /// Pixel grid lines over the canvas.
 const GRID_LINE: u8 = BACKGROUND;
-/// Ink of a disabled tool icon's body and shading.
-const DISABLED_INKS: [u8; 3] = [OUTLINE, CHECK_DARK, CHECK_LIGHT];
-const DISABLED_HOVER_INKS: [u8; 3] = [OUTLINE, CHECK_LIGHT, DIM];
-/// Labels the options bar shows left of its buttons.
-const VIEW_ONLY: &str = "VIEW ONLY";
+/// Tool icon inks, as for the workspace's tabs.
+const ACTIVE_TOOL_INKS: [u8; 3] = [OUTLINE, ACCENT, TEXT];
+const HOVER_TOOL_INKS: [u8; 3] = [OUTLINE, HOVER_SHADE, PALE];
+const IDLE_TOOL_INKS: [u8; 3] = [OUTLINE, IDLE_SHADE, DIM];
+/// Shown in the options bar while the tiles differ from the cartridge's
+/// files.
+const MODIFIED: &str = "MODIFIED";
 
 impl SpriteEditor {
     /// Draws the editor below the tab bar from `source`, or explains why
@@ -52,8 +54,9 @@ impl SpriteEditor {
             layout: &layout,
         };
 
-        painter.options_bar(self, hover);
-        painter.toolbar(ui, hover);
+        let modified = source.is_ok_and(|source| source.modified);
+        painter.options_bar(self, hover, modified);
+        painter.toolbar(ui, self.tool, hover);
         match source {
             Ok(source) => {
                 painter.canvas(self, &source, hover);
@@ -88,7 +91,13 @@ impl SpriteEditor {
                 {
                     left += &format!(" | X:{x} Y:{y} | Color:{local:X}");
                 }
-                "View only".to_owned()
+                match self.tool {
+                    ToolSlot::Pencil => "Drag: draw",
+                    ToolSlot::Eraser => "Drag: erase",
+                    ToolSlot::Eyedropper => "Click: pick its color",
+                    ToolSlot::Fill => "Click: fill the area",
+                }
+                .to_owned()
             }
             Hit::Sheet(tile) => {
                 let (column, row) = grid_position(tile);
@@ -96,7 +105,7 @@ impl SpriteEditor {
             }
             Hit::Swatch(local) => format!("Click: select color {local:X}"),
             Hit::Bank(bank) => format!("OBP {bank}: read-only"),
-            Hit::Tool(tool) => format!("{}: not available yet", tool.name()),
+            Hit::Tool(tool) => format!("{}: {}", tool.key().to_ascii_uppercase(), tool.name()),
             Hit::GridButton => "G: show or hide the pixel grid".to_owned(),
             Hit::AdvancedButton if self.advanced => "A: hide palette details".to_owned(),
             Hit::AdvancedButton => "A: show palette details".to_owned(),
@@ -184,7 +193,7 @@ impl Painter<'_> {
         i32::try_from(text.chars().count()).unwrap_or(i32::MAX) * self.layout.metrics.cell_w
     }
 
-    fn options_bar(&mut self, editor: &SpriteEditor, hover: Hit) {
+    fn options_bar(&mut self, editor: &SpriteEditor, hover: Hit, modified: bool) {
         let layout = self.layout;
         let bar = layout.options;
         let cell_w = layout.metrics.cell_w;
@@ -193,16 +202,18 @@ impl Painter<'_> {
         let tile = format!("Tile {:04}", editor.selected);
         self.text(&tile, 4, text_y, TEXT);
 
-        // The tag tells that the editor shows sprites but cannot change
-        // them yet.
+        let tool = editor.tool.name();
         let tag = Rect {
             x: 4 + self.cells(&tile) + cell_w,
             y: bar.y + 1,
-            width: self.cells(VIEW_ONLY) + 4,
+            width: self.cells(tool) + 4,
             height: bar.height - 3,
         };
         self.fill(tag, BAR);
-        self.text(VIEW_ONLY, tag.x + 2, text_y, DIM);
+        self.text(tool, tag.x + 2, text_y, PALE);
+        if modified {
+            self.text(MODIFIED, tag.right() + cell_w, text_y, ACCENT);
+        }
 
         let zoom = editor.sheet.zoom();
         let buttons = [
@@ -252,18 +263,26 @@ impl Painter<'_> {
         self.text(zoom.label(), layout.zoom_label.x, text_y, TEXT);
     }
 
-    fn toolbar(&mut self, ui: &SystemUi, hover: Hit) {
+    fn toolbar(&mut self, ui: &SystemUi, active: ToolSlot, hover: Hit) {
         for (tool, rect) in self.layout.tools {
-            self.fill(rect, BAR);
             let icon = match tool {
                 ToolSlot::Pencil => SystemIcon::Sprites,
                 ToolSlot::Eraser => SystemIcon::Eraser,
                 ToolSlot::Eyedropper => SystemIcon::Eyedropper,
+                ToolSlot::Fill => SystemIcon::Fill,
             };
-            let inks = if hover == Hit::Tool(tool) {
-                DISABLED_HOVER_INKS
+            let inks = if tool == active {
+                // The active plate takes the body's color, like the active
+                // tab.
+                self.fill(rect, BACKGROUND);
+                self.outline(rect, ACCENT);
+                ACTIVE_TOOL_INKS
+            } else if hover == Hit::Tool(tool) {
+                self.fill(rect, BAR);
+                HOVER_TOOL_INKS
             } else {
-                DISABLED_INKS
+                self.fill(rect, BAR);
+                IDLE_TOOL_INKS
             };
             let pad = (rect.width - ICON_SIZE as i32) / 2;
             draw_ink_image(
@@ -647,6 +666,7 @@ mod tests {
                 obj: &self.obj,
                 master: &self.master,
                 preview: &self.preview,
+                modified: false,
             }
         }
     }
@@ -788,7 +808,68 @@ mod tests {
         assert_eq!(left, "Tile 0012 (12,0) | OBP 0 | 4 bpp");
         assert_eq!(right, "Click: select tile 1023 (15,63)");
         let (_, right) = editor.status(Some(&source), Hit::Tool(ToolSlot::Eraser));
-        assert_eq!(right, "Eraser: not available yet");
+        assert_eq!(right, "E: Eraser");
+        editor.tool = ToolSlot::Fill;
+        let (_, right) = editor.status(Some(&source), Hit::Canvas { x: 0, y: 0 });
+        assert_eq!(right, "Click: fill the area");
+    }
+
+    #[test]
+    fn a_written_pixel_shows_in_the_canvas_and_the_sheet_in_the_next_frame() {
+        let mut fixture = Fixture::new();
+        let editor = SpriteEditor::new(METRICS);
+        fixture.obj.tiles_mut().set_pixel(0, 7, 7, 5);
+        let fb = render(&editor, &fixture);
+        let layout = editor.layout();
+        let slot = fixture.preview.slot(205).unwrap();
+        let canvas = layout.canvas;
+        assert_eq!(
+            fb.pixel(canvas.right() - 2, canvas.bottom() - 2),
+            Some(slot)
+        );
+        let cell = layout.sheet_cell(0, 0, editor.sheet.zoom());
+        assert_eq!(fb.pixel(cell.right() - 1, cell.bottom() - 1), Some(slot));
+        assert_ne!(fb.pixel(cell.x, cell.y), Some(slot));
+    }
+
+    #[test]
+    fn only_the_active_tool_is_drawn_active() {
+        let fixture = Fixture::new();
+        let mut editor = SpriteEditor::new(METRICS);
+        editor.tool = ToolSlot::Fill;
+        let fb = render(&editor, &fixture);
+        for (tool, rect) in editor.layout().tools {
+            let active = pixels(&fb, rect).contains(&ACCENT);
+            assert_eq!(active, tool == ToolSlot::Fill, "{tool:?}");
+        }
+    }
+
+    #[test]
+    fn the_options_bar_names_the_tool_and_flags_unsaved_edits() {
+        let fixture = Fixture::new();
+        let editor = SpriteEditor::new(METRICS);
+        let bar = editor.layout().options;
+        // Solid glyphs, so drawn text shows up as pixels.
+        let mut font = BitmapFont::new(FontMetrics::SYSTEM);
+        let metrics = FontMetrics::SYSTEM;
+        let solid = (1u8 << metrics.glyph_width()) - 1;
+        let rows = vec![solid; usize::from(metrics.glyph_height())];
+        for ch in glaux_machine::font::FIRST_CHAR..=glaux_machine::font::LAST_CHAR {
+            font.insert(ch, &rows).unwrap();
+        }
+        let draw = |modified| {
+            let mut fb = Framebuffer::new();
+            let source = SpriteSource {
+                modified,
+                ..fixture.source()
+            };
+            editor.render(&mut fb, &font, &SystemUi::default(), Ok(source), None);
+            pixels(&fb, bar)
+        };
+        let accents = |pixels: Vec<u8>| pixels.iter().filter(|&&p| p == ACCENT).count();
+        assert!(draw(false).contains(&PALE), "the tool's name");
+        // The grid button is already accented while the grid shows.
+        assert!(accents(draw(true)) > accents(draw(false)));
     }
 
     #[test]

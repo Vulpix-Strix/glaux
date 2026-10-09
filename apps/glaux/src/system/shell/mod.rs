@@ -87,16 +87,21 @@ pub enum LoadOrigin {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartridgeSlot<'a> {
     Empty,
-    /// Loaded, with no VM.
-    Loaded(&'a LoadedCartridge),
+    /// Loaded, with no VM. `unsaved` tells whether the editors hold changes
+    /// to it that are not written back.
+    Loaded {
+        cartridge: &'a LoadedCartridge,
+        unsaved: bool,
+    },
     /// Its VM is alive but paused while the shell is active.
     Paused(&'a LoadedCartridge),
 }
 
 impl<'a> CartridgeSlot<'a> {
-    /// A slot that is empty or holds a loaded cartridge.
-    pub fn loaded(cartridge: Option<&'a LoadedCartridge>) -> Self {
-        cartridge.map_or(Self::Empty, Self::Loaded)
+    /// A slot that is empty or holds a loaded cartridge with `unsaved`
+    /// edits or none.
+    pub fn loaded(cartridge: Option<&'a LoadedCartridge>, unsaved: bool) -> Self {
+        cartridge.map_or(Self::Empty, |cartridge| Self::Loaded { cartridge, unsaved })
     }
 }
 
@@ -214,6 +219,7 @@ impl Shell {
             | InputEvent::PointerMove(_)
             | InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }
+            | InputEvent::PointerCancel
             | InputEvent::Wheel { .. }
             | InputEvent::WheelHorizontal { .. } => {}
         }
@@ -1119,7 +1125,13 @@ mod tests {
 
         send(&mut shell, &typed("run"));
         assert_eq!(
-            shell.handle_input(Enter, CartridgeSlot::Loaded(&cartridge)),
+            shell.handle_input(
+                Enter,
+                CartridgeSlot::Loaded {
+                    cartridge: &cartridge,
+                    unsaved: false,
+                }
+            ),
             Some(ShellRequest::Run)
         );
         send(&mut shell, &typed("run"));

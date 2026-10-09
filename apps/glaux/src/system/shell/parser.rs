@@ -18,6 +18,10 @@ pub(super) struct Invocation<'a> {
     /// Everything after the command name exactly as typed, minus leading
     /// whitespace, for commands that interpret their arguments themselves.
     pub(super) raw_args: &'a str,
+    /// The command's valueless flags found among the words, by name
+    /// without the leading `--`. The parser leaves this empty; commands
+    /// that take flags have them moved here out of `args`.
+    pub(super) flags: Vec<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -136,6 +140,7 @@ pub(super) fn parse(line: &str) -> Result<Option<Invocation<'_>>, ParseError> {
         name,
         args,
         raw_args: line[name_end..].trim_start(),
+        flags: Vec::new(),
     }))
 }
 

@@ -114,6 +114,9 @@ pub(crate) struct PointerFrame {
     pub(crate) wheel_x: f32,
     /// Whether Shift is held, which turns the vertical wheel sideways.
     pub(crate) shift: bool,
+    /// Whether the window has input focus. Losing it cancels captures,
+    /// since the release may never reach the window.
+    pub(crate) focused: bool,
 }
 
 /// Turns per-frame mouse state into pointer events.
@@ -144,6 +147,10 @@ impl PointerTracker {
     /// release, buttons held at that moment are ignored until released, and
     /// the first enabled frame reports the current position. While
     /// disabled, nothing is reported.
+    ///
+    /// A frame without focus ends every capture with one
+    /// [`InputEvent::PointerCancel`] instead of releases; buttons held then
+    /// are ignored until released.
     pub(crate) fn events(&mut self, frame: PointerFrame, enabled: bool, out: &mut Vec<InputEvent>) {
         if enabled != self.enabled {
             self.reset(frame, enabled);
@@ -153,6 +160,11 @@ impl PointerTracker {
                 *ignored = button.down && !button.released;
             }
             return;
+        }
+        if !frame.focused && self.is_captured() {
+            self.captured = [false; 3];
+            self.ignored = frame.buttons.map(|b| b.down || b.pressed);
+            out.push(InputEvent::PointerCancel);
         }
 
         let mapping = Mapping::new(frame.window, frame.curved);
@@ -423,6 +435,7 @@ mod tests {
             wheel: 0.0,
             wheel_x: 0.0,
             shift: false,
+            focused: true,
         }
     }
 
@@ -629,6 +642,56 @@ mod tests {
                 at: INSIDE_PIXEL
             }]
         );
+    }
+
+    #[test]
+    fn losing_focus_mid_drag_cancels_the_capture_without_a_release() {
+        let mut tracker = enabled();
+        step(&mut tracker, frame(INSIDE, PRESS));
+        let mut unfocused = frame((-50.0, 2000.0), HOLD);
+        unfocused.on_window = false;
+        unfocused.focused = false;
+        assert_eq!(
+            step(&mut tracker, unfocused),
+            [InputEvent::PointerCancel, InputEvent::PointerMove(None)],
+            "no longer clamped: the pointer is simply off the frame"
+        );
+        unfocused.buttons[0] = RELEASE;
+        assert_eq!(step(&mut tracker, unfocused), []);
+        assert_eq!(
+            step(&mut tracker, frame(INSIDE, UP)),
+            [InputEvent::PointerMove(Some(INSIDE_PIXEL))]
+        );
+    }
+
+    #[test]
+    fn a_button_held_through_focus_loss_is_ignored_until_released() {
+        let mut tracker = enabled();
+        step(&mut tracker, frame(INSIDE, PRESS));
+        let mut unfocused = frame(INSIDE, HOLD);
+        unfocused.focused = false;
+        assert_eq!(step(&mut tracker, unfocused), [InputEvent::PointerCancel]);
+        // Focus returns with the button still down: no press, no drag.
+        assert_eq!(
+            step(&mut tracker, frame((34.0, 62.0), HOLD)),
+            [InputEvent::PointerMove(pt(11, 20))]
+        );
+        assert_eq!(step(&mut tracker, frame((34.0, 62.0), RELEASE)), []);
+        assert_eq!(
+            step(&mut tracker, frame((34.0, 62.0), PRESS)),
+            [InputEvent::PointerDown {
+                button: PRIMARY,
+                at: Point::new(11, 20)
+            }]
+        );
+    }
+
+    #[test]
+    fn an_unfocused_window_without_captures_reports_nothing_extra() {
+        let mut tracker = enabled();
+        let mut unfocused = frame(INSIDE, UP);
+        unfocused.focused = false;
+        assert_eq!(step(&mut tracker, unfocused), []);
     }
 
     #[test]

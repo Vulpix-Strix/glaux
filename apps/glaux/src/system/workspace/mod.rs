@@ -1,9 +1,10 @@
 //! The editor workspace: a tab bar over one view per cartridge resource.
 //!
 //! The workspace works on the loaded cartridge without starting it. The
-//! system lends it the cartridge for each tick and frame; the workspace
-//! keeps only its own UI state, so the selected tab and each editor's view
-//! survive tab switches and trips to the shell.
+//! system lends it the cartridge and the documents the editors change for
+//! each tick and frame; the workspace keeps only its own UI state, so the
+//! selected tab and each editor's view survive tab switches and trips to the
+//! shell.
 
 mod sprites;
 
@@ -16,11 +17,12 @@ use glaux_machine::system_rom::{Cursor, SystemIcon, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 use glaux_video::preview::ObjPreviewPalette;
 
-use super::video::{CartridgeVideo, CartridgeVideoDefaults};
+use super::sprite_document::SpriteDocument;
 use super::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::cartridge::LoadedCartridge;
 use crate::rom::ICON_SIZE;
-use sprites::{SpriteEditor, SpriteSource};
+use sprites::SpriteEditor;
+pub use sprites::SpriteSource;
 
 /// Entries of the workspace's frame palette that keep the system palette's
 /// colors. Every UI color index is below it; the cartridge's object colors
@@ -258,35 +260,46 @@ pub fn draw_cursor(framebuffer: &mut Framebuffer, cursor: &Cursor, pointer: Opti
     );
 }
 
-/// The cartridge's video state as the workspace shows it, read when the
-/// workspace opens.
+/// How the workspace shows the cartridge's colors, prepared when it opens:
+/// where the frame palette holds each master color the object palettes use,
+/// or why the cartridge's video state can't be shown.
 #[derive(Debug)]
-// Boxed: two palettes and a frame palette would make every system state
-// as large as this one.
-pub struct WorkspaceVideo(Result<Box<PreviewVideo>, String>);
-
-#[derive(Debug)]
-struct PreviewVideo {
-    video: CartridgeVideo,
-    preview: ObjPreviewPalette,
-}
+// Boxed: a frame palette would make every system state as large as this
+// one.
+pub struct WorkspaceVideo(Result<Box<ObjPreviewPalette>, String>);
 
 impl WorkspaceVideo {
+    /// The video state could not be read, for the reason in `message`.
+    pub fn unavailable(message: String) -> Self {
+        tracing::warn!(%message, "cartridge video unavailable in the workspace");
+        Self(Err(message))
+    }
+
+    /// Whether the editors can show the cartridge's video state.
+    pub fn is_ready(&self) -> bool {
+        self.0.is_ok()
+    }
+
     /// The palette the workspace's frames are presented with, if the
     /// cartridge's video assets loaded.
     pub fn frame_palette(&self) -> Option<&Palette> {
-        self.0.as_ref().ok().map(|ready| ready.preview.palette())
+        self.0.as_ref().ok().map(|preview| preview.palette())
     }
 
-    fn source(&self) -> Result<SpriteSource<'_>, &str> {
-        match &self.0 {
-            Ok(ready) => Ok(SpriteSource {
-                obj: &ready.video.obj,
-                master: &ready.video.palette,
-                preview: &ready.preview,
-            }),
-            Err(message) => Err(message),
-        }
+    /// What the sprite editor shows of `document`, or why it shows nothing.
+    pub fn source<'a>(
+        &'a self,
+        document: Option<&'a SpriteDocument>,
+    ) -> Result<SpriteSource<'a>, &'a str> {
+        let preview = self.0.as_deref().map_err(String::as_str)?;
+        // The system only prepares a preview from a document it keeps.
+        let document = document.ok_or("The cartridge's sprites are not loaded.")?;
+        Ok(SpriteSource {
+            obj: document.obj(),
+            master: &document.video().palette,
+            preview,
+            modified: document.is_modified(),
+        })
     }
 }
 
@@ -318,29 +331,20 @@ impl Workspace {
         }
     }
 
-    /// Reads `cartridge`'s video assets, falling back to `defaults` for
-    /// those it lacks, for the editors to show. Nothing is written back.
-    pub fn load_video(
-        &self,
-        cartridge: &LoadedCartridge,
-        defaults: &CartridgeVideoDefaults,
-    ) -> WorkspaceVideo {
-        let loaded = CartridgeVideo::load(cartridge, defaults)
-            .map_err(|err| err.to_string())
-            .and_then(|video| {
-                let preview = ObjPreviewPalette::new(
-                    &self.system_palette,
-                    SYSTEM_COLORS,
-                    &video.palette,
-                    video.obj.palettes(),
-                )
-                .map_err(|err| err.to_string())?;
-                Ok(Box::new(PreviewVideo { video, preview }))
-            });
-        if let Err(message) = &loaded {
-            tracing::warn!(%message, "cartridge video unavailable in the workspace");
+    /// Prepares to show `document` in the workspace's frame palette. The
+    /// object palettes are read-only, so this holds for as long as the
+    /// workspace stays open.
+    pub fn prepare_video(&self, document: &SpriteDocument) -> WorkspaceVideo {
+        let video = document.video();
+        match ObjPreviewPalette::new(
+            &self.system_palette,
+            SYSTEM_COLORS,
+            &video.palette,
+            video.obj.palettes(),
+        ) {
+            Ok(preview) => WorkspaceVideo(Ok(Box::new(preview))),
+            Err(err) => WorkspaceVideo::unavailable(err.to_string()),
         }
-        WorkspaceVideo(loaded)
     }
 
     #[cfg(test)]
@@ -352,36 +356,51 @@ impl Workspace {
         self.tab
     }
 
-    /// Applies `event`. Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs, and a
-    /// primary press on a tab selects it. Everything else goes to the open
-    /// view's editor, if it has one.
-    pub fn handle_input(&mut self, event: InputEvent) {
+    /// Applies `event`, letting the sprite editor change `sprites`.
+    /// Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs, and a primary press on a
+    /// tab selects it. Everything else goes to the open view's editor, if it
+    /// has one.
+    pub fn handle_input(&mut self, event: InputEvent, sprites: Option<&mut SpriteDocument>) {
         match event {
-            InputEvent::NextView => self.tab = self.tab.next(),
-            InputEvent::PreviousView => self.tab = self.tab.previous(),
+            InputEvent::NextView => self.switch_to(self.tab.next()),
+            InputEvent::PreviousView => self.switch_to(self.tab.previous()),
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
             } if self.layout.tab_at(at).is_some() => {
                 if let Some(tab) = self.layout.tab_at(at) {
-                    self.tab = tab;
+                    self.switch_to(tab);
                 }
             }
-            _ if self.tab == Tab::Sprites => self.sprites.handle_input(event),
+            _ if self.tab == Tab::Sprites => self.sprites.handle_input(event, sprites),
             _ => {}
         }
     }
 
+    /// Ends any drag in progress, which must not outlive the view or the
+    /// visit it started in.
+    pub fn end_stroke(&mut self) {
+        self.sprites.end_stroke();
+    }
+
+    fn switch_to(&mut self, tab: Tab) {
+        if tab != self.tab {
+            self.end_stroke();
+        }
+        self.tab = tab;
+    }
+
     /// Draws the tab bar and the selected view for `cartridge`, whose
-    /// video state is `video`, with what is under `pointer` highlighted.
-    /// The pointer itself is not drawn; see [`draw_cursor`].
+    /// sprites the editor shows from `sprites`, with what is under
+    /// `pointer` highlighted. The pointer itself is not drawn; see
+    /// [`draw_cursor`].
     pub fn render(
         &self,
         framebuffer: &mut Framebuffer,
         font: &BitmapFont,
         ui: &SystemUi,
         cartridge: &LoadedCartridge,
-        video: &WorkspaceVideo,
+        sprites: Result<SpriteSource<'_>, &str>,
         pointer: Option<Point>,
     ) {
         let layout = self.layout;
@@ -443,9 +462,7 @@ impl Workspace {
         }
 
         match self.tab {
-            Tab::Sprites => self
-                .sprites
-                .render(framebuffer, font, ui, video.source(), pointer),
+            Tab::Sprites => self.sprites.render(framebuffer, font, ui, sprites, pointer),
             _ => self.render_placeholder(framebuffer, font),
         }
     }
@@ -487,6 +504,16 @@ pub(super) mod tests_support {
     /// Where the sprite editor draws the enlarged tile.
     pub fn sprite_canvas(workspace: &Workspace) -> Rect {
         workspace.sprites.canvas_rect()
+    }
+
+    /// The middle of tile pixel `(x, y)` on the sprite editor's canvas.
+    pub fn sprite_pixel(workspace: &Workspace, x: i32, y: i32) -> Point {
+        let canvas = sprite_canvas(workspace);
+        let zoom = canvas.width / glaux_machine::sprite::OBJ_TILE_WIDTH as i32;
+        Point::new(
+            (canvas.x + x * zoom + zoom / 2) as u16,
+            (canvas.y + y * zoom + zoom / 2) as u16,
+        )
     }
 
     /// The leftmost column the cartridge name may use.

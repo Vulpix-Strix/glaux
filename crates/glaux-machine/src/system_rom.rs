@@ -54,11 +54,12 @@ pub enum SystemIcon {
     Music,
     Eraser,
     Eyedropper,
+    Fill,
 }
 
 impl SystemIcon {
     /// Number of icons, the length of [`SystemUi::new`]'s `icons`.
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 }
 
 /// The images the system UI draws with. The default has every image
@@ -305,12 +306,14 @@ mod tests {
             solid(1),
             solid(2),
             solid(3),
+            solid(0),
         ];
         let rom = rom.with_ui(SystemUi::new(pointer.clone(), icons));
         assert_eq!(rom.ui().pointer(), &pointer);
         assert_eq!(rom.ui().icon(SystemIcon::Map), &solid(2));
         assert_eq!(rom.ui().icon(SystemIcon::Music), &solid(1));
         assert_eq!(rom.ui().icon(SystemIcon::Eyedropper), &solid(3));
+        assert_eq!(rom.ui().icon(SystemIcon::Fill), &solid(0));
     }
 
     #[test]

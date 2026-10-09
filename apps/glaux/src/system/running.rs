@@ -6,6 +6,7 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
+use glaux_machine::sprite::ObjTileBank;
 use glaux_video::draw::{
     ObjPaletteChoice, ObjSprite, clear, draw_obj_sprite, draw_text, fill_rect, pixel,
 };
@@ -47,18 +48,25 @@ pub struct RunningCartridge {
 impl RunningCartridge {
     /// Creates a fresh VM for `cartridge` and runs its entry script and
     /// `boot()`, with `defaults` standing in for video assets the cartridge
-    /// does not supply. On failure the cartridge is handed back, still
-    /// loaded.
+    /// does not supply. `tiles`, when given, replaces the object tiles read
+    /// from the cartridge, so a run can show edits not written back. On
+    /// failure the cartridge is handed back, still loaded.
     pub fn start(
         cartridge: LoadedCartridge,
         defaults: &CartridgeVideoDefaults,
+        tiles: Option<&ObjTileBank>,
     ) -> Result<Self, Box<FailedStart>> {
         let source = match cartridge.entry_source() {
             Ok(source) => source,
             Err(err) => return Err(failed(cartridge, StartError::Cartridge(err))),
         };
         let video = match CartridgeVideo::load(&cartridge, defaults) {
-            Ok(video) => video,
+            Ok(mut video) => {
+                if let Some(tiles) = tiles {
+                    *video.obj.tiles_mut() = tiles.clone();
+                }
+                video
+            }
             Err(VideoLoadError::Cartridge(err)) => {
                 return Err(failed(cartridge, StartError::Cartridge(err)));
             }
@@ -213,7 +221,7 @@ mod tests {
         .unwrap();
         let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
-        let mut running = RunningCartridge::start(cartridge, &defaults()).unwrap();
+        let mut running = RunningCartridge::start(cartridge, &defaults(), None).unwrap();
         assert_eq!(texts(running.take_output()), ["enemies loaded"]);
         running.tick(&[]).unwrap();
         running.tick(&[]).unwrap();
@@ -229,7 +237,7 @@ mod tests {
         fs::write(dir.join("code/boom.luau"), "\nerror(\"x\")").unwrap();
         let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
-        let failed = RunningCartridge::start(cartridge, &defaults()).unwrap_err();
+        let failed = RunningCartridge::start(cartridge, &defaults(), None).unwrap_err();
         let StartError::Script(failure) = failed.error else {
             panic!("expected a script error, got {:?}", failed.error);
         };
@@ -239,7 +247,7 @@ mod tests {
         );
 
         fs::write(dir.join("code/main.luau"), r#"require("nope")"#).unwrap();
-        let failed = RunningCartridge::start(failed.cartridge, &defaults()).unwrap_err();
+        let failed = RunningCartridge::start(failed.cartridge, &defaults(), None).unwrap_err();
         let StartError::Script(failure) = failed.error else {
             panic!("expected a script error, got {:?}", failed.error);
         };
@@ -272,7 +280,7 @@ mod tests {
         fs::write(dir.join("palette.bin"), palette.to_rgb888()).unwrap();
         let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
-        let mut running = RunningCartridge::start(cartridge, &defaults()).unwrap();
+        let mut running = RunningCartridge::start(cartridge, &defaults(), None).unwrap();
         running.tick(&[]).unwrap();
         let rom = crate::rom::load().unwrap();
         let mut framebuffer = Framebuffer::new();
@@ -290,7 +298,7 @@ mod tests {
         write_cartridge(&dir, "Pong");
         let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
         let rom = crate::rom::load().unwrap();
-        let running = RunningCartridge::start(cartridge, &defaults()).unwrap();
+        let running = RunningCartridge::start(cartridge, &defaults(), None).unwrap();
         assert_eq!(running.palette(), rom.palette());
         assert_eq!(running.video.obj.palettes(), rom.obj_palettes());
     }
@@ -306,7 +314,7 @@ mod tests {
             crate::cartridge_fs::CartridgeFs::new(root.clone()),
         );
         let cartridge = LoadedCartridge::load(&storage, "palettes").unwrap();
-        let mut running = RunningCartridge::start(cartridge, &defaults()).unwrap();
+        let mut running = RunningCartridge::start(cartridge, &defaults(), None).unwrap();
         running.tick(&[]).unwrap();
         let rom = crate::rom::load().unwrap();
         let mut framebuffer = Framebuffer::new();
@@ -359,7 +367,7 @@ mod tests {
             let root = fs::canonicalize(examples).unwrap();
             let storage = CartridgeStorage::Available(CartridgeFs::new(root));
             let cartridge = LoadedCartridge::load(&storage, "signal-lost").unwrap();
-            RunningCartridge::start(cartridge, &defaults()).unwrap()
+            RunningCartridge::start(cartridge, &defaults(), None).unwrap()
         }
 
         fn down(button: Button) -> InputEvent {

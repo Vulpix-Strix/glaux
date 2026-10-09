@@ -38,24 +38,51 @@ pub struct Metrics {
     pub top: i32,
 }
 
-/// The sprite editor's tools. None works in this version: they are shown
-/// disabled so the editor reads as a viewer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The sprite editor's tools, one per toolbar slot, top to bottom.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ToolSlot {
+    /// Draws the selected color.
+    #[default]
     Pencil,
+    /// Draws transparent local 0.
     Eraser,
+    /// Selects the color of the pixel it touches.
     Eyedropper,
+    /// Recolors the area of one color around a pixel, within the tile.
+    Fill,
 }
 
 impl ToolSlot {
-    pub const ALL: [Self; 3] = [Self::Pencil, Self::Eraser, Self::Eyedropper];
+    pub const ALL: [Self; 4] = [Self::Pencil, Self::Eraser, Self::Eyedropper, Self::Fill];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Pencil => "Pencil",
             Self::Eraser => "Eraser",
             Self::Eyedropper => "Eyedropper",
+            Self::Fill => "Fill",
         }
+    }
+
+    /// The key that selects the tool, as typed without Shift.
+    pub fn key(self) -> char {
+        match self {
+            Self::Pencil => 'p',
+            Self::Eraser => 'e',
+            Self::Eyedropper => 'i',
+            Self::Fill => 'f',
+        }
+    }
+
+    /// The tool `key` selects, ignoring ASCII case.
+    pub fn from_key(key: char) -> Option<Self> {
+        let key = key.to_ascii_lowercase();
+        Self::ALL.into_iter().find(|tool| tool.key() == key)
+    }
+
+    /// Whether the tool keeps acting while the pointer is dragged.
+    pub fn drags(self) -> bool {
+        !matches!(self, Self::Fill)
     }
 }
 
@@ -96,7 +123,7 @@ pub struct SpriteLayout {
     /// The tiles the sheet shows, exactly `visible` whole tiles.
     pub sheet: Rect,
     pub visible: Visible,
-    pub tools: [(ToolSlot, Rect); 3],
+    pub tools: [(ToolSlot, Rect); 4],
     pub grid_button: Rect,
     pub advanced_button: Rect,
     pub zoom_out: Rect,
@@ -262,6 +289,15 @@ impl SpriteLayout {
         }
     }
 
+    /// The tile pixel under `point` as if the canvas went on past its
+    /// edges, so drags that leave it keep their direction.
+    pub fn canvas_pixel(&self, point: Point) -> (i32, i32) {
+        (
+            (i32::from(point.x) - self.canvas.x).div_euclid(CANVAS_ZOOM),
+            (i32::from(point.y) - self.canvas.y).div_euclid(CANVAS_ZOOM),
+        )
+    }
+
     /// What `point` falls on, with the sheet scrolled as in `view`.
     pub fn hit(&self, point: Point, view: &SheetView) -> Hit {
         let (x, y) = (i32::from(point.x), i32::from(point.y));
@@ -392,7 +428,24 @@ mod tests {
     }
 
     #[test]
-    fn options_buttons_fit_beside_the_view_only_tag() {
+    fn canvas_pixels_continue_past_the_canvas_edges() {
+        let layout = SpriteLayout::new(METRICS, false, Zoom::X1);
+        let at = |dx: i32, dy: i32| {
+            layout.canvas_pixel(Point::new(
+                (layout.canvas.x + dx) as u16,
+                (layout.canvas.y + dy) as u16,
+            ))
+        };
+        assert_eq!(at(0, 0), (0, 0));
+        assert_eq!(at(95, 95), (7, 7));
+        assert_eq!(at(96, 0), (8, 0));
+        assert_eq!(at(-1, -1), (-1, -1));
+        assert_eq!(at(30, -12), (2, -1));
+        assert_eq!(at(30, -13), (2, -2));
+    }
+
+    #[test]
+    fn options_buttons_fit_beside_the_tool_tag() {
         for layout in layouts() {
             let buttons = [
                 layout.grid_button,
@@ -404,8 +457,10 @@ mod tests {
             for pair in buttons.windows(2) {
                 assert!(pair[0].right() <= pair[1].x, "{pair:?}");
             }
-            // "Tile 1023" and "VIEW ONLY" with their padding.
-            assert!(layout.grid_button.x >= MARGIN + 21 * METRICS.cell_w);
+            // "Tile 1023", the longest tool name and "MODIFIED", with their
+            // padding.
+            let cells = 9 + 1 + 10 + 1 + 8;
+            assert!(layout.grid_button.x >= MARGIN + cells * METRICS.cell_w + 4);
         }
     }
 

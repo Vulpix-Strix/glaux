@@ -1,20 +1,22 @@
-//! The sprite editor
-//!
-//! The editor only views the cartridge.
+//! The sprite editor: draws on the loaded cartridge's object tiles in
+//! memory. Its palettes are shown but not edited.
 
 mod layout;
 mod render;
 mod sheet;
+mod stroke;
 
-use glaux_input::{InputEvent, PointerButton};
+use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::obj_palette::OBJ_PALETTE_COLORS;
 use glaux_machine::palette::Palette;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, ObjVram};
 use glaux_video::preview::ObjPreviewPalette;
 
 pub use layout::Metrics;
-use layout::{Hit, SpriteLayout};
+use layout::{Hit, SpriteLayout, ToolSlot};
 use sheet::{SheetView, grid_position};
+
+use crate::system::sprite_document::SpriteDocument;
 
 /// The cartridge state the editor shows, borrowed for one frame.
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +26,15 @@ pub struct SpriteSource<'a> {
     pub master: &'a Palette,
     /// Where the frame palette holds each master color.
     pub preview: &'a ObjPreviewPalette,
+    /// Whether the tiles differ from the cartridge's files.
+    pub modified: bool,
+}
+
+/// A drag of a tool across the canvas, begun by a primary press on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Stroke {
+    /// The tile pixel the drag last reached, which may lie off the tile.
+    last: (i32, i32),
 }
 
 /// The sprite editor's UI state. It holds no cartridge data, so it stays
@@ -37,6 +48,10 @@ pub struct SpriteEditor {
     advanced: bool,
     /// The selected local color, 0–15.
     color: u8,
+    tool: ToolSlot,
+    /// The drag in progress, if any. It only continues while its press is
+    /// known to be held, and ends on anything that casts doubt on that.
+    stroke: Option<Stroke>,
 }
 
 impl SpriteEditor {
@@ -50,6 +65,8 @@ impl SpriteEditor {
             grid: true,
             advanced: false,
             color: 1,
+            tool: ToolSlot::default(),
+            stroke: None,
         }
     }
 
@@ -63,6 +80,11 @@ impl SpriteEditor {
         self.advanced
     }
 
+    /// Ends the drag in progress, if any. What it drew stays.
+    pub fn end_stroke(&mut self) {
+        self.stroke = None;
+    }
+
     /// Where the enlarged tile is drawn.
     #[cfg(test)]
     pub fn canvas_rect(&self) -> crate::system::workspace::Rect {
@@ -73,29 +95,58 @@ impl SpriteEditor {
         SpriteLayout::new(self.metrics, self.advanced, self.sheet.zoom())
     }
 
-    /// Applies `event`. Nothing here changes the cartridge.
+    /// Applies `event`, drawing on the selected tile of `document` when
+    /// there is one.
     ///
-    /// A click selects a sheet tile, a palette color or an options button.
-    /// The wheel scrolls the sheet's rows, and Shift with the wheel pans its
-    /// columns. Arrow keys move the selection, `g` toggles the grid, `a`
-    /// Advanced mode, and `+` and `-` zoom the sheet.
-    pub fn handle_input(&mut self, event: InputEvent) {
+    /// A press on the canvas uses the selected tool there, and the pencil,
+    /// eraser and eyedropper keep acting along a drag until its release.
+    /// A click elsewhere selects a sheet tile, a palette color, a tool or
+    /// an options button. The wheel scrolls the sheet's rows, and Shift
+    /// with the wheel pans its columns. Arrow keys move the selection; `p`,
+    /// `e`, `i` and `f` pick a tool, `g` toggles the grid, `a` Advanced
+    /// mode, and `+` and `-` zoom the sheet.
+    pub fn handle_input(&mut self, event: InputEvent, document: Option<&mut SpriteDocument>) {
         let layout = self.layout();
         match event {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
-            } => match layout.hit(at, &self.sheet) {
-                // A tile under the pointer is on screen, so selecting it
-                // never scrolls.
-                Hit::Sheet(tile) => self.selected = tile,
-                Hit::Swatch(local) => self.color = local,
-                Hit::GridButton => self.grid = !self.grid,
-                Hit::AdvancedButton => self.toggle_advanced(),
-                Hit::ZoomOut => self.zoom(-1),
-                Hit::ZoomIn => self.zoom(1),
-                Hit::Canvas { .. } | Hit::Tool(_) | Hit::Bank(_) | Hit::None => {}
-            },
+            } => {
+                // A press while a drag is open means its release was lost.
+                self.end_stroke();
+                match layout.hit(at, &self.sheet) {
+                    Hit::Canvas { .. } => {
+                        if let Some(document) = document {
+                            self.press(document, layout.canvas_pixel(at));
+                        }
+                    }
+                    // A tile under the pointer is on screen, so selecting
+                    // it never scrolls.
+                    Hit::Sheet(tile) => self.select(tile),
+                    Hit::Swatch(local) => self.color = local,
+                    Hit::Tool(tool) => self.set_tool(tool),
+                    Hit::GridButton => self.grid = !self.grid,
+                    Hit::AdvancedButton => self.toggle_advanced(),
+                    Hit::ZoomOut => self.zoom(-1),
+                    Hit::ZoomIn => self.zoom(1),
+                    Hit::Bank(_) | Hit::None => {}
+                }
+            }
+            InputEvent::PointerMove(Some(at)) => {
+                if let Some(document) = document {
+                    self.drag(document, at);
+                }
+            }
+            InputEvent::PointerUp {
+                button: PointerButton::Primary,
+                at,
+            } => {
+                if let Some(document) = document {
+                    self.drag(document, at);
+                }
+                self.end_stroke();
+            }
+            InputEvent::PointerCancel => self.end_stroke(),
             InputEvent::Wheel { delta } => {
                 let rows = -i32::from(delta) * self.sheet.zoom().wheel_rows();
                 self.sheet.scroll_rows(rows, layout.visible);
@@ -111,8 +162,73 @@ impl SpriteEditor {
             InputEvent::Text('a' | 'A') => self.toggle_advanced(),
             InputEvent::Text('+' | '=') => self.zoom(1),
             InputEvent::Text('-' | '_') => self.zoom(-1),
+            InputEvent::Text(key) => {
+                if let Some(tool) = ToolSlot::from_key(key) {
+                    self.set_tool(tool);
+                }
+            }
             _ => {}
         }
+    }
+
+    /// Uses the tool at tile pixel `at`, starting a drag if the tool keeps
+    /// acting while dragged.
+    fn press(&mut self, document: &mut SpriteDocument, at: (i32, i32)) {
+        self.apply(document, at);
+        if self.tool.drags() {
+            self.stroke = Some(Stroke { last: at });
+        }
+    }
+
+    /// Continues the drag in progress to the pixel under `at`, using the
+    /// tool on every pixel between, so fast moves leave no gaps.
+    fn drag(&mut self, document: &mut SpriteDocument, at: Point) {
+        let Some(stroke) = self.stroke else {
+            return;
+        };
+        let to = self.layout().canvas_pixel(at);
+        for pixel in stroke::line(stroke.last, to).skip(1) {
+            self.apply(document, pixel);
+        }
+        self.stroke = Some(Stroke { last: to });
+    }
+
+    /// Uses the tool on tile pixel `at` of the selected tile. Pixels off
+    /// the tile are ignored.
+    fn apply(&mut self, document: &mut SpriteDocument, (x, y): (i32, i32)) {
+        let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
+            return;
+        };
+        let tile = self.selected;
+        match self.tool {
+            ToolSlot::Pencil => {
+                document.set_pixel(tile, x, y, self.color());
+            }
+            ToolSlot::Eraser => {
+                document.set_pixel(tile, x, y, 0);
+            }
+            ToolSlot::Eyedropper => {
+                if let Some(local) = document.pixel(tile, x, y) {
+                    self.color = local;
+                }
+            }
+            ToolSlot::Fill => {
+                document.fill(tile, x, y, self.color());
+            }
+        }
+    }
+
+    fn set_tool(&mut self, tool: ToolSlot) {
+        self.end_stroke();
+        self.tool = tool;
+    }
+
+    /// Selects `tile`. A drag never carries over to another tile.
+    fn select(&mut self, tile: usize) {
+        if tile != self.selected {
+            self.end_stroke();
+        }
+        self.selected = tile;
     }
 
     /// Moves the selection by whole grid cells, stopping at the grid's
@@ -121,7 +237,7 @@ impl SpriteEditor {
         let (column, row) = grid_position(self.selected);
         let column = (column as i32 + columns).clamp(0, OBJ_GRID_COLUMNS as i32 - 1) as usize;
         let row = (row as i32 + rows).clamp(0, OBJ_GRID_ROWS as i32 - 1) as usize;
-        self.selected = row * OBJ_GRID_COLUMNS + column;
+        self.select(row * OBJ_GRID_COLUMNS + column);
         self.sheet.reveal(self.selected, self.layout().visible);
     }
 
@@ -170,19 +286,22 @@ mod tests {
     }
 
     fn click(editor: &mut SpriteEditor, rect: crate::system::workspace::Rect) {
-        editor.handle_input(InputEvent::PointerDown {
-            button: PointerButton::Primary,
-            at: Point::new(
-                (rect.x + rect.width / 2) as u16,
-                (rect.y + rect.height / 2) as u16,
-            ),
-        });
+        editor.handle_input(
+            InputEvent::PointerDown {
+                button: PointerButton::Primary,
+                at: Point::new(
+                    (rect.x + rect.width / 2) as u16,
+                    (rect.y + rect.height / 2) as u16,
+                ),
+            },
+            None,
+        );
     }
 
     #[test]
     fn clicking_a_visible_tile_selects_it_without_scrolling() {
         let mut editor = editor();
-        editor.handle_input(InputEvent::Wheel { delta: -5 });
+        editor.handle_input(InputEvent::Wheel { delta: -5 }, None);
         let before = editor.sheet;
         let layout = editor.layout();
         click(&mut editor, layout.sheet_cell(4, 21, Zoom::X1));
@@ -193,28 +312,28 @@ mod tests {
     #[test]
     fn the_wheel_scrolls_rows_and_shift_wheel_pans_at_two_x() {
         let mut editor = editor();
-        editor.handle_input(InputEvent::Wheel { delta: -3 });
+        editor.handle_input(InputEvent::Wheel { delta: -3 }, None);
         assert_eq!(editor.sheet.top_row(), 6);
-        editor.handle_input(InputEvent::Wheel { delta: 1 });
+        editor.handle_input(InputEvent::Wheel { delta: 1 }, None);
         assert_eq!(editor.sheet.top_row(), 4);
-        editor.handle_input(InputEvent::WheelHorizontal { delta: -2 });
+        editor.handle_input(InputEvent::WheelHorizontal { delta: -2 }, None);
         assert_eq!(editor.sheet.left_column(), 0, "1x shows every column");
 
-        editor.handle_input(InputEvent::Text('+'));
+        editor.handle_input(InputEvent::Text('+'), None);
         assert_eq!(editor.sheet.zoom(), Zoom::X2);
-        editor.handle_input(InputEvent::WheelHorizontal { delta: -2 });
+        editor.handle_input(InputEvent::WheelHorizontal { delta: -2 }, None);
         assert_eq!(editor.sheet.left_column(), 2);
-        editor.handle_input(InputEvent::WheelHorizontal { delta: -100 });
+        editor.handle_input(InputEvent::WheelHorizontal { delta: -100 }, None);
         assert_eq!(editor.sheet.left_column(), 5);
-        editor.handle_input(InputEvent::Wheel { delta: i8::MIN });
+        editor.handle_input(InputEvent::Wheel { delta: i8::MIN }, None);
         assert_eq!(editor.sheet.top_row(), 64 - 11);
     }
 
     #[test]
     fn arrows_move_the_selection_and_reveal_it_minimally() {
         let mut editor = editor();
-        editor.handle_input(InputEvent::Left { select: false });
-        editor.handle_input(InputEvent::Up);
+        editor.handle_input(InputEvent::Left { select: false }, None);
+        editor.handle_input(InputEvent::Up, None);
         assert_eq!(
             editor.selected(),
             0,
@@ -222,13 +341,13 @@ mod tests {
         );
 
         for _ in 0..22 {
-            editor.handle_input(InputEvent::Down);
+            editor.handle_input(InputEvent::Down, None);
         }
         assert_eq!(editor.selected(), 22 * 16);
         assert_eq!(editor.sheet.top_row(), 1);
 
         for _ in 0..20 {
-            editor.handle_input(InputEvent::Right { select: false });
+            editor.handle_input(InputEvent::Right { select: false }, None);
         }
         assert_eq!(editor.selected(), 22 * 16 + 15);
         assert_eq!(editor.sheet.top_row(), 1);
@@ -239,27 +358,27 @@ mod tests {
         let mut editor = editor();
         let layout = editor.layout();
         click(&mut editor, layout.sheet_cell(15, 20, Zoom::X1));
-        editor.handle_input(InputEvent::Text('+'));
+        editor.handle_input(InputEvent::Text('+'), None);
         let visible = editor.layout().visible;
         assert!(editor.sheet.is_visible(editor.selected(), visible));
-        editor.handle_input(InputEvent::Text('+'));
+        editor.handle_input(InputEvent::Text('+'), None);
         assert_eq!(editor.sheet.zoom(), Zoom::X2, "2x is the largest zoom");
-        editor.handle_input(InputEvent::Text('-'));
-        editor.handle_input(InputEvent::Text('-'));
+        editor.handle_input(InputEvent::Text('-'), None);
+        editor.handle_input(InputEvent::Text('-'), None);
         assert_eq!(editor.sheet.zoom(), Zoom::X1);
     }
 
     #[test]
     fn advanced_mode_keeps_zoom_and_scroll() {
         let mut editor = editor();
-        editor.handle_input(InputEvent::Text('+'));
-        editor.handle_input(InputEvent::Wheel { delta: -10 });
-        editor.handle_input(InputEvent::WheelHorizontal { delta: -3 });
+        editor.handle_input(InputEvent::Text('+'), None);
+        editor.handle_input(InputEvent::Wheel { delta: -10 }, None);
+        editor.handle_input(InputEvent::WheelHorizontal { delta: -3 }, None);
         let before = editor.sheet;
-        editor.handle_input(InputEvent::Text('a'));
+        editor.handle_input(InputEvent::Text('a'), None);
         assert!(editor.is_advanced());
         assert_eq!(editor.sheet, before);
-        editor.handle_input(InputEvent::Text('a'));
+        editor.handle_input(InputEvent::Text('a'), None);
         assert_eq!(editor.sheet, before);
     }
 
@@ -277,15 +396,227 @@ mod tests {
         assert!(editor.is_advanced());
     }
 
+    // Drawing.
+
+    use crate::system::video::{CartridgeVideoDefaults, VideoFiles};
+
+    /// A document whose tile 0 is solid local 5 and every other tile empty.
+    fn document() -> SpriteDocument {
+        let files = VideoFiles {
+            obj_tiles: Some(vec![0x55; glaux_machine::sprite::OBJ_TILE_BYTES]),
+            ..VideoFiles::default()
+        };
+        let defaults = CartridgeVideoDefaults::from_rom(&crate::rom::load().unwrap());
+        SpriteDocument::from_files(&files, &defaults).unwrap()
+    }
+
+    /// The screen point in the middle of tile pixel `(x, y)`, which may lie
+    /// off the canvas.
+    fn canvas_point(editor: &SpriteEditor, x: i32, y: i32) -> Point {
+        let canvas = editor.canvas_rect();
+        let half = layout::CANVAS_ZOOM / 2;
+        Point::new(
+            (canvas.x + x * layout::CANVAS_ZOOM + half) as u16,
+            (canvas.y + y * layout::CANVAS_ZOOM + half) as u16,
+        )
+    }
+
+    fn down(editor: &mut SpriteEditor, doc: &mut SpriteDocument, x: i32, y: i32) {
+        let at = canvas_point(editor, x, y);
+        editor.handle_input(
+            InputEvent::PointerDown {
+                button: PointerButton::Primary,
+                at,
+            },
+            Some(doc),
+        );
+    }
+
+    fn drag(editor: &mut SpriteEditor, doc: &mut SpriteDocument, x: i32, y: i32) {
+        let at = canvas_point(editor, x, y);
+        editor.handle_input(InputEvent::PointerMove(Some(at)), Some(doc));
+    }
+
+    fn up(editor: &mut SpriteEditor, doc: &mut SpriteDocument, x: i32, y: i32) {
+        let at = canvas_point(editor, x, y);
+        editor.handle_input(
+            InputEvent::PointerUp {
+                button: PointerButton::Primary,
+                at,
+            },
+            Some(doc),
+        );
+    }
+
+    /// Tile `tile` as one string of hex digits per pixel row.
+    fn rows(doc: &SpriteDocument, tile: usize) -> Vec<String> {
+        (0..8)
+            .map(|y| {
+                (0..8)
+                    .map(|x| format!("{:X}", doc.pixel(tile, x, y).unwrap()))
+                    .collect()
+            })
+            .collect()
+    }
+
     #[test]
-    fn canvas_and_tool_clicks_change_nothing() {
+    fn a_fast_diagonal_drag_paints_every_pixel_between() {
+        let mut editor = editor();
+        let mut doc = document();
+        editor.select(1);
+        down(&mut editor, &mut doc, 0, 0);
+        drag(&mut editor, &mut doc, 7, 7);
+        up(&mut editor, &mut doc, 7, 7);
+        for n in 0..8 {
+            assert_eq!(doc.pixel(1, n, n), Some(1), "pixel ({n}, {n})");
+        }
+        assert_eq!(rows(&doc, 1).concat().matches('1').count(), 8);
+    }
+
+    #[test]
+    fn a_fast_horizontal_drag_leaves_no_gaps() {
+        let mut editor = editor();
+        let mut doc = document();
+        editor.handle_input(InputEvent::Text('e'), None);
+        down(&mut editor, &mut doc, 0, 3);
+        drag(&mut editor, &mut doc, 5, 3);
+        drag(&mut editor, &mut doc, 7, 3);
+        up(&mut editor, &mut doc, 7, 3);
+        assert_eq!(rows(&doc, 0)[3], "00000000");
+        assert_eq!(rows(&doc, 0)[2], "55555555");
+    }
+
+    #[test]
+    fn a_drag_off_the_canvas_paints_to_the_edge_and_resumes_on_return() {
+        let mut editor = editor();
+        let mut doc = document();
+        editor.select(1);
+        down(&mut editor, &mut doc, 5, 1);
+        drag(&mut editor, &mut doc, 11, 1);
+        drag(&mut editor, &mut doc, 11, 5);
+        drag(&mut editor, &mut doc, 5, 5);
+        up(&mut editor, &mut doc, 5, 5);
+        assert_eq!(
+            rows(&doc, 1),
+            [
+                "00000000", //
+                "00000111", //
+                "00000000", //
+                "00000000", //
+                "00000000", //
+                "00000111", //
+                "00000000", //
+                "00000000", //
+            ]
+        );
+        assert_eq!(
+            rows(&doc, 2).concat(),
+            "0".repeat(64),
+            "never the next tile"
+        );
+    }
+
+    #[test]
+    fn moves_after_a_release_or_cancel_do_not_paint() {
+        let mut editor = editor();
+        let mut doc = document();
+        editor.select(1);
+        down(&mut editor, &mut doc, 0, 0);
+        up(&mut editor, &mut doc, 0, 0);
+        drag(&mut editor, &mut doc, 3, 0);
+        assert_eq!(rows(&doc, 1)[0], "10000000");
+
+        down(&mut editor, &mut doc, 0, 2);
+        drag(&mut editor, &mut doc, 2, 2);
+        editor.handle_input(InputEvent::PointerCancel, Some(&mut doc));
+        drag(&mut editor, &mut doc, 6, 2);
+        up(&mut editor, &mut doc, 6, 2);
+        assert_eq!(rows(&doc, 1)[2], "11100000", "what was drawn stays");
+    }
+
+    #[test]
+    fn a_press_without_a_release_starts_a_new_stroke() {
+        let mut editor = editor();
+        let mut doc = document();
+        editor.select(1);
+        down(&mut editor, &mut doc, 0, 0);
+        // The release was lost; the next press must not join the two.
+        down(&mut editor, &mut doc, 7, 7);
+        drag(&mut editor, &mut doc, 7, 6);
+        assert_eq!(rows(&doc, 1).concat().matches('1').count(), 3);
+        assert_eq!(doc.pixel(1, 3, 3), Some(0));
+    }
+
+    #[test]
+    fn changing_tool_or_tile_ends_the_stroke() {
+        let mut editor = editor();
+        let mut doc = document();
+        editor.select(1);
+        down(&mut editor, &mut doc, 0, 0);
+        editor.handle_input(InputEvent::Text('e'), Some(&mut doc));
+        drag(&mut editor, &mut doc, 4, 0);
+        assert_eq!(rows(&doc, 1)[0], "10000000");
+
+        editor.handle_input(InputEvent::Text('p'), Some(&mut doc));
+        down(&mut editor, &mut doc, 0, 1);
+        editor.handle_input(InputEvent::Down, Some(&mut doc));
+        drag(&mut editor, &mut doc, 4, 1);
+        assert_eq!(rows(&doc, 1)[1], "10000000");
+        assert_eq!(rows(&doc, 17)[1], "00000000");
+    }
+
+    #[test]
+    fn the_eyedropper_picks_colors_including_transparent() {
+        let mut editor = editor();
+        let mut doc = document();
+        editor.handle_input(InputEvent::Text('I'), None);
+        assert_eq!(editor.tool, ToolSlot::Eyedropper);
+        down(&mut editor, &mut doc, 2, 2);
+        assert_eq!(editor.color(), 5);
+        editor.select(1);
+        down(&mut editor, &mut doc, 2, 2);
+        assert_eq!(editor.color(), 0);
+        assert!(!doc.is_modified());
+    }
+
+    #[test]
+    fn fill_acts_once_per_press() {
+        let mut editor = editor();
+        let mut doc = document();
+        editor.handle_input(InputEvent::Text('f'), None);
+        editor.color = 9;
+        down(&mut editor, &mut doc, 4, 4);
+        assert!(rows(&doc, 0).iter().all(|row| row == "99999999"));
+        assert!(rows(&doc, 1).iter().all(|row| row == "00000000"));
+        assert_eq!(editor.stroke, None);
+    }
+
+    #[test]
+    fn keys_and_tool_plates_select_tools() {
+        let mut editor = editor();
+        assert_eq!(editor.tool, ToolSlot::Pencil);
+        for (key, tool) in [
+            ('e', ToolSlot::Eraser),
+            ('i', ToolSlot::Eyedropper),
+            ('F', ToolSlot::Fill),
+            ('p', ToolSlot::Pencil),
+        ] {
+            editor.handle_input(InputEvent::Text(key), None);
+            assert_eq!(editor.tool, tool, "{key}");
+        }
+        let layout = editor.layout();
+        for (tool, rect) in layout.tools {
+            click(&mut editor, rect);
+            assert_eq!(editor.tool, tool);
+        }
+    }
+
+    #[test]
+    fn without_a_document_the_canvas_does_nothing() {
         let mut editor = editor();
         let before = editor.clone();
-        let layout = editor.layout();
-        click(&mut editor, layout.canvas);
-        for (_, rect) in layout.tools {
-            click(&mut editor, rect);
-        }
+        let canvas = editor.layout().canvas;
+        click(&mut editor, canvas);
         assert_eq!(editor, before);
     }
 }

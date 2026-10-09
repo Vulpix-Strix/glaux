@@ -68,8 +68,11 @@ pub enum InputEvent {
     /// A pointer button was pressed inside the logical viewport.
     ///
     /// The press captures the pointer until the matching
-    /// [`PointerUp`](Self::PointerUp), which is always delivered, at the
-    /// clamped position if the button is released outside the viewport.
+    /// [`PointerUp`](Self::PointerUp), delivered at the clamped position if
+    /// the button is released outside the viewport. The one exception is a
+    /// capture the host loses, such as when the window loses focus: then
+    /// [`PointerCancel`](Self::PointerCancel) ends every capture instead,
+    /// and no `PointerUp` follows for them.
     /// Presses that start outside the viewport, such as on the bars around
     /// it, are not reported, and neither are their releases.
     PointerDown {
@@ -81,6 +84,11 @@ pub enum InputEvent {
         button: PointerButton,
         at: Point,
     },
+    /// Every captured pointer button lost its capture without a release,
+    /// for example because the window lost focus. Abandon any gesture the
+    /// captured presses started. Buttons still held are not reported again
+    /// until they are released and pressed anew.
+    PointerCancel,
     /// The scroll wheel moved by whole notches; positive is away from the
     /// user. Hosts report at most one wheel event per host frame.
     Wheel {
@@ -103,6 +111,7 @@ impl InputEvent {
             Self::PointerMove(_)
                 | Self::PointerDown { .. }
                 | Self::PointerUp { .. }
+                | Self::PointerCancel
                 | Self::Wheel { .. }
                 | Self::WheelHorizontal { .. }
         )
