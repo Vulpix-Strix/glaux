@@ -142,6 +142,50 @@ fn blit_obj_tile(
     }
 }
 
+/// Draws object tile `tile` through its default palette bank with its
+/// top-left corner at `(x, y)`, each pixel enlarged to a `scale`×`scale`
+/// block. Master index `m` is written as `slots[m]`, which lets the tile be
+/// shown in a frame whose palette places the master colors elsewhere.
+///
+/// Tile-local index 0 is transparent. A non-positive `scale` or an invalid
+/// tile draws nothing.
+pub fn draw_obj_tile_scaled(
+    framebuffer: &mut Framebuffer,
+    vram: &ObjVram,
+    tile: usize,
+    (x, y): (i32, i32),
+    scale: i32,
+    slots: &[u8; PALETTE_LEN],
+) {
+    if scale <= 0 {
+        return;
+    }
+    let bank = vram.attributes().bank(tile);
+    for local_y in 0..OBJ_TILE_HEIGHT {
+        for local_x in 0..OBJ_TILE_WIDTH {
+            let Some(local) = vram.tiles().pixel(tile, local_x, local_y) else {
+                return;
+            };
+            let Some(master) = vram.palettes().resolve(bank, local) else {
+                continue;
+            };
+            // Clip in i64: a block far from the origin may not fit in i32.
+            let px = i64::from(x) + local_x as i64 * i64::from(scale);
+            let py = i64::from(y) + local_y as i64 * i64::from(scale);
+            if let (Ok(px), Ok(py)) = (i32::try_from(px), i32::try_from(py)) {
+                fill_rect(
+                    framebuffer,
+                    px,
+                    py,
+                    scale,
+                    scale,
+                    slots[usize::from(master)],
+                );
+            }
+        }
+    }
+}
+
 /// Replaces every pixel's palette index `i` with `table[i]`.
 pub fn remap(framebuffer: &mut Framebuffer, table: &[u8; PALETTE_LEN]) {
     for index in framebuffer.as_bytes_mut() {
@@ -789,6 +833,68 @@ mod tests {
             ObjTileAttributes::from_bytes(&attributes).unwrap(),
             bank_marking_palettes(),
         )
+    }
+
+    /// Maps master `m` to `255 - m`, so tests can tell slots from masters.
+    fn reversed_slots() -> [u8; PALETTE_LEN] {
+        std::array::from_fn(|m| 255 - m as u8)
+    }
+
+    #[test]
+    fn scaled_tiles_draw_square_blocks_through_slots_and_default_bank() {
+        // Tile 1 has default bank 5: local 3 resolves to master 105.
+        let vram = mixed_bank_vram();
+        let mut fb = filled(9);
+        draw_obj_tile_scaled(&mut fb, &vram, 1, (10, 20), 3, &reversed_slots());
+
+        let expected = 255 - 105;
+        for y in 0..240 {
+            for x in 0..320 {
+                let inside = (10..34).contains(&x) && (20..44).contains(&y);
+                let want = if inside { expected } else { 9 };
+                assert_eq!(fb.pixel(x, y), Some(want), "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn scaled_tiles_keep_local_zero_transparent_and_place_each_block() {
+        // Row pattern 0,1,2,3,4,0,5,6 on every row, through OBP0 linear.
+        let row = [0x01, 0x23, 0x40, 0x56];
+        let bytes = row
+            .into_iter()
+            .cycle()
+            .take(OBJ_TILE_BYTES)
+            .collect::<Vec<_>>();
+        let vram = linear_vram(&ObjTileBank::from_bytes(&bytes).unwrap());
+        let identity: [u8; PALETTE_LEN] = std::array::from_fn(|m| m as u8);
+        let mut fb = filled(200);
+        draw_obj_tile_scaled(&mut fb, &vram, 0, (0, 0), 2, &identity);
+
+        let expected_row = [200, 1, 2, 3, 4, 200, 5, 6];
+        for (column, expected) in expected_row.into_iter().enumerate() {
+            let x = column as i32 * 2;
+            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                assert_eq!(fb.pixel(x + dx, 14 + dy), Some(expected), "column {column}");
+            }
+        }
+        assert_eq!(fb.pixel(16, 0), Some(200));
+        assert_eq!(fb.pixel(0, 16), Some(200));
+    }
+
+    #[test]
+    fn scaled_tiles_ignore_bad_scales_and_tiles_and_clip() {
+        let vram = linear_vram(&solid_tiles(&[(0, 4)]));
+        let identity: [u8; PALETTE_LEN] = std::array::from_fn(|m| m as u8);
+        for (tile, scale) in [(0, 0), (0, -2), (OBJ_TILE_CAPACITY, 2)] {
+            let mut fb = Framebuffer::new();
+            draw_obj_tile_scaled(&mut fb, &vram, tile, (0, 0), scale, &identity);
+            assert_eq!(fb, Framebuffer::new(), "tile {tile} scale {scale}");
+        }
+        let mut fb = Framebuffer::new();
+        draw_obj_tile_scaled(&mut fb, &vram, 0, (i32::MAX - 4, -10), 12, &identity);
+        draw_obj_tile_scaled(&mut fb, &vram, 0, (316, 236), 12, &identity);
+        assert_eq!(fb.as_bytes().iter().filter(|&&p| p == 4).count(), 16);
     }
 
     fn block_2x2(palette: ObjPaletteChoice, flip_x: bool) -> ObjSprite {

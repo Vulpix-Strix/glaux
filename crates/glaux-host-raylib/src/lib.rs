@@ -363,6 +363,9 @@ impl RaylibHost {
                 button(MouseButton::MOUSE_BUTTON_MIDDLE),
             ],
             wheel: rl.get_mouse_wheel_move(),
+            wheel_x: rl.get_mouse_wheel_move_v().x,
+            shift: rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
+                || rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT),
         }
     }
 }

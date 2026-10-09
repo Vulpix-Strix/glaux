@@ -679,6 +679,7 @@ version = "0.1.0"
 dependencies = [
  "glaux-machine",
  "pretty_assertions",
+ "thiserror",
 ]
 
 [[package]]

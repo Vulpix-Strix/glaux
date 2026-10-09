@@ -42,14 +42,23 @@ pub struct Cursor {
     pub hotspot: (u8, u8),
 }
 
-/// An icon the System ROM's UI shows, one per workspace view.
+/// An icon the System ROM's UI shows: one per workspace view, then the
+/// sprite editor's tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemIcon {
     Code,
+    /// A pencil, also used for the sprite editor's pencil tool.
     Sprites,
     Map,
     Sfx,
     Music,
+    Eraser,
+    Eyedropper,
+}
+
+impl SystemIcon {
+    /// Number of icons, the length of [`SystemUi::new`]'s `icons`.
+    pub const COUNT: usize = 7;
 }
 
 /// The images the system UI draws with. The default has every image
@@ -57,12 +66,12 @@ pub enum SystemIcon {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SystemUi {
     pointer: Cursor,
-    icons: [InkImage; 5],
+    icons: [InkImage; SystemIcon::COUNT],
 }
 
 impl SystemUi {
     /// `icons` are in [`SystemIcon`] declaration order.
-    pub fn new(pointer: Cursor, icons: [InkImage; 5]) -> Self {
+    pub fn new(pointer: Cursor, icons: [InkImage; SystemIcon::COUNT]) -> Self {
         Self { pointer, icons }
     }
 
@@ -288,11 +297,20 @@ mod tests {
             image: InkImage::new(2, 1, vec![1, 2]).unwrap(),
             hotspot: (1, 0),
         };
-        let icons = [solid(0), solid(1), solid(2), solid(3), solid(1)];
+        let icons = [
+            solid(0),
+            solid(1),
+            solid(2),
+            solid(3),
+            solid(1),
+            solid(2),
+            solid(3),
+        ];
         let rom = rom.with_ui(SystemUi::new(pointer.clone(), icons));
         assert_eq!(rom.ui().pointer(), &pointer);
         assert_eq!(rom.ui().icon(SystemIcon::Map), &solid(2));
         assert_eq!(rom.ui().icon(SystemIcon::Music), &solid(1));
+        assert_eq!(rom.ui().icon(SystemIcon::Eyedropper), &solid(3));
     }
 
     #[test]

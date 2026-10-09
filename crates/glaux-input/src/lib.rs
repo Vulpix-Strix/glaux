@@ -86,6 +86,13 @@ pub enum InputEvent {
     Wheel {
         delta: i8,
     },
+    /// Sideways scrolling by whole notches, from a horizontal wheel or the
+    /// wheel turned while Shift is held; positive is toward the left, as
+    /// Shift with the wheel turned away from the user. Hosts report at most
+    /// one horizontal wheel event per host frame.
+    WheelHorizontal {
+        delta: i8,
+    },
 }
 
 impl InputEvent {
@@ -97,6 +104,7 @@ impl InputEvent {
                 | Self::PointerDown { .. }
                 | Self::PointerUp { .. }
                 | Self::Wheel { .. }
+                | Self::WheelHorizontal { .. }
         )
     }
 }

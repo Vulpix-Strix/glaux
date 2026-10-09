@@ -4,18 +4,14 @@ use glaux_input::{InputEvent, InputLatch};
 use glaux_luau::{Budget, DrawCommand, LogEntry, Runtime, RuntimeError, StartFailure};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
-use glaux_machine::obj_palette::{ObjPalettes, ObjPalettesError};
-use glaux_machine::palette::{Palette, PaletteBytesError};
+use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
-use glaux_machine::sprite::{
-    ObjTileAttributes, ObjTileAttributesError, ObjTileBank, ObjTileBankError, ObjVram,
-};
-use glaux_machine::system_rom::SystemRom;
 use glaux_video::draw::{
     ObjPaletteChoice, ObjSprite, clear, draw_obj_sprite, draw_text, fill_rect, pixel,
 };
 
 use super::audio;
+use super::video::{CartridgeVideo, CartridgeVideoDefaults, VideoAssetError, VideoLoadError};
 use crate::cartridge::{CartridgeError, LoadedCartridge};
 
 /// Why a cartridge could not start.
@@ -27,88 +23,6 @@ pub enum StartError {
     Video(VideoAssetError),
     /// The entry chunk or `boot()` failed.
     Script(StartFailure),
-}
-
-/// A cartridge video asset that is not valid native G1 data.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum VideoAssetError {
-    #[error("Invalid sprites.bin: {0}")]
-    ObjTiles(#[from] ObjTileBankError),
-    #[error("Invalid objattr.bin: {0}")]
-    ObjAttributes(#[from] ObjTileAttributesError),
-    #[error("Invalid obp.bin: {0}")]
-    ObjPalettes(#[from] ObjPalettesError),
-    #[error("Invalid palette.bin: {0}")]
-    Palette(#[from] PaletteBytesError),
-}
-
-/// The video state a cartridge starts with for each asset it does not
-/// supply, taken from the System ROM.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CartridgeVideoDefaults {
-    palette: Palette,
-    obj_palettes: ObjPalettes,
-}
-
-impl CartridgeVideoDefaults {
-    pub fn from_rom(rom: &SystemRom) -> Self {
-        Self {
-            palette: rom.palette().clone(),
-            obj_palettes: rom.obj_palettes().clone(),
-        }
-    }
-}
-
-/// A cartridge's video state, loaded once when it starts and unchanged for
-/// the whole run, so replaying a frame always resolves the same colors.
-#[derive(Debug)]
-struct CartridgeVideo {
-    /// The master palette the cartridge's frames are presented with.
-    palette: Palette,
-    obj: ObjVram,
-}
-
-impl CartridgeVideo {
-    /// Reads the cartridge's optional video assets, falling back to
-    /// `defaults` for those it lacks.
-    fn load(
-        cartridge: &LoadedCartridge,
-        defaults: &CartridgeVideoDefaults,
-    ) -> Result<Self, StartError> {
-        let tiles = match cartridge.read_obj_tiles().map_err(StartError::Cartridge)? {
-            Some(bytes) => ObjTileBank::from_bytes(&bytes).map_err(video_error)?,
-            None => ObjTileBank::new(),
-        };
-        let attributes = match cartridge
-            .read_obj_attributes()
-            .map_err(StartError::Cartridge)?
-        {
-            Some(bytes) => ObjTileAttributes::from_bytes(&bytes).map_err(video_error)?,
-            None => ObjTileAttributes::new(),
-        };
-        let palettes = match cartridge
-            .read_obj_palettes()
-            .map_err(StartError::Cartridge)?
-        {
-            Some(bytes) => ObjPalettes::from_bytes(&bytes).map_err(video_error)?,
-            None => defaults.obj_palettes.clone(),
-        };
-        let palette = match cartridge
-            .read_master_palette()
-            .map_err(StartError::Cartridge)?
-        {
-            Some(bytes) => Palette::from_rgb888(&bytes).map_err(video_error)?,
-            None => defaults.palette.clone(),
-        };
-        Ok(Self {
-            palette,
-            obj: ObjVram::new(tiles, attributes, palettes),
-        })
-    }
-}
-
-fn video_error(err: impl Into<VideoAssetError>) -> StartError {
-    StartError::Video(err.into())
 }
 
 /// A cartridge that could not start, handed back still loaded.
@@ -145,7 +59,12 @@ impl RunningCartridge {
         };
         let video = match CartridgeVideo::load(&cartridge, defaults) {
             Ok(video) => video,
-            Err(err) => return Err(failed(cartridge, err)),
+            Err(VideoLoadError::Cartridge(err)) => {
+                return Err(failed(cartridge, StartError::Cartridge(err)));
+            }
+            Err(VideoLoadError::Asset(err)) => {
+                return Err(failed(cartridge, StartError::Video(err)));
+            }
         };
         let entry = &cartridge.manifest().runtime.entry;
         match Runtime::start(entry, &source, cartridge.modules(), Budget::default()) {
@@ -258,6 +177,7 @@ mod tests {
     use std::path::Path;
 
     use glaux_luau::ScriptError;
+    use glaux_machine::obj_palette::ObjPalettes;
     use pretty_assertions::assert_eq;
 
     use super::*;

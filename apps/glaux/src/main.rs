@@ -117,6 +117,7 @@ fn run(
         CartridgeVideoDefaults::from_rom(&rom),
         cartridges,
         rom.font().metrics(),
+        rom.palette().clone(),
     );
 
     let saved = config_dir.and_then(window_state::load);

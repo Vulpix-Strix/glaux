@@ -109,6 +109,11 @@ pub(crate) struct PointerFrame {
     /// Wheel movement this frame, in notches; positive is away from the
     /// user.
     pub(crate) wheel: f32,
+    /// Horizontal wheel movement this frame, in notches; positive is
+    /// toward the left.
+    pub(crate) wheel_x: f32,
+    /// Whether Shift is held, which turns the vertical wheel sideways.
+    pub(crate) shift: bool,
 }
 
 /// Turns per-frame mouse state into pointer events.
@@ -128,6 +133,8 @@ pub(crate) struct PointerTracker {
     grip: Point,
     /// Fractional wheel movement not reported yet.
     wheel: f32,
+    /// Fractional horizontal wheel movement not reported yet.
+    wheel_x: f32,
 }
 
 impl PointerTracker {
@@ -171,15 +178,22 @@ impl PointerTracker {
 
         self.report_position(located, clamped, out);
         if located.is_some() || self.is_captured() {
-            self.wheel += frame.wheel;
-            let notches = self.wheel.trunc();
-            if notches != 0.0 {
-                self.wheel -= notches;
-                let delta = notches.clamp(i8::MIN.into(), i8::MAX.into()) as i8;
+            // Shift turns the wheel sideways, the convention on desktops
+            // whose mice have no horizontal wheel.
+            let (vertical, horizontal) = if frame.shift {
+                (0.0, frame.wheel_x + frame.wheel)
+            } else {
+                (frame.wheel, frame.wheel_x)
+            };
+            if let Some(delta) = take_notches(&mut self.wheel, vertical) {
                 out.push(InputEvent::Wheel { delta });
+            }
+            if let Some(delta) = take_notches(&mut self.wheel_x, horizontal) {
+                out.push(InputEvent::WheelHorizontal { delta });
             }
         } else {
             self.wheel = 0.0;
+            self.wheel_x = 0.0;
         }
 
         let mut ended = false;
@@ -241,6 +255,18 @@ impl PointerTracker {
             ..Self::default()
         };
     }
+}
+
+/// Adds `movement` to the fractional `pending` wheel movement and takes the
+/// whole notches out of it, if any.
+fn take_notches(pending: &mut f32, movement: f32) -> Option<i8> {
+    *pending += movement;
+    let notches = pending.trunc();
+    if notches == 0.0 {
+        return None;
+    }
+    *pending -= notches;
+    Some(notches.clamp(i8::MIN.into(), i8::MAX.into()) as i8)
 }
 
 #[cfg(test)]
@@ -395,6 +421,8 @@ mod tests {
             curved: false,
             buttons: [primary, ButtonFrame::default(), ButtonFrame::default()],
             wheel: 0.0,
+            wheel_x: 0.0,
+            shift: false,
         }
     }
 
@@ -616,6 +644,41 @@ mod tests {
         let mut bar = frame((10.0, 300.0), UP);
         bar.window = (1280, 720);
         bar.wheel = 5.0;
+        assert_eq!(step(&mut tracker, bar), [InputEvent::PointerMove(None)]);
+    }
+
+    #[test]
+    fn shift_turns_the_wheel_sideways() {
+        let mut tracker = enabled();
+        let mut f = frame(INSIDE, UP);
+        f.shift = true;
+        f.wheel = 2.0;
+        assert_eq!(
+            step(&mut tracker, f),
+            [InputEvent::WheelHorizontal { delta: 2 }]
+        );
+        f.shift = false;
+        assert_eq!(step(&mut tracker, f), [InputEvent::Wheel { delta: 2 }]);
+    }
+
+    #[test]
+    fn horizontal_wheels_report_whole_notches_on_their_own_axis() {
+        let mut tracker = enabled();
+        let mut f = frame(INSIDE, UP);
+        f.wheel_x = -0.6;
+        f.wheel = 0.5;
+        assert_eq!(step(&mut tracker, f), []);
+        assert_eq!(
+            step(&mut tracker, f),
+            [
+                InputEvent::Wheel { delta: 1 },
+                InputEvent::WheelHorizontal { delta: -1 }
+            ]
+        );
+
+        let mut bar = frame((10.0, 300.0), UP);
+        bar.window = (1280, 720);
+        bar.wheel_x = 4.0;
         assert_eq!(step(&mut tracker, bar), [InputEvent::PointerMove(None)]);
     }
 }

@@ -10,7 +10,7 @@ use glaux_audio::{Envelope, Tone, Waveform};
 use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
 use glaux_machine::ink_image::InkImage;
 use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
-use glaux_machine::system_rom::{Cursor, SystemRom, SystemSounds, SystemUi};
+use glaux_machine::system_rom::{Cursor, SystemIcon, SystemRom, SystemSounds, SystemUi};
 use png::{BitDepth, ColorType, Transformations};
 use semver::Version;
 
@@ -29,14 +29,16 @@ const COPYRIGHT: &str = include_str!("../../../rom/copyright");
 const PALETTE_HEX: &str = include_str!("../../../rom/palette/system.hex");
 const FONT_BDF: &str = include_str!("../../../rom/font/Tamzen5x9r.bdf");
 
-/// The pointer and the workspace view icons, in `SystemIcon` order.
+/// The pointer, then the icons in `SystemIcon` order.
 const POINTER_PNG: (&str, &[u8]) = embed!("ui/cursors/pointer.png");
-const ICON_PNGS: [(&str, &[u8]); 5] = [
+const ICON_PNGS: [(&str, &[u8]); SystemIcon::COUNT] = [
     embed!("ui/icons/code.png"),
     embed!("ui/icons/sprites.png"),
     embed!("ui/icons/map.png"),
     embed!("ui/icons/sfx.png"),
     embed!("ui/icons/music.png"),
+    embed!("ui/icons/eraser.png"),
+    embed!("ui/icons/eyedropper.png"),
 ];
 
 /// Side of a view icon, in pixels.
@@ -635,8 +637,6 @@ mod tests {
     // icon uses the pack's outline and light inks.
     #[test]
     fn embedded_ui_images_load() {
-        use glaux_machine::system_rom::SystemIcon;
-
         let ui = ui().unwrap();
         let pointer = ui.pointer();
         assert_eq!((pointer.image.width(), pointer.image.height()), (12, 16));
@@ -650,6 +650,8 @@ mod tests {
             SystemIcon::Map,
             SystemIcon::Sfx,
             SystemIcon::Music,
+            SystemIcon::Eraser,
+            SystemIcon::Eyedropper,
         ] {
             let image = ui.icon(icon);
             assert_eq!((image.width(), image.height()), (ICON_SIZE, ICON_SIZE));

@@ -11,12 +11,13 @@ mod pause;
 mod running;
 mod sfx;
 mod shell;
+mod video;
 mod workspace;
 
 pub use boot::Boot;
-pub use running::CartridgeVideoDefaults;
 pub use shell::Shell;
-use workspace::Workspace;
+pub use video::CartridgeVideoDefaults;
+use workspace::{Workspace, WorkspaceVideo};
 
 use glaux_input::{InputEvent, InputMode, Point};
 use glaux_luau::RuntimeError;
@@ -69,6 +70,8 @@ pub enum SystemState {
     Workspace {
         shell: Box<Shell>,
         cartridge: LoadedCartridge,
+        /// The cartridge's video assets, read when the workspace opened.
+        video: WorkspaceVideo,
     },
     /// A cartridge runs and receives the logical ticks. The shell keeps its
     /// state, collecting logged output, but takes no input. The break key
@@ -153,13 +156,15 @@ impl System {
     /// Starts at frame 0 of the boot sequence, which plays the System ROM's
     /// `sounds`. The shell that follows navigates `cartridges`, and
     /// cartridges it starts fall back to `video_defaults`. The workspace is
-    /// laid out for the System ROM font's `font` metrics.
+    /// laid out for the System ROM font's `font` metrics and drawn in the
+    /// System ROM's `palette`.
     pub fn new(
         info: SystemInfo,
         sounds: SystemSounds,
         video_defaults: CartridgeVideoDefaults,
         cartridges: CartridgeStorage,
         font: FontMetrics,
+        palette: Palette,
     ) -> Self {
         Self {
             state: SystemState::Boot {
@@ -170,7 +175,7 @@ impl System {
             audio_source: AudioSource::Silent,
             sound: SystemSound::new(sounds),
             video_defaults,
-            workspace: Workspace::new(font),
+            workspace: Workspace::new(font, palette),
         }
     }
 
@@ -250,9 +255,11 @@ impl System {
             SystemState::Shell { shell, loaded } => {
                 shell_tick(shell, loaded, input, &video_defaults, &mut workspace)
             }
-            SystemState::Workspace { shell, cartridge } => {
-                workspace_tick(shell, cartridge, &mut workspace, input)
-            }
+            SystemState::Workspace {
+                shell,
+                cartridge,
+                video,
+            } => workspace_tick(shell, cartridge, video, &mut workspace, input),
             SystemState::Running { shell, running } => running_tick(shell, running, input),
             SystemState::Paused {
                 shell,
@@ -333,9 +340,11 @@ impl System {
 
     /// The master palette the frame drawn by [`render`](Self::render)
     /// resolves to: the cartridge's own while its frame is on screen, the
-    /// System ROM palette otherwise.
+    /// System ROM palette with the cartridge's object colors after the UI
+    /// colors in the workspace, and the System ROM palette otherwise.
     pub fn frame_palette<'a>(&'a self, rom: &'a SystemRom) -> &'a Palette {
         match &self.state {
+            SystemState::Workspace { video, .. } => video.frame_palette().unwrap_or(rom.palette()),
             SystemState::Running { running, .. }
             | SystemState::Paused {
                 running,
@@ -344,7 +353,6 @@ impl System {
             } => running.palette(),
             SystemState::Boot { .. }
             | SystemState::Shell { .. }
-            | SystemState::Workspace { .. }
             | SystemState::Paused {
                 view: PausedView::Shell,
                 ..
@@ -375,9 +383,11 @@ impl System {
                 view: PausedView::Shell,
                 ..
             } => shell.lines(text_columns(cell_w), text_rows(cell_h)),
-            SystemState::Workspace { cartridge, .. } => {
+            SystemState::Workspace {
+                cartridge, video, ..
+            } => {
                 self.workspace
-                    .render(framebuffer, font, rom.ui(), cartridge, pointer);
+                    .render(framebuffer, font, rom.ui(), cartridge, video, pointer);
                 return;
             }
             SystemState::Running { running, .. } => {
@@ -459,7 +469,9 @@ fn shell_tick(
     for (index, &event) in input.iter().enumerate() {
         if event == InputEvent::Break {
             match loaded {
-                Some(cartridge) => return open_workspace(shell, cartridge, workspace),
+                Some(cartridge) => {
+                    return open_workspace(shell, cartridge, workspace, video_defaults);
+                }
                 None => {
                     shell.report(NO_CARTRIDGE_HINT);
                     continue;
@@ -504,15 +516,22 @@ fn shell_tick(
     SystemState::Shell { shell, loaded }
 }
 
-/// Makes the workspace the active UI on `cartridge`.
+/// Makes the workspace the active UI on `cartridge`, reading its video
+/// assets afresh so the editors show the files as they are now.
 fn open_workspace(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
-    workspace: &mut Workspace,
+    workspace: &Workspace,
+    video_defaults: &CartridgeVideoDefaults,
 ) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
     tracing::info!(cartridge = %identity, tab = ?workspace.tab(), "workspace opened");
-    SystemState::Workspace { shell, cartridge }
+    let video = workspace.load_video(&cartridge, video_defaults);
+    SystemState::Workspace {
+        shell,
+        cartridge,
+        video,
+    }
 }
 
 /// Feeds `input` to the workspace. Break returns to the shell with the
@@ -521,6 +540,7 @@ fn open_workspace(
 fn workspace_tick(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
+    video: WorkspaceVideo,
     workspace: &mut Workspace,
     input: &[InputEvent],
 ) -> SystemState {
@@ -534,7 +554,11 @@ fn workspace_tick(
         }
         workspace.handle_input(event);
     }
-    SystemState::Workspace { shell, cartridge }
+    SystemState::Workspace {
+        shell,
+        cartridge,
+        video,
+    }
 }
 
 /// Starts `cartridge`, reporting its start or failure and what it logged.
@@ -799,7 +823,7 @@ mod tests {
             image: InkImage::new(2, 2, vec![1, 0, 0, 2]).unwrap(),
             hotspot: (1, 1),
         };
-        SystemUi::new(pointer, [icon(), icon(), icon(), icon(), icon()])
+        SystemUi::new(pointer, std::array::from_fn(|_| icon()))
     }
 
     fn video_defaults() -> CartridgeVideoDefaults {
@@ -827,6 +851,7 @@ mod tests {
             video_defaults(),
             cartridges(),
             fake_rom().font().metrics(),
+            fake_rom().palette().clone(),
         )
     }
 
@@ -1213,6 +1238,7 @@ mod tests {
             video_defaults(),
             fixture.storage(),
             fake_rom().font().metrics(),
+            fake_rom().palette().clone(),
         );
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
@@ -1510,6 +1536,7 @@ mod tests {
             video_defaults(),
             fixture.storage(),
             fake_rom().font().metrics(),
+            fake_rom().palette().clone(),
         );
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
@@ -2398,6 +2425,7 @@ mod tests {
             video_defaults(),
             cartridges(),
             fake_rom().font().metrics(),
+            fake_rom().palette().clone(),
         );
         let (_, ticks) = boot_audio(system, &mut Psg::new());
         assert!(ticks.iter().all(|samples| quiet(samples)));
@@ -2430,7 +2458,7 @@ mod tests {
             audio_source: AudioSource::Silent,
             sound,
             video_defaults: video_defaults(),
-            workspace: Workspace::new(fake_rom().font().metrics()),
+            workspace: Workspace::new(fake_rom().font().metrics(), fake_rom().palette().clone()),
         };
         system = system.update(&[]);
         system.audio(&mut psg);
@@ -3127,6 +3155,7 @@ mod tests {
             video_defaults(),
             fixture.storage(),
             fake_rom().font().metrics(),
+            fake_rom().palette().clone(),
         );
         assert!(!drawn(&system), "boot");
         while matches!(system.state(), SystemState::Boot { .. }) {
@@ -3308,7 +3337,8 @@ mod tests {
         let system = started_with_palette(&fixture, "", &reversed_rom_palette());
         let mut system = press_break(stop_cartridge(system));
         assert!(is_workspace(&system));
-        assert_eq!(system.frame_palette(&rom), rom.palette());
+        let palette = system.frame_palette(&rom);
+        assert_eq!(palette.entries()[..32], rom.palette().entries()[..32]);
         let mut psg = Psg::new();
         for _ in 0..5 {
             system = system.update(&[]);
@@ -3357,5 +3387,209 @@ mod tests {
                 assert_eq!(long.pixel(x, y), short.pixel(x, y), "({x}, {y})");
             }
         }
+    }
+
+    // Sprite editor.
+
+    fn open_sprites(system: System) -> System {
+        press_break(system).update(&click(tab_centre(Tab::Sprites)))
+    }
+
+    /// A master palette whose every entry is distinct and differs from the
+    /// fake ROM's.
+    fn distinct_palette() -> Palette {
+        Palette::new(std::array::from_fn(|i| {
+            let i = i as u8;
+            glaux_machine::palette::Rgb {
+                r: i,
+                g: 255 - i,
+                b: i ^ 0x5a,
+            }
+        }))
+    }
+
+    /// OBP bytes mapping every bank's local `n` to master `100 + n`.
+    fn obp_hundreds() -> [u8; 128] {
+        std::array::from_fn(|offset| match offset % 16 {
+            0 => 0,
+            local => 100 + local as u8,
+        })
+    }
+
+    /// Writes every video asset into `pong`: tile 0 solid local 3, tile 1
+    /// with a single pixel, all tiles on OBP0.
+    fn write_video_assets(fixture: &Fixture) {
+        let dir = fixture.root().join("pong");
+        let mut tiles = vec![0u8; 64 * 32];
+        tiles[..32].fill(0x33);
+        tiles[32] = 0x50;
+        std::fs::write(dir.join("sprites.bin"), &tiles).unwrap();
+        std::fs::write(dir.join("objattr.bin"), [0u8; 64]).unwrap();
+        std::fs::write(dir.join("obp.bin"), obp_hundreds()).unwrap();
+        std::fs::write(dir.join("palette.bin"), distinct_palette().to_rgb888()).unwrap();
+    }
+
+    fn with_video_assets(fixture: &Fixture) -> System {
+        let system = shell_with_cartridge(fixture, "");
+        write_video_assets(fixture);
+        enter(system, "load pong")
+    }
+
+    #[test]
+    fn the_workspace_presents_ui_colors_and_exact_cartridge_colors() {
+        let fixture = Fixture::new("sys-sprites-palette");
+        let rom = fake_rom();
+        let system = open_sprites(with_video_assets(&fixture));
+        let palette = system.frame_palette(&rom);
+        let master = distinct_palette();
+        assert_eq!(palette.entries()[..32], rom.palette().entries()[..32]);
+        for local in 1..16u8 {
+            assert_eq!(
+                palette.get(31 + local),
+                master.get(100 + local),
+                "local {local}"
+            );
+        }
+
+        let fb = render(&system);
+        let canvas = workspace::tests_support::sprite_canvas(&system.workspace);
+        let pixel = fb.pixel(canvas.x + 5, canvas.y + 5).unwrap();
+        assert_eq!(palette.get(pixel), master.get(103));
+    }
+
+    #[test]
+    fn reopening_the_workspace_reads_the_assets_again() {
+        let fixture = Fixture::new("sys-sprites-reload");
+        let rom = fake_rom();
+        let system = open_sprites(with_video_assets(&fixture));
+        let mut changed = distinct_palette().entries().to_owned();
+        changed[103] = glaux_machine::palette::Rgb::from_hex(0x123456);
+        std::fs::write(
+            fixture.root().join("pong/palette.bin"),
+            Palette::new(changed).to_rgb888(),
+        )
+        .unwrap();
+        let before = system.frame_palette(&rom).get(34);
+        assert_eq!(before, distinct_palette().get(103));
+
+        let system = press_break(press_break(system));
+        assert_eq!(
+            system.frame_palette(&rom).get(34),
+            glaux_machine::palette::Rgb::from_hex(0x123456)
+        );
+    }
+
+    #[test]
+    fn sprite_editor_state_survives_tab_switches_and_shell_trips() {
+        let fixture = Fixture::new("sys-sprites-keep");
+        let system = open_sprites(loaded(&fixture));
+        assert_eq!(workspace_tab(&system), Tab::Sprites);
+        let system = system.update(&[
+            InputEvent::Down,
+            InputEvent::Down,
+            InputEvent::Right { select: false },
+            InputEvent::Text('a'),
+            InputEvent::Text('+'),
+            InputEvent::Wheel { delta: -3 },
+            InputEvent::WheelHorizontal { delta: -2 },
+            InputEvent::Text('g'),
+        ]);
+        let state = system.workspace.sprites().clone();
+        assert_eq!(state.selected(), 33);
+        assert!(state.is_advanced());
+
+        // Keys typed in other views do not reach the sprite editor.
+        let system = system.update(&[
+            InputEvent::NextView,
+            InputEvent::Text('a'),
+            InputEvent::Down,
+            InputEvent::Wheel { delta: 2 },
+        ]);
+        assert_eq!(workspace_tab(&system), Tab::Map);
+        let system = system.update(&click(tab_centre(Tab::Sprites)));
+        assert_eq!(system.workspace.sprites(), &state);
+
+        let system = press_break(enter(press_break(system), "info"));
+        assert_eq!(workspace_tab(&system), Tab::Sprites);
+        assert_eq!(system.workspace.sprites(), &state);
+    }
+
+    /// Every file under `dir` with its contents and modification time.
+    fn snapshot(
+        dir: &std::path::Path,
+    ) -> Vec<(std::path::PathBuf, Vec<u8>, std::time::SystemTime)> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                out.extend(snapshot(&path));
+            } else {
+                let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+                out.push((path.clone(), std::fs::read(&path).unwrap(), modified));
+            }
+        }
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn browsing_sprites_never_writes_the_cartridge() {
+        let fixture = Fixture::new("sys-sprites-readonly");
+        let system = with_video_assets(&fixture);
+        let before = snapshot(&fixture.root().join("pong"));
+
+        let mut system = open_sprites(system);
+        let keys = [
+            InputEvent::Text('a'),
+            InputEvent::Text('+'),
+            InputEvent::Text('g'),
+            InputEvent::Text('-'),
+            InputEvent::Down,
+            InputEvent::Right { select: false },
+            InputEvent::Wheel { delta: -2 },
+            InputEvent::WheelHorizontal { delta: -1 },
+            InputEvent::Enter,
+            InputEvent::Backspace,
+            InputEvent::Delete,
+        ];
+        for round in 0..2 {
+            system = system.update(&keys);
+            // Click everywhere below the tab bar: canvas, sheet, tools,
+            // swatches, bank cells and options buttons.
+            for y in (16..240).step_by(3) {
+                let row: Vec<InputEvent> = (0..320)
+                    .step_by(5)
+                    .flat_map(|x| click(Point::new(x, y)))
+                    .collect();
+                system = system.update(&row);
+            }
+            system.render(
+                &mut Framebuffer::new(),
+                &fake_rom(),
+                Some(Point::new(40, 60)),
+            );
+            assert_eq!(workspace_tab(&system), Tab::Sprites, "round {round}");
+        }
+        let system = press_break(system);
+        assert!(!is_workspace(&system));
+        assert_eq!(snapshot(&fixture.root().join("pong")), before);
+    }
+
+    #[test]
+    fn malformed_video_assets_leave_the_workspace_usable() {
+        let fixture = Fixture::new("sys-sprites-malformed");
+        let rom = fake_rom();
+        let system = with_video_assets(&fixture);
+        std::fs::write(fixture.root().join("pong/obp.bin"), [1u8, 2, 3]).unwrap();
+        let system = open_sprites(system);
+        assert_eq!(system.frame_palette(&rom), rom.palette());
+        let fb = render(&system);
+        assert!(fb.as_bytes().contains(&ERROR), "the error is shown");
+
+        let system = system.update(&[InputEvent::Text('a'), InputEvent::Wheel { delta: -1 }]);
+        let system = system.update(&click(tab_centre(Tab::Map)));
+        assert_eq!(workspace_tab(&system), Tab::Map);
+        render(&system);
+        assert!(!is_workspace(&press_break(system)));
     }
 }

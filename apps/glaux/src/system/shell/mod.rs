@@ -214,7 +214,8 @@ impl Shell {
             | InputEvent::PointerMove(_)
             | InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }
-            | InputEvent::Wheel { .. } => {}
+            | InputEvent::Wheel { .. }
+            | InputEvent::WheelHorizontal { .. } => {}
         }
         None
     }

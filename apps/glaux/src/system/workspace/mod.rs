@@ -2,19 +2,30 @@
 //!
 //! The workspace works on the loaded cartridge without starting it. The
 //! system lends it the cartridge for each tick and frame; the workspace
-//! keeps only its own UI state, so the selected tab survives trips to the
-//! shell.
+//! keeps only its own UI state, so the selected tab and each editor's view
+//! survive tab switches and trips to the shell.
+
+mod sprites;
 
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::{BitmapFont, FontMetrics};
 use glaux_machine::framebuffer::{Framebuffer, WIDTH};
 use glaux_machine::ink_image::INK_SLOTS;
+use glaux_machine::palette::Palette;
 use glaux_machine::system_rom::{Cursor, SystemIcon, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
+use glaux_video::preview::ObjPreviewPalette;
 
+use super::video::{CartridgeVideo, CartridgeVideoDefaults};
 use super::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::cartridge::LoadedCartridge;
 use crate::rom::ICON_SIZE;
+use sprites::{SpriteEditor, SpriteSource};
+
+/// Entries of the workspace's frame palette that keep the system palette's
+/// colors. Every UI color index is below it; the cartridge's object colors
+/// are placed after it.
+const SYSTEM_COLORS: usize = 32;
 
 /// Fill of the tab bar, as a system palette index.
 const BAR: u8 = 12;
@@ -116,6 +127,34 @@ impl Rect {
 
     fn right(self) -> i32 {
         self.x + self.width
+    }
+
+    fn bottom(self) -> i32 {
+        self.y + self.height
+    }
+
+    /// The rectangle shrunk by `by` pixels on every side, or grown when
+    /// `by` is negative.
+    fn inset(self, by: i32) -> Self {
+        Self {
+            x: self.x + by,
+            y: self.y + by,
+            width: self.width - 2 * by,
+            height: self.height - 2 * by,
+        }
+    }
+
+    #[cfg(test)]
+    fn contains_xy(self, x: i32, y: i32) -> bool {
+        (self.x..self.right()).contains(&x) && (self.y..self.bottom()).contains(&y)
+    }
+
+    #[cfg(test)]
+    fn overlaps(self, other: Self) -> bool {
+        self.x < other.right()
+            && other.x < self.right()
+            && self.y < other.bottom()
+            && other.y < self.bottom()
     }
 }
 
@@ -219,20 +258,94 @@ pub fn draw_cursor(framebuffer: &mut Framebuffer, cursor: &Cursor, pointer: Opti
     );
 }
 
+/// The cartridge's video state as the workspace shows it, read when the
+/// workspace opens.
+#[derive(Debug)]
+// Boxed: two palettes and a frame palette would make every system state
+// as large as this one.
+pub struct WorkspaceVideo(Result<Box<PreviewVideo>, String>);
+
+#[derive(Debug)]
+struct PreviewVideo {
+    video: CartridgeVideo,
+    preview: ObjPreviewPalette,
+}
+
+impl WorkspaceVideo {
+    /// The palette the workspace's frames are presented with, if the
+    /// cartridge's video assets loaded.
+    pub fn frame_palette(&self) -> Option<&Palette> {
+        self.0.as_ref().ok().map(|ready| ready.preview.palette())
+    }
+
+    fn source(&self) -> Result<SpriteSource<'_>, &str> {
+        match &self.0 {
+            Ok(ready) => Ok(SpriteSource {
+                obj: &ready.video.obj,
+                master: &ready.video.palette,
+                preview: &ready.preview,
+            }),
+            Err(message) => Err(message),
+        }
+    }
+}
+
 /// The workspace's UI state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
     layout: Layout,
     tab: Tab,
+    sprites: SpriteEditor,
+    /// The system palette, whose first [`SYSTEM_COLORS`] entries the UI is
+    /// drawn with.
+    system_palette: Palette,
 }
 
 impl Workspace {
-    /// A workspace on the Code tab, laid out for a font with `metrics`.
-    pub fn new(metrics: FontMetrics) -> Self {
+    /// A workspace on the Code tab, laid out for a font with `metrics`
+    /// and drawn in `system_palette`.
+    pub fn new(metrics: FontMetrics, system_palette: Palette) -> Self {
+        let layout = Layout::new(metrics);
         Self {
-            layout: Layout::new(metrics),
+            layout,
             tab: Tab::default(),
+            sprites: SpriteEditor::new(sprites::Metrics {
+                cell_w: layout.cell_w,
+                cell_h: layout.cell_h,
+                top: layout.bar_height(),
+            }),
+            system_palette,
         }
+    }
+
+    /// Reads `cartridge`'s video assets, falling back to `defaults` for
+    /// those it lacks, for the editors to show. Nothing is written back.
+    pub fn load_video(
+        &self,
+        cartridge: &LoadedCartridge,
+        defaults: &CartridgeVideoDefaults,
+    ) -> WorkspaceVideo {
+        let loaded = CartridgeVideo::load(cartridge, defaults)
+            .map_err(|err| err.to_string())
+            .and_then(|video| {
+                let preview = ObjPreviewPalette::new(
+                    &self.system_palette,
+                    SYSTEM_COLORS,
+                    &video.palette,
+                    video.obj.palettes(),
+                )
+                .map_err(|err| err.to_string())?;
+                Ok(Box::new(PreviewVideo { video, preview }))
+            });
+        if let Err(message) = &loaded {
+            tracing::warn!(%message, "cartridge video unavailable in the workspace");
+        }
+        WorkspaceVideo(loaded)
+    }
+
+    #[cfg(test)]
+    pub fn sprites(&self) -> &SpriteEditor {
+        &self.sprites
     }
 
     pub fn tab(&self) -> Tab {
@@ -240,8 +353,8 @@ impl Workspace {
     }
 
     /// Applies `event`. Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs, and a
-    /// primary press on a tab selects it. Plain Tab and text are left for
-    /// the editors.
+    /// primary press on a tab selects it. Everything else goes to the open
+    /// view's editor, if it has one.
     pub fn handle_input(&mut self, event: InputEvent) {
         match event {
             InputEvent::NextView => self.tab = self.tab.next(),
@@ -249,24 +362,26 @@ impl Workspace {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
-            } => {
+            } if self.layout.tab_at(at).is_some() => {
                 if let Some(tab) = self.layout.tab_at(at) {
                     self.tab = tab;
                 }
             }
+            _ if self.tab == Tab::Sprites => self.sprites.handle_input(event),
             _ => {}
         }
     }
 
-    /// Draws the tab bar and the selected view for `cartridge`, with the
-    /// tab under `pointer` highlighted. The pointer itself is not drawn;
-    /// see [`draw_cursor`].
+    /// Draws the tab bar and the selected view for `cartridge`, whose
+    /// video state is `video`, with what is under `pointer` highlighted.
+    /// The pointer itself is not drawn; see [`draw_cursor`].
     pub fn render(
         &self,
         framebuffer: &mut Framebuffer,
         font: &BitmapFont,
         ui: &SystemUi,
         cartridge: &LoadedCartridge,
+        video: &WorkspaceVideo,
         pointer: Option<Point>,
     ) {
         let layout = self.layout;
@@ -327,7 +442,12 @@ impl Workspace {
             draw_text(framebuffer, font, &name, x, layout.text_y(), PALE);
         }
 
-        self.render_placeholder(framebuffer, font);
+        match self.tab {
+            Tab::Sprites => self
+                .sprites
+                .render(framebuffer, font, ui, video.source(), pointer),
+            _ => self.render_placeholder(framebuffer, font),
+        }
     }
 
     /// The selected view's stand-in until its editor exists.
@@ -362,6 +482,11 @@ pub(super) mod tests_support {
     pub fn hint_origin(metrics: FontMetrics) -> (i32, i32) {
         let layout = Layout::new(metrics);
         (layout.hint_x(), layout.text_y())
+    }
+
+    /// Where the sprite editor draws the enlarged tile.
+    pub fn sprite_canvas(workspace: &Workspace) -> Rect {
+        workspace.sprites.canvas_rect()
     }
 
     /// The leftmost column the cartridge name may use.

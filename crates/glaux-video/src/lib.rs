@@ -1,6 +1,7 @@
 //! Video subsystem for Glaux.
 
 pub mod draw;
+pub mod preview;
 pub mod shade;
 
 use glaux_machine::framebuffer::{Framebuffer, LEN};
