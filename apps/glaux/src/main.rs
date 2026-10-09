@@ -19,6 +19,7 @@ use clock::TickClock;
 use desktop::single_instance::{self, PrimaryInstance, SecondaryLaunch, Startup};
 use desktop::window_state::{self, WindowSnapshot, WindowTracker};
 use glaux_host_raylib::{AudioDevice, AudioOutput, Presentation, RaylibHost};
+use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::machine::Machine;
 use glaux_machine::psg::{SAMPLE_RATE, SAMPLES_PER_TICK};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
@@ -149,6 +150,7 @@ fn run(
     let mut clock = TickClock::new();
     let mut pending = Vec::new();
     let mut last = Instant::now();
+    let mut presented = Framebuffer::new();
     // Render before updating so the initial state is the first frame shown.
     while !host.should_close() {
         tracker.observe(snapshot(&host, &tracker));
@@ -160,14 +162,15 @@ fn run(
             }
         }
 
-        system.render(machine.framebuffer_mut(), &rom);
-        host.present(&IndexedFrame::new(
-            machine.framebuffer(),
-            system.frame_palette(&rom),
-        ))?;
-        // Follows every state change, Escape transitions included, before
-        // the input for the new state is polled.
-        host.set_pointer_visible(system.pointer_visible());
+        let pointer = host.pointer_position();
+        system.render(machine.framebuffer_mut(), &rom, pointer);
+        // The pointer goes on a copy so it follows the host every frame
+        // without ever entering the machine's framebuffer.
+        presented
+            .as_bytes_mut()
+            .copy_from_slice(machine.framebuffer().as_bytes());
+        system.draw_cursor(&mut presented, &rom, pointer);
+        host.present(&IndexedFrame::new(&presented, system.frame_palette(&rom)))?;
         pending.extend(host.poll_input(system.input_mode()));
 
         let now = Instant::now();

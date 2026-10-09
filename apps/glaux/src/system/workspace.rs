@@ -8,19 +8,32 @@
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::{BitmapFont, FontMetrics};
 use glaux_machine::framebuffer::{Framebuffer, WIDTH};
-use glaux_video::draw::{clear, draw_text, draw_text_scaled, fill_rect};
+use glaux_machine::ink_image::INK_SLOTS;
+use glaux_machine::system_rom::{Cursor, SystemIcon, SystemUi};
+use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 
 use super::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::cartridge::LoadedCartridge;
+use crate::rom::ICON_SIZE;
 
 /// Fill of the tab bar, as a system palette index.
 const BAR: u8 = 12;
-/// Space between a tab's label and its edges.
-const TAB_PAD: i32 = 3;
+/// Icon outlines and the pointer's outline.
+const OUTLINE: u8 = 11;
+/// Icon shading on an idle tab.
+const IDLE_SHADE: u8 = 13;
+/// Icon shading while a tab is hovered.
+const HOVER_SHADE: u8 = 19;
+/// Space between a tab's icon and the sides of its plate.
+const PLATE_PAD: i32 = 1;
 /// Gap between adjacent tabs, and before the first one.
 const TAB_GAP: i32 = 1;
-/// Minimum space between the last tab and the cartridge name.
+/// Space between the last tab and the tab name hint.
+const HINT_GAP: i32 = 4;
+/// Minimum space between the hint and the cartridge name.
 const NAME_GAP: i32 = 8;
+/// Space between the cartridge name and the right edge.
+const NAME_PAD: i32 = 4;
 /// Fewest cells worth showing of a truncated cartridge name.
 const MIN_NAME_CELLS: usize = 4;
 /// Marks a cartridge name cut short to fit the bar.
@@ -47,6 +60,16 @@ impl Tab {
             Self::Map => "Map",
             Self::Sfx => "SFX",
             Self::Music => "Music",
+        }
+    }
+
+    fn icon(self) -> SystemIcon {
+        match self {
+            Self::Code => SystemIcon::Code,
+            Self::Sprites => SystemIcon::Sprites,
+            Self::Map => SystemIcon::Map,
+            Self::Sfx => SystemIcon::Sfx,
+            Self::Music => SystemIcon::Music,
         }
     }
 
@@ -90,6 +113,10 @@ impl Rect {
         let (x, y) = (i32::from(point.x), i32::from(point.y));
         (self.x..self.x + self.width).contains(&x) && (self.y..self.y + self.height).contains(&y)
     }
+
+    fn right(self) -> i32 {
+        self.x + self.width
+    }
 }
 
 /// Where the workspace chrome sits for one font.
@@ -107,17 +134,18 @@ impl Layout {
         }
     }
 
-    /// Height of the tab bar: one text row and a pixel above and below.
+    /// Height of the tab bar: an icon, or one text row with a pixel above
+    /// and below, whichever is taller.
     fn bar_height(self) -> i32 {
-        self.cell_h + 2
+        (self.cell_h + 2).max(ICON_SIZE as i32)
     }
 
     /// Each tab's clickable plate, left to right. Rendering and hit-testing
     /// both use these.
     fn tabs(self) -> [(Tab, Rect); 5] {
+        let width = ICON_SIZE as i32 + 2 * PLATE_PAD;
         let mut x = TAB_GAP;
         Tab::ALL.map(|tab| {
-            let width = text_width(tab.label(), self.cell_w) + 2 * TAB_PAD;
             let rect = Rect {
                 x,
                 y: 0,
@@ -136,11 +164,26 @@ impl Layout {
             .map(|(tab, _)| tab)
     }
 
-    /// Cells available to the cartridge name, right of the last tab.
-    fn name_cells(self) -> usize {
+    /// Where the hint naming a tab starts, right of the last tab.
+    fn hint_x(self) -> i32 {
         let [.., (_, last)] = self.tabs();
-        let start = last.x + last.width + NAME_GAP;
-        let space = WIDTH as i32 - TAB_GAP - TAB_PAD - start;
+        last.right() + HINT_GAP
+    }
+
+    /// Text row origin within the bar.
+    fn text_y(self) -> i32 {
+        (self.bar_height() - self.cell_h) / 2 + 1
+    }
+
+    /// Cells available to the cartridge name, right of the longest hint.
+    fn name_cells(self) -> usize {
+        let longest = Tab::ALL
+            .iter()
+            .map(|tab| text_width(tab.label(), self.cell_w))
+            .max()
+            .unwrap_or(0);
+        let start = self.hint_x() + longest + NAME_GAP;
+        let space = WIDTH as i32 - NAME_PAD - start;
         usize::try_from(space / self.cell_w.max(1)).unwrap_or(0)
     }
 }
@@ -160,13 +203,27 @@ fn fit_name(name: &str, cells: usize) -> Option<String> {
     (kept >= MIN_NAME_CELLS).then(|| name.chars().take(kept).chain(ELLIPSIS.chars()).collect())
 }
 
+/// Draws `cursor` with its hotspot on `pointer`, if any. Drawn over the
+/// finished frame, it covers everything below it.
+pub fn draw_cursor(framebuffer: &mut Framebuffer, cursor: &Cursor, pointer: Option<Point>) {
+    let Some(at) = pointer else {
+        return;
+    };
+    let (hot_x, hot_y) = cursor.hotspot;
+    draw_ink_image(
+        framebuffer,
+        &cursor.image,
+        i32::from(at.x) - i32::from(hot_x),
+        i32::from(at.y) - i32::from(hot_y),
+        &[OUTLINE, TEXT, TEXT],
+    );
+}
+
 /// The workspace's UI state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
     layout: Layout,
     tab: Tab,
-    /// The logical pixel under the pointer, while it is over the screen.
-    hover: Option<Point>,
 }
 
 impl Workspace {
@@ -175,18 +232,11 @@ impl Workspace {
         Self {
             layout: Layout::new(metrics),
             tab: Tab::default(),
-            hover: None,
         }
     }
 
     pub fn tab(&self) -> Tab {
         self.tab
-    }
-
-    /// Forgets pointer state, keeping the selected tab. Called whenever the
-    /// workspace is entered or left, so no hover or press outlives a visit.
-    pub fn reset_pointer(&mut self) {
-        self.hover = None;
     }
 
     /// Applies `event`. Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs, and a
@@ -196,12 +246,10 @@ impl Workspace {
         match event {
             InputEvent::NextView => self.tab = self.tab.next(),
             InputEvent::PreviousView => self.tab = self.tab.previous(),
-            InputEvent::PointerMove(position) => self.hover = position,
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
             } => {
-                self.hover = Some(at);
                 if let Some(tab) = self.layout.tab_at(at) {
                     self.tab = tab;
                 }
@@ -210,20 +258,25 @@ impl Workspace {
         }
     }
 
-    /// Draws the tab bar and the selected view for `cartridge`.
+    /// Draws the tab bar and the selected view for `cartridge`, with the
+    /// tab under `pointer` highlighted. The pointer itself is not drawn;
+    /// see [`draw_cursor`].
     pub fn render(
         &self,
         framebuffer: &mut Framebuffer,
         font: &BitmapFont,
+        ui: &SystemUi,
         cartridge: &LoadedCartridge,
+        pointer: Option<Point>,
     ) {
         let layout = self.layout;
         clear(framebuffer, BACKGROUND);
         fill_rect(framebuffer, 0, 0, WIDTH as i32, layout.bar_height(), BAR);
 
-        let hovered = self.hover.and_then(|at| layout.tab_at(at));
+        let hovered = pointer.and_then(|at| layout.tab_at(at));
         for (tab, rect) in layout.tabs() {
-            let label = if tab == self.tab {
+            let active = tab == self.tab;
+            let inks: [u8; INK_SLOTS] = if active {
                 // The active plate takes the body's color so it reads as
                 // the front of the view below it.
                 fill_rect(
@@ -234,27 +287,44 @@ impl Workspace {
                     rect.height,
                     BACKGROUND,
                 );
-                fill_rect(framebuffer, rect.x, rect.y, rect.width, 1, ACCENT);
-                TEXT
+                [OUTLINE, ACCENT, TEXT]
             } else if hovered == Some(tab) {
-                PALE
+                [OUTLINE, HOVER_SHADE, PALE]
             } else {
-                DIM
+                [OUTLINE, IDLE_SHADE, DIM]
             };
-            draw_text(
+            let icon_y = rect.y + (rect.height - ICON_SIZE as i32) / 2;
+            draw_ink_image(
                 framebuffer,
-                font,
-                tab.label(),
-                rect.x + TAB_PAD,
-                rect.y + 1,
-                label,
+                ui.icon(tab.icon()),
+                rect.x + PLATE_PAD,
+                icon_y,
+                &inks,
             );
+            if active {
+                fill_rect(framebuffer, rect.x, rect.y, rect.width, 1, ACCENT);
+            }
         }
+
+        // Icons alone don't say which editor is which: name the one under
+        // the pointer, or else the open one.
+        let (hint, color) = match hovered {
+            Some(tab) => (tab, PALE),
+            None => (self.tab, DIM),
+        };
+        draw_text(
+            framebuffer,
+            font,
+            hint.label(),
+            layout.hint_x(),
+            layout.text_y(),
+            color,
+        );
 
         let name = &cartridge.manifest().cartridge.name;
         if let Some(name) = fit_name(name, layout.name_cells()) {
-            let x = WIDTH as i32 - TAB_GAP - TAB_PAD - text_width(&name, layout.cell_w);
-            draw_text(framebuffer, font, &name, x, 1, PALE);
+            let x = WIDTH as i32 - NAME_PAD - text_width(&name, layout.cell_w);
+            draw_text(framebuffer, font, &name, x, layout.text_y(), PALE);
         }
 
         self.render_placeholder(framebuffer, font);
@@ -286,6 +356,18 @@ pub(super) mod tests_support {
     /// Where `tab` sits in the bar for a font with `metrics`.
     pub fn tab_rect(tab: Tab, metrics: FontMetrics) -> Rect {
         Layout::new(metrics).tabs()[tab.index()].1
+    }
+
+    /// Top-left corner of the tab name hint's first character cell.
+    pub fn hint_origin(metrics: FontMetrics) -> (i32, i32) {
+        let layout = Layout::new(metrics);
+        (layout.hint_x(), layout.text_y())
+    }
+
+    /// The leftmost column the cartridge name may use.
+    pub fn name_start(metrics: FontMetrics) -> i32 {
+        let layout = Layout::new(metrics);
+        WIDTH as i32 - NAME_PAD - layout.name_cells() as i32 * layout.cell_w
     }
 }
 
@@ -350,10 +432,25 @@ mod tests {
 
     #[test]
     fn the_bar_stays_compact() {
-        assert_eq!(layout().bar_height(), 12);
+        assert_eq!(layout().bar_height(), 16);
+        for (tab, rect) in layout().tabs() {
+            assert_eq!((rect.width, rect.height), (18, 16), "{tab:?}");
+        }
         let [.., (_, last)] = layout().tabs();
-        assert!(last.x + last.width < WIDTH as i32 / 2 + 20);
-        assert!(layout().name_cells() >= 16);
+        assert!(last.right() < WIDTH as i32 / 3);
+        assert!(layout().name_cells() >= 24);
+    }
+
+    #[test]
+    fn every_hint_fits_between_the_tabs_and_the_name() {
+        let layout = layout();
+        let [.., (_, last)] = layout.tabs();
+        assert!(layout.hint_x() > last.right());
+        let name_start = WIDTH as i32 - NAME_PAD - layout.name_cells() as i32 * layout.cell_w;
+        for tab in Tab::ALL {
+            let end = layout.hint_x() + text_width(tab.label(), layout.cell_w);
+            assert!(end + NAME_GAP <= name_start, "{tab:?}");
+        }
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 pub use audio::{AudioDevice, AudioError, AudioOutput};
 use crt::CrtPass;
-use glaux_input::{InputEvent, InputMode};
+use glaux_input::{InputEvent, InputMode, Point};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
 use keyboard::{EditKeys, GameKeys, KeyState, Modifiers, TextKeys, retain_for_mode};
 use pointer::{ButtonFrame, PointerFrame, PointerTracker};
@@ -89,8 +89,6 @@ pub struct RaylibHost {
     text_keys: TextKeys,
     game_keys: GameKeys,
     pointer: PointerTracker,
-    /// Whether the system mouse cursor is shown over the window.
-    pointer_visible: bool,
     rl: RaylibHandle,
     thread: RaylibThread,
 }
@@ -119,7 +117,10 @@ impl RaylibHost {
         rl.set_window_min_size(width, height);
         // Esc is Glaux's break key; raylib would otherwise close the window.
         rl.set_exit_key(None);
-        // The cursor is shown only where the system asks for it.
+        // The system draws its own pointer into the frame. GLFW's hidden
+        // mode only hides the cursor while it is over this window's client
+        // area; unlike the disabled mode it never locks or captures it, so
+        // the desktop pointer stays usable everywhere else.
         rl.hide_cursor();
 
         tracing::info!(
@@ -166,7 +167,6 @@ impl RaylibHost {
             text_keys: TextKeys::default(),
             game_keys: GameKeys::default(),
             pointer: PointerTracker::default(),
-            pointer_visible: false,
             rl,
             thread,
         })
@@ -242,18 +242,12 @@ impl RaylibHost {
         self.rl.set_window_focused();
     }
 
-    /// Shows or hides the system mouse cursor over the window.
-    pub fn set_pointer_visible(&mut self, visible: bool) {
-        if visible == self.pointer_visible {
-            return;
-        }
-        self.pointer_visible = visible;
-        if visible {
-            self.rl.show_cursor();
-        } else {
-            self.rl.hide_cursor();
-        }
-        tracing::debug!(visible, "pointer visibility changed");
+    /// The logical pixel under the pointer as of the last
+    /// [`poll_input`](Self::poll_input), mapped like pointer events. It is
+    /// `None` outside [`InputMode::Workspace`] and while the pointer is off
+    /// the frame, except during a press, when it is clamped to the frame.
+    pub fn pointer_position(&self) -> Option<Point> {
+        self.pointer.position()
     }
 
     /// Returns `true` once the user has asked to close the window.

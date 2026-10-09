@@ -2,6 +2,7 @@
 
 pub mod font;
 pub mod framebuffer;
+pub mod ink_image;
 pub mod machine;
 pub mod obj_palette;
 pub mod palette;

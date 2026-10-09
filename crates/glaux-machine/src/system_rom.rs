@@ -4,6 +4,7 @@ use glaux_audio::sfx::Sfx;
 use semver::Version;
 
 use crate::font::BitmapFont;
+use crate::ink_image::InkImage;
 use crate::obj_palette::ObjPalettes;
 use crate::palette::Palette;
 
@@ -33,9 +34,52 @@ impl SystemSounds {
     }
 }
 
+/// A pointer image and the pixel of it that marks the pointed-at position.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Cursor {
+    pub image: InkImage,
+    /// Offset of the pointed-at pixel from the image's top-left corner.
+    pub hotspot: (u8, u8),
+}
+
+/// An icon the System ROM's UI shows, one per workspace view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemIcon {
+    Code,
+    Sprites,
+    Map,
+    Sfx,
+    Music,
+}
+
+/// The images the system UI draws with. The default has every image
+/// empty, so a ROM built without them draws nothing for them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SystemUi {
+    pointer: Cursor,
+    icons: [InkImage; 5],
+}
+
+impl SystemUi {
+    /// `icons` are in [`SystemIcon`] declaration order.
+    pub fn new(pointer: Cursor, icons: [InkImage; 5]) -> Self {
+        Self { pointer, icons }
+    }
+
+    /// The default mouse pointer.
+    pub fn pointer(&self) -> &Cursor {
+        &self.pointer
+    }
+
+    pub fn icon(&self, icon: SystemIcon) -> &InkImage {
+        &self.icons[icon as usize]
+    }
+}
+
 /// Built-in data the machine is created with: the ROM version, its
 /// copyright notice, the system palette, the system font, the system
-/// sounds and the object palette banks cartridges start with.
+/// sounds, the system UI images and the object palette banks cartridges
+/// start with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemRom {
     version: Version,
@@ -43,6 +87,7 @@ pub struct SystemRom {
     palette: Palette,
     font: BitmapFont,
     sounds: SystemSounds,
+    ui: SystemUi,
     obj_palettes: ObjPalettes,
 }
 
@@ -54,6 +99,7 @@ impl SystemRom {
             palette,
             font,
             sounds: SystemSounds::default(),
+            ui: SystemUi::default(),
             obj_palettes: ObjPalettes::linear(),
         }
     }
@@ -61,6 +107,12 @@ impl SystemRom {
     /// This ROM with `sounds` in place of its sound effects.
     pub fn with_sounds(mut self, sounds: SystemSounds) -> Self {
         self.sounds = sounds;
+        self
+    }
+
+    /// This ROM with `ui` in place of its UI images.
+    pub fn with_ui(mut self, ui: SystemUi) -> Self {
+        self.ui = ui;
         self
     }
 
@@ -95,6 +147,11 @@ impl SystemRom {
     /// The system sound effects.
     pub fn sounds(&self) -> &SystemSounds {
         &self.sounds
+    }
+
+    /// The images the system UI draws with.
+    pub fn ui(&self) -> &SystemUi {
+        &self.ui
     }
 
     /// The object palette banks a cartridge starts with unless it supplies
@@ -214,6 +271,28 @@ mod tests {
         );
         assert_eq!(rom.font().glyph('.').unwrap().rows(), &[0, 0, 0b010]);
         assert_eq!(rom.font().glyph('x'), None);
+    }
+
+    #[test]
+    fn ui_images_are_empty_unless_injected_and_found_by_icon() {
+        let rom = SystemRom::new(
+            Version::new(0, 1, 0),
+            notice(),
+            Palette::provisional(),
+            empty_font(),
+        );
+        assert_eq!(rom.ui(), &SystemUi::default());
+
+        let solid = |slot| InkImage::new(1, 1, vec![slot]).unwrap();
+        let pointer = Cursor {
+            image: InkImage::new(2, 1, vec![1, 2]).unwrap(),
+            hotspot: (1, 0),
+        };
+        let icons = [solid(0), solid(1), solid(2), solid(3), solid(1)];
+        let rom = rom.with_ui(SystemUi::new(pointer.clone(), icons));
+        assert_eq!(rom.ui().pointer(), &pointer);
+        assert_eq!(rom.ui().icon(SystemIcon::Map), &solid(2));
+        assert_eq!(rom.ui().icon(SystemIcon::Music), &solid(1));
     }
 
     #[test]

@@ -202,6 +202,13 @@ impl PointerTracker {
         }
     }
 
+    /// The logical pixel last reported as the pointer position: clamped to
+    /// the frame while a button is captured, and `None` while disabled,
+    /// before the first report, or off the frame.
+    pub(crate) fn position(&self) -> Option<Point> {
+        self.reported.flatten()
+    }
+
     fn is_captured(&self) -> bool {
         self.captured.contains(&true)
     }
@@ -438,6 +445,30 @@ mod tests {
             step(&mut tracker, frame((34.0, 62.0), UP)),
             [InputEvent::PointerMove(pt(11, 20))]
         );
+    }
+
+    #[test]
+    fn position_follows_reports_and_clears_off_frame_or_disabled() {
+        let mut tracker = PointerTracker::default();
+        assert_eq!(tracker.position(), None);
+        step(&mut tracker, frame(INSIDE, UP));
+        assert_eq!(tracker.position(), Some(INSIDE_PIXEL));
+        step(&mut tracker, frame((34.0, 62.0), UP));
+        assert_eq!(tracker.position(), pt(11, 20));
+
+        // Captured drags keep a clamped position outside the frame.
+        step(&mut tracker, frame(INSIDE, PRESS));
+        let mut outside = frame((-50.0, 2000.0), HOLD);
+        outside.on_window = false;
+        step(&mut tracker, outside);
+        assert_eq!(tracker.position(), pt(0, 239));
+        outside.buttons[0] = RELEASE;
+        step(&mut tracker, outside);
+        assert_eq!(tracker.position(), None);
+
+        step(&mut tracker, frame(INSIDE, UP));
+        tracker.events(frame(INSIDE, UP), false, &mut Vec::new());
+        assert_eq!(tracker.position(), None);
     }
 
     #[test]

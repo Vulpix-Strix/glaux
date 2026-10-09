@@ -5,6 +5,7 @@
 
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
+use glaux_machine::ink_image::{INK_SLOTS, InkImage};
 use glaux_machine::obj_palette::ObjBank;
 use glaux_machine::palette::PALETTE_LEN;
 use glaux_machine::sprite::{OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjVram, obj_grid_tile};
@@ -252,6 +253,33 @@ pub fn draw_text_scaled(
         }
 
         pen_x += i64::from(metrics.cell_width()) * scale64;
+    }
+}
+
+/// Draws `image` with its top-left corner at `(x, y)`, writing ink slot
+/// `n` as `inks[n - 1]` and leaving transparent pixels untouched. Parts
+/// outside the framebuffer are clipped.
+pub fn draw_ink_image(
+    framebuffer: &mut Framebuffer,
+    image: &InkImage,
+    x: i32,
+    y: i32,
+    inks: &[u8; INK_SLOTS],
+) {
+    for iy in 0..image.height() {
+        for ix in 0..image.width() {
+            let slot = image.pixel(ix, iy);
+            if slot == 0 {
+                continue;
+            }
+            // Images are a few pixels across, so offsets fit in i32; pixels
+            // pushed past i32 by an extreme origin are off-screen anyway.
+            let px = i64::from(x) + ix as i64;
+            let py = i64::from(y) + iy as i64;
+            if let (Ok(px), Ok(py)) = (i32::try_from(px), i32::try_from(py)) {
+                framebuffer.set_pixel(px, py, inks[usize::from(slot) - 1]);
+            }
+        }
     }
 }
 
@@ -1073,5 +1101,38 @@ mod tests {
         );
         draw_text_scaled(&mut fb, &tiny_font(), "##\n##", i32::MIN, i32::MIN, 8, INK);
         assert_eq!(fb, Framebuffer::new());
+    }
+
+    #[test]
+    fn ink_images_resolve_slots_and_skip_transparency() {
+        let image = InkImage::new(3, 2, vec![0, 1, 2, 3, 0, 1]).unwrap();
+        let mut fb = filled(9);
+        draw_ink_image(&mut fb, &image, 10, 20, &[4, 5, 6]);
+        let row = |y| {
+            (10..13)
+                .map(|x| fb.pixel(x, y).unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(row(20), [9, 4, 5]);
+        assert_eq!(row(21), [6, 9, 4]);
+        assert_eq!(fb.pixel(13, 20), Some(9));
+    }
+
+    #[test]
+    fn ink_images_clip_at_every_edge() {
+        let image = InkImage::new(2, 2, vec![1; 4]).unwrap();
+        let (w, h) = (WIDTH as i32, HEIGHT as i32);
+        for (x, y, expected) in [
+            (-1, -1, vec![(0, 0)]),
+            (w - 1, h - 1, vec![(w - 1, h - 1)]),
+            (-1, h - 1, vec![(0, h - 1)]),
+            (w - 1, -1, vec![(w - 1, 0)]),
+            (w, 0, vec![]),
+            (i32::MIN, i32::MAX, vec![]),
+        ] {
+            let mut fb = Framebuffer::new();
+            draw_ink_image(&mut fb, &image, x, y, &[INK, INK, INK]);
+            assert_eq!(fb, with_ink(expected), "origin ({x}, {y})");
+        }
     }
 }

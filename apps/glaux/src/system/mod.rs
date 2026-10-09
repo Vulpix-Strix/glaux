@@ -18,7 +18,7 @@ pub use running::CartridgeVideoDefaults;
 pub use shell::Shell;
 use workspace::Workspace;
 
-use glaux_input::{InputEvent, InputMode};
+use glaux_input::{InputEvent, InputMode, Point};
 use glaux_luau::RuntimeError;
 use glaux_machine::font::FontMetrics;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
@@ -192,10 +192,23 @@ impl System {
         }
     }
 
-    /// Whether the host should show its mouse cursor: only while the
-    /// workspace, the one pointer-driven state, is active.
-    pub fn pointer_visible(&self) -> bool {
-        matches!(self.state, SystemState::Workspace { .. })
+    /// Draws the system's mouse pointer with its hotspot on `pointer`, the
+    /// logical pixel under the host's pointer. Only the workspace, the one
+    /// pointer-driven state, shows it.
+    ///
+    /// Call on a copy of the frame drawn by [`render`](Self::render), once
+    /// per presented frame: the pointer then follows the host at its
+    /// refresh rate rather than the tick rate, and never ends up in the
+    /// machine's framebuffer.
+    pub fn draw_cursor(
+        &self,
+        framebuffer: &mut Framebuffer,
+        rom: &SystemRom,
+        pointer: Option<Point>,
+    ) {
+        if matches!(self.state, SystemState::Workspace { .. }) {
+            workspace::draw_cursor(framebuffer, rom.ui().pointer(), pointer);
+        }
     }
 
     /// Advances the system by one logical tick, applying the tick's `input`.
@@ -318,8 +331,6 @@ impl System {
         }
     }
 
-    /// Redraws the whole framebuffer for the current state using the ROM's
-    /// font.
     /// The master palette the frame drawn by [`render`](Self::render)
     /// resolves to: the cartridge's own while its frame is on screen, the
     /// System ROM palette otherwise.
@@ -341,7 +352,10 @@ impl System {
         }
     }
 
-    pub fn render(&self, framebuffer: &mut Framebuffer, rom: &SystemRom) {
+    /// Redraws the whole framebuffer for the current state using the ROM's
+    /// font and UI images. In the workspace, `pointer` is the logical pixel
+    /// under the host's pointer, used to highlight what it hovers.
+    pub fn render(&self, framebuffer: &mut Framebuffer, rom: &SystemRom, pointer: Option<Point>) {
         let font = rom.font();
         let metrics = font.metrics();
         let (cell_w, cell_h) = (
@@ -362,7 +376,8 @@ impl System {
                 ..
             } => shell.lines(text_columns(cell_w), text_rows(cell_h)),
             SystemState::Workspace { cartridge, .. } => {
-                self.workspace.render(framebuffer, font, cartridge);
+                self.workspace
+                    .render(framebuffer, font, rom.ui(), cartridge, pointer);
                 return;
             }
             SystemState::Running { running, .. } => {
@@ -489,14 +504,12 @@ fn shell_tick(
     SystemState::Shell { shell, loaded }
 }
 
-/// Makes the workspace the active UI on `cartridge`, with no pointer state
-/// carried in from a previous visit.
+/// Makes the workspace the active UI on `cartridge`.
 fn open_workspace(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
     workspace: &mut Workspace,
 ) -> SystemState {
-    workspace.reset_pointer();
     let identity = cartridge_identity(cartridge.manifest());
     tracing::info!(cartridge = %identity, tab = ?workspace.tab(), "workspace opened");
     SystemState::Workspace { shell, cartridge }
@@ -513,7 +526,6 @@ fn workspace_tick(
 ) -> SystemState {
     for &event in input {
         if event == InputEvent::Break {
-            workspace.reset_pointer();
             tracing::info!("workspace closed");
             return SystemState::Shell {
                 shell,
@@ -739,11 +751,12 @@ mod tests {
     use super::boot::BootStage;
     use super::*;
     use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
+    use glaux_machine::ink_image::InkImage;
     use glaux_machine::palette::Palette;
     use glaux_machine::psg::{
         Adsr, CHANNELS, ENVELOPE_FULL, EnvelopeStage, SAMPLES_PER_TICK, Waveform,
     };
-    use glaux_machine::system_rom::SystemSfx;
+    use glaux_machine::system_rom::{Cursor, SystemSfx, SystemUi};
     use pretty_assertions::assert_eq;
     use semver::Version;
 
@@ -763,6 +776,30 @@ mod tests {
             Palette::provisional(),
             font,
         )
+        .with_ui(fake_ui())
+    }
+
+    /// Icons framed in outline ink and filled with light ink, and a 2×2
+    /// pointer whose hotspot is its body pixel at (1, 1).
+    fn fake_ui() -> SystemUi {
+        let icon = || {
+            let pixels = (0..16 * 16)
+                .map(|i| {
+                    let (x, y) = (i % 16, i / 16);
+                    if x == 0 || y == 0 || x == 15 || y == 15 {
+                        1
+                    } else {
+                        3
+                    }
+                })
+                .collect();
+            InkImage::new(16, 16, pixels).unwrap()
+        };
+        let pointer = Cursor {
+            image: InkImage::new(2, 2, vec![1, 0, 0, 2]).unwrap(),
+            hotspot: (1, 1),
+        };
+        SystemUi::new(pointer, [icon(), icon(), icon(), icon(), icon()])
     }
 
     fn video_defaults() -> CartridgeVideoDefaults {
@@ -795,7 +832,7 @@ mod tests {
 
     fn render(system: &System) -> Framebuffer {
         let mut fb = Framebuffer::new();
-        system.render(&mut fb, &fake_rom());
+        system.render(&mut fb, &fake_rom(), None);
         fb
     }
 
@@ -1153,8 +1190,8 @@ mod tests {
             second.clear(200);
             second.set_pixel(300, 230, 3);
 
-            system.render(&mut first, &rom);
-            system.render(&mut second, &rom);
+            system.render(&mut first, &rom, None);
+            system.render(&mut second, &rom, None);
             assert_eq!(first, second);
         }
     }
@@ -1774,7 +1811,7 @@ mod tests {
         let rom = fake_rom();
         for _ in 0..3 {
             let mut fb = filled(200);
-            system.render(&mut fb, &rom);
+            system.render(&mut fb, &rom, None);
             assert_eq!(fb, filled(1));
         }
         let system = ticks(system, 1);
@@ -3008,7 +3045,7 @@ mod tests {
         assert_eq!(loaded_name(&system), None);
         assert_eq!(transcript(&system).last().unwrap(), NO_CARTRIDGE_HINT);
         assert!(NO_CARTRIDGE_HINT.len() <= text_columns(6));
-        assert!(!system.pointer_visible());
+        assert_eq!(system.input_mode(), InputMode::Text);
         // Input after the hint in the same tick still reaches the shell.
         let mut input = vec![InputEvent::Break];
         input.extend("pwd".chars().map(InputEvent::Text));
@@ -3065,9 +3102,25 @@ mod tests {
         assert_eq!(after(&system, "> load pong")[1..], ["> pwd", "/"]);
     }
 
+    /// `system`'s frame with the pointer drawn over a copy, as the host
+    /// presents it.
+    fn presented(system: &System, pointer: Point) -> Framebuffer {
+        let rom = fake_rom();
+        let mut fb = Framebuffer::new();
+        system.render(&mut fb, &rom, Some(pointer));
+        system.draw_cursor(&mut fb, &rom, Some(pointer));
+        fb
+    }
+
     #[test]
-    fn the_pointer_is_visible_only_in_the_workspace() {
+    fn the_cursor_is_drawn_only_in_the_workspace() {
         let fixture = Fixture::new("sys-ws-pointer");
+        let at = Point::new(200, 5);
+        let drawn = |system: &System| {
+            let mut clean = Framebuffer::new();
+            system.render(&mut clean, &fake_rom(), Some(at));
+            presented(system, at) != clean
+        };
         let mut system = System::new(
             info(),
             sounds(),
@@ -3075,22 +3128,93 @@ mod tests {
             fixture.storage(),
             fake_rom().font().metrics(),
         );
-        assert!(!system.pointer_visible(), "boot");
+        assert!(!drawn(&system), "boot");
         while matches!(system.state(), SystemState::Boot { .. }) {
             system = system.update(&[]);
         }
         write_cartridge(&fixture.root().join("pong"), "Pong");
         let system = enter(system, "load pong");
-        assert!(!system.pointer_visible(), "shell");
+        assert!(!drawn(&system), "shell");
         let system = press_break(system);
-        assert!(system.pointer_visible(), "workspace");
+        assert!(drawn(&system), "workspace");
         let system = enter(press_break(system), "run");
         assert!(is_running(&system));
-        assert!(!system.pointer_visible(), "running");
+        assert!(!drawn(&system), "running");
         let system = press_break(system);
-        assert!(!system.pointer_visible(), "paused");
+        assert!(!drawn(&system), "paused");
         let system = open_shell(system);
-        assert!(!system.pointer_visible(), "paused shell");
+        assert!(!drawn(&system), "paused shell");
+    }
+
+    #[test]
+    fn the_cursor_hotspot_sits_on_the_pointer_and_clips_at_the_edges() {
+        let fixture = Fixture::new("sys-ws-hotspot");
+        let system = press_break(loaded(&fixture));
+        // Over the plain bar, where the outline ink stands out.
+        let fb = presented(&system, Point::new(200, 5));
+        assert_eq!(fb.pixel(200, 5), Some(TEXT), "hotspot");
+        assert_eq!(fb.pixel(199, 4), Some(11), "outline up and left");
+        assert_eq!(fb.pixel(199, 5), Some(12), "transparent");
+        assert_eq!(fb.pixel(201, 6), Some(12), "nothing past the image");
+
+        let fb = presented(&system, Point::new(0, 0));
+        assert_eq!(fb.pixel(0, 0), Some(TEXT));
+        let (w, h) = (WIDTH as u16, HEIGHT as u16);
+        let fb = presented(&system, Point::new(w - 1, h - 1));
+        assert_eq!(fb.pixel(i32::from(w) - 1, i32::from(h) - 1), Some(TEXT));
+    }
+
+    #[test]
+    fn the_cursor_never_enters_the_rendered_frame() {
+        let fixture = Fixture::new("sys-ws-trails");
+        let system = press_break(loaded(&fixture));
+        let rom = fake_rom();
+        // Both over the plain bar, where the outline ink stands out.
+        let (a, b) = (Point::new(200, 5), Point::new(120, 8));
+
+        let mut machine = Framebuffer::new();
+        let mut shown = Framebuffer::new();
+        for at in [a, b] {
+            system.render(&mut machine, &rom, Some(at));
+            shown.as_bytes_mut().copy_from_slice(machine.as_bytes());
+            system.draw_cursor(&mut shown, &rom, Some(at));
+        }
+        let mut clean = Framebuffer::new();
+        system.render(&mut clean, &rom, Some(b));
+        assert_eq!(machine, clean);
+
+        let changed: Vec<(i32, i32)> = (0..HEIGHT as i32)
+            .flat_map(|y| (0..WIDTH as i32).map(move |x| (x, y)))
+            .filter(|&(x, y)| shown.pixel(x, y) != clean.pixel(x, y))
+            .collect();
+        assert_eq!(changed, [(119, 7), (120, 8)]);
+    }
+
+    #[test]
+    fn hovering_a_tab_highlights_it_and_names_it() {
+        let fixture = Fixture::new("sys-ws-hover");
+        let system = press_break(loaded(&fixture));
+        let metrics = fake_rom().font().metrics();
+        let interior = |fb: &Framebuffer, tab| {
+            let rect = workspace::tests_support::tab_rect(tab, metrics);
+            fb.pixel(rect.x + 6, rect.y + 6)
+        };
+        let idle = render(&system);
+        let hover = presented(&system, tab_centre(Tab::Map));
+
+        assert_eq!(interior(&idle, Tab::Code), Some(TEXT), "active");
+        assert_eq!(interior(&idle, Tab::Map), Some(DIM), "idle");
+        assert_eq!(interior(&hover, Tab::Map), Some(PALE), "hovered");
+        assert_eq!(interior(&hover, Tab::Code), Some(TEXT), "still active");
+
+        // The hint names the open tab ("Code") until a tab is hovered
+        // ("Map"), with the fake font's glyphs drawn as solid blocks.
+        let (x, y) = workspace::tests_support::hint_origin(metrics);
+        let cell = metrics.cell_width() as i32;
+        assert_eq!(idle.pixel(x, y), Some(DIM));
+        assert_eq!(idle.pixel(x + 3 * cell, y), Some(DIM));
+        assert_eq!(hover.pixel(x, y), Some(PALE));
+        assert_eq!(hover.pixel(x + 3 * cell, y), Some(12));
     }
 
     #[test]
@@ -3211,7 +3335,7 @@ mod tests {
 
         let mut dirty = Framebuffer::new();
         dirty.clear(200);
-        system.render(&mut dirty, &fake_rom());
+        system.render(&mut dirty, &fake_rom(), None);
         assert_eq!(dirty, fb);
     }
 
@@ -3226,7 +3350,9 @@ mod tests {
         let metrics = fake_rom().font().metrics();
         let tabs = Tab::ALL.map(|tab| workspace::tests_support::tab_rect(tab, metrics));
         let last = tabs[tabs.len() - 1];
-        for x in 0..last.x + last.width + 4 {
+        let name_start = workspace::tests_support::name_start(metrics);
+        assert!(name_start > last.x + last.width);
+        for x in 0..name_start {
             for y in 0..last.height {
                 assert_eq!(long.pixel(x, y), short.pixel(x, y), "({x}, {y})");
             }
