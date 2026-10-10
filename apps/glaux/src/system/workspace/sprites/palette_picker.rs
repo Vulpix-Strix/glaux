@@ -6,7 +6,7 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjBank};
 use glaux_machine::sprite::OBJ_TILE_WIDTH;
-use glaux_video::draw::{ObjPaletteChoice, draw_obj_tile_scaled, draw_text, fill_rect};
+use glaux_video::draw::{ObjPaletteChoice, draw_obj_tile_scaled, draw_text};
 
 use super::SpriteSource;
 use super::layout::Metrics;
@@ -14,7 +14,7 @@ use super::render::{bank_name, checker, outline};
 use crate::system::PALE;
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
-    AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window,
+    AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,
 };
 
 const TITLE: &str = "SELECT PALETTE";
@@ -408,14 +408,6 @@ impl PickerLayout {
             None
         }
     }
-}
-
-fn fill(framebuffer: &mut Framebuffer, rect: Rect, color: u8) {
-    fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, color);
-}
-
-fn cells(text: &str) -> i32 {
-    i32::try_from(text.chars().count()).unwrap_or(i32::MAX)
 }
 
 #[cfg(test)]

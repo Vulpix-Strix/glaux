@@ -17,7 +17,7 @@ use glaux_video::draw::{
 
 use super::layout::{ADVANCED_LABELS, CANVAS_ZOOM, Hit, SCROLLBAR, SpriteLayout, ToolSlot};
 use super::sheet::{SheetView, Visible, grid_position};
-use super::{SpriteEditor, SpriteSource};
+use super::{EditorDialog, SpriteEditor, SpriteSource};
 use crate::rom::ICON_SIZE;
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
@@ -27,6 +27,8 @@ pub(super) const CHECK_DARK: u8 = 12;
 pub(super) const CHECK_LIGHT: u8 = 13;
 /// The status bar hint while the palette picker is open.
 const PICKER_HINT: &str = "Arrows: choose  Enter: apply  Esc: cancel";
+/// The status bar hint while EDIT COLOR is open.
+const COLOR_HINT: &str = "Drag: pick  Tab: next  Enter: apply  Esc: cancel";
 /// Frames around the canvas and the sheet.
 const FRAME: u8 = DIM;
 /// Pixel grid lines over the canvas.
@@ -55,8 +57,8 @@ impl SpriteEditor {
         notice: Option<(&str, u8)>,
     ) {
         let layout = self.layout();
-        // Nothing under the palette picker reacts to the pointer.
-        let hover = match (&self.picker, pointer) {
+        // Nothing under a dialog reacts to the pointer.
+        let hover = match (&self.dialog, pointer) {
             (None, Some(at)) => layout.hit(at, &self.sheet),
             _ => Hit::None,
         };
@@ -80,8 +82,10 @@ impl SpriteEditor {
             Err(message) => painter.unavailable(message),
         }
         let (left, mut right) = self.status(source.ok().as_ref(), hover);
-        if self.picker.is_some() {
-            right = PICKER_HINT.to_owned();
+        match self.dialog {
+            Some(EditorDialog::Palette(_)) => right = PICKER_HINT.to_owned(),
+            Some(EditorDialog::Color(_)) => right = COLOR_HINT.to_owned(),
+            None => {}
         }
         match notice {
             // A notice answers what the user just did, so it wins over the
@@ -94,9 +98,16 @@ impl SpriteEditor {
                 painter.status_bar(&left, PALE, &right, control);
             }
         }
-        if let (Some(picker), Ok(source)) = (&self.picker, source) {
-            let picker_layout = self.picker_layout();
-            picker.render(framebuffer, font, &picker_layout, &source, pointer);
+        match (&self.dialog, source) {
+            (Some(EditorDialog::Palette(picker)), Ok(source)) => {
+                let layout = self.picker_layout();
+                picker.render(framebuffer, font, &layout, &source, pointer);
+            }
+            (Some(EditorDialog::Color(editor)), Ok(source)) => {
+                let layout = self.edit_color_layout();
+                editor.render(framebuffer, font, &layout, &source);
+            }
+            _ => {}
         }
     }
 
@@ -131,7 +142,8 @@ impl SpriteEditor {
                 let (column, row) = grid_position(tile);
                 format!("Click: select tile {tile:04} ({column},{row})")
             }
-            Hit::Swatch(local) => format!("Click: select color {local:X}"),
+            Hit::Swatch(0) => "Click: select transparent color 0".to_owned(),
+            Hit::Swatch(local) => format!("Click: select color {local:X}  Double-click: edit"),
             Hit::Bank(bank) => format!("Click: choose this tile's palette, from OBP {bank}"),
             Hit::PaletteButton => "Click: choose this tile's palette".to_owned(),
             Hit::Tool(tool) => format!("{}: {}", tool.key().to_ascii_uppercase(), tool.name()),
@@ -651,7 +663,7 @@ pub(super) fn bank_name(bank: ObjBank, advanced: bool) -> String {
 }
 
 /// System palette index of text that reads on a swatch of `color`.
-fn contrasting(color: Rgb) -> u8 {
+pub(super) fn contrasting(color: Rgb) -> u8 {
     let luma = 299 * u32::from(color.r) + 587 * u32::from(color.g) + 114 * u32::from(color.b);
     if luma > 140_000 { BACKGROUND } else { TEXT }
 }

@@ -368,6 +368,100 @@ fn a_new_palette_edit_drops_the_redo_steps() {
     assert!(!doc.undo(), "the undone pixel edit is gone");
 }
 
+fn color(bank_number: u8, local: u8) -> ColorTarget {
+    ColorTarget {
+        bank: bank(bank_number),
+        local,
+    }
+}
+
+/// A document on linear palettes, where every (bank, local) entry has a
+/// master of its own, except that OBP0 L2 and OBP3 L4 share OBP0 L1's
+/// master 1. Tile 0 is the one edited; tiles 1–4 each hold one pixel.
+fn shared_master_document() -> SpriteDocument {
+    let files = VideoFiles {
+        obj_palettes: Some(ObjPalettes::linear().as_bytes().to_vec()),
+        ..VideoFiles::default()
+    };
+    let mut doc = SpriteDocument::from_files(&files, &defaults()).unwrap();
+    doc.set_obj_color(bank(0), 2, 1);
+    doc.set_obj_color(bank(3), 4, 1);
+    doc.set_pixel(0, 0, 0, 1);
+    // Shows master 1 through OBP0 L2.
+    doc.set_pixel(1, 3, 3, 2);
+    // Shows master 1 through OBP3 L4.
+    doc.set_tile_bank(2, bank(3));
+    doc.set_pixel(2, 7, 7, 4);
+    // OBP3 L1 is master 49; OBP1 L4 is master 20.
+    doc.set_tile_bank(3, bank(3));
+    doc.set_pixel(3, 0, 0, 1);
+    doc.set_tile_bank(4, bank(1));
+    doc.set_pixel(4, 0, 0, 4);
+    doc
+}
+
+#[test]
+fn color_uses_count_entries_banks_and_tiles_apart() {
+    let doc = shared_master_document();
+    let uses = doc.color_uses(color(0, 1), 0).unwrap();
+    assert_eq!(uses.master, 1);
+    assert_eq!(uses.entries, [color(0, 2), color(3, 4)]);
+    assert_eq!(
+        uses.other_banks(bank(0)),
+        [bank(3)],
+        "two entries, one other bank"
+    );
+    assert_eq!(uses.tiles, 2, "tiles 1 and 2; never the edited tile 0");
+    assert!(uses.is_shared());
+
+    // Counted from another tile, the edited tile 0 is one of the uses.
+    assert_eq!(doc.color_uses(color(0, 1), 5).unwrap().tiles, 3);
+
+    let alone = doc.color_uses(color(1, 4), 4).unwrap();
+    assert_eq!((alone.master, alone.entries.len(), alone.tiles), (20, 0, 0));
+    assert!(!alone.is_shared());
+
+    assert_eq!(
+        doc.color_uses(color(0, 0), 0),
+        None,
+        "local 0 is transparent"
+    );
+    assert_eq!(doc.color_uses(color(0, 16), 0), None);
+}
+
+#[test]
+fn recolor_changes_the_shared_master_as_one_undoable_edit() {
+    let mut doc = shared_master_document();
+    let before = doc.clone();
+    let old = doc.video().palette.get(1);
+    assert!(doc.recolor(color(3, 4), RED));
+    assert_eq!(doc.video().palette.get(1), RED);
+    assert_eq!(doc.obj().palettes(), before.obj().palettes());
+    assert!(doc.is_asset_modified(PALETTE));
+
+    assert!(doc.undo());
+    assert_eq!(doc.video().palette.get(1), old);
+    assert!(!doc.is_asset_modified(PALETTE));
+    assert_eq!(doc.video(), before.video(), "one step undoes it all");
+    assert!(doc.redo());
+    assert_eq!(doc.video().palette.get(1), RED);
+}
+
+#[test]
+fn recoloring_to_the_same_color_or_transparency_records_nothing() {
+    let mut doc = document(None);
+    let target = color(2, 5);
+    let master = doc
+        .obj()
+        .palettes()
+        .resolve(target.bank, target.local)
+        .unwrap();
+    let current = doc.video().palette.get(master);
+    assert!(!doc.recolor(target, current));
+    assert!(!doc.recolor(color(2, 0), RED));
+    assert!(!doc.is_modified() && !doc.can_undo());
+}
+
 #[test]
 fn the_history_change_budget_drops_old_edits_but_keeps_the_newest() {
     let mut doc = document(None);

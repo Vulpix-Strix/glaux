@@ -314,7 +314,8 @@ pub fn draw_button(
     draw_text(framebuffer, font, label, x, y, ink);
 }
 
-fn fill(framebuffer: &mut Framebuffer, rect: Rect, color: u8) {
+/// Fills `rect` with `color`.
+pub fn fill(framebuffer: &mut Framebuffer, rect: Rect, color: u8) {
     fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, color);
 }
 
@@ -325,7 +326,8 @@ impl DialogLayout {
     }
 }
 
-fn text_cells(text: &str) -> i32 {
+/// Character cells `text` takes.
+pub fn text_cells(text: &str) -> i32 {
     i32::try_from(text.chars().count()).unwrap_or(i32::MAX)
 }
 

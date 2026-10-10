@@ -16,7 +16,7 @@ use glaux_machine::font::{BitmapFont, FontMetrics};
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::ink_image::INK_SLOTS;
 use glaux_machine::machine::TICK_RATE;
-use glaux_machine::obj_palette::ObjPalettes;
+use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjPalettes};
 use glaux_machine::palette::Palette;
 use glaux_machine::system_rom::{Cursor, SystemIcon, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
@@ -37,6 +37,11 @@ use sprites::{SpriteEditor, SpriteRequest};
 /// colors. Every UI color index is below it; the cartridge's object colors
 /// are placed after it.
 const SYSTEM_COLORS: usize = 32;
+
+// The UI colors, every master color the object palettes can reach and the
+// sprite editor's dialog colors each keep entries of their own.
+const _: () =
+    assert!(SYSTEM_COLORS + OBJ_PALETTE_BANKS * (OBJ_PALETTE_COLORS - 1) <= sprites::SCRATCH_BASE);
 
 /// Fill of the tab bar, as a system palette index.
 const BAR: u8 = 12;
@@ -394,6 +399,10 @@ pub struct WorkspaceVideo(Result<Box<PreparedVideo>, String>);
 #[derive(Debug)]
 struct PreparedVideo {
     preview: ObjPreviewPalette,
+    /// The preview's palette with the sprite editor's dialog colors, if
+    /// any, from [`sprites::SCRATCH_BASE`] on: what frames are presented
+    /// with.
+    frame: Palette,
     master: Palette,
     obj: ObjPalettes,
 }
@@ -413,7 +422,7 @@ impl WorkspaceVideo {
     /// The palette the workspace's frames are presented with, if the
     /// cartridge's video assets loaded.
     pub fn frame_palette(&self) -> Option<&Palette> {
-        self.0.as_ref().ok().map(|video| video.preview.palette())
+        self.0.as_ref().ok().map(|video| &video.frame)
     }
 
     /// What the sprite editor shows of `document`, or why it shows nothing.
@@ -486,6 +495,7 @@ impl Workspace {
             video.obj.palettes(),
         ) {
             Ok(preview) => WorkspaceVideo(Ok(Box::new(PreparedVideo {
+                frame: preview.palette().clone(),
                 preview,
                 master: video.palette.clone(),
                 obj: video.obj.palettes().clone(),
@@ -495,11 +505,22 @@ impl Workspace {
     }
 
     /// Prepares `video` again if `document`'s palettes changed since it was
-    /// prepared, so the frame palette never shows stale colors. Video that
-    /// could not be prepared stays as it is.
+    /// prepared, so the frame palette never shows stale colors, and gives
+    /// the frame palette the colors of the sprite editor's open dialog.
+    /// Video that could not be prepared stays as it is.
     pub fn refresh_video(&self, video: &mut WorkspaceVideo, document: &SpriteDocument) {
         if video.is_ready() && !video.matches(document) {
             *video = self.prepare_video(document);
+        }
+        if let Ok(prepared) = &mut video.0 {
+            let mut frame = prepared.preview.palette().clone();
+            if let Some(colors) = self.sprites.scratch_colors() {
+                for (offset, color) in colors.into_iter().enumerate() {
+                    // Scratch entries end at the palette's end, so fit u8.
+                    frame.set((sprites::SCRATCH_BASE + offset) as u8, color);
+                }
+            }
+            prepared.frame = frame;
         }
     }
 
@@ -516,7 +537,7 @@ impl Workspace {
     /// returns the file work it calls for, if any.
     ///
     /// While a dialog is open it takes every event, Escape included; so
-    /// does the sprite editor's palette picker. Otherwise Ctrl+Tab and
+    /// do the sprite editor's own dialogs. Otherwise Ctrl+Tab and
     /// Ctrl+Shift+Tab cycle the tabs, a primary press on a tab selects it,
     /// and everything else goes to the open view's editor, if it has one.
     pub fn handle_input(
@@ -540,7 +561,7 @@ impl Workspace {
                 Choice::Cancel | Choice::Dismiss => None,
             };
         }
-        if self.sprites.has_picker() {
+        if self.sprites.has_dialog() {
             return self.sprite_input(event, sprites);
         }
         match event {
@@ -575,14 +596,15 @@ impl Workspace {
         }
     }
 
-    /// Whether a dialog, or the sprite editor's palette picker, is open and
+    /// Whether a dialog, or one of the sprite editor's, is open and
     /// taking all input.
     pub fn has_modal(&self) -> bool {
-        self.modal.is_some() || self.sprites.has_picker()
+        self.modal.is_some() || self.sprites.has_dialog()
     }
 
     /// Advances time-limited UI state by one tick.
     pub fn tick(&mut self) {
+        self.sprites.tick();
         if let Some(notice) = &mut self.notice {
             notice.ticks_left = notice.ticks_left.saturating_sub(1);
             if notice.ticks_left == 0 {
@@ -746,10 +768,10 @@ impl Workspace {
         fill_rect(framebuffer, 0, 0, WIDTH as i32, layout.bar_height(), BAR);
 
         // Nothing under an open dialog reacts to the pointer, and only the
-        // palette picker does while it is open.
+        // sprite editor's dialog does while one is open.
         let pointer = pointer.filter(|_| self.modal.is_none());
         let hovered = pointer
-            .filter(|_| !self.sprites.has_picker())
+            .filter(|_| !self.sprites.has_dialog())
             .and_then(|at| layout.tab_at(at));
         for (tab, rect) in layout.tabs() {
             let active = tab == self.tab;

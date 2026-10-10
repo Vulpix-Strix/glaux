@@ -515,7 +515,7 @@ fn bank_of(doc: &SpriteDocument, tile: usize) -> u8 {
 fn open_picker(editor: &mut SpriteEditor, doc: &mut SpriteDocument) {
     let button = centre_of(editor.layout().palette_button);
     assert_eq!(tap(editor, doc, button), None);
-    assert!(editor.has_picker());
+    assert!(editor.has_dialog());
 }
 
 #[test]
@@ -525,13 +525,13 @@ fn the_palette_button_opens_the_picker_on_the_tiles_bank() {
     assert!(doc.set_tile_bank(9, ObjBank::new(3).unwrap()));
     editor.selected = 9;
     open_picker(&mut editor, &mut doc);
-    assert_eq!(editor.picker.as_ref().unwrap().pending().get(), 3);
-    assert_eq!(editor.picker.as_ref().unwrap().tile(), 9);
+    assert_eq!(editor.picker().unwrap().pending().get(), 3);
+    assert_eq!(editor.picker().unwrap().tile(), 9);
 
     let mut editor = SpriteEditor::new(METRICS);
     let button = editor.layout().palette_button;
     click(&mut editor, button);
-    assert!(!editor.has_picker(), "without a document there is no tile");
+    assert!(!editor.has_dialog(), "without a document there is no tile");
 }
 
 #[test]
@@ -541,11 +541,11 @@ fn an_advanced_obp_cell_preselects_without_assigning() {
     let mut doc = document();
     let cell = centre_of(editor.layout().banks[4]);
     tap(&mut editor, &mut doc, cell);
-    assert_eq!(editor.picker.as_ref().unwrap().pending().get(), 4);
+    assert_eq!(editor.picker().unwrap().pending().get(), 4);
     assert_eq!(bank_of(&doc, 0), 0, "only chosen, not assigned");
 
     assert_eq!(command(&mut editor, &mut doc, InputEvent::Break), None);
-    assert!(!editor.has_picker());
+    assert!(!editor.has_dialog());
     assert_eq!(bank_of(&doc, 0), 0);
     assert!(!doc.is_modified() && !doc.can_undo());
 }
@@ -582,7 +582,7 @@ fn the_open_picker_takes_every_event() {
             "{event:?}"
         );
     }
-    assert!(editor.has_picker());
+    assert!(editor.has_dialog());
     assert_eq!(doc, before);
     assert_eq!(
         (editor.tool, editor.grid, editor.selected),
@@ -599,7 +599,7 @@ fn applying_a_palette_is_one_undoable_edit() {
     command(&mut editor, &mut doc, InputEvent::Down);
     assert_eq!(bank_of(&doc, 0), 0, "nothing changes before Apply");
     assert_eq!(command(&mut editor, &mut doc, InputEvent::Enter), None);
-    assert!(!editor.has_picker());
+    assert!(!editor.has_dialog());
     assert_eq!(bank_of(&doc, 0), 2);
     assert!(doc.is_modified());
 
@@ -621,14 +621,14 @@ fn applying_the_current_palette_or_cancelling_changes_nothing() {
     let mut doc = document();
     open_picker(&mut editor, &mut doc);
     assert_eq!(command(&mut editor, &mut doc, InputEvent::Enter), None);
-    assert!(!editor.has_picker());
+    assert!(!editor.has_dialog());
     assert!(!doc.is_modified() && !doc.can_undo());
 
     open_picker(&mut editor, &mut doc);
     command(&mut editor, &mut doc, InputEvent::Text('6'));
     let cancel = centre_of(editor.picker_layout().cancel);
     assert_eq!(tap(&mut editor, &mut doc, cancel), None);
-    assert!(!editor.has_picker());
+    assert!(!editor.has_dialog());
     assert_eq!(bank_of(&doc, 0), 0);
     assert!(!doc.is_modified() && !doc.can_undo());
 }
@@ -649,7 +649,7 @@ fn choosing_and_applying_by_pointer_never_draws() {
     assert_ne!(row, 0, "a bank the tile does not have");
     tap(&mut editor, &mut doc, centre_of(layout.rows[row]));
     tap(&mut editor, &mut doc, centre_of(layout.apply));
-    assert!(!editor.has_picker());
+    assert!(!editor.has_dialog());
     assert_eq!(bank_of(&doc, 0), row as u8);
 
     // What follows the closing release reaches the editor, which holds no
@@ -664,4 +664,166 @@ fn choosing_and_applying_by_pointer_never_draws() {
         Some(&mut doc),
     );
     assert_eq!(rows(&doc, 0), before);
+}
+
+// Editing a color.
+
+/// Taps swatch `local` twice, `gap` ticks apart.
+fn tap_swatch_twice(
+    editor: &mut SpriteEditor,
+    doc: &mut SpriteDocument,
+    local: u8,
+    gap: u32,
+) -> Option<SpriteRequest> {
+    let at = centre_of(editor.swatch_rect(local));
+    tap(editor, doc, at);
+    for _ in 0..gap {
+        editor.tick();
+    }
+    tap(editor, doc, at)
+}
+
+#[test]
+fn a_double_click_on_a_swatch_opens_edit_color_on_that_color() {
+    let mut editor = editor();
+    let mut doc = document();
+    assert!(doc.set_tile_bank(0, ObjBank::new(2).unwrap()));
+    assert_eq!(
+        tap_swatch_twice(&mut editor, &mut doc, 6, DOUBLE_CLICK_TICKS),
+        None
+    );
+    let open = editor.color_editor().expect("EDIT COLOR is open");
+    assert_eq!(
+        open.target(),
+        ColorTarget {
+            bank: ObjBank::new(2).unwrap(),
+            local: 6
+        }
+    );
+    assert_eq!(editor.color, 6, "the first click selected the color");
+}
+
+#[test]
+fn slow_or_split_clicks_only_select() {
+    let mut editor = editor();
+    let mut doc = document();
+    tap_swatch_twice(&mut editor, &mut doc, 6, DOUBLE_CLICK_TICKS + 1);
+    assert!(!editor.has_dialog());
+
+    let mut editor = SpriteEditor::new(METRICS);
+    let first = centre_of(editor.swatch_rect(6));
+    let second = centre_of(editor.swatch_rect(7));
+    tap(&mut editor, &mut doc, first);
+    tap(&mut editor, &mut doc, second);
+    assert!(!editor.has_dialog());
+    assert_eq!(editor.color, 7);
+    // A third click on the same swatch completes a new double click.
+    tap(&mut editor, &mut doc, second);
+    assert!(editor.color_editor().is_some());
+}
+
+#[test]
+fn c_opens_edit_color_but_transparency_has_no_color_to_edit() {
+    let mut editor = editor();
+    let mut doc = document();
+    editor.color = 9;
+    assert_eq!(command(&mut editor, &mut doc, InputEvent::Text('c')), None);
+    assert_eq!(editor.color_editor().unwrap().target().local, 9);
+
+    let mut editor = SpriteEditor::new(METRICS);
+    editor.color = 0;
+    assert_eq!(
+        command(&mut editor, &mut doc, InputEvent::Text('c')),
+        Some(SpriteRequest::Notice("Color 0 is transparent"))
+    );
+    assert_eq!(
+        tap_swatch_twice(&mut editor, &mut doc, 0, 1),
+        Some(SpriteRequest::Notice("Color 0 is transparent"))
+    );
+    assert!(!editor.has_dialog());
+
+    let mut editor = SpriteEditor::new(METRICS);
+    editor.handle_input(InputEvent::Text('c'), None);
+    assert!(!editor.has_dialog(), "without a document there is no color");
+}
+
+#[test]
+fn cancelling_edit_color_leaves_the_document_exactly_as_it_was() {
+    let mut editor = editor();
+    let mut doc = document();
+    doc.set_pixel(0, 0, 0, 3);
+    let before = doc.clone();
+    command(&mut editor, &mut doc, InputEvent::Text('c'));
+    let layout = editor.color_editor_layout();
+    // Drag across the field, then type a color, then cancel.
+    tap(&mut editor, &mut doc, centre_of(layout.sat_val));
+    tap(&mut editor, &mut doc, centre_of(layout.fields[0]));
+    for c in "123456".chars() {
+        command(&mut editor, &mut doc, InputEvent::Text(c));
+    }
+    assert_eq!(
+        editor.color_editor().unwrap().color(),
+        Rgb::from_hex(0x123456)
+    );
+    tap(&mut editor, &mut doc, centre_of(layout.cancel));
+    assert!(!editor.has_dialog());
+    assert_eq!(doc, before);
+}
+
+#[test]
+fn applying_edit_color_is_one_undoable_edit() {
+    let mut editor = editor();
+    let mut doc = document();
+    let red = Rgb::from_hex(0xe6482e);
+    let master = doc.obj().palettes().resolve(ObjBank::ZERO, 5).unwrap();
+    let old = doc.video().palette.get(master);
+    tap_swatch_twice(&mut editor, &mut doc, 5, 0);
+    let layout = editor.color_editor_layout();
+    tap(&mut editor, &mut doc, centre_of(layout.fields[0]));
+    for c in "E6482E".chars() {
+        command(&mut editor, &mut doc, InputEvent::Text(c));
+    }
+    assert_eq!(doc.video().palette.get(master), old, "nothing applied yet");
+    command(&mut editor, &mut doc, InputEvent::Enter);
+    command(&mut editor, &mut doc, InputEvent::Enter);
+    assert!(!editor.has_dialog());
+    assert_eq!(doc.video().palette.get(master), red);
+    assert!(doc.is_modified());
+
+    assert_eq!(command(&mut editor, &mut doc, InputEvent::Undo), None);
+    assert_eq!(doc.video().palette.get(master), old);
+    assert!(!doc.is_modified());
+    assert_eq!(
+        command(&mut editor, &mut doc, InputEvent::Undo),
+        Some(SpriteRequest::Notice("Nothing to undo"))
+    );
+}
+
+#[test]
+fn edit_color_takes_every_event() {
+    let mut editor = editor();
+    let mut doc = document();
+    command(&mut editor, &mut doc, InputEvent::Text('c'));
+    let before = doc.clone();
+    let canvas = canvas_point(&editor, 3, 3);
+    for event in [
+        InputEvent::PointerDown {
+            button: PointerButton::Primary,
+            at: canvas,
+        },
+        InputEvent::PointerUp {
+            button: PointerButton::Primary,
+            at: canvas,
+        },
+        InputEvent::Text('e'),
+        InputEvent::Text('a'),
+        InputEvent::Undo,
+        InputEvent::Save,
+    ] {
+        assert_eq!(command(&mut editor, &mut doc, event), None);
+    }
+    assert_eq!(doc, before);
+    assert!(editor.color_editor().is_some());
+    assert!(!editor.is_advanced());
+    assert_eq!(editor.tool, ToolSlot::Pencil);
 }

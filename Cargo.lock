@@ -616,6 +616,7 @@ dependencies = [
  "glaux-video",
  "png",
  "pretty_assertions",
+ "proptest",
  "ron",
  "semver",
  "serde",

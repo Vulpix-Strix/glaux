@@ -4,10 +4,10 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 
-use glaux_machine::obj_palette::ObjBank;
+use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjBank};
 use glaux_machine::palette::Rgb;
 use glaux_machine::sprite::{
-    OBJ_TILE_BYTES, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjTileBank, ObjVram,
+    OBJ_TILE_BYTES, OBJ_TILE_CAPACITY, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjTileBank, ObjVram,
 };
 
 use super::video::{
@@ -169,6 +169,53 @@ pub struct Reopened {
     /// Assets whose files changed under unsaved changes. They were not
     /// touched.
     pub conflicts: Vec<Conflict>,
+}
+
+/// A visible color of one object palette bank: local index `local` (1–15)
+/// of `bank`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ColorTarget {
+    pub bank: ObjBank,
+    pub local: u8,
+}
+
+/// What the stored assets tell about who else shows the master color a
+/// [`ColorTarget`] resolves to.
+///
+/// Only the document's own data is counted. Tiles a running cartridge
+/// draws with another bank, and code that draws master indices directly,
+/// are beyond what the document can know.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColorUses {
+    /// The master index the target resolves to.
+    pub master: u8,
+    /// The other (bank, local) entries resolving to `master`, in bank then
+    /// local order. Other locals of the target's own bank are included.
+    pub entries: Vec<ColorTarget>,
+    /// Tiles, besides the one being edited, with at least one pixel that
+    /// resolves to `master` through the tile's stored default bank.
+    pub tiles: usize,
+}
+
+impl ColorUses {
+    /// Whether another entry resolves to the same master, so changing the
+    /// master changes more than the target.
+    pub fn is_shared(&self) -> bool {
+        !self.entries.is_empty()
+    }
+
+    /// The distinct banks among [`entries`](Self::entries) other than
+    /// `own`, in bank order.
+    pub fn other_banks(&self, own: ObjBank) -> Vec<ObjBank> {
+        let mut banks: Vec<ObjBank> = self
+            .entries
+            .iter()
+            .map(|entry| entry.bank)
+            .filter(|&bank| bank != own)
+            .collect();
+        banks.dedup();
+        banks
+    }
 }
 
 /// What one change wrote to: a single value of one asset.
@@ -572,10 +619,6 @@ impl SpriteDocument {
     /// changed.
     ///
     /// Outside an open edit, the write is an edit of its own.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no editor control changes palettes yet")
-    )]
     pub fn set_master_color(&mut self, index: u8, color: Rgb) -> bool {
         let Some(previous) = self.write_master_color(index, color) else {
             return false;
@@ -586,6 +629,60 @@ impl SpriteDocument {
             after: color,
         });
         true
+    }
+
+    /// Who else shows the master color `target` resolves to, counting
+    /// tiles other than `edited`. `None` for the transparent local 0 and
+    /// locals above 15.
+    pub fn color_uses(&self, target: ColorTarget, edited: usize) -> Option<ColorUses> {
+        let palettes = self.obj().palettes();
+        let master = palettes.resolve(target.bank, target.local)?;
+        let mut entries = Vec::new();
+        // Per bank, which locals resolve to `master`.
+        let mut shows = [[false; OBJ_PALETTE_COLORS]; OBJ_PALETTE_BANKS];
+        for bank in (0..OBJ_PALETTE_BANKS as u8).filter_map(ObjBank::new) {
+            for local in 1..OBJ_PALETTE_COLORS as u8 {
+                if palettes.resolve(bank, local) != Some(master) {
+                    continue;
+                }
+                shows[usize::from(bank.get())][usize::from(local)] = true;
+                let entry = ColorTarget { bank, local };
+                if entry != target {
+                    entries.push(entry);
+                }
+            }
+        }
+        let attributes = self.obj().attributes();
+        let tiles = (0..OBJ_TILE_CAPACITY)
+            .filter(|&tile| tile != edited)
+            .filter(|&tile| {
+                let locals = &shows[usize::from(attributes.bank(tile).get())];
+                locals.contains(&true)
+                    && (0..OBJ_TILE_HEIGHT).any(|y| {
+                        (0..OBJ_TILE_WIDTH).any(|x| {
+                            self.pixel(tile, x, y)
+                                .is_some_and(|local| locals[usize::from(local)])
+                        })
+                    })
+            })
+            .count();
+        Some(ColorUses {
+            master,
+            entries,
+            tiles,
+        })
+    }
+
+    /// Sets the master color `target` resolves to, so every entry sharing
+    /// that master changes with it. Returns whether anything changed; the
+    /// transparent local 0 and locals above 15 change nothing.
+    ///
+    /// Outside an open edit, the change is an edit of its own.
+    pub fn recolor(&mut self, target: ColorTarget, color: Rgb) -> bool {
+        let Some(master) = self.obj().palettes().resolve(target.bank, target.local) else {
+            return false;
+        };
+        self.set_master_color(master, color)
     }
 
     /// Replaces the pixels of `tile` connected to `(x, y)` through edges,

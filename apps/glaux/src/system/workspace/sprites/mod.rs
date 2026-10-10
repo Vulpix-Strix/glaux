@@ -2,6 +2,7 @@
 //! memory, chooses the palette each tile is drawn with, undoes and redoes
 //! those edits, and asks for them to be saved.
 
+mod color_editor;
 mod layout;
 mod palette_picker;
 mod render;
@@ -10,17 +11,23 @@ mod stroke;
 
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
+use glaux_machine::machine::TICK_RATE;
 use glaux_machine::obj_palette::{OBJ_PALETTE_COLORS, ObjBank};
-use glaux_machine::palette::Palette;
+use glaux_machine::palette::{Palette, Rgb};
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, ObjVram};
 use glaux_video::preview::ObjPreviewPalette;
 
+use color_editor::{ColorEditor, ColorEditorLayout, ColorOutcome};
+pub use color_editor::{SCRATCH_BASE, SCRATCH_COLORS};
 pub use layout::Metrics;
 use layout::{Hit, SpriteLayout, ToolSlot};
 use palette_picker::{PalettePicker, PickerLayout, PickerOutcome};
 use sheet::{SheetView, grid_position};
 
-use crate::system::sprite_document::SpriteDocument;
+use crate::system::sprite_document::{ColorTarget, SpriteDocument};
+
+/// Most ticks between the presses of a double click.
+const DOUBLE_CLICK_TICKS: u32 = TICK_RATE * 2 / 5;
 
 /// The cartridge state the editor shows, borrowed for one frame.
 #[derive(Debug, Clone, Copy)]
@@ -42,6 +49,22 @@ pub enum SpriteRequest {
     /// Tell the user something briefly, such as that there is nothing to
     /// undo.
     Notice(&'static str),
+}
+
+/// A modal dialog the editor opened, which takes every input while open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EditorDialog {
+    /// SELECT PALETTE.
+    Palette(PalettePicker),
+    /// EDIT COLOR.
+    Color(ColorEditor),
+}
+
+/// What closing a dialog asks of the document.
+enum DialogResult {
+    Bank(usize, ObjBank),
+    Color(ColorTarget, Rgb),
+    Nothing,
 }
 
 /// A drag of a tool across the canvas, begun by a primary press on it.
@@ -66,8 +89,11 @@ pub struct SpriteEditor {
     /// The drag in progress, if any. It only continues while its press is
     /// known to be held, and ends on anything that casts doubt on that.
     stroke: Option<Stroke>,
-    /// The open SELECT PALETTE dialog, which takes every input while open.
-    picker: Option<PalettePicker>,
+    /// The open dialog, which takes every input while open.
+    dialog: Option<EditorDialog>,
+    /// The swatch last pressed, and for how many more ticks a press on it
+    /// makes a double click.
+    last_swatch_press: Option<(u8, u32)>,
 }
 
 impl SpriteEditor {
@@ -83,7 +109,8 @@ impl SpriteEditor {
             color: 1,
             tool: ToolSlot::default(),
             stroke: None,
-            picker: None,
+            dialog: None,
+            last_swatch_press: None,
         }
     }
 
@@ -97,9 +124,56 @@ impl SpriteEditor {
         self.advanced
     }
 
-    /// Whether the palette picker is open and taking every input.
-    pub fn has_picker(&self) -> bool {
-        self.picker.is_some()
+    /// Whether a dialog is open and taking every input.
+    pub fn has_dialog(&self) -> bool {
+        self.dialog.is_some()
+    }
+
+    /// The open SELECT PALETTE dialog, if any.
+    #[cfg(test)]
+    pub fn picker(&self) -> Option<&PalettePicker> {
+        match &self.dialog {
+            Some(EditorDialog::Palette(picker)) => Some(picker),
+            _ => None,
+        }
+    }
+
+    /// The open EDIT COLOR dialog, if any.
+    #[cfg(test)]
+    pub fn color_editor(&self) -> Option<&ColorEditor> {
+        match &self.dialog {
+            Some(EditorDialog::Color(editor)) => Some(editor),
+            _ => None,
+        }
+    }
+
+    /// Where the open EDIT COLOR dialog's parts sit.
+    #[cfg(test)]
+    pub fn color_editor_layout(&self) -> ColorEditorLayout {
+        self.edit_color_layout()
+    }
+
+    /// Where the swatch of local color `local` is drawn.
+    #[cfg(test)]
+    pub fn swatch_rect(&self, local: u8) -> crate::system::workspace::Rect {
+        self.layout().swatches[usize::from(local)]
+    }
+
+    /// Advances the time double clicks are measured in by one tick.
+    pub fn tick(&mut self) {
+        self.last_swatch_press = match self.last_swatch_press {
+            Some((local, ticks)) if ticks > 0 => Some((local, ticks - 1)),
+            _ => None,
+        };
+    }
+
+    /// The colors the open EDIT COLOR dialog draws with, for the frame
+    /// palette from [`SCRATCH_BASE`] on.
+    pub fn scratch_colors(&self) -> Option<[Rgb; SCRATCH_COLORS]> {
+        match &self.dialog {
+            Some(EditorDialog::Color(editor)) => Some(editor.scratch_colors()),
+            _ => None,
+        }
     }
 
     /// Ends the drag in progress, if any, closing its edit in `document`.
@@ -140,15 +214,24 @@ impl SpriteEditor {
         SpriteLayout::new(self.metrics, self.advanced, self.sheet.zoom())
     }
 
-    /// The palette picker, centred in the editor's area.
-    fn picker_layout(&self) -> PickerLayout {
-        let area = crate::system::workspace::Rect {
+    /// The screen below the tab bar, where the dialogs are centred.
+    fn dialog_area(&self) -> crate::system::workspace::Rect {
+        crate::system::workspace::Rect {
             x: 0,
             y: self.metrics.top,
             width: WIDTH as i32,
             height: HEIGHT as i32 - self.metrics.top,
-        };
-        PickerLayout::new(area, self.metrics, self.advanced)
+        }
+    }
+
+    /// The palette picker, centred in the editor's area.
+    fn picker_layout(&self) -> PickerLayout {
+        PickerLayout::new(self.dialog_area(), self.metrics, self.advanced)
+    }
+
+    /// The color editor, centred in the editor's area.
+    fn edit_color_layout(&self) -> ColorEditorLayout {
+        ColorEditorLayout::new(self.dialog_area(), self.metrics, self.advanced)
     }
 
     /// Applies `event`, drawing on the selected tile of `document` when
@@ -166,22 +249,16 @@ impl SpriteEditor {
     /// it counts as one finished edit.
     ///
     /// The palette button, or an OBP cell in Advanced mode, opens the
-    /// palette picker, which then takes every event until it closes.
+    /// palette picker. A double click on a swatch, or `c`, opens EDIT COLOR
+    /// on that color. Either dialog then takes every event until it
+    /// closes.
     pub fn handle_input(
         &mut self,
         event: InputEvent,
         mut document: Option<&mut SpriteDocument>,
     ) -> Option<SpriteRequest> {
-        let picker_layout = self.picker.is_some().then(|| self.picker_layout());
-        if let (Some(picker), Some(picker_layout)) = (&mut self.picker, picker_layout) {
-            let outcome = picker.handle_input(event, &picker_layout)?;
-            let tile = picker.tile();
-            self.picker = None;
-            // Applying the bank the tile has is a no-op the document
-            // records nothing for.
-            if let (PickerOutcome::Apply(bank), Some(document)) = (outcome, document) {
-                document.set_tile_bank(tile, bank);
-            }
+        if self.dialog.is_some() {
+            self.dialog_input(event, document);
             return None;
         }
         let layout = self.layout();
@@ -201,7 +278,7 @@ impl SpriteEditor {
                     // A tile under the pointer is on screen, so selecting
                     // it never scrolls.
                     Hit::Sheet(tile) => self.select(tile, document),
-                    Hit::Swatch(local) => self.color = local,
+                    Hit::Swatch(local) => return self.press_swatch(local, document),
                     Hit::Tool(tool) => self.set_tool(tool, document),
                     Hit::GridButton => self.grid = !self.grid,
                     Hit::AdvancedButton => self.toggle_advanced(),
@@ -243,6 +320,7 @@ impl SpriteEditor {
             InputEvent::Text('a' | 'A') => self.toggle_advanced(),
             InputEvent::Text('+' | '=') => self.zoom(1),
             InputEvent::Text('-' | '_') => self.zoom(-1),
+            InputEvent::Text('c' | 'C') => return self.open_color_editor(document, self.color),
             InputEvent::Text(key) => {
                 if let Some(tool) = ToolSlot::from_key(key) {
                     self.set_tool(tool, document);
@@ -266,6 +344,99 @@ impl SpriteEditor {
         None
     }
 
+    /// Hands `event` to the open dialog, and carries out how it closes, if
+    /// it does.
+    fn dialog_input(&mut self, event: InputEvent, document: Option<&mut SpriteDocument>) {
+        let picker_layout = self.picker_layout();
+        let color_layout = self.edit_color_layout();
+        let outcome = match &mut self.dialog {
+            Some(EditorDialog::Palette(picker)) => {
+                let Some(outcome) = picker.handle_input(event, &picker_layout) else {
+                    return;
+                };
+                let tile = picker.tile();
+                // Applying the bank the tile has is a no-op the document
+                // records nothing for.
+                Some(match outcome {
+                    PickerOutcome::Apply(bank) => DialogResult::Bank(tile, bank),
+                    PickerOutcome::Cancel => DialogResult::Nothing,
+                })
+            }
+            Some(EditorDialog::Color(editor)) => {
+                let Some(outcome) = editor.handle_input(event, &color_layout) else {
+                    return;
+                };
+                Some(match outcome {
+                    ColorOutcome::Apply(color) => DialogResult::Color(editor.target(), color),
+                    ColorOutcome::Cancel => DialogResult::Nothing,
+                })
+            }
+            None => None,
+        };
+        let Some(outcome) = outcome else {
+            return;
+        };
+        self.dialog = None;
+        let Some(document) = document else {
+            return;
+        };
+        match outcome {
+            DialogResult::Bank(tile, bank) => {
+                document.set_tile_bank(tile, bank);
+            }
+            DialogResult::Color(target, color) => {
+                document.recolor(target, color);
+            }
+            DialogResult::Nothing => {}
+        }
+    }
+
+    /// Selects local color `local`, opening EDIT COLOR on it when this
+    /// press follows another on the same swatch quickly enough.
+    fn press_swatch(
+        &mut self,
+        local: u8,
+        document: Option<&mut SpriteDocument>,
+    ) -> Option<SpriteRequest> {
+        self.color = local;
+        if self
+            .last_swatch_press
+            .take()
+            .is_some_and(|(last, _)| last == local)
+        {
+            return self.open_color_editor(document, local);
+        }
+        self.last_swatch_press = Some((local, DOUBLE_CLICK_TICKS));
+        None
+    }
+
+    /// Opens EDIT COLOR on local color `local` of the selected tile's
+    /// palette. The transparent local 0 has no color to edit, and without
+    /// a document nothing opens.
+    fn open_color_editor(
+        &mut self,
+        document: Option<&mut SpriteDocument>,
+        local: u8,
+    ) -> Option<SpriteRequest> {
+        let document = document?;
+        let target = ColorTarget {
+            bank: document.obj().attributes().bank(self.selected),
+            local,
+        };
+        let Some(uses) = document.color_uses(target, self.selected) else {
+            return Some(SpriteRequest::Notice("Color 0 is transparent"));
+        };
+        self.end_stroke(Some(&mut *document));
+        let old = document.video().palette.get(uses.master);
+        self.dialog = Some(EditorDialog::Color(ColorEditor::new(
+            self.selected,
+            target,
+            uses,
+            old,
+        )));
+        None
+    }
+
     /// Opens the palette picker on the selected tile of `document`, with
     /// `pending` chosen, or else the tile's own bank. Without a document
     /// there is no tile to recolor, so nothing opens.
@@ -275,10 +446,10 @@ impl SpriteEditor {
         };
         self.end_stroke(Some(&mut *document));
         let current = document.obj().attributes().bank(self.selected);
-        self.picker = Some(PalettePicker::new(
+        self.dialog = Some(EditorDialog::Palette(PalettePicker::new(
             self.selected,
             pending.unwrap_or(current),
-        ));
+        )));
     }
 
     /// Ends any drag, then asks to save `document` if it has changes.

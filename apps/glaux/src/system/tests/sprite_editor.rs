@@ -842,3 +842,129 @@ fn an_applied_palette_saves_undoes_and_redoes() {
     assert_eq!(tile_bank(&system, 0), 4);
     assert!(!document(&system).is_modified());
 }
+
+// Editing a color.
+
+/// The frame palette entry EDIT COLOR shows its proposed color in.
+const NEW_SLOT: u8 = 255;
+/// The frame palette entry the workspace shows OBP0 local 3 in.
+const SLOT_LOCAL_3: u8 = 34;
+
+fn centre(rect: workspace::Rect) -> Point {
+    Point::new(
+        (rect.x + rect.width / 2) as u16,
+        (rect.y + rect.height / 2) as u16,
+    )
+}
+
+/// Opens the sprite editor on the cartridge's assets and double-clicks
+/// swatch 3, the color tile 0 is drawn in.
+fn editing_color(system: System) -> System {
+    let system = open_sprites(system);
+    let at = centre(workspace::tests_support::sprite_swatch(
+        &system.workspace,
+        3,
+    ));
+    let system = system.update(&click(at)).update(&click(at));
+    assert!(system.workspace.has_modal());
+    system
+}
+
+/// Types `hex` into the open EDIT COLOR dialog's HEX field.
+fn type_hex(system: System, hex: &str) -> System {
+    let (_, field, _) = workspace::tests_support::color_editor_parts(&system.workspace);
+    let typed: Vec<InputEvent> = hex.chars().map(InputEvent::Text).collect();
+    system.update(&click(centre(field))).update(&typed)
+}
+
+#[test]
+fn edit_color_previews_through_the_frame_palette_only() {
+    let fixture = Fixture::new("sys-color-preview");
+    let rom = fake_rom();
+    let system = type_hex(editing_color(with_video_assets(&fixture)), "E6482E");
+    let palette = system.frame_palette(&rom);
+    assert_eq!(palette.get(NEW_SLOT), RED);
+    assert_eq!(palette.get(SLOT_LOCAL_3), distinct_palette().get(103));
+    assert_eq!(palette.entries()[..32], rom.palette().entries()[..32]);
+    assert!(!document(&system).is_modified());
+
+    // Tile 0 is solid local 3: the preview draws it in the new color.
+    let fb = render(&system);
+    let (preview, _, _) = workspace::tests_support::color_editor_parts(&system.workspace);
+    assert_eq!(fb.pixel(preview.x + 3, preview.y + 3), Some(NEW_SLOT));
+}
+
+#[test]
+fn an_applied_color_saves_undoes_and_keeps_the_ui_colors() {
+    let fixture = Fixture::new("sys-color-apply");
+    let rom = fake_rom();
+    let system = type_hex(editing_color(with_video_assets(&fixture)), "e6482e")
+        .update(&[InputEvent::Enter, InputEvent::Enter]);
+    assert!(!system.workspace.has_modal());
+    assert_eq!(document(&system).video().palette.get(103), RED);
+    assert_eq!(system.frame_palette(&rom).get(SLOT_LOCAL_3), RED);
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(
+        workspace::tests_support::notice(&system.workspace),
+        Some("Saved palette.bin (768 bytes)")
+    );
+    let saved = std::fs::read(fixture.root().join("pong/palette.bin")).unwrap();
+    assert_eq!(saved[103 * 3..104 * 3], [RED.r, RED.g, RED.b]);
+
+    let system = system.update(&[InputEvent::Undo]);
+    assert_eq!(
+        system.frame_palette(&rom).get(SLOT_LOCAL_3),
+        distinct_palette().get(103)
+    );
+    assert!(
+        document(&system).is_modified(),
+        "the file has the new color"
+    );
+}
+
+#[test]
+fn escape_reverts_typing_then_cancels_without_leaving_the_workspace() {
+    let fixture = Fixture::new("sys-color-escape");
+    let rom = fake_rom();
+    let system = with_video_assets(&fixture);
+    let system = type_hex(editing_color(system), "123456");
+    let system = press_break(system);
+    assert!(
+        system.workspace.has_modal(),
+        "the first Escape reverts typing"
+    );
+    assert_eq!(
+        workspace::tests_support::color_editor_color(&system.workspace),
+        Some(distinct_palette().get(103))
+    );
+    let system = press_break(system);
+    assert!(is_workspace(&system));
+    assert!(!system.workspace.has_modal());
+    assert!(!document(&system).is_modified() && !document(&system).can_undo());
+    assert_eq!(
+        system.frame_palette(&rom).get(NEW_SLOT),
+        rom.palette().get(NEW_SLOT),
+        "the dialog's colors are gone"
+    );
+}
+
+#[test]
+fn editing_a_low_master_never_touches_the_ui_entry_of_that_index() {
+    let fixture = Fixture::new("sys-color-low-master");
+    let rom = fake_rom();
+    let system = shell_with_cartridge(&fixture, "");
+    write_video_assets(&fixture);
+    let mut obp = obp_hundreds();
+    // OBP0 local 3, tile 0's color, resolves to master 5.
+    obp[3] = 5;
+    std::fs::write(fixture.root().join("pong/obp.bin"), obp).unwrap();
+    let system = enter(system, "load pong");
+
+    let system =
+        type_hex(editing_color(system), "E6482E").update(&[InputEvent::Enter, InputEvent::Enter]);
+    assert_eq!(document(&system).video().palette.get(5), RED);
+    let palette = system.frame_palette(&rom);
+    assert_eq!(palette.entries()[..32], rom.palette().entries()[..32]);
+    assert_eq!(palette.get(SLOT_LOCAL_3), RED);
+}

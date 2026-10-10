@@ -64,3 +64,23 @@ pub fn sprite_palette_button(workspace: &Workspace) -> Rect {
 pub fn picker_preview(workspace: &Workspace, bank: usize) -> Rect {
     workspace.sprites.picker_preview_rect(bank)
 }
+
+/// Where the sprite editor draws the swatch of local color `local`.
+pub fn sprite_swatch(workspace: &Workspace, local: u8) -> Rect {
+    workspace.sprites.swatch_rect(local)
+}
+
+/// Where the open EDIT COLOR dialog draws its tile preview, its first
+/// field (HEX) and its confirm button.
+pub fn color_editor_parts(workspace: &Workspace) -> (Rect, Rect, Rect) {
+    let layout = workspace.sprites.color_editor_layout();
+    (layout.preview, layout.fields[0], layout.apply)
+}
+
+/// What the open EDIT COLOR dialog would apply, if one is open.
+pub fn color_editor_color(workspace: &Workspace) -> Option<glaux_machine::palette::Rgb> {
+    workspace
+        .sprites
+        .color_editor()
+        .map(|editor| editor.color())
+}
