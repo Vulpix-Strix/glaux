@@ -106,6 +106,8 @@ pub enum Hit {
     ZoomOut,
     ZoomIn,
     SaveButton,
+    /// Opens the palette picker for the selected tile.
+    PaletteButton,
     None,
 }
 
@@ -130,8 +132,10 @@ pub struct SpriteLayout {
     pub zoom_out: Rect,
     pub zoom_label: Rect,
     pub zoom_in: Rect,
-    /// Saves the tiles; under the canvas caption, as wide as the canvas.
+    /// Saves the changes; under the canvas caption, as wide as the canvas.
     pub save_button: Rect,
+    /// Opens the palette picker; under the Save button, as wide as it.
+    pub palette_button: Rect,
     /// Tops of the palette panel's rows, the swatch row's first.
     pub swatch_y: i32,
     /// The 16 local color cells, by local index.
@@ -246,6 +250,10 @@ impl SpriteLayout {
             width: canvas_frame.width,
             height: bar,
         };
+        let palette_button = Rect {
+            y: save_button.bottom() + 2,
+            ..save_button
+        };
 
         let swatch_x = MARGIN + LABEL_CELLS * cell_w;
         let pitch = (2 * cell_w).max(cell_h) + SWATCH_GAP;
@@ -279,6 +287,7 @@ impl SpriteLayout {
             zoom_label,
             zoom_in,
             save_button,
+            palette_button,
             swatch_y,
             swatches: std::array::from_fn(|i| cell(i, swatch_y)),
             banks: std::array::from_fn(|i| cell(i, bank_y)),
@@ -319,6 +328,7 @@ impl SpriteLayout {
             (self.zoom_out, Hit::ZoomOut),
             (self.zoom_in, Hit::ZoomIn),
             (self.save_button, Hit::SaveButton),
+            (self.palette_button, Hit::PaletteButton),
         ];
         if let Some(&(_, hit)) = buttons.iter().find(|(rect, _)| rect.contains(point)) {
             return hit;

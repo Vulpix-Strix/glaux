@@ -32,6 +32,7 @@ fn regions(layout: &SpriteLayout) -> Vec<(String, Rect)> {
         ("canvas".into(), layout.canvas_frame),
         ("sheet".into(), layout.sheet.inset(-1)),
         ("save".into(), layout.save_button),
+        ("palette button".into(), layout.palette_button),
     ];
     out.extend(layout.tools.iter().map(|(t, r)| (format!("{t:?}"), *r)));
     out
@@ -129,6 +130,10 @@ fn every_region_hits_what_it_shows() {
         assert_eq!(layout.hit(centre(layout.zoom_out), &view), Hit::ZoomOut);
         assert_eq!(layout.hit(centre(layout.zoom_in), &view), Hit::ZoomIn);
         assert_eq!(layout.hit(centre(layout.zoom_label), &view), Hit::None);
+        assert_eq!(
+            layout.hit(centre(layout.palette_button), &view),
+            Hit::PaletteButton
+        );
         for (tool, rect) in layout.tools {
             assert_eq!(layout.hit(centre(rect), &view), Hit::Tool(tool));
         }
@@ -194,5 +199,6 @@ fn advanced_mode_keeps_the_main_layout() {
     assert_eq!(advanced.sheet.x, normal.sheet.x);
     assert_eq!(advanced.tools, normal.tools);
     assert_eq!(advanced.options, normal.options);
+    assert_eq!(advanced.palette_button, normal.palette_button);
     assert!(advanced.palette.height > normal.palette.height);
 }

@@ -14,19 +14,19 @@ use super::{BAR, Rect, wrap};
 use crate::system::{BACKGROUND, TEXT};
 
 /// Window body.
-const BODY: u8 = TEXT;
+pub const BODY: u8 = TEXT;
 /// Body text, borders, the title bar and focused buttons.
-const INK: u8 = BACKGROUND;
+pub const INK: u8 = BACKGROUND;
 /// The window's drop shadow. Lighter than the dark workspace behind it so
 /// it still reads as an edge.
 const SHADOW: u8 = BAR;
 /// Offset of the drop shadow, right and down.
-const SHADOW_OFFSET: i32 = 2;
+pub const SHADOW_OFFSET: i32 = 2;
 /// Space between the window border and its contents.
-const PAD: i32 = 6;
+pub const PAD: i32 = 6;
 /// Space kept between the window and the edges of the area it is centred
 /// in.
-const AREA_MARGIN: i32 = 8;
+pub const AREA_MARGIN: i32 = 8;
 /// Most text columns a message line takes.
 const MAX_COLUMNS: i32 = 40;
 /// Buttons are indented from the body text by this many cells.
@@ -247,50 +247,75 @@ impl<A: Copy> Dialog<A> {
             cell_h,
             ..
         } = *layout;
-        let fill = |fb: &mut Framebuffer, rect: Rect, color: u8| {
-            fill_rect(fb, rect.x, rect.y, rect.width, rect.height, color);
-        };
-        let shadow = Rect {
-            x: window.x + SHADOW_OFFSET,
-            y: window.y + SHADOW_OFFSET,
-            ..window
-        };
-        fill(framebuffer, shadow, SHADOW);
-        fill(framebuffer, window, INK);
-        fill(framebuffer, window.inset(1), BODY);
-
-        fill(framebuffer, title_bar, INK);
-        let title_x = title_bar.x + (title_bar.width - text_cells(&self.title) * cell_w) / 2;
-        draw_text(
-            framebuffer,
-            font,
-            &self.title,
-            title_x,
-            title_bar.y + 2,
-            BODY,
-        );
-
+        draw_window(framebuffer, font, window, title_bar, &self.title, cell_w);
         for (line, y) in &layout.lines {
             draw_text(framebuffer, font, line, layout.text_x, *y, INK);
         }
-
         for (index, ((label, _), &rect)) in self.actions.iter().zip(&layout.buttons).enumerate() {
-            let focused = index == self.focus;
-            fill(framebuffer, rect, INK);
-            let (face, ink) = if focused { (INK, BODY) } else { (BODY, INK) };
-            fill(framebuffer, rect.inset(1), face);
-            if focused {
-                // An inner rule marks the focused button even where the
-                // inversion alone is hard to see.
-                let ring = rect.inset(2);
-                fill(framebuffer, ring, BODY);
-                fill(framebuffer, ring.inset(1), INK);
-            }
-            let x = rect.x + (rect.width - text_cells(label) * cell_w) / 2;
-            let y = rect.y + (rect.height - cell_h) / 2 + 1;
-            draw_text(framebuffer, font, label, x, y, ink);
+            draw_button(
+                framebuffer,
+                font,
+                rect,
+                label,
+                index == self.focus,
+                cell_w,
+                cell_h,
+            );
         }
     }
+}
+
+/// Draws a window's drop shadow, border, body and title bar, with `title`
+/// centred in the bar.
+pub fn draw_window(
+    framebuffer: &mut Framebuffer,
+    font: &BitmapFont,
+    window: Rect,
+    title_bar: Rect,
+    title: &str,
+    cell_w: i32,
+) {
+    let shadow = Rect {
+        x: window.x + SHADOW_OFFSET,
+        y: window.y + SHADOW_OFFSET,
+        ..window
+    };
+    fill(framebuffer, shadow, SHADOW);
+    fill(framebuffer, window, INK);
+    fill(framebuffer, window.inset(1), BODY);
+    fill(framebuffer, title_bar, INK);
+    let title_x = title_bar.x + (title_bar.width - text_cells(title) * cell_w) / 2;
+    draw_text(framebuffer, font, title, title_x, title_bar.y + 2, BODY);
+}
+
+/// Draws a push button labelled `label`, inverted with an inner rule when
+/// `focused`.
+pub fn draw_button(
+    framebuffer: &mut Framebuffer,
+    font: &BitmapFont,
+    rect: Rect,
+    label: &str,
+    focused: bool,
+    cell_w: i32,
+    cell_h: i32,
+) {
+    fill(framebuffer, rect, INK);
+    let (face, ink) = if focused { (INK, BODY) } else { (BODY, INK) };
+    fill(framebuffer, rect.inset(1), face);
+    if focused {
+        // An inner rule marks the focused button even where the inversion
+        // alone is hard to see.
+        let ring = rect.inset(2);
+        fill(framebuffer, ring, BODY);
+        fill(framebuffer, ring.inset(1), INK);
+    }
+    let x = rect.x + (rect.width - text_cells(label) * cell_w) / 2;
+    let y = rect.y + (rect.height - cell_h) / 2 + 1;
+    draw_text(framebuffer, font, label, x, y, ink);
+}
+
+fn fill(framebuffer: &mut Framebuffer, rect: Rect, color: u8) {
+    fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, color);
 }
 
 impl DialogLayout {

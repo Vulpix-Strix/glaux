@@ -11,7 +11,9 @@ use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, ObjBank};
 use glaux_machine::palette::Rgb;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, OBJ_TILE_WIDTH};
 use glaux_machine::system_rom::{SystemIcon, SystemUi};
-use glaux_video::draw::{draw_ink_image, draw_obj_tile_scaled, draw_text, fill_rect};
+use glaux_video::draw::{
+    ObjPaletteChoice, draw_ink_image, draw_obj_tile_scaled, draw_text, fill_rect,
+};
 
 use super::layout::{ADVANCED_LABELS, CANVAS_ZOOM, Hit, SCROLLBAR, SpriteLayout, ToolSlot};
 use super::sheet::{SheetView, Visible, grid_position};
@@ -21,8 +23,10 @@ use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 
 /// The two colors of the checkerboard behind transparent pixels.
-const CHECK_DARK: u8 = 12;
-const CHECK_LIGHT: u8 = 13;
+pub(super) const CHECK_DARK: u8 = 12;
+pub(super) const CHECK_LIGHT: u8 = 13;
+/// The status bar hint while the palette picker is open.
+const PICKER_HINT: &str = "Arrows: choose  Enter: apply  Esc: cancel";
 /// Frames around the canvas and the sheet.
 const FRAME: u8 = DIM;
 /// Pixel grid lines over the canvas.
@@ -51,7 +55,11 @@ impl SpriteEditor {
         notice: Option<(&str, u8)>,
     ) {
         let layout = self.layout();
-        let hover = pointer.map_or(Hit::None, |at| layout.hit(at, &self.sheet));
+        // Nothing under the palette picker reacts to the pointer.
+        let hover = match (&self.picker, pointer) {
+            (None, Some(at)) => layout.hit(at, &self.sheet),
+            _ => Hit::None,
+        };
         let mut painter = Painter {
             framebuffer,
             font,
@@ -65,12 +73,16 @@ impl SpriteEditor {
             Ok(source) => {
                 painter.canvas(self, &source, hover);
                 painter.save_button(source.modified, hover);
+                painter.palette_button(self, &source, hover);
                 painter.sheet(self, &source, hover);
                 painter.palette(self, &source, hover);
             }
             Err(message) => painter.unavailable(message),
         }
-        let (left, right) = self.status(source.ok().as_ref(), hover);
+        let (left, mut right) = self.status(source.ok().as_ref(), hover);
+        if self.picker.is_some() {
+            right = PICKER_HINT.to_owned();
+        }
         match notice {
             // A notice answers what the user just did, so it wins over the
             // hint when both don't fit.
@@ -81,6 +93,10 @@ impl SpriteEditor {
                 let control = !matches!(hover, Hit::None | Hit::Canvas { .. });
                 painter.status_bar(&left, PALE, &right, control);
             }
+        }
+        if let (Some(picker), Ok(source)) = (&self.picker, source) {
+            let picker_layout = self.picker_layout();
+            picker.render(framebuffer, font, &picker_layout, &source, pointer);
         }
     }
 
@@ -116,7 +132,8 @@ impl SpriteEditor {
                 format!("Click: select tile {tile:04} ({column},{row})")
             }
             Hit::Swatch(local) => format!("Click: select color {local:X}"),
-            Hit::Bank(bank) => format!("OBP {bank}: read-only"),
+            Hit::Bank(bank) => format!("Click: choose this tile's palette, from OBP {bank}"),
+            Hit::PaletteButton => "Click: choose this tile's palette".to_owned(),
             Hit::Tool(tool) => format!("{}: {}", tool.key().to_ascii_uppercase(), tool.name()),
             Hit::GridButton => "G: show or hide the pixel grid".to_owned(),
             Hit::AdvancedButton if self.advanced => "A: hide palette details".to_owned(),
@@ -130,7 +147,7 @@ impl SpriteEditor {
                 None => "The sheet is at its largest".to_owned(),
             },
             Hit::SaveButton if source.is_some_and(|s| s.modified) => {
-                "Ctrl+S: write sprites.bin".to_owned()
+                "Ctrl+S: write the changed files".to_owned()
             }
             Hit::SaveButton => "No unsaved edits".to_owned(),
             Hit::None if source.is_none() => String::new(),
@@ -166,38 +183,12 @@ impl Painter<'_> {
         );
     }
 
-    /// A one-pixel outline just inside `rect`.
     fn outline(&mut self, rect: Rect, color: u8) {
-        let Rect {
-            x,
-            y,
-            width,
-            height,
-        } = rect;
-        let fb = &mut *self.framebuffer;
-        fill_rect(fb, x, y, width, 1, color);
-        fill_rect(fb, x, y + height - 1, width, 1, color);
-        fill_rect(fb, x, y, 1, height, color);
-        fill_rect(fb, x + width - 1, y, 1, height, color);
+        outline(self.framebuffer, rect, color);
     }
 
-    /// Fills `rect` with a checkerboard of `square`-pixel squares, the
-    /// top-left one dark.
     fn checker(&mut self, rect: Rect, square: i32) {
-        let square = square.max(1);
-        let mut y = rect.y;
-        while y < rect.bottom() {
-            let mut x = rect.x;
-            while x < rect.right() {
-                let parity = ((x - rect.x) / square + (y - rect.y) / square) % 2;
-                let color = if parity == 0 { CHECK_DARK } else { CHECK_LIGHT };
-                let w = square.min(rect.right() - x);
-                let h = square.min(rect.bottom() - y);
-                fill_rect(self.framebuffer, x, y, w, h, color);
-                x += square;
-            }
-            y += square;
-        }
+        checker(self.framebuffer, rect, square);
     }
 
     /// Top of a text row centred in a bar that starts at `y`.
@@ -320,6 +311,7 @@ impl Painter<'_> {
             self.framebuffer,
             source.obj,
             editor.selected,
+            ObjPaletteChoice::TileDefault,
             (canvas.x, canvas.y),
             CANVAS_ZOOM,
             source.preview.slots(),
@@ -382,6 +374,7 @@ impl Painter<'_> {
                     self.framebuffer,
                     source.obj,
                     tile,
+                    ObjPaletteChoice::TileDefault,
                     (cell.x, cell.y),
                     zoom.scale(),
                     source.preview.slots(),
@@ -558,6 +551,20 @@ impl Painter<'_> {
         }
     }
 
+    /// The button that opens the palette picker, naming the selected
+    /// tile's palette.
+    fn palette_button(&mut self, editor: &SpriteEditor, source: &SpriteSource<'_>, hover: Hit) {
+        let rect = self.layout.palette_button;
+        let bank = source.obj.attributes().bank(editor.selected);
+        let label = format!("{}...", bank_name(bank, editor.advanced));
+        let hovered = hover == Hit::PaletteButton;
+        self.fill(rect, if hovered { HOVER_SHADE } else { BAR });
+        self.outline(rect, DIM);
+        let x = rect.x + (rect.width - self.cells(&label)) / 2;
+        let y = self.bar_text_y(rect.y, rect.height);
+        self.text(&label, x, y, if hovered { TEXT } else { PALE });
+    }
+
     /// The Save button, which only looks pressable while there is
     /// something to save.
     fn save_button(&mut self, modified: bool, hover: Hit) {
@@ -573,6 +580,39 @@ impl Painter<'_> {
         let x = rect.x + (rect.width - self.cells(SAVE_LABEL)) / 2;
         let y = self.bar_text_y(rect.y, rect.height);
         self.text(SAVE_LABEL, x, y, color);
+    }
+}
+
+/// Draws a one-pixel outline just inside `rect`.
+pub(super) fn outline(framebuffer: &mut Framebuffer, rect: Rect, color: u8) {
+    let Rect {
+        x,
+        y,
+        width,
+        height,
+    } = rect;
+    fill_rect(framebuffer, x, y, width, 1, color);
+    fill_rect(framebuffer, x, y + height - 1, width, 1, color);
+    fill_rect(framebuffer, x, y, 1, height, color);
+    fill_rect(framebuffer, x + width - 1, y, 1, height, color);
+}
+
+/// Fills `rect` with the transparency checkerboard of `square`-pixel
+/// squares, the top-left one dark.
+pub(super) fn checker(framebuffer: &mut Framebuffer, rect: Rect, square: i32) {
+    let square = square.max(1);
+    let mut y = rect.y;
+    while y < rect.bottom() {
+        let mut x = rect.x;
+        while x < rect.right() {
+            let parity = ((x - rect.x) / square + (y - rect.y) / square) % 2;
+            let color = if parity == 0 { CHECK_DARK } else { CHECK_LIGHT };
+            let w = square.min(rect.right() - x);
+            let h = square.min(rect.bottom() - y);
+            fill_rect(framebuffer, x, y, w, h, color);
+            x += square;
+        }
+        y += square;
     }
 }
 
@@ -597,6 +637,16 @@ fn selection_text(source: &SpriteSource<'_>, bank: ObjBank, local: u8) -> String
             )
         }
         None => format!("Selected: Local {local:X} -> transparent"),
+    }
+}
+
+/// What the palette bank `bank` is called: `Palette n` normally, `OBPn` in
+/// Advanced mode.
+pub(super) fn bank_name(bank: ObjBank, advanced: bool) -> String {
+    if advanced {
+        format!("OBP{}", bank.get())
+    } else {
+        format!("Palette {}", bank.get())
     }
 }
 

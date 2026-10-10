@@ -515,10 +515,10 @@ impl Workspace {
     /// Applies `event`, letting the sprite editor change `sprites`, and
     /// returns the file work it calls for, if any.
     ///
-    /// While a dialog is open it takes every event, Escape included.
-    /// Otherwise Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs, a primary
-    /// press on a tab selects it, and everything else goes to the open
-    /// view's editor, if it has one.
+    /// While a dialog is open it takes every event, Escape included; so
+    /// does the sprite editor's palette picker. Otherwise Ctrl+Tab and
+    /// Ctrl+Shift+Tab cycle the tabs, a primary press on a tab selects it,
+    /// and everything else goes to the open view's editor, if it has one.
     pub fn handle_input(
         &mut self,
         event: InputEvent,
@@ -540,6 +540,9 @@ impl Workspace {
                 Choice::Cancel | Choice::Dismiss => None,
             };
         }
+        if self.sprites.has_picker() {
+            return self.sprite_input(event, sprites);
+        }
         match event {
             InputEvent::NextView => self.switch_to(self.tab.next(), sprites),
             InputEvent::PreviousView => self.switch_to(self.tab.previous(), sprites),
@@ -551,18 +554,31 @@ impl Workspace {
                     self.switch_to(tab, sprites);
                 }
             }
-            _ if self.tab == Tab::Sprites => match self.sprites.handle_input(event, sprites)? {
-                SpriteRequest::Save => return Some(WorkspaceRequest::Save),
-                SpriteRequest::Notice(text) => self.notify(text, PALE),
-            },
+            _ if self.tab == Tab::Sprites => return self.sprite_input(event, sprites),
             _ => {}
         }
         None
     }
 
-    /// Whether a dialog is open and taking all input.
+    /// Hands `event` to the sprite editor and carries out what it asks.
+    fn sprite_input(
+        &mut self,
+        event: InputEvent,
+        sprites: Option<&mut SpriteDocument>,
+    ) -> Option<WorkspaceRequest> {
+        match self.sprites.handle_input(event, sprites)? {
+            SpriteRequest::Save => Some(WorkspaceRequest::Save),
+            SpriteRequest::Notice(text) => {
+                self.notify(text, PALE);
+                None
+            }
+        }
+    }
+
+    /// Whether a dialog, or the sprite editor's palette picker, is open and
+    /// taking all input.
     pub fn has_modal(&self) -> bool {
-        self.modal.is_some()
+        self.modal.is_some() || self.sprites.has_picker()
     }
 
     /// Advances time-limited UI state by one tick.
@@ -729,9 +745,12 @@ impl Workspace {
         clear(framebuffer, BACKGROUND);
         fill_rect(framebuffer, 0, 0, WIDTH as i32, layout.bar_height(), BAR);
 
-        // Nothing under an open dialog reacts to the pointer.
+        // Nothing under an open dialog reacts to the pointer, and only the
+        // palette picker does while it is open.
         let pointer = pointer.filter(|_| self.modal.is_none());
-        let hovered = pointer.and_then(|at| layout.tab_at(at));
+        let hovered = pointer
+            .filter(|_| !self.sprites.has_picker())
+            .and_then(|at| layout.tab_at(at));
         for (tab, rect) in layout.tabs() {
             let active = tab == self.tab;
             let inks: [u8; INK_SLOTS] = if active {

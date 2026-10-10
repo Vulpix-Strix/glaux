@@ -477,3 +477,191 @@ fn save_is_asked_for_only_with_unsaved_edits() {
     );
     assert_eq!(editor.handle_input(press, None), None);
 }
+
+// Choosing a tile's palette.
+
+use glaux_machine::obj_palette::ObjBank;
+
+fn centre_of(rect: crate::system::workspace::Rect) -> Point {
+    Point::new(
+        (rect.x + rect.width / 2) as u16,
+        (rect.y + rect.height / 2) as u16,
+    )
+}
+
+/// A primary press and release at `at`.
+fn tap(editor: &mut SpriteEditor, doc: &mut SpriteDocument, at: Point) -> Option<SpriteRequest> {
+    let pressed = editor.handle_input(
+        InputEvent::PointerDown {
+            button: PointerButton::Primary,
+            at,
+        },
+        Some(doc),
+    );
+    let released = editor.handle_input(
+        InputEvent::PointerUp {
+            button: PointerButton::Primary,
+            at,
+        },
+        Some(doc),
+    );
+    pressed.or(released)
+}
+
+fn bank_of(doc: &SpriteDocument, tile: usize) -> u8 {
+    doc.obj().attributes().bank(tile).get()
+}
+
+fn open_picker(editor: &mut SpriteEditor, doc: &mut SpriteDocument) {
+    let button = centre_of(editor.layout().palette_button);
+    assert_eq!(tap(editor, doc, button), None);
+    assert!(editor.has_picker());
+}
+
+#[test]
+fn the_palette_button_opens_the_picker_on_the_tiles_bank() {
+    let mut editor = editor();
+    let mut doc = document();
+    assert!(doc.set_tile_bank(9, ObjBank::new(3).unwrap()));
+    editor.selected = 9;
+    open_picker(&mut editor, &mut doc);
+    assert_eq!(editor.picker.as_ref().unwrap().pending().get(), 3);
+    assert_eq!(editor.picker.as_ref().unwrap().tile(), 9);
+
+    let mut editor = SpriteEditor::new(METRICS);
+    let button = editor.layout().palette_button;
+    click(&mut editor, button);
+    assert!(!editor.has_picker(), "without a document there is no tile");
+}
+
+#[test]
+fn an_advanced_obp_cell_preselects_without_assigning() {
+    let mut editor = editor();
+    editor.handle_input(InputEvent::Text('a'), None);
+    let mut doc = document();
+    let cell = centre_of(editor.layout().banks[4]);
+    tap(&mut editor, &mut doc, cell);
+    assert_eq!(editor.picker.as_ref().unwrap().pending().get(), 4);
+    assert_eq!(bank_of(&doc, 0), 0, "only chosen, not assigned");
+
+    assert_eq!(command(&mut editor, &mut doc, InputEvent::Break), None);
+    assert!(!editor.has_picker());
+    assert_eq!(bank_of(&doc, 0), 0);
+    assert!(!doc.is_modified() && !doc.can_undo());
+}
+
+#[test]
+fn the_open_picker_takes_every_event() {
+    let mut editor = editor();
+    let mut doc = document();
+    doc.set_pixel(0, 7, 7, 1);
+    open_picker(&mut editor, &mut doc);
+    let before = doc.clone();
+    let canvas = canvas_point(&editor, 3, 3);
+    for event in [
+        InputEvent::PointerDown {
+            button: PointerButton::Primary,
+            at: canvas,
+        },
+        InputEvent::PointerMove(Some(canvas_point(&editor, 4, 4))),
+        InputEvent::PointerUp {
+            button: PointerButton::Primary,
+            at: canvas,
+        },
+        InputEvent::Text('e'),
+        InputEvent::Text('g'),
+        InputEvent::Undo,
+        InputEvent::Redo,
+        InputEvent::Save,
+        InputEvent::Right { select: false },
+        InputEvent::Wheel { delta: -1 },
+    ] {
+        assert_eq!(
+            editor.handle_input(event, Some(&mut doc)),
+            None,
+            "{event:?}"
+        );
+    }
+    assert!(editor.has_picker());
+    assert_eq!(doc, before);
+    assert_eq!(
+        (editor.tool, editor.grid, editor.selected),
+        (ToolSlot::Pencil, true, 0)
+    );
+}
+
+#[test]
+fn applying_a_palette_is_one_undoable_edit() {
+    let mut editor = editor();
+    let mut doc = document();
+    open_picker(&mut editor, &mut doc);
+    command(&mut editor, &mut doc, InputEvent::Down);
+    command(&mut editor, &mut doc, InputEvent::Down);
+    assert_eq!(bank_of(&doc, 0), 0, "nothing changes before Apply");
+    assert_eq!(command(&mut editor, &mut doc, InputEvent::Enter), None);
+    assert!(!editor.has_picker());
+    assert_eq!(bank_of(&doc, 0), 2);
+    assert!(doc.is_modified());
+
+    assert_eq!(command(&mut editor, &mut doc, InputEvent::Undo), None);
+    assert_eq!(bank_of(&doc, 0), 0);
+    assert!(!doc.is_modified());
+    assert_eq!(
+        command(&mut editor, &mut doc, InputEvent::Undo),
+        Some(SpriteRequest::Notice("Nothing to undo")),
+        "one step"
+    );
+    command(&mut editor, &mut doc, InputEvent::Redo);
+    assert_eq!(bank_of(&doc, 0), 2);
+}
+
+#[test]
+fn applying_the_current_palette_or_cancelling_changes_nothing() {
+    let mut editor = editor();
+    let mut doc = document();
+    open_picker(&mut editor, &mut doc);
+    assert_eq!(command(&mut editor, &mut doc, InputEvent::Enter), None);
+    assert!(!editor.has_picker());
+    assert!(!doc.is_modified() && !doc.can_undo());
+
+    open_picker(&mut editor, &mut doc);
+    command(&mut editor, &mut doc, InputEvent::Text('6'));
+    let cancel = centre_of(editor.picker_layout().cancel);
+    assert_eq!(tap(&mut editor, &mut doc, cancel), None);
+    assert!(!editor.has_picker());
+    assert_eq!(bank_of(&doc, 0), 0);
+    assert!(!doc.is_modified() && !doc.can_undo());
+}
+
+#[test]
+fn choosing_and_applying_by_pointer_never_draws() {
+    let mut editor = editor();
+    let mut doc = document();
+    let before = rows(&doc, 0);
+    open_picker(&mut editor, &mut doc);
+    let layout = editor.picker_layout();
+    // A row lying over the canvas is chosen, not painted on.
+    let row = layout
+        .rows
+        .iter()
+        .rposition(|row| row.overlaps(editor.layout().canvas))
+        .expect("a row over the canvas");
+    assert_ne!(row, 0, "a bank the tile does not have");
+    tap(&mut editor, &mut doc, centre_of(layout.rows[row]));
+    tap(&mut editor, &mut doc, centre_of(layout.apply));
+    assert!(!editor.has_picker());
+    assert_eq!(bank_of(&doc, 0), row as u8);
+
+    // What follows the closing release reaches the editor, which holds no
+    // stroke to continue.
+    let canvas = canvas_point(&editor, 2, 2);
+    editor.handle_input(InputEvent::PointerMove(Some(canvas)), Some(&mut doc));
+    editor.handle_input(
+        InputEvent::PointerUp {
+            button: PointerButton::Primary,
+            at: canvas,
+        },
+        Some(&mut doc),
+    );
+    assert_eq!(rows(&doc, 0), before);
+}

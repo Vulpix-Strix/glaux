@@ -1,20 +1,23 @@
 //! The sprite editor: draws on the loaded cartridge's object tiles in
-//! memory, undoes and redoes those edits, and asks for them to be saved.
-//! Its palettes are shown but not edited.
+//! memory, chooses the palette each tile is drawn with, undoes and redoes
+//! those edits, and asks for them to be saved.
 
 mod layout;
+mod palette_picker;
 mod render;
 mod sheet;
 mod stroke;
 
 use glaux_input::{InputEvent, Point, PointerButton};
-use glaux_machine::obj_palette::OBJ_PALETTE_COLORS;
+use glaux_machine::framebuffer::{HEIGHT, WIDTH};
+use glaux_machine::obj_palette::{OBJ_PALETTE_COLORS, ObjBank};
 use glaux_machine::palette::Palette;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, ObjVram};
 use glaux_video::preview::ObjPreviewPalette;
 
 pub use layout::Metrics;
 use layout::{Hit, SpriteLayout, ToolSlot};
+use palette_picker::{PalettePicker, PickerLayout, PickerOutcome};
 use sheet::{SheetView, grid_position};
 
 use crate::system::sprite_document::SpriteDocument;
@@ -63,6 +66,8 @@ pub struct SpriteEditor {
     /// The drag in progress, if any. It only continues while its press is
     /// known to be held, and ends on anything that casts doubt on that.
     stroke: Option<Stroke>,
+    /// The open SELECT PALETTE dialog, which takes every input while open.
+    picker: Option<PalettePicker>,
 }
 
 impl SpriteEditor {
@@ -78,6 +83,7 @@ impl SpriteEditor {
             color: 1,
             tool: ToolSlot::default(),
             stroke: None,
+            picker: None,
         }
     }
 
@@ -89,6 +95,11 @@ impl SpriteEditor {
     #[cfg(test)]
     pub fn is_advanced(&self) -> bool {
         self.advanced
+    }
+
+    /// Whether the palette picker is open and taking every input.
+    pub fn has_picker(&self) -> bool {
+        self.picker.is_some()
     }
 
     /// Ends the drag in progress, if any, closing its edit in `document`.
@@ -106,6 +117,19 @@ impl SpriteEditor {
         self.layout().canvas
     }
 
+    /// Where the palette button is drawn.
+    #[cfg(test)]
+    pub fn palette_button_rect(&self) -> crate::system::workspace::Rect {
+        self.layout().palette_button
+    }
+
+    /// Where the open palette picker draws the tile through `bank`.
+    #[cfg(test)]
+    pub fn picker_preview_rect(&self, bank: usize) -> crate::system::workspace::Rect {
+        let layout = self.picker_layout();
+        layout.preview(layout.rows[bank])
+    }
+
     /// Where the Save button is drawn.
     #[cfg(test)]
     pub fn save_button_rect(&self) -> crate::system::workspace::Rect {
@@ -114,6 +138,17 @@ impl SpriteEditor {
 
     fn layout(&self) -> SpriteLayout {
         SpriteLayout::new(self.metrics, self.advanced, self.sheet.zoom())
+    }
+
+    /// The palette picker, centred in the editor's area.
+    fn picker_layout(&self) -> PickerLayout {
+        let area = crate::system::workspace::Rect {
+            x: 0,
+            y: self.metrics.top,
+            width: WIDTH as i32,
+            height: HEIGHT as i32 - self.metrics.top,
+        };
+        PickerLayout::new(area, self.metrics, self.advanced)
     }
 
     /// Applies `event`, drawing on the selected tile of `document` when
@@ -129,11 +164,26 @@ impl SpriteEditor {
     /// `f` pick a tool, `g` toggles the grid, `a` Advanced mode, and `+`
     /// and `-` zoom the sheet. Undo, redo and save first end any drag, so
     /// it counts as one finished edit.
+    ///
+    /// The palette button, or an OBP cell in Advanced mode, opens the
+    /// palette picker, which then takes every event until it closes.
     pub fn handle_input(
         &mut self,
         event: InputEvent,
         mut document: Option<&mut SpriteDocument>,
     ) -> Option<SpriteRequest> {
+        let picker_layout = self.picker.is_some().then(|| self.picker_layout());
+        if let (Some(picker), Some(picker_layout)) = (&mut self.picker, picker_layout) {
+            let outcome = picker.handle_input(event, &picker_layout)?;
+            let tile = picker.tile();
+            self.picker = None;
+            // Applying the bank the tile has is a no-op the document
+            // records nothing for.
+            if let (PickerOutcome::Apply(bank), Some(document)) = (outcome, document) {
+                document.set_tile_bank(tile, bank);
+            }
+            return None;
+        }
         let layout = self.layout();
         match event {
             InputEvent::PointerDown {
@@ -158,7 +208,9 @@ impl SpriteEditor {
                     Hit::ZoomOut => self.zoom(-1),
                     Hit::ZoomIn => self.zoom(1),
                     Hit::SaveButton => return self.save(document),
-                    Hit::Bank(_) | Hit::None => {}
+                    Hit::PaletteButton => self.open_picker(document, None),
+                    Hit::Bank(bank) => self.open_picker(document, ObjBank::new(bank)),
+                    Hit::None => {}
                 }
             }
             InputEvent::PointerMove(Some(at)) => {
@@ -212,6 +264,21 @@ impl SpriteEditor {
             _ => {}
         }
         None
+    }
+
+    /// Opens the palette picker on the selected tile of `document`, with
+    /// `pending` chosen, or else the tile's own bank. Without a document
+    /// there is no tile to recolor, so nothing opens.
+    fn open_picker(&mut self, document: Option<&mut SpriteDocument>, pending: Option<ObjBank>) {
+        let Some(document) = document else {
+            return;
+        };
+        self.end_stroke(Some(&mut *document));
+        let current = document.obj().attributes().bank(self.selected);
+        self.picker = Some(PalettePicker::new(
+            self.selected,
+            pending.unwrap_or(current),
+        ));
     }
 
     /// Ends any drag, then asks to save `document` if it has changes.

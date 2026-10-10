@@ -531,7 +531,15 @@ fn scaled_tiles_draw_square_blocks_through_slots_and_default_bank() {
     // Tile 1 has default bank 5: local 3 resolves to master 105.
     let vram = mixed_bank_vram();
     let mut fb = filled(9);
-    draw_obj_tile_scaled(&mut fb, &vram, 1, (10, 20), 3, &reversed_slots());
+    draw_obj_tile_scaled(
+        &mut fb,
+        &vram,
+        1,
+        ObjPaletteChoice::TileDefault,
+        (10, 20),
+        3,
+        &reversed_slots(),
+    );
 
     let expected = 255 - 105;
     for y in 0..240 {
@@ -541,6 +549,31 @@ fn scaled_tiles_draw_square_blocks_through_slots_and_default_bank() {
             assert_eq!(fb.pixel(x, y), Some(want), "({x}, {y})");
         }
     }
+}
+
+#[test]
+fn scaled_tiles_can_draw_through_any_bank() {
+    // Tile 1 defaults to bank 5; bank 2 resolves local 3 to master 102.
+    let vram = mixed_bank_vram();
+    let bank = ObjBank::new(2).unwrap();
+    let mut fb = filled(9);
+    draw_obj_tile_scaled(
+        &mut fb,
+        &vram,
+        1,
+        ObjPaletteChoice::Bank(bank),
+        (0, 0),
+        1,
+        &reversed_slots(),
+    );
+    assert_eq!(fb.pixel(0, 0), Some(255 - 102));
+    assert_eq!(fb.pixel(7, 7), Some(255 - 102));
+    assert_eq!(fb.pixel(8, 8), Some(9));
+    assert_eq!(
+        vram.attributes().bank(1).get(),
+        5,
+        "the tile keeps its bank"
+    );
 }
 
 #[test]
@@ -555,7 +588,15 @@ fn scaled_tiles_keep_local_zero_transparent_and_place_each_block() {
     let vram = linear_vram(&ObjTileBank::from_bytes(&bytes).unwrap());
     let identity: [u8; PALETTE_LEN] = std::array::from_fn(|m| m as u8);
     let mut fb = filled(200);
-    draw_obj_tile_scaled(&mut fb, &vram, 0, (0, 0), 2, &identity);
+    draw_obj_tile_scaled(
+        &mut fb,
+        &vram,
+        0,
+        ObjPaletteChoice::TileDefault,
+        (0, 0),
+        2,
+        &identity,
+    );
 
     let expected_row = [200, 1, 2, 3, 4, 200, 5, 6];
     for (column, expected) in expected_row.into_iter().enumerate() {
@@ -574,12 +615,36 @@ fn scaled_tiles_ignore_bad_scales_and_tiles_and_clip() {
     let identity: [u8; PALETTE_LEN] = std::array::from_fn(|m| m as u8);
     for (tile, scale) in [(0, 0), (0, -2), (OBJ_TILE_CAPACITY, 2)] {
         let mut fb = Framebuffer::new();
-        draw_obj_tile_scaled(&mut fb, &vram, tile, (0, 0), scale, &identity);
+        draw_obj_tile_scaled(
+            &mut fb,
+            &vram,
+            tile,
+            ObjPaletteChoice::TileDefault,
+            (0, 0),
+            scale,
+            &identity,
+        );
         assert_frame_eq!(fb, Framebuffer::new(), "tile {tile} scale {scale}");
     }
     let mut fb = Framebuffer::new();
-    draw_obj_tile_scaled(&mut fb, &vram, 0, (i32::MAX - 4, -10), 12, &identity);
-    draw_obj_tile_scaled(&mut fb, &vram, 0, (316, 236), 12, &identity);
+    draw_obj_tile_scaled(
+        &mut fb,
+        &vram,
+        0,
+        ObjPaletteChoice::TileDefault,
+        (i32::MAX - 4, -10),
+        12,
+        &identity,
+    );
+    draw_obj_tile_scaled(
+        &mut fb,
+        &vram,
+        0,
+        ObjPaletteChoice::TileDefault,
+        (316, 236),
+        12,
+        &identity,
+    );
     assert_eq!(fb.as_bytes().iter().filter(|&&p| p == 4).count(), 16);
 }
 

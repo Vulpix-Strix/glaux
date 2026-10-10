@@ -194,10 +194,7 @@ impl Target {
 /// One value an edit changed, with what it held before and after.
 #[cfg_attr(
     not(test),
-    expect(
-        dead_code,
-        reason = "no editor control changes attributes or palettes yet"
-    )
+    expect(dead_code, reason = "no editor control changes palettes yet")
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Change {
@@ -536,13 +533,6 @@ impl SpriteDocument {
     /// whether it changed; tiles past the bank change nothing.
     ///
     /// Outside an open edit, the write is an edit of its own.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no editor control changes attributes or palettes yet"
-        )
-    )]
     pub fn set_tile_bank(&mut self, tile: usize, bank: ObjBank) -> bool {
         let Some(previous) = self.write_tile_bank(tile, bank) else {
             return false;
@@ -563,10 +553,7 @@ impl SpriteDocument {
     /// Outside an open edit, the write is an edit of its own.
     #[cfg_attr(
         not(test),
-        expect(
-            dead_code,
-            reason = "no editor control changes attributes or palettes yet"
-        )
+        expect(dead_code, reason = "no editor control changes palettes yet")
     )]
     pub fn set_obj_color(&mut self, bank: ObjBank, local: u8, master: u8) -> bool {
         let Some(previous) = self.write_obj_color(bank, local, master) else {
@@ -587,10 +574,7 @@ impl SpriteDocument {
     /// Outside an open edit, the write is an edit of its own.
     #[cfg_attr(
         not(test),
-        expect(
-            dead_code,
-            reason = "no editor control changes attributes or palettes yet"
-        )
+        expect(dead_code, reason = "no editor control changes palettes yet")
     )]
     pub fn set_master_color(&mut self, index: u8, color: Rgb) -> bool {
         let Some(previous) = self.write_master_color(index, color) else {

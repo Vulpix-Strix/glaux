@@ -552,8 +552,9 @@ fn editing_without_saving_never_writes_the_cartridge() {
     for round in 0..2 {
         system = system.update(&keys);
         // Click everywhere below the tab bar but the Save button:
-        // canvas, sheet, tools, swatches, bank cells and options
-        // buttons.
+        // canvas, sheet, tools, swatches, bank cells, options buttons and
+        // the palette button, and then whatever the palette picker they
+        // open shows.
         let save = workspace::tests_support::sprite_save_button(&system.workspace);
         for y in (16..240).step_by(3) {
             let row: Vec<InputEvent> = (0..320)
@@ -569,6 +570,10 @@ fn editing_without_saving_never_writes_the_cartridge() {
             Some(Point::new(40, 60)),
         );
         assert_eq!(workspace_tab(&system), Tab::Sprites, "round {round}");
+    }
+    if system.workspace.has_modal() {
+        system = press_break(system);
+        assert!(is_workspace(&system), "Escape closed the picker first");
     }
     let system = press_break(system);
     assert!(!is_workspace(&system));
@@ -754,5 +759,86 @@ fn a_save_that_stops_partway_says_what_was_saved() {
         workspace::tests_support::notice(&system.workspace),
         Some("Saved obp.bin (128 bytes)")
     );
+    assert!(!document(&system).is_modified());
+}
+
+// Choosing a tile's palette.
+
+/// Opens the sprite editor on assets from `write_video_assets` and clicks
+/// the palette button.
+fn picking(fixture: &Fixture) -> System {
+    let system = open_sprites(with_video_assets(fixture));
+    let button = workspace::tests_support::sprite_palette_button(&system.workspace);
+    let at = Point::new(
+        (button.x + button.width / 2) as u16,
+        (button.y + button.height / 2) as u16,
+    );
+    let system = system.update(&click(at));
+    assert!(system.workspace.has_modal());
+    system
+}
+
+fn tile_bank(system: &System, tile: usize) -> u8 {
+    document(system).obj().attributes().bank(tile).get()
+}
+
+#[test]
+fn the_picker_shows_the_tile_in_the_cartridge_colors() {
+    let fixture = Fixture::new("sys-picker-colors");
+    let rom = fake_rom();
+    let system = picking(&fixture);
+    let fb = render(&system);
+    // Tile 0 is solid local 3, which every bank maps to master 103.
+    for bank in 0..8 {
+        let preview = workspace::tests_support::picker_preview(&system.workspace, bank);
+        let shown = fb.pixel(preview.x + 7, preview.y + 7).unwrap();
+        assert_eq!(
+            system.frame_palette(&rom).get(shown),
+            distinct_palette().get(103),
+            "bank {bank}"
+        );
+    }
+}
+
+#[test]
+fn escape_and_tab_keys_stay_inside_the_picker() {
+    let fixture = Fixture::new("sys-picker-escape");
+    let system = picking(&fixture).update(&[
+        InputEvent::NextView,
+        InputEvent::PreviousView,
+        InputEvent::Down,
+    ]);
+    assert_eq!(workspace_tab(&system), Tab::Sprites);
+    assert!(system.workspace.has_modal());
+
+    let system = press_break(system);
+    assert!(is_workspace(&system), "Escape closed the picker only");
+    assert!(!system.workspace.has_modal());
+    assert_eq!(tile_bank(&system, 0), 0);
+    assert!(!document(&system).is_modified());
+    assert!(!is_workspace(&press_break(system)));
+}
+
+#[test]
+fn an_applied_palette_saves_undoes_and_redoes() {
+    let fixture = Fixture::new("sys-picker-save");
+    let system = picking(&fixture).update(&[InputEvent::Text('4'), InputEvent::Enter]);
+    assert!(!system.workspace.has_modal());
+    assert_eq!(tile_bank(&system, 0), 4);
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(
+        workspace::tests_support::notice(&system.workspace),
+        Some("Saved objattr.bin (64 bytes)")
+    );
+    let attributes = std::fs::read(fixture.root().join("pong/objattr.bin")).unwrap();
+    assert_eq!(attributes[..2], [4, 0]);
+    assert!(attributes[2..].iter().all(|&b| b == 0));
+
+    let system = system.update(&[InputEvent::Undo]);
+    assert_eq!(tile_bank(&system, 0), 0);
+    assert!(document(&system).is_modified(), "the file has bank 4");
+    let system = system.update(&[InputEvent::Redo]);
+    assert_eq!(tile_bank(&system, 0), 4);
     assert!(!document(&system).is_modified());
 }

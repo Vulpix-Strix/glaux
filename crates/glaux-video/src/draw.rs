@@ -142,7 +142,7 @@ fn blit_obj_tile(
     }
 }
 
-/// Draws object tile `tile` through its default palette bank with its
+/// Draws object tile `tile` through the bank `palette` chooses with its
 /// top-left corner at `(x, y)`, each pixel enlarged to a `scale`×`scale`
 /// block. Master index `m` is written as `slots[m]`, which lets the tile be
 /// shown in a frame whose palette places the master colors elsewhere.
@@ -153,6 +153,7 @@ pub fn draw_obj_tile_scaled(
     framebuffer: &mut Framebuffer,
     vram: &ObjVram,
     tile: usize,
+    palette: ObjPaletteChoice,
     (x, y): (i32, i32),
     scale: i32,
     slots: &[u8; PALETTE_LEN],
@@ -160,7 +161,10 @@ pub fn draw_obj_tile_scaled(
     if scale <= 0 {
         return;
     }
-    let bank = vram.attributes().bank(tile);
+    let bank = match palette {
+        ObjPaletteChoice::TileDefault => vram.attributes().bank(tile),
+        ObjPaletteChoice::Bank(bank) => bank,
+    };
     for local_y in 0..OBJ_TILE_HEIGHT {
         for local_x in 0..OBJ_TILE_WIDTH {
             let Some(local) = vram.tiles().pixel(tile, local_x, local_y) else {

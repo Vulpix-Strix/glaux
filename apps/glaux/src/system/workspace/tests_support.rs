@@ -54,3 +54,13 @@ pub fn name_start(metrics: FontMetrics) -> i32 {
     let layout = Layout::new(metrics);
     WIDTH as i32 - NAME_PAD - layout.name_cells() as i32 * layout.cell_w
 }
+
+/// Where the sprite editor's palette button is.
+pub fn sprite_palette_button(workspace: &Workspace) -> Rect {
+    workspace.sprites.palette_button_rect()
+}
+
+/// Where the open palette picker shows the tile through `bank`.
+pub fn picker_preview(workspace: &Workspace, bank: usize) -> Rect {
+    workspace.sprites.picker_preview_rect(bank)
+}
