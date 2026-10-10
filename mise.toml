@@ -2,7 +2,7 @@
 rust = { version = "stable", components = "rustfmt,clippy" }
 "aqua:nextest-rs/nextest/cargo-nextest" = "latest"
 "cargo:cargo-mutants" = "27.1.0"
-python = "3.13"
+python = "3.15"
 uv = "latest"
 
 [tasks.check]
@@ -32,3 +32,7 @@ run = "cargo run -p glaux"
 [tasks.signal-lost-sheet]
 description = "Rebuild examples/signal-lost/sprites.png and code/sheet.luau from the 0x72 DungeonTileset II frames directory given as the argument"
 run = "uv run --script examples/signal-lost/tools/build_sheet.py"
+
+[tasks.sync-examples]
+description = "Synchronize repository examples into Glaux's local cartridge directory"
+run = "python scripts/sync_examples.py"
