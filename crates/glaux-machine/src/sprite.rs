@@ -190,6 +190,16 @@ impl ObjTileAttributes {
             .unwrap_or(ObjBank::ZERO)
     }
 
+    /// Makes `bank` the default palette bank of `tile` and returns the bank
+    /// it replaced. `None` means `tile` is past the bank; nothing is written
+    /// then.
+    pub fn set_bank(&mut self, tile: usize, bank: ObjBank) -> Option<ObjBank> {
+        let previous = self.bank(tile);
+        // A bank number never sets a reserved bit.
+        *self.bytes.get_mut(tile)? = bank.get();
+        Some(previous)
+    }
+
     /// Returns the complete native byte representation of the attributes.
     pub fn as_bytes(&self) -> &[u8; OBJ_TILE_ATTRIBUTES_BYTES] {
         &self.bytes
@@ -224,8 +234,6 @@ impl ObjVram {
         &self.tiles
     }
 
-    /// The tile bank, for writing pixels. Attributes and palettes have no
-    /// mutable access.
     pub fn tiles_mut(&mut self) -> &mut ObjTileBank {
         &mut self.tiles
     }
@@ -234,8 +242,16 @@ impl ObjVram {
         &self.attributes
     }
 
+    pub fn attributes_mut(&mut self) -> &mut ObjTileAttributes {
+        &mut self.attributes
+    }
+
     pub fn palettes(&self) -> &ObjPalettes {
         &self.palettes
+    }
+
+    pub fn palettes_mut(&mut self) -> &mut ObjPalettes {
+        &mut self.palettes
     }
 }
 

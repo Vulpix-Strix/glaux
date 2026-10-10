@@ -97,6 +97,17 @@ impl ObjPalettes {
             .then(|| self.bytes[usize::from(bank.get()) * OBJ_PALETTE_COLORS + local])
     }
 
+    /// Maps `local` in `bank` to master index `master` and returns the
+    /// master it mapped to before.
+    ///
+    /// `None` means `local` is the reserved transparent index 0 or not a
+    /// 4 bpp value; nothing is written then.
+    pub fn set(&mut self, bank: ObjBank, local: u8, master: u8) -> Option<u8> {
+        let previous = self.resolve(bank, local)?;
+        self.bytes[usize::from(bank.get()) * OBJ_PALETTE_COLORS + usize::from(local)] = master;
+        Some(previous)
+    }
+
     /// Returns the complete native byte representation of the banks.
     pub fn as_bytes(&self) -> &[u8; OBJ_PALETTES_BYTES] {
         &self.bytes

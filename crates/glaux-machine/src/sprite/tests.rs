@@ -201,6 +201,27 @@ fn short_attribute_data_defaults_remaining_tiles_to_bank_zero() {
 }
 
 #[test]
+fn set_bank_writes_one_tile_in_native_form() {
+    let mut attributes = ObjTileAttributes::from_bytes(&[3, 5]).unwrap();
+    let seven = ObjBank::new(7).unwrap();
+    assert_eq!(attributes.set_bank(1, seven), ObjBank::new(5));
+    assert_eq!(
+        attributes.set_bank(OBJ_TILE_CAPACITY - 1, seven),
+        Some(ObjBank::ZERO)
+    );
+    assert_eq!(attributes.as_bytes()[..3], [3, 7, 0]);
+    assert_eq!(attributes.as_bytes()[OBJ_TILE_CAPACITY - 1], 7);
+
+    let before = attributes.clone();
+    assert_eq!(attributes.set_bank(OBJ_TILE_CAPACITY, seven), None);
+    assert_eq!(attributes, before);
+    assert_eq!(
+        ObjTileAttributes::from_bytes(attributes.as_bytes()),
+        Ok(attributes)
+    );
+}
+
+#[test]
 fn attributes_reject_reserved_bits_and_oversized_data() {
     assert_eq!(
         ObjTileAttributes::from_bytes(&[1, 0x09]),

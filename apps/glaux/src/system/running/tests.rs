@@ -39,7 +39,8 @@ fn a_cartridge_requires_its_own_modules() {
     .unwrap();
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
-    let mut running = RunningCartridge::start(cartridge, &defaults(), None).unwrap();
+    let mut running =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
     assert_eq!(texts(running.take_output()), ["enemies loaded"]);
     running.tick(&[]).unwrap();
     running.tick(&[]).unwrap();
@@ -55,7 +56,8 @@ fn module_errors_name_cartridge_relative_paths() {
     fs::write(dir.join("code/boom.luau"), "\nerror(\"x\")").unwrap();
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
-    let failed = RunningCartridge::start(cartridge, &defaults(), None).unwrap_err();
+    let failed =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap_err();
     let StartError::Script(failure) = failed.error else {
         panic!("expected a script error, got {:?}", failed.error);
     };
@@ -65,7 +67,8 @@ fn module_errors_name_cartridge_relative_paths() {
     );
 
     fs::write(dir.join("code/main.luau"), r#"require("nope")"#).unwrap();
-    let failed = RunningCartridge::start(failed.cartridge, &defaults(), None).unwrap_err();
+    let failed = RunningCartridge::start(failed.cartridge, &defaults(), VideoOverrides::default())
+        .unwrap_err();
     let StartError::Script(failure) = failed.error else {
         panic!("expected a script error, got {:?}", failed.error);
     };
@@ -98,7 +101,8 @@ fn sprites_resolve_through_the_cartridge_palette_assets() {
     fs::write(dir.join("palette.bin"), palette.to_rgb888()).unwrap();
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
-    let mut running = RunningCartridge::start(cartridge, &defaults(), None).unwrap();
+    let mut running =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
     running.tick(&[]).unwrap();
     let rom = crate::rom::load().unwrap();
     let mut framebuffer = Framebuffer::new();
@@ -116,7 +120,8 @@ fn missing_video_assets_fall_back_to_the_rom() {
     write_cartridge(&dir, "Pong");
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
     let rom = crate::rom::load().unwrap();
-    let running = RunningCartridge::start(cartridge, &defaults(), None).unwrap();
+    let running =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
     assert_eq!(running.palette(), rom.palette());
     assert_eq!(running.video.obj.palettes(), rom.obj_palettes());
 }
@@ -132,7 +137,8 @@ fn the_imported_example_shows_its_png_colors() {
         crate::cartridge_fs::CartridgeFs::new(root.clone()),
     );
     let cartridge = LoadedCartridge::load(&storage, "palettes").unwrap();
-    let mut running = RunningCartridge::start(cartridge, &defaults(), None).unwrap();
+    let mut running =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
     running.tick(&[]).unwrap();
     let rom = crate::rom::load().unwrap();
     let mut framebuffer = Framebuffer::new();
@@ -185,7 +191,7 @@ mod signal_lost {
         let root = fs::canonicalize(examples).unwrap();
         let storage = CartridgeStorage::Available(CartridgeFs::new(root));
         let cartridge = LoadedCartridge::load(&storage, "signal-lost").unwrap();
-        RunningCartridge::start(cartridge, &defaults(), None).unwrap()
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap()
     }
 
     fn down(button: Button) -> InputEvent {

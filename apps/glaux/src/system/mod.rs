@@ -276,7 +276,15 @@ impl System {
                 shell,
                 cartridge,
                 video,
-            } => workspace_tick(shell, cartridge, video, &mut workspace, &mut sprites, input),
+            } => workspace_tick(
+                shell,
+                cartridge,
+                video,
+                &mut workspace,
+                &mut sprites,
+                &video_defaults,
+                input,
+            ),
             SystemState::Running { shell, running } => running_tick(shell, running, input),
             SystemState::Paused {
                 shell,
@@ -554,16 +562,16 @@ fn discard_sprites(sprites: &mut Option<SpriteDocument>) {
         .take()
         .is_some_and(|document| document.is_modified())
     {
-        tracing::info!("unsaved sprite edits discarded");
+        tracing::info!("unsaved graphics changes discarded");
     }
 }
 
 /// Makes the workspace the active UI on `cartridge`.
 ///
 /// A document kept from an earlier visit is brought up to date with the
-/// files without losing unsaved edits or, while `sprites.bin` is unchanged,
-/// its undo history; see [`SpriteDocument::reopen`]. Without one, the video
-/// assets are read afresh.
+/// files without losing unsaved changes or, for assets whose files are
+/// unchanged, their undo history; see [`SpriteDocument::reopen`]. Without
+/// one, the video assets are read afresh.
 fn open_workspace(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
@@ -600,9 +608,10 @@ fn open_workspace(
 fn workspace_tick(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
-    video: WorkspaceVideo,
+    mut video: WorkspaceVideo,
     workspace: &mut Workspace,
     sprites: &mut Option<SpriteDocument>,
+    video_defaults: &CartridgeVideoDefaults,
     input: &[InputEvent],
 ) -> SystemState {
     workspace.tick();
@@ -628,12 +637,16 @@ fn workspace_tick(
             WorkspaceRequest::Overwrite(seen) => {
                 workspace.saved(document.overwrite(&cartridge, &seen));
             }
-            WorkspaceRequest::Reload => workspace.reloaded(
-                document
-                    .reload_tiles(&cartridge)
-                    .map_err(|err| err.to_string()),
-            ),
+            WorkspaceRequest::Reload(assets) => {
+                let result = document
+                    .reload(&cartridge, &assets, video_defaults)
+                    .map_err(|err| err.to_string());
+                workspace.reloaded(&assets, result);
+            }
         }
+    }
+    if let Some(document) = sprites.as_ref() {
+        workspace.refresh_video(&mut video, document);
     }
     SystemState::Workspace {
         shell,
@@ -644,8 +657,8 @@ fn workspace_tick(
 
 /// Starts `cartridge`, reporting its start or failure and what it logged.
 /// A cartridge that fails to start stays loaded in the shell. When
-/// `sprites` holds unsaved edits, the cartridge runs with them instead of
-/// its tile file.
+/// `sprites` holds unsaved changes, the cartridge runs with the changed
+/// assets instead of their files.
 fn start(
     mut shell: Box<Shell>,
     cartridge: LoadedCartridge,
@@ -653,14 +666,13 @@ fn start(
     sprites: Option<&SpriteDocument>,
 ) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
-    let edited = sprites
-        .filter(|document| document.is_modified())
-        .map(SpriteDocument::tiles);
-    match RunningCartridge::start(cartridge, video_defaults, edited) {
+    let overrides = sprites.map(SpriteDocument::unsaved).unwrap_or_default();
+    let edited = !overrides.is_empty();
+    match RunningCartridge::start(cartridge, video_defaults, overrides) {
         Ok(mut running) => {
-            tracing::info!(cartridge = %identity, edited = edited.is_some(), "cartridge started");
-            if edited.is_some() {
-                shell.report(format!("Running {identity} with unsaved sprite edits"));
+            tracing::info!(cartridge = %identity, edited, "cartridge started");
+            if edited {
+                shell.report(format!("Running {identity} with unsaved graphics changes"));
             } else {
                 shell.report(format!("Running {identity}"));
             }

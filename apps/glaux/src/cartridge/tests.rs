@@ -477,76 +477,43 @@ fn one_cartridge_cannot_load_another_cartridges_modules() {
 }
 
 #[test]
-fn object_tiles_are_optional_and_read_fresh() {
-    let fixture = Fixture::new("load-obj-tiles");
+fn video_assets_are_optional_and_read_fresh() {
+    let fixture = Fixture::new("load-video-assets");
     let dir = fixture.root().join("pong");
     write_cartridge(&dir, "Pong");
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
-    assert_eq!(cartridge.read_obj_tiles(), Ok(None));
-
-    fs::write(dir.join("sprites.bin"), [0x12; 32]).unwrap();
-    assert_eq!(cartridge.read_obj_tiles(), Ok(Some(vec![0x12; 32])));
-    fs::write(dir.join("sprites.bin"), [0x34; 64]).unwrap();
-    assert_eq!(cartridge.read_obj_tiles(), Ok(Some(vec![0x34; 64])));
-}
-
-#[test]
-fn palette_assets_are_optional_and_read_fresh() {
-    let fixture = Fixture::new("load-palette-assets");
-    let dir = fixture.root().join("pong");
-    write_cartridge(&dir, "Pong");
-    let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
-    type Reader = fn(&LoadedCartridge) -> Result<Option<Vec<u8>>, CartridgeError>;
-    let readers: [(&str, Reader); 3] = [
-        ("objattr.bin", LoadedCartridge::read_obj_attributes),
-        ("obp.bin", LoadedCartridge::read_obj_palettes),
-        ("palette.bin", LoadedCartridge::read_master_palette),
-    ];
-    for (name, read) in readers {
-        assert_eq!(read(&cartridge), Ok(None), "{name}");
+    for asset in VideoAsset::ALL {
+        let name = asset.file_name();
+        assert_eq!(cartridge.read_asset(asset), Ok(None), "{name}");
         fs::write(dir.join(name), [1, 2, 3]).unwrap();
-        assert_eq!(read(&cartridge), Ok(Some(vec![1, 2, 3])), "{name}");
+        assert_eq!(
+            cartridge.read_asset(asset),
+            Ok(Some(vec![1, 2, 3])),
+            "{name}"
+        );
+        fs::write(dir.join(name), [4; 64]).unwrap();
+        assert_eq!(cartridge.read_asset(asset), Ok(Some(vec![4; 64])), "{name}");
     }
 }
 
 #[test]
-fn palette_assets_must_be_regular_files() {
-    let fixture = Fixture::new("load-palette-assets-file");
+fn video_assets_must_be_regular_files() {
+    let fixture = Fixture::new("load-video-assets-file");
     let dir = fixture.root().join("pong");
     write_cartridge(&dir, "Pong");
-    for name in ["objattr.bin", "obp.bin", "palette.bin"] {
-        fs::create_dir(dir.join(name)).unwrap();
+    for asset in VideoAsset::ALL {
+        fs::create_dir(dir.join(asset.file_name())).unwrap();
     }
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+    for asset in VideoAsset::ALL {
+        assert_eq!(
+            cartridge.read_asset(asset),
+            Err(CartridgeError::AssetNotAFile(asset))
+        );
+    }
     assert_eq!(
-        cartridge.read_obj_attributes(),
-        Err(CartridgeError::ObjAttributesNotAFile)
-    );
-    assert_eq!(
-        cartridge.read_obj_palettes(),
-        Err(CartridgeError::ObjPalettesNotAFile)
-    );
-    assert_eq!(
-        cartridge.read_master_palette(),
-        Err(CartridgeError::PaletteNotAFile)
-    );
-}
-
-#[test]
-fn object_tiles_must_be_a_regular_readable_file() {
-    let fixture = Fixture::new("load-obj-tiles-file");
-    let dir = fixture.root().join("pong");
-    write_cartridge(&dir, "Pong");
-    fs::create_dir(dir.join("sprites.bin")).unwrap();
-    let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
-
-    assert_eq!(
-        cartridge.read_obj_tiles(),
-        Err(CartridgeError::ObjTilesNotAFile)
-    );
-    assert_eq!(
-        CartridgeError::ObjTilesNotAFile.to_string(),
-        "sprites.bin is not a file"
+        CartridgeError::AssetNotAFile(VideoAsset::ObjPalettes).to_string(),
+        "obp.bin is not a file"
     );
 }
 
@@ -679,7 +646,13 @@ fn shipped_examples_load_with_their_assets() {
             "{example}"
         );
         assert!(!cartridge.entry_source().unwrap().is_empty(), "{example}");
-        assert!(cartridge.read_obj_tiles().unwrap().is_some(), "{example}");
+        assert!(
+            cartridge
+                .read_asset(VideoAsset::ObjTiles)
+                .unwrap()
+                .is_some(),
+            "{example}"
+        );
     }
 }
 

@@ -23,17 +23,52 @@ const LEGACY_MANIFEST: &str = "/cart.json";
 /// The only manifest format this Glaux understands.
 pub(crate) const FORMAT: u32 = 1;
 
-/// Optional native object-tile data from the cartridge root.
-const OBJ_TILES: &str = "/sprites.bin";
+/// One of a cartridge's optional video asset files, all in its root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum VideoAsset {
+    /// Native object-tile data, `sprites.bin`.
+    ObjTiles,
+    /// Per-tile object attributes, `objattr.bin`.
+    ObjAttributes,
+    /// Object palette banks, `obp.bin`.
+    ObjPalettes,
+    /// RGB888 master palette, `palette.bin`.
+    MasterPalette,
+}
 
-/// Optional per-tile object attributes from the cartridge root.
-const OBJ_ATTRIBUTES: &str = "/objattr.bin";
+impl VideoAsset {
+    pub const ALL: [Self; 4] = [
+        Self::ObjTiles,
+        Self::ObjAttributes,
+        Self::ObjPalettes,
+        Self::MasterPalette,
+    ];
 
-/// Optional object palette banks from the cartridge root.
-const OBJ_PALETTES: &str = "/obp.bin";
+    /// The asset's file name in the cartridge root.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Self::ObjTiles => "sprites.bin",
+            Self::ObjAttributes => "objattr.bin",
+            Self::ObjPalettes => "obp.bin",
+            Self::MasterPalette => "palette.bin",
+        }
+    }
 
-/// Optional RGB888 master palette from the cartridge root.
-const MASTER_PALETTE: &str = "/palette.bin";
+    /// Position of the asset in [`ALL`](Self::ALL).
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    fn path(self) -> String {
+        format!("/{}", self.file_name())
+    }
+}
+
+impl std::fmt::Display for VideoAsset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.file_name())
+    }
+}
 
 /// Suffix an entry script's file name must have.
 const ENTRY_EXTENSION: &str = ".luau";
@@ -90,26 +125,14 @@ pub enum CartridgeError {
     EntryNotAFile(String),
     #[error("Cannot read entry: {0}")]
     EntryUnreadable(String),
-    #[error("sprites.bin is not a file")]
-    ObjTilesNotAFile,
-    #[error("Cannot read sprites.bin")]
-    ObjTilesUnreadable,
-    #[error("Cannot write sprites.bin")]
-    ObjTilesUnwritable,
-    #[error("sprites.bin is read-only")]
-    ObjTilesReadOnly,
-    #[error("objattr.bin is not a file")]
-    ObjAttributesNotAFile,
-    #[error("Cannot read objattr.bin")]
-    ObjAttributesUnreadable,
-    #[error("obp.bin is not a file")]
-    ObjPalettesNotAFile,
-    #[error("Cannot read obp.bin")]
-    ObjPalettesUnreadable,
-    #[error("palette.bin is not a file")]
-    PaletteNotAFile,
-    #[error("Cannot read palette.bin")]
-    PaletteUnreadable,
+    #[error("{0} is not a file")]
+    AssetNotAFile(VideoAsset),
+    #[error("Cannot read {0}")]
+    AssetUnreadable(VideoAsset),
+    #[error("Cannot write {0}")]
+    AssetUnwritable(VideoAsset),
+    #[error("{0} is read-only")]
+    AssetReadOnly(VideoAsset),
 }
 
 /// The validated contents of `cartridge.ron`.
@@ -421,68 +444,49 @@ impl LoadedCartridge {
         }
     }
 
-    /// Current native object-tile bytes, if the optional `sprites.bin` exists.
+    /// Current bytes of the optional video asset file `asset`, or `None`
+    /// when it does not exist.
     ///
-    /// Like every optional asset, the file is read on every call so a fresh
-    /// cartridge run observes edits made since the cartridge was loaded.
-    /// Format validation belongs to the machine representation constructed
-    /// by the caller.
-    pub fn read_obj_tiles(&self) -> Result<Option<Vec<u8>>, CartridgeError> {
-        self.read_optional(
-            OBJ_TILES,
-            CartridgeError::ObjTilesNotAFile,
-            CartridgeError::ObjTilesUnreadable,
-        )
+    /// The file is read on every call, so a fresh cartridge run observes
+    /// edits made since the cartridge was loaded. Format validation belongs
+    /// to the machine representation constructed by the caller.
+    pub fn read_asset(&self, asset: VideoAsset) -> Result<Option<Vec<u8>>, CartridgeError> {
+        match self.files.read_file(&asset.path()) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => Ok(None),
+            Err(FsError::NotAFile(_)) => Err(CartridgeError::AssetNotAFile(asset)),
+            Err(
+                FsError::Unreadable(_)
+                | FsError::AlreadyExists(_)
+                | FsError::Unwritable(_)
+                | FsError::ReadOnly(_)
+                | FsError::Unavailable,
+            ) => Err(CartridgeError::AssetUnreadable(asset)),
+        }
     }
 
-    /// Current per-tile object attribute bytes, if `objattr.bin` exists.
-    pub fn read_obj_attributes(&self) -> Result<Option<Vec<u8>>, CartridgeError> {
-        self.read_optional(
-            OBJ_ATTRIBUTES,
-            CartridgeError::ObjAttributesNotAFile,
-            CartridgeError::ObjAttributesUnreadable,
-        )
-    }
-
-    /// Current object palette bank bytes, if `obp.bin` exists.
-    pub fn read_obj_palettes(&self) -> Result<Option<Vec<u8>>, CartridgeError> {
-        self.read_optional(
-            OBJ_PALETTES,
-            CartridgeError::ObjPalettesNotAFile,
-            CartridgeError::ObjPalettesUnreadable,
-        )
-    }
-
-    /// Current RGB888 master palette bytes, if `palette.bin` exists.
-    pub fn read_master_palette(&self) -> Result<Option<Vec<u8>>, CartridgeError> {
-        self.read_optional(
-            MASTER_PALETTE,
-            CartridgeError::PaletteNotAFile,
-            CartridgeError::PaletteUnreadable,
-        )
-    }
-
-    /// Replaces `sprites.bin` with `bytes`, provided it still holds
+    /// Replaces the file of `asset` with `bytes`, provided it still holds
     /// `expected` (`None`: provided it is absent). See
     /// [`CartridgeFs::replace_file`]: the file is replaced whole or not at
     /// all, and a read-only file is never replaced.
-    pub fn replace_obj_tiles(
+    pub fn replace_asset(
         &self,
+        asset: VideoAsset,
         bytes: &[u8],
         expected: Option<&[u8]>,
-    ) -> Result<(), ObjTilesWriteError> {
+    ) -> Result<(), AssetWriteError> {
         self.files
-            .replace_file(OBJ_TILES, bytes, expected)
+            .replace_file(&asset.path(), bytes, expected)
             .map_err(|err| match err {
-                ReplaceError::Changed(current) => ObjTilesWriteError::Changed(current),
+                ReplaceError::Changed(current) => AssetWriteError::Changed(current),
                 ReplaceError::Fs(FsError::ReadOnly(_)) => {
-                    ObjTilesWriteError::Failed(CartridgeError::ObjTilesReadOnly)
+                    AssetWriteError::Failed(CartridgeError::AssetReadOnly(asset))
                 }
                 ReplaceError::Fs(FsError::NotAFile(_)) => {
-                    ObjTilesWriteError::Failed(CartridgeError::ObjTilesNotAFile)
+                    AssetWriteError::Failed(CartridgeError::AssetNotAFile(asset))
                 }
                 ReplaceError::Fs(FsError::Unreadable(_)) => {
-                    ObjTilesWriteError::Failed(CartridgeError::ObjTilesUnreadable)
+                    AssetWriteError::Failed(CartridgeError::AssetUnreadable(asset))
                 }
                 ReplaceError::Fs(
                     FsError::NotFound(_)
@@ -490,39 +494,18 @@ impl LoadedCartridge {
                     | FsError::AlreadyExists(_)
                     | FsError::Unwritable(_)
                     | FsError::Unavailable,
-                ) => ObjTilesWriteError::Failed(CartridgeError::ObjTilesUnwritable),
+                ) => AssetWriteError::Failed(CartridgeError::AssetUnwritable(asset)),
             })
-    }
-
-    /// Reads an optional root file: `None` when it does not exist.
-    fn read_optional(
-        &self,
-        path: &str,
-        not_a_file: CartridgeError,
-        unreadable: CartridgeError,
-    ) -> Result<Option<Vec<u8>>, CartridgeError> {
-        match self.files.read_file(path) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => Ok(None),
-            Err(FsError::NotAFile(_)) => Err(not_a_file),
-            Err(
-                FsError::Unreadable(_)
-                | FsError::AlreadyExists(_)
-                | FsError::Unwritable(_)
-                | FsError::ReadOnly(_)
-                | FsError::Unavailable,
-            ) => Err(unreadable),
-        }
     }
 }
 
-/// A failed [`LoadedCartridge::replace_obj_tiles`].
+/// A failed [`LoadedCartridge::replace_asset`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ObjTilesWriteError {
+pub enum AssetWriteError {
     /// The file could not be checked or written.
     Failed(CartridgeError),
-    /// `sprites.bin` no longer holds what the caller expected. Holds what
-    /// it holds now, `None` when it is absent.
+    /// The file no longer holds what the caller expected. Holds what it
+    /// holds now, `None` when it is absent.
     Changed(Option<Vec<u8>>),
 }
 

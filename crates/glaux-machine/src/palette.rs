@@ -97,6 +97,11 @@ impl Palette {
         self.entries[usize::from(index)]
     }
 
+    /// Sets the color of a palette index and returns the color it replaced.
+    pub fn set(&mut self, index: u8, color: Rgb) -> Rgb {
+        std::mem::replace(&mut self.entries[usize::from(index)], color)
+    }
+
     /// Returns all 256 entries in index order.
     pub fn entries(&self) -> &[Rgb; PALETTE_LEN] {
         &self.entries

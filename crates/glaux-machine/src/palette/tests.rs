@@ -11,6 +11,18 @@ fn rgb888_round_trips_in_channel_order() {
 }
 
 #[test]
+fn set_replaces_one_entry_and_encodes_at_its_offset() {
+    let mut palette = Palette::provisional();
+    let red = Rgb::from_hex(0xe6482e);
+    assert_eq!(palette.set(42, red), DEBUG_MAGENTA);
+    assert_eq!(palette.set(255, red), DEBUG_MAGENTA);
+    let bytes = palette.to_rgb888();
+    assert_eq!(bytes[42 * 3..43 * 3], [0xe6, 0x48, 0x2e]);
+    assert_eq!(bytes[255 * 3..], [0xe6, 0x48, 0x2e]);
+    assert_eq!(bytes[41 * 3..42 * 3], [0xff, 0x00, 0xff]);
+}
+
+#[test]
 fn rgb888_rejects_wrong_lengths() {
     for length in [0, PALETTE_RGB888_BYTES - 1, PALETTE_RGB888_BYTES + 1] {
         assert_eq!(

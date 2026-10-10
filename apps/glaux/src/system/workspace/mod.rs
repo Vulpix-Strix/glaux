@@ -16,16 +16,18 @@ use glaux_machine::font::{BitmapFont, FontMetrics};
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::ink_image::INK_SLOTS;
 use glaux_machine::machine::TICK_RATE;
+use glaux_machine::obj_palette::ObjPalettes;
 use glaux_machine::palette::Palette;
 use glaux_machine::system_rom::{Cursor, SystemIcon, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 use glaux_video::preview::ObjPreviewPalette;
 
 use super::sprite_document::{
-    Conflict, ConflictKind, DiskTiles, Reopened, SaveError, Saved, SpriteDocument,
+    Conflict, ConflictKind, DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile,
+    SpriteDocument, file_list,
 };
 use super::{ACCENT, BACKGROUND, DIM, OK, PALE, TEXT};
-use crate::cartridge::{CartridgeError, LoadedCartridge};
+use crate::cartridge::{CartridgeError, LoadedCartridge, VideoAsset};
 use crate::rom::ICON_SIZE;
 use dialog::Dialog;
 pub use sprites::SpriteSource;
@@ -64,14 +66,14 @@ const NOTICE_TICKS: u32 = 3 * TICK_RATE;
 /// File work the workspace asks the system to do on the loaded cartridge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceRequest {
-    /// Save the sprite document to `sprites.bin`.
+    /// Save every modified asset of the sprite document.
     Save,
-    /// Write the sprite document over `sprites.bin`, which changed outside
-    /// Glaux, provided it still holds what the user was shown.
-    Overwrite(DiskTiles),
-    /// Discard the sprite edits and their history and read `sprites.bin`
-    /// again.
-    Reload,
+    /// Save the sprite document, writing over these files, which changed
+    /// outside Glaux, provided each still holds what the user was shown.
+    Overwrite(Vec<DiskAsset>),
+    /// Discard the changes to these assets, and the history steps involving
+    /// them, and read their files again.
+    Reload(Vec<VideoAsset>),
 }
 
 /// What a workspace dialog's buttons do.
@@ -88,8 +90,9 @@ enum Choice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Modal {
     dialog: Dialog<Choice>,
-    /// The disk state a conflict dialog showed, which Overwrite may replace.
-    conflict: Option<DiskTiles>,
+    /// The files a conflict dialog showed, as it showed them: what
+    /// Overwrite may replace and Reload reads again.
+    conflict: Vec<DiskAsset>,
 }
 
 /// A short message in the status bar answering what the user just did.
@@ -333,19 +336,33 @@ fn wrap(text: &str, columns: usize) -> Vec<String> {
     lines
 }
 
-/// What to tell the user when writing `sprites.bin` failed.
+/// What to tell the user when saving an asset file failed.
 fn write_advice(err: &CartridgeError) -> String {
     match err {
-        CartridgeError::ObjTilesReadOnly => {
-            "sprites.bin is read-only. Make it writable, then save again.".to_owned()
+        CartridgeError::AssetReadOnly(asset) => {
+            format!("{asset} is read-only. Make it writable, then save again.")
         }
-        CartridgeError::ObjTilesUnwritable => "Glaux could not write sprites.bin. Check the cartridge folder's permissions and free space, then save again.".to_owned(),
-        CartridgeError::ObjTilesUnreadable => "Glaux could not read sprites.bin to check it for outside changes. Check its permissions, then save again.".to_owned(),
-        CartridgeError::ObjTilesNotAFile => {
-            "sprites.bin is not a regular file. Move it aside, then save again.".to_owned()
+        CartridgeError::AssetUnwritable(asset) => format!(
+            "Glaux could not write {asset}. Check the cartridge folder's permissions and free space, then save again."
+        ),
+        CartridgeError::AssetUnreadable(asset) => format!(
+            "Glaux could not read {asset} to check it for outside changes. Check its permissions, then save again."
+        ),
+        CartridgeError::AssetNotAFile(asset) => {
+            format!("{asset} is not a regular file. Move it aside, then save again.")
         }
         other => other.to_string(),
     }
+}
+
+/// The line telling which files a save that stopped partway did write.
+fn saved_line(written: &[SavedFile]) -> Option<String> {
+    (!written.is_empty()).then(|| {
+        format!(
+            "Saved {} before stopping.",
+            file_list(written.iter().map(|file| file.asset))
+        )
+    })
 }
 
 /// Draws `cursor` with its hotspot on `pointer`, if any. Drawn over the
@@ -364,13 +381,22 @@ pub fn draw_cursor(framebuffer: &mut Framebuffer, cursor: &Cursor, pointer: Opti
     );
 }
 
-/// How the workspace shows the cartridge's colors, prepared when it opens:
-/// where the frame palette holds each master color the object palettes use,
-/// or why the cartridge's video state can't be shown.
+/// How the workspace shows the cartridge's colors: where the frame palette
+/// holds each master color the object palettes use, or why the cartridge's
+/// video state can't be shown.
 #[derive(Debug)]
 // Boxed: a frame palette would make every system state as large as this
 // one.
-pub struct WorkspaceVideo(Result<Box<ObjPreviewPalette>, String>);
+pub struct WorkspaceVideo(Result<Box<PreparedVideo>, String>);
+
+/// A frame palette with the palettes it was built from, to tell when it no
+/// longer matches the document.
+#[derive(Debug)]
+struct PreparedVideo {
+    preview: ObjPreviewPalette,
+    master: Palette,
+    obj: ObjPalettes,
+}
 
 impl WorkspaceVideo {
     /// The video state could not be read, for the reason in `message`.
@@ -387,7 +413,7 @@ impl WorkspaceVideo {
     /// The palette the workspace's frames are presented with, if the
     /// cartridge's video assets loaded.
     pub fn frame_palette(&self) -> Option<&Palette> {
-        self.0.as_ref().ok().map(|preview| preview.palette())
+        self.0.as_ref().ok().map(|video| video.preview.palette())
     }
 
     /// What the sprite editor shows of `document`, or why it shows nothing.
@@ -395,14 +421,22 @@ impl WorkspaceVideo {
         &'a self,
         document: Option<&'a SpriteDocument>,
     ) -> Result<SpriteSource<'a>, &'a str> {
-        let preview = self.0.as_deref().map_err(String::as_str)?;
+        let video = self.0.as_deref().map_err(String::as_str)?;
         // The system only prepares a preview from a document it keeps.
         let document = document.ok_or("The cartridge's sprites are not loaded.")?;
         Ok(SpriteSource {
             obj: document.obj(),
             master: &document.video().palette,
-            preview,
+            preview: &video.preview,
             modified: document.is_modified(),
+        })
+    }
+
+    /// Whether the frame palette was built from `document`'s palettes as
+    /// they are now.
+    fn matches(&self, document: &SpriteDocument) -> bool {
+        self.0.as_ref().is_ok_and(|video| {
+            video.master == document.video().palette && video.obj == *document.obj().palettes()
         })
     }
 }
@@ -440,9 +474,9 @@ impl Workspace {
         }
     }
 
-    /// Prepares to show `document` in the workspace's frame palette. The
-    /// object palettes are read-only, so this holds for as long as the
-    /// workspace stays open.
+    /// Prepares to show `document` in the workspace's frame palette. It
+    /// holds until the document's palettes change; see
+    /// [`refresh_video`](Self::refresh_video).
     pub fn prepare_video(&self, document: &SpriteDocument) -> WorkspaceVideo {
         let video = document.video();
         match ObjPreviewPalette::new(
@@ -451,8 +485,21 @@ impl Workspace {
             &video.palette,
             video.obj.palettes(),
         ) {
-            Ok(preview) => WorkspaceVideo(Ok(Box::new(preview))),
+            Ok(preview) => WorkspaceVideo(Ok(Box::new(PreparedVideo {
+                preview,
+                master: video.palette.clone(),
+                obj: video.obj.palettes().clone(),
+            }))),
             Err(err) => WorkspaceVideo::unavailable(err.to_string()),
+        }
+    }
+
+    /// Prepares `video` again if `document`'s palettes changed since it was
+    /// prepared, so the frame palette never shows stale colors. Video that
+    /// could not be prepared stays as it is.
+    pub fn refresh_video(&self, video: &mut WorkspaceVideo, document: &SpriteDocument) {
+        if video.is_ready() && !video.matches(document) {
+            *video = self.prepare_video(document);
         }
     }
 
@@ -486,8 +533,10 @@ impl Workspace {
             let choice = modal.dialog.handle_input(event, &layout)?;
             let modal = self.modal.take()?;
             return match choice {
-                Choice::Overwrite => modal.conflict.map(WorkspaceRequest::Overwrite),
-                Choice::Reload => Some(WorkspaceRequest::Reload),
+                Choice::Overwrite => Some(WorkspaceRequest::Overwrite(modal.conflict)),
+                Choice::Reload => Some(WorkspaceRequest::Reload(
+                    modal.conflict.iter().map(|disk| disk.asset).collect(),
+                )),
                 Choice::Cancel | Choice::Dismiss => None,
             };
         }
@@ -529,56 +578,87 @@ impl Workspace {
     /// Reports how a save, or an overwrite after a conflict, went.
     pub fn saved(&mut self, result: Result<Saved, SaveError>) {
         match result {
-            Ok(Saved::Written { bytes }) => {
-                self.notify(format!("Saved sprites.bin ({bytes} bytes)"), OK);
-            }
+            Ok(Saved::Written(files)) => match files.as_slice() {
+                [file] => self.notify(format!("Saved {} ({} bytes)", file.asset, file.bytes), OK),
+                files => self.notify(
+                    format!("Saved {}", file_list(files.iter().map(|file| file.asset))),
+                    OK,
+                ),
+            },
             Ok(Saved::NothingToSave) => self.notify("Nothing to save", PALE),
-            Err(SaveError::Conflict(conflict)) => self.open_conflict(conflict),
-            Err(SaveError::Cartridge(err)) => self.open_error("SAVE FAILED", write_advice(&err)),
+            Err(SaveError { written, cause }) => {
+                let saved = saved_line(&written);
+                match cause {
+                    SaveFailure::Conflict(conflicts) => self.open_conflict(conflicts, saved),
+                    SaveFailure::Cartridge(err) => {
+                        let lines = saved.into_iter().chain([write_advice(&err)]).collect();
+                        self.open_error("SAVE FAILED", lines);
+                    }
+                }
+            }
         }
     }
 
-    /// Reports how discarding the edits and reloading `sprites.bin` went.
-    pub fn reloaded(&mut self, result: Result<(), String>) {
+    /// Reports how discarding the changes to `assets` and reading their
+    /// files again went.
+    pub fn reloaded(&mut self, assets: &[VideoAsset], result: Result<(), String>) {
         match result {
-            Ok(()) => self.notify("Reloaded sprites.bin from disk", OK),
-            Err(message) => self.open_error("RELOAD FAILED", message),
+            Ok(()) => self.notify(
+                format!("Reloaded {} from disk", file_list(assets.iter().copied())),
+                OK,
+            ),
+            Err(message) => self.open_error("RELOAD FAILED", vec![message]),
         }
     }
 
     /// Reports what reopening the workspace found on disk.
-    pub fn reopened(&mut self, reopened: Reopened) {
-        match reopened {
-            Reopened::Unchanged
-            | Reopened::Reloaded {
-                history_cleared: false,
-            } => {}
-            Reopened::Reloaded {
-                history_cleared: true,
-            } => {
-                self.notify("sprites.bin changed on disk: reloaded, undo cleared", PALE);
-            }
-            Reopened::Conflict(conflict) => self.open_conflict(conflict),
-            Reopened::Failed(message) => self.open_error("CANNOT READ FILES", message),
+    pub fn reopened(&mut self, reopened: Result<Reopened, String>) {
+        let reopened = match reopened {
+            Ok(reopened) => reopened,
+            Err(message) => return self.open_error("CANNOT READ FILES", vec![message]),
+        };
+        if reopened.history_trimmed {
+            self.notify(
+                format!(
+                    "{} changed on disk: reloaded, undo steps dropped",
+                    file_list(reopened.reloaded.iter().copied())
+                ),
+                PALE,
+            );
+        }
+        if !reopened.conflicts.is_empty() {
+            self.open_conflict(reopened.conflicts, None);
         }
     }
 
-    /// Asks whether to overwrite `sprites.bin`, discard the edits for it,
-    /// or leave both as they are. Cancel is focused so a stray Enter loses
-    /// nothing.
-    fn open_conflict(&mut self, conflict: Conflict) {
-        let what = match conflict.kind {
-            ConflictKind::Modified => "sprites.bin changed outside Glaux.",
-            ConflictKind::Deleted => "sprites.bin was deleted outside Glaux.",
-            ConflictKind::Created => "A new sprites.bin appeared outside Glaux.",
+    /// Asks whether to overwrite the files in `conflicts`, discard the
+    /// changes to them, or leave both as they are. `saved`, if any, tells
+    /// what a save wrote before it found the conflict. Cancel is focused so
+    /// a stray Enter loses nothing.
+    fn open_conflict(&mut self, conflicts: Vec<Conflict>, saved: Option<String>) {
+        let mut lines: Vec<String> = conflicts
+            .iter()
+            .map(|conflict| {
+                let asset = conflict.asset();
+                match conflict.kind {
+                    ConflictKind::Modified => format!("{asset} changed outside Glaux."),
+                    ConflictKind::Deleted => format!("{asset} was deleted outside Glaux."),
+                    ConflictKind::Created => format!("A new {asset} appeared outside Glaux."),
+                }
+            })
+            .collect();
+        lines.extend(saved);
+        let (them, files) = match conflicts.as_slice() {
+            [_] => ("it", "the file"),
+            _ => ("them", "these files"),
         };
+        lines.push("Your unsaved edits are still in memory.".to_owned());
+        lines.push(format!(
+            "OVERWRITE DISK replaces {files} with your edits. DISCARD & RELOAD throws away your unsaved edits to {them} and the undo steps involving {them}."
+        ));
         let dialog = Dialog::new(
             "FILE CONFLICT",
-            vec![
-                what.to_owned(),
-                "Your unsaved edits are still in memory.".to_owned(),
-                "OVERWRITE DISK replaces the file with your edits. DISCARD & RELOAD throws away your unsaved edits and undo history.".to_owned(),
-            ],
+            lines,
             vec![
                 ("OVERWRITE DISK", Choice::Overwrite),
                 ("DISCARD & RELOAD", Choice::Reload),
@@ -589,21 +669,25 @@ impl Workspace {
         );
         self.modal = Some(Modal {
             dialog,
-            conflict: Some(conflict.disk),
+            conflict: conflicts
+                .into_iter()
+                .map(|conflict| conflict.disk)
+                .collect(),
         });
     }
 
-    fn open_error(&mut self, title: &str, message: String) {
+    fn open_error(&mut self, title: &str, mut lines: Vec<String>) {
+        lines.push("Your edits are still in memory.".to_owned());
         let dialog = Dialog::new(
             title,
-            vec![message, "Your edits are still in memory.".to_owned()],
+            lines,
             vec![("OK", Choice::Dismiss)],
             0,
             Some(Choice::Dismiss),
         );
         self.modal = Some(Modal {
             dialog,
-            conflict: None,
+            conflict: Vec::new(),
         });
     }
 

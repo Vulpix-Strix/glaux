@@ -220,7 +220,7 @@ fn unsaved_edits_block_load_new_and_unload_without_discard() {
     assert_eq!(
         after(&system, "> load pong"),
         [
-            "! Pong 0.1.0 has unsaved sprite edits; --discard drops them",
+            "! Pong 0.1.0 has unsaved graphics changes; --discard drops them",
             "Try: load --discard pong",
         ]
     );
@@ -228,7 +228,7 @@ fn unsaved_edits_block_load_new_and_unload_without_discard() {
     assert_eq!(
         after(&system, "> new other --name Other"),
         [
-            "! Pong 0.1.0 has unsaved sprite edits; --discard drops them",
+            "! Pong 0.1.0 has unsaved graphics changes; --discard drops them",
             "Try: new --discard other --name Other",
         ]
     );
@@ -236,7 +236,7 @@ fn unsaved_edits_block_load_new_and_unload_without_discard() {
     assert_eq!(
         after(&system, "> unload"),
         [
-            "! Pong 0.1.0 has unsaved sprite edits; --discard drops them",
+            "! Pong 0.1.0 has unsaved graphics changes; --discard drops them",
             "Try: unload --discard",
         ]
     );
@@ -282,7 +282,7 @@ fn run_uses_unsaved_edits_and_they_survive_the_run() {
     let system = ticks(enter(press_break(system), "run"), 1);
     assert_eq!(
         after(&system, "> run"),
-        ["Running Pong 0.1.0 with unsaved sprite edits"]
+        ["Running Pong 0.1.0 with unsaved graphics changes"]
     );
     let fb = render(&system);
     assert_eq!(fb.pixel(10, 10), Some(0), "the erased pixel");
@@ -591,4 +591,168 @@ fn malformed_video_assets_leave_the_workspace_usable() {
     assert_eq!(workspace_tab(&system), Tab::Map);
     render(&system);
     assert!(!is_workspace(&press_break(system)));
+}
+
+// Palette changes.
+
+const RED: glaux_machine::palette::Rgb = glaux_machine::palette::Rgb::from_hex(0xe6482e);
+
+/// Sets master 101, which local 1 of every bank resolves to under
+/// `obp_hundreds`, to red in the document, as a palette editor would.
+fn recolor(mut system: System) -> System {
+    let document = system.sprites.as_mut().expect("a sprite document");
+    assert!(document.set_master_color(101, RED));
+    system
+}
+
+/// The frame palette entry the workspace shows master 101 with.
+const SLOT_101: u8 = 32;
+
+#[test]
+fn palette_changes_show_at_once_and_undo_restores_them() {
+    let fixture = Fixture::new("sys-palette-show");
+    let rom = fake_rom();
+    let system = recolor(open_sprites(with_video_assets(&fixture))).update(&[]);
+    assert_eq!(system.frame_palette(&rom).get(SLOT_101), RED);
+
+    let system = system.update(&[InputEvent::Undo]);
+    assert_eq!(
+        system.frame_palette(&rom).get(SLOT_101),
+        distinct_palette().get(101)
+    );
+    assert!(!document(&system).is_modified());
+}
+
+#[test]
+fn palette_changes_block_load_survive_trips_and_reach_a_run() {
+    let fixture = Fixture::new("sys-palette-run");
+    let rom = fake_rom();
+    let dir = fixture.root().join("pong");
+    let system = recolor(open_sprites(with_video_assets(&fixture)));
+    let before = snapshot(&dir);
+
+    let system = enter(press_break(system), "load pong");
+    assert_eq!(
+        after(&system, "> load pong"),
+        [
+            "! Pong 0.1.0 has unsaved graphics changes; --discard drops them",
+            "Try: load --discard pong",
+        ]
+    );
+    let system = press_break(system);
+    assert!(is_workspace(&system));
+    assert!(modal(&system).is_none());
+    assert_eq!(document(&system).video().palette.get(101), RED);
+
+    let system = ticks(enter(press_break(system), "run"), 1);
+    assert_eq!(
+        after(&system, "> run"),
+        ["Running Pong 0.1.0 with unsaved graphics changes"]
+    );
+    assert_eq!(system.frame_palette(&rom).get(101), RED);
+    assert_eq!(
+        system.frame_palette(&rom).get(102),
+        distinct_palette().get(102),
+        "unmodified colors come from the files"
+    );
+
+    let system = stop_cartridge(system);
+    assert_eq!(document(&system).video().palette.get(101), RED);
+    assert_eq!(snapshot(&dir), before, "nothing was written");
+}
+
+#[test]
+fn an_outside_palette_change_reloads_beside_unsaved_tile_edits() {
+    let fixture = Fixture::new("sys-palette-outside");
+    let rom = fake_rom();
+    let system = press_break(edited(&fixture));
+    let mut outside = distinct_palette();
+    outside.set(101, RED);
+    std::fs::write(fixture.root().join("pong/palette.bin"), outside.to_rgb888()).unwrap();
+
+    let system = press_break(system);
+    assert!(
+        modal(&system).is_none(),
+        "the palette had no unsaved changes"
+    );
+    assert_eq!(system.frame_palette(&rom).get(SLOT_101), RED);
+    assert_eq!(document(&system).pixel(0, 0, 0), Some(1));
+    let system = system.update(&[InputEvent::Undo]);
+    assert_eq!(document(&system).pixel(0, 0, 0), Some(3), "tile undo kept");
+}
+
+#[test]
+fn discard_and_reload_of_a_palette_conflict_keeps_tile_edits() {
+    let fixture = Fixture::new("sys-palette-conflict");
+    let system = recolor(edited(&fixture));
+    let system = press_break(system);
+    std::fs::write(fixture.root().join("pong/palette.bin"), [0; 768]).unwrap();
+
+    let system = press_break(system);
+    assert_eq!(
+        modal(&system),
+        Some(("FILE CONFLICT".to_owned(), conflict_labels()))
+    );
+    let layout = workspace::tests_support::modal_layout(&system.workspace).unwrap();
+    let reload = layout.buttons[1];
+    let at = Point::new(
+        (reload.x + reload.width / 2) as u16,
+        (reload.y + reload.height / 2) as u16,
+    );
+    let system = system.update(&click(at));
+    assert!(modal(&system).is_none());
+    assert_eq!(
+        workspace::tests_support::notice(&system.workspace),
+        Some("Reloaded palette.bin from disk")
+    );
+    assert_eq!(
+        document(&system).video().palette.get(101),
+        glaux_machine::palette::Rgb::from_hex(0)
+    );
+    assert_eq!(document(&system).pixel(0, 0, 0), Some(1));
+    assert!(document(&system).is_modified(), "the tile edit stays");
+}
+
+/// The open dialog's message, its wrapped lines joined by spaces.
+fn modal_text(system: &System) -> String {
+    let layout = workspace::tests_support::modal_layout(&system.workspace).unwrap();
+    let lines: Vec<String> = layout
+        .lines
+        .into_iter()
+        .map(|(line, _)| line)
+        .filter(|line| !line.is_empty())
+        .collect();
+    lines.join(" ")
+}
+
+#[test]
+fn a_save_that_stops_partway_says_what_was_saved() {
+    let fixture = Fixture::new("sys-palette-partial");
+    let obp = fixture.root().join("pong/obp.bin");
+    let mut system = recolor(open_sprites(with_video_assets(&fixture)));
+    let bank = glaux_machine::obj_palette::ObjBank::new(2).unwrap();
+    assert!(system.sprites.as_mut().unwrap().set_obj_color(bank, 1, 7));
+    let writable = std::fs::metadata(&obp).unwrap().permissions();
+    let mut readonly = writable.clone();
+    readonly.set_readonly(true);
+    std::fs::set_permissions(&obp, readonly).unwrap();
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(
+        modal(&system),
+        Some(("SAVE FAILED".to_owned(), vec!["OK".to_owned()]))
+    );
+    assert_eq!(
+        modal_text(&system),
+        "Saved palette.bin before stopping. obp.bin is read-only. Make it writable, then save \
+         again. Your edits are still in memory."
+    );
+
+    std::fs::set_permissions(&obp, writable).unwrap();
+    let system = system.update(&[InputEvent::Enter, InputEvent::Save]);
+    assert_eq!(
+        workspace::tests_support::notice(&system.workspace),
+        Some("Saved obp.bin (128 bytes)")
+    );
+    assert!(!document(&system).is_modified());
 }

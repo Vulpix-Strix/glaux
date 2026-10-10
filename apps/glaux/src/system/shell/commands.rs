@@ -309,7 +309,7 @@ fn refuse_unsaved(invocation: &Invocation<'_>, ctx: &mut Context<'_>) -> bool {
         line.push_str(&quote(arg));
     }
     ctx.suggest(
-        format!("{identity} has unsaved sprite edits; --discard drops them"),
+        format!("{identity} has unsaved graphics changes; --discard drops them"),
         line,
     );
     true

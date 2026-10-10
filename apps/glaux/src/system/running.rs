@@ -6,13 +6,14 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
-use glaux_machine::sprite::ObjTileBank;
 use glaux_video::draw::{
     ObjPaletteChoice, ObjSprite, clear, draw_obj_sprite, draw_text, fill_rect, pixel,
 };
 
 use super::audio;
-use super::video::{CartridgeVideo, CartridgeVideoDefaults, VideoAssetError, VideoLoadError};
+use super::video::{
+    CartridgeVideo, CartridgeVideoDefaults, VideoAssetError, VideoLoadError, VideoOverrides,
+};
 use crate::cartridge::{CartridgeError, LoadedCartridge};
 
 /// Why a cartridge could not start.
@@ -48,13 +49,13 @@ pub struct RunningCartridge {
 impl RunningCartridge {
     /// Creates a fresh VM for `cartridge` and runs its entry script and
     /// `boot()`, with `defaults` standing in for video assets the cartridge
-    /// does not supply. `tiles`, when given, replaces the object tiles read
-    /// from the cartridge, so a run can show edits not written back. On
+    /// does not supply. The assets in `overrides` replace what the
+    /// cartridge's files hold, so a run can show edits not written back. On
     /// failure the cartridge is handed back, still loaded.
     pub fn start(
         cartridge: LoadedCartridge,
         defaults: &CartridgeVideoDefaults,
-        tiles: Option<&ObjTileBank>,
+        overrides: VideoOverrides<'_>,
     ) -> Result<Self, Box<FailedStart>> {
         let source = match cartridge.entry_source() {
             Ok(source) => source,
@@ -62,9 +63,7 @@ impl RunningCartridge {
         };
         let video = match CartridgeVideo::load(&cartridge, defaults) {
             Ok(mut video) => {
-                if let Some(tiles) = tiles {
-                    *video.obj.tiles_mut() = tiles.clone();
-                }
+                overrides.apply(&mut video);
                 video
             }
             Err(VideoLoadError::Cartridge(err)) => {

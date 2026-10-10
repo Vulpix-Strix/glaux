@@ -67,3 +67,25 @@ fn rejects_wrong_lengths_and_reserved_entries() {
         Err(ObjPalettesError::ReservedEntry { bank: 2, value: 4 })
     );
 }
+
+#[test]
+fn set_writes_one_entry_and_keeps_entry_zero_reserved() {
+    let mut palettes = ObjPalettes::linear();
+    assert_eq!(palettes.set(bank(2), 15, 200), Some(47));
+    assert_eq!(palettes.resolve(bank(2), 15), Some(200));
+    assert_eq!(
+        palettes.resolve(bank(3), 15),
+        Some(63),
+        "other banks keep theirs"
+    );
+
+    let before = palettes.clone();
+    assert_eq!(palettes.set(bank(2), 0, 9), None);
+    assert_eq!(palettes.set(bank(2), 16, 9), None);
+    assert_eq!(palettes, before, "rejected writes change nothing");
+
+    let mut expected = *ObjPalettes::linear().as_bytes();
+    expected[2 * 16 + 15] = 200;
+    assert_eq!(palettes.as_bytes(), &expected);
+    assert_eq!(ObjPalettes::from_bytes(palettes.as_bytes()), Ok(palettes));
+}

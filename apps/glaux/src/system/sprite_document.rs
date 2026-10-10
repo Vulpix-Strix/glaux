@@ -1,43 +1,84 @@
 //! The loaded cartridge's video state as the editors change it, with the
 //! edit history and the file state it is saved against.
 
-use std::collections::VecDeque;
+use std::borrow::Cow;
+use std::collections::{HashMap, VecDeque};
 
+use glaux_machine::obj_palette::ObjBank;
+use glaux_machine::palette::Rgb;
 use glaux_machine::sprite::{
     OBJ_TILE_BYTES, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjTileBank, ObjVram,
 };
 
 use super::video::{
     CartridgeVideo, CartridgeVideoDefaults, VideoAssetError, VideoFiles, VideoLoadError,
+    VideoOverrides,
 };
-use crate::cartridge::{CartridgeError, LoadedCartridge, ObjTilesWriteError};
+use crate::cartridge::{AssetWriteError, CartridgeError, LoadedCartridge, VideoAsset};
 
-/// Edits the history keeps. Older ones are forgotten first. Editor strokes
-/// and fills stay inside one tile, so one edit holds at most 64 pixel
-/// changes and a full history stays around 100 KiB.
+/// Edits the history keeps. Older ones are forgotten first.
 pub const HISTORY_LIMIT: usize = 256;
 
-/// What `sprites.bin` held when the document was read or last saved: the
-/// state saving compares the disk against.
+/// Changes the undo and redo steps may hold together, about 512 KiB. Older
+/// edits are forgotten first while there are more, but the newest edit is
+/// always kept whatever its size. Editor strokes and fills stay inside one
+/// tile, so they hold at most 64 changes and never reach this; it bounds
+/// edits grouped across many tiles or assets.
+pub const HISTORY_CHANGE_LIMIT: usize = 65_536;
+
+/// The order saving writes assets in. It is fixed so that saves are
+/// reproducible; it does not keep the files consistent with each other if
+/// a save stops partway.
+const SAVE_ORDER: [VideoAsset; 4] = [
+    VideoAsset::MasterPalette,
+    VideoAsset::ObjPalettes,
+    VideoAsset::ObjAttributes,
+    VideoAsset::ObjTiles,
+];
+
+const ASSETS: usize = VideoAsset::ALL.len();
+
+/// What the asset files held when the document read or last saved them:
+/// the state saving compares the disk against.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TileOrigin {
-    bank: ObjTileBank,
-    /// Length of `sprites.bin`, or `None` when the cartridge had none.
-    file_len: Option<usize>,
+pub struct Origin {
+    /// Each asset as decoded from its file, or its default where the
+    /// cartridge had none.
+    video: CartridgeVideo,
+    /// Length of each asset's file, `None` where the cartridge had none.
+    file_lens: [Option<usize>; ASSETS],
 }
 
-impl TileOrigin {
-    /// The exact bytes `sprites.bin` held, or `None` when it was absent.
-    pub fn file_bytes(&self) -> Option<&[u8]> {
-        self.file_len.map(|len| &self.bank.as_bytes()[..len])
+impl Origin {
+    /// The exact bytes `asset`'s file held, or `None` when it was absent.
+    ///
+    /// A file always holds a prefix of its asset's native encoding, so the
+    /// decoded state and the length are enough to give it back.
+    pub fn file_bytes(&self, asset: VideoAsset) -> Option<Cow<'_, [u8]>> {
+        let len = self.file_lens[asset.index()]?;
+        Some(prefix(self.video.native_bytes(asset), len))
     }
 }
 
-/// `sprites.bin` as found on disk at one moment.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiskTiles(pub Option<Vec<u8>>);
+fn prefix(bytes: Cow<'_, [u8]>, len: usize) -> Cow<'_, [u8]> {
+    match bytes {
+        Cow::Borrowed(bytes) => Cow::Borrowed(&bytes[..len]),
+        Cow::Owned(mut bytes) => {
+            bytes.truncate(len);
+            Cow::Owned(bytes)
+        }
+    }
+}
 
-/// How `sprites.bin` on disk differs from what the document was read from.
+/// One asset file as found on disk at one moment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiskAsset {
+    pub asset: VideoAsset,
+    /// The file's bytes, `None` when it is absent.
+    pub bytes: Option<Vec<u8>>,
+}
+
+/// How an asset file on disk differs from what the document was read from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictKind {
     /// The file was changed.
@@ -48,74 +89,231 @@ pub enum ConflictKind {
     Created,
 }
 
-/// `sprites.bin` changed outside Glaux since the document's baseline.
+/// An asset file changed outside Glaux since the document's baseline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
     pub kind: ConflictKind,
     /// What the file holds now. Overwriting is only allowed over exactly
     /// this.
-    pub disk: DiskTiles,
+    pub disk: DiskAsset,
+}
+
+impl Conflict {
+    pub fn asset(&self) -> VideoAsset {
+        self.disk.asset
+    }
+}
+
+/// One asset file a save wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SavedFile {
+    pub asset: VideoAsset,
+    /// The file's new length.
+    pub bytes: usize,
 }
 
 /// A successful [`SpriteDocument::save`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Saved {
-    /// `sprites.bin` now holds this many bytes of the document's tiles.
-    Written { bytes: usize },
+    /// These files were written, in this order: every asset with unsaved
+    /// changes.
+    Written(Vec<SavedFile>),
     /// The document already matched its baseline; nothing was written.
     NothingToSave,
 }
 
-/// Why the tiles were not saved. The document is unchanged either way.
+/// Why a save stopped.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum SaveError {
-    #[error("sprites.bin changed outside Glaux")]
-    Conflict(Conflict),
-    /// Reading or writing the file failed; nothing on disk changed.
+pub enum SaveFailure {
+    /// These files changed outside Glaux. A conflict found before writing
+    /// lists every such file; one found while writing lists that file.
+    #[error("{} changed outside Glaux", file_list(.0.iter().map(Conflict::asset)))]
+    Conflict(Vec<Conflict>),
+    /// Reading or writing a file failed; that file is unchanged on disk.
     #[error(transparent)]
     Cartridge(CartridgeError),
 }
 
+/// A save that stopped before writing every changed asset.
+///
+/// Each file is replaced whole or not at all, but the files of one save
+/// are not replaced together: the assets in `written` were saved and are
+/// unmodified now, while the rest keep their unsaved changes. Until they
+/// are saved too, the files on disk may hold a combination of assets that
+/// never existed together in the document.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{cause}")]
+pub struct SaveError {
+    pub written: Vec<SavedFile>,
+    pub cause: SaveFailure,
+}
+
+/// File names joined for messages, as in `obp.bin, sprites.bin`.
+pub fn file_list(assets: impl IntoIterator<Item = VideoAsset>) -> String {
+    assets
+        .into_iter()
+        .map(VideoAsset::file_name)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// What [`SpriteDocument::reopen`] found on disk.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reopened {
-    /// `sprites.bin` matches the baseline. The document and its history
-    /// are kept; the read-only assets were read afresh.
-    Unchanged,
-    /// The document held no unsaved edits and was reloaded from a changed
-    /// `sprites.bin`. `history_cleared` tells whether undo history was
-    /// dropped with the old tiles.
-    Reloaded { history_cleared: bool },
-    /// `sprites.bin` changed under unsaved edits. Nothing was touched.
-    Conflict(Conflict),
-    /// The files could not be read or are invalid, for the reason given.
-    /// The document and its history are kept as they were.
-    Failed(String),
-}
-
-/// One pixel an edit changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PixelChange {
-    tile: u16,
-    x: u8,
-    y: u8,
-    before: u8,
-    after: u8,
-}
-
-/// The pixels one user action changed, in the order first changed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct Edit(Vec<PixelChange>);
+pub struct Reopened {
+    /// Assets without unsaved changes whose files changed, and which were
+    /// read again.
+    pub reloaded: Vec<VideoAsset>,
+    /// Whether undo or redo steps were dropped because they involved a
+    /// reloaded asset.
+    pub history_trimmed: bool,
+    /// Assets whose files changed under unsaved changes. They were not
+    /// touched.
+    pub conflicts: Vec<Conflict>,
+}
+
+/// What one change wrote to: a single value of one asset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Target {
+    Pixel { tile: u16, x: u8, y: u8 },
+    TileBank { tile: u16 },
+    ObjColor { bank: ObjBank, local: u8 },
+    MasterColor { index: u8 },
+}
+
+impl Target {
+    fn asset(self) -> VideoAsset {
+        match self {
+            Self::Pixel { .. } => VideoAsset::ObjTiles,
+            Self::TileBank { .. } => VideoAsset::ObjAttributes,
+            Self::ObjColor { .. } => VideoAsset::ObjPalettes,
+            Self::MasterColor { .. } => VideoAsset::MasterPalette,
+        }
+    }
+}
+
+/// One value an edit changed, with what it held before and after.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "no editor control changes attributes or palettes yet"
+    )
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Change {
+    /// A tile-local palette index.
+    Pixel {
+        tile: u16,
+        x: u8,
+        y: u8,
+        before: u8,
+        after: u8,
+    },
+    /// A tile's default object palette bank.
+    TileBank {
+        tile: u16,
+        before: ObjBank,
+        after: ObjBank,
+    },
+    /// The master index a local index resolves to in an object palette
+    /// bank.
+    ObjColor {
+        bank: ObjBank,
+        local: u8,
+        before: u8,
+        after: u8,
+    },
+    /// A master palette color.
+    MasterColor { index: u8, before: Rgb, after: Rgb },
+}
+
+// The history stores many changes; keep each one as small as a pixel's.
+const _: () = assert!(size_of::<Change>() <= 8);
+
+impl Change {
+    fn target(self) -> Target {
+        match self {
+            Self::Pixel { tile, x, y, .. } => Target::Pixel { tile, x, y },
+            Self::TileBank { tile, .. } => Target::TileBank { tile },
+            Self::ObjColor { bank, local, .. } => Target::ObjColor { bank, local },
+            Self::MasterColor { index, .. } => Target::MasterColor { index },
+        }
+    }
+
+    fn is_noop(self) -> bool {
+        match self {
+            Self::Pixel { before, after, .. } | Self::ObjColor { before, after, .. } => {
+                before == after
+            }
+            Self::TileBank { before, after, .. } => before == after,
+            Self::MasterColor { before, after, .. } => before == after,
+        }
+    }
+
+    /// The same change with `after` taken from `later`, a change of the
+    /// same target.
+    fn followed_by(mut self, later: Self) -> Self {
+        match (&mut self, later) {
+            (Self::Pixel { after, .. }, Self::Pixel { after: new, .. })
+            | (Self::ObjColor { after, .. }, Self::ObjColor { after: new, .. }) => *after = new,
+            (Self::TileBank { after, .. }, Self::TileBank { after: new, .. }) => *after = new,
+            (Self::MasterColor { after, .. }, Self::MasterColor { after: new, .. }) => {
+                *after = new;
+            }
+            _ => unreachable!("changes of one target are of one kind"),
+        }
+        self
+    }
+
+    /// The change that undoes this one.
+    fn reversed(mut self) -> Self {
+        match &mut self {
+            Self::Pixel { before, after, .. } | Self::ObjColor { before, after, .. } => {
+                std::mem::swap(before, after);
+            }
+            Self::TileBank { before, after, .. } => std::mem::swap(before, after),
+            Self::MasterColor { before, after, .. } => std::mem::swap(before, after),
+        }
+        self
+    }
+}
+
+/// The values one user action changed, in the order first changed. One
+/// edit may change several assets.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Edit(Vec<Change>);
 
 impl Edit {
-    /// Adds a write to the edit. A pixel written again keeps its first
+    fn touches(&self, asset: VideoAsset) -> bool {
+        self.0.iter().any(|c| c.target().asset() == asset)
+    }
+}
+
+/// The edit still being recorded, with where it holds each target's change
+/// so that recording stays linear in the size of the edit.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct OpenEdit {
+    edit: Edit,
+    positions: HashMap<Target, usize>,
+}
+
+impl OpenEdit {
+    /// Adds a write to the edit. A value written again keeps its first
     /// `before` and takes the new `after`.
-    fn record(&mut self, change: PixelChange) {
-        let same = |c: &&mut PixelChange| (c.tile, c.x, c.y) == (change.tile, change.x, change.y);
-        match self.0.iter_mut().find(same) {
-            Some(existing) => existing.after = change.after,
-            None => self.0.push(change),
+    fn record(&mut self, change: Change) {
+        let changes = &mut self.edit.0;
+        match self.positions.get(&change.target()) {
+            Some(&at) => changes[at] = changes[at].followed_by(change),
+            None => {
+                self.positions.insert(change.target(), changes.len());
+                changes.push(change);
+            }
         }
+    }
+
+    #[cfg(test)]
+    fn changes_anything(&self) -> bool {
+        self.edit.0.iter().any(|c| !c.is_noop())
     }
 }
 
@@ -124,17 +322,21 @@ impl Edit {
 struct History {
     undo: VecDeque<Edit>,
     redo: Vec<Edit>,
-    open: Option<Edit>,
+    open: Option<OpenEdit>,
 }
 
 impl History {
     /// Files the open edit, if it changed anything, as the newest undo
     /// step. A new step makes the redo steps unreachable, so they go.
     fn close(&mut self) {
-        let Some(Edit(mut changes)) = self.open.take() else {
+        let Some(OpenEdit {
+            edit: Edit(mut changes),
+            ..
+        }) = self.open.take()
+        else {
             return;
         };
-        changes.retain(|c| c.before != c.after);
+        changes.retain(|c| !c.is_noop());
         if changes.is_empty() {
             return;
         }
@@ -142,31 +344,64 @@ impl History {
         self.push_undo(Edit(changes));
     }
 
+    /// Adds the newest undo step, forgetting the oldest ones past
+    /// [`HISTORY_LIMIT`] edits or [`HISTORY_CHANGE_LIMIT`] changes.
     fn push_undo(&mut self, edit: Edit) {
         self.undo.push_back(edit);
-        if self.undo.len() > HISTORY_LIMIT {
-            self.undo.pop_front();
+        let mut stored: usize = self.undo.iter().chain(&self.redo).map(|e| e.0.len()).sum();
+        while self.undo.len() > HISTORY_LIMIT
+            || (stored > HISTORY_CHANGE_LIMIT && self.undo.len() > 1)
+        {
+            if let Some(oldest) = self.undo.pop_front() {
+                stored -= oldest.0.len();
+            }
         }
+    }
+
+    /// Drops the steps that no longer apply once `asset` was replaced
+    /// outside the history. Returns whether any were dropped.
+    ///
+    /// Edits are never split, since an edit's changes only make sense
+    /// together. The newest undo step involving `asset` goes with every
+    /// older one, and the first redo step involving it goes with every one
+    /// after it. The steps left never involve `asset` and lead from the
+    /// current state without a gap, so undoing and redoing them stays
+    /// exact.
+    fn invalidate(&mut self, asset: VideoAsset) -> bool {
+        self.close();
+        let mut dropped = false;
+        if let Some(newest) = self.undo.iter().rposition(|edit| edit.touches(asset)) {
+            self.undo.drain(..=newest);
+            dropped = true;
+        }
+        // The last redo step is the next one redone.
+        if let Some(first) = self.redo.iter().rposition(|edit| edit.touches(asset)) {
+            self.redo.drain(..=first);
+            dropped = true;
+        }
+        dropped
     }
 }
 
 /// A cartridge's video state as the editors change it, held in memory.
 ///
-/// Object tiles are editable; their attributes, the object palette banks and
-/// the master palette are read-only. The document remembers the tiles it was
-/// read with or last saved, so it knows exactly whether it differs from
-/// them: restoring every changed pixel, by hand or by undo, leaves it
-/// unmodified again.
+/// Every asset is editable: object tiles, their attributes, the object
+/// palette banks and the master palette. The document remembers what each
+/// asset's file held when it was read or last saved, so it knows exactly
+/// which assets differ from their files: restoring every changed value, by
+/// hand or by undo, leaves an asset unmodified again.
 ///
 /// Changes are grouped into edits between [`begin_edit`](Self::begin_edit)
-/// and [`end_edit`](Self::end_edit), each undone and redone whole. Saving
-/// keeps the history; reloading from disk clears it.
+/// and [`end_edit`](Self::end_edit), each undone and redone whole, whatever
+/// assets it involves. Saving keeps the history; reading an asset from disk
+/// again drops the steps involving it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteDocument {
     video: CartridgeVideo,
-    origin: TileOrigin,
-    /// Pixels whose local index differs from `origin`'s.
-    changed_pixels: usize,
+    origin: Origin,
+    /// Per asset, how many of its values differ from `origin`'s: pixels,
+    /// tile attributes, object palette entries or master colors.
+    changed: [usize; ASSETS],
     history: History,
 }
 
@@ -187,14 +422,14 @@ impl SpriteDocument {
         defaults: &CartridgeVideoDefaults,
     ) -> Result<Self, VideoAssetError> {
         let video = CartridgeVideo::decode(files, defaults)?;
-        let origin = TileOrigin {
-            bank: video.obj.tiles().clone(),
-            file_len: files.obj_tiles.as_ref().map(Vec::len),
+        let origin = Origin {
+            video: video.clone(),
+            file_lens: VideoAsset::ALL.map(|asset| files.get(asset).map(<[u8]>::len)),
         };
         Ok(Self {
             video,
             origin,
-            changed_pixels: 0,
+            changed: [0; ASSETS],
             history: History::default(),
         })
     }
@@ -211,29 +446,50 @@ impl SpriteDocument {
         self.video.obj.tiles()
     }
 
-    /// What the tiles are saved against, to tell whether the file changed
-    /// on disk since.
+    /// What the assets are saved against, to tell whether their files
+    /// changed on disk since.
     #[cfg(test)]
-    pub fn origin(&self) -> &TileOrigin {
+    pub fn origin(&self) -> &Origin {
         &self.origin
     }
 
-    /// Whether any pixel differs from the tiles last read or saved.
+    /// Whether any asset differs from what its file held when last read or
+    /// saved.
     pub fn is_modified(&self) -> bool {
-        self.changed_pixels > 0
+        self.changed.iter().any(|&n| n > 0)
+    }
+
+    /// Whether `asset` differs from what its file held when last read or
+    /// saved, so saving would write it.
+    pub fn is_asset_modified(&self, asset: VideoAsset) -> bool {
+        self.changed[asset.index()] > 0
+    }
+
+    /// The assets saving would write.
+    pub fn modified_assets(&self) -> impl Iterator<Item = VideoAsset> + '_ {
+        VideoAsset::ALL
+            .into_iter()
+            .filter(|&asset| self.is_asset_modified(asset))
+    }
+
+    /// The modified assets, to stand in for the cartridge's files in a run.
+    pub fn unsaved(&self) -> VideoOverrides<'_> {
+        VideoOverrides::new(&self.video, self.modified_assets())
     }
 
     /// Whether there is an edit to undo.
+    #[cfg(test)]
     pub fn can_undo(&self) -> bool {
         !self.history.undo.is_empty()
             || self
                 .history
                 .open
                 .as_ref()
-                .is_some_and(|edit| edit.0.iter().any(|c| c.before != c.after))
+                .is_some_and(OpenEdit::changes_anything)
     }
 
     /// Whether there is an undone edit to redo.
+    #[cfg(test)]
     pub fn can_redo(&self) -> bool {
         !self.history.redo.is_empty()
     }
@@ -244,10 +500,11 @@ impl SpriteDocument {
     }
 
     /// Starts recording one undoable edit, closing any still open. Every
-    /// change until [`end_edit`](Self::end_edit) is undone as one.
+    /// change until [`end_edit`](Self::end_edit) is undone as one, whatever
+    /// assets it involves.
     pub fn begin_edit(&mut self) {
         self.history.close();
-        self.history.open = Some(Edit::default());
+        self.history.open = Some(OpenEdit::default());
     }
 
     /// Closes the edit being recorded. An edit that changed nothing, or
@@ -261,24 +518,89 @@ impl SpriteDocument {
     ///
     /// Outside an open edit, the write is an edit of its own.
     pub fn set_pixel(&mut self, tile: usize, x: usize, y: usize, index: u8) -> bool {
-        let Some(previous) = self.write(tile, x, y, index) else {
+        let Some(previous) = self.write_pixel(tile, x, y, index) else {
             return false;
         };
-        // `write` only succeeds for a valid tile and pixel, which fit.
-        let change = PixelChange {
+        // `write_pixel` only succeeds for a valid tile and pixel, which fit.
+        self.record(Change::Pixel {
             tile: tile as u16,
             x: x as u8,
             y: y as u8,
             before: previous,
             after: index,
+        });
+        true
+    }
+
+    /// Makes `bank` the default object palette bank of `tile`. Returns
+    /// whether it changed; tiles past the bank change nothing.
+    ///
+    /// Outside an open edit, the write is an edit of its own.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no editor control changes attributes or palettes yet"
+        )
+    )]
+    pub fn set_tile_bank(&mut self, tile: usize, bank: ObjBank) -> bool {
+        let Some(previous) = self.write_tile_bank(tile, bank) else {
+            return false;
         };
-        match &mut self.history.open {
-            Some(edit) => edit.record(change),
-            None => {
-                self.history.redo.clear();
-                self.history.push_undo(Edit(vec![change]));
-            }
-        }
+        // `write_tile_bank` only succeeds for a valid tile, which fits.
+        self.record(Change::TileBank {
+            tile: tile as u16,
+            before: previous,
+            after: bank,
+        });
+        true
+    }
+
+    /// Maps `local` in object palette `bank` to master index `master`.
+    /// Returns whether the mapping changed; the transparent local 0 and
+    /// locals above 15 change nothing.
+    ///
+    /// Outside an open edit, the write is an edit of its own.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no editor control changes attributes or palettes yet"
+        )
+    )]
+    pub fn set_obj_color(&mut self, bank: ObjBank, local: u8, master: u8) -> bool {
+        let Some(previous) = self.write_obj_color(bank, local, master) else {
+            return false;
+        };
+        self.record(Change::ObjColor {
+            bank,
+            local,
+            before: previous,
+            after: master,
+        });
+        true
+    }
+
+    /// Sets master palette entry `index` to `color`. Returns whether it
+    /// changed.
+    ///
+    /// Outside an open edit, the write is an edit of its own.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no editor control changes attributes or palettes yet"
+        )
+    )]
+    pub fn set_master_color(&mut self, index: u8, color: Rgb) -> bool {
+        let Some(previous) = self.write_master_color(index, color) else {
+            return false;
+        };
+        self.record(Change::MasterColor {
+            index,
+            before: previous,
+            after: color,
+        });
         true
     }
 
@@ -331,12 +653,7 @@ impl SpriteDocument {
             return false;
         };
         for change in edit.0.iter().rev() {
-            self.write(
-                change.tile.into(),
-                change.x.into(),
-                change.y.into(),
-                change.before,
-            );
+            self.apply(change.reversed());
         }
         self.history.redo.push(edit);
         true
@@ -348,209 +665,339 @@ impl SpriteDocument {
         let Some(edit) = self.history.redo.pop() else {
             return false;
         };
-        for change in &edit.0 {
-            self.write(
-                change.tile.into(),
-                change.x.into(),
-                change.y.into(),
-                change.after,
-            );
+        for &change in &edit.0 {
+            self.apply(change);
         }
         self.history.push_undo(edit);
         true
     }
 
-    /// The bytes saving writes: the whole original file length, grown in
-    /// whole tiles to cover every non-empty tile past it.
-    pub fn save_bytes(&self) -> &[u8] {
-        let bytes = self.tiles().as_bytes();
+    /// The bytes saving writes for `asset`. The palettes are written whole.
+    /// The tiles and their attributes keep the whole original file length,
+    /// grown in whole tiles to cover every non-empty tile past it.
+    pub fn save_bytes(&self, asset: VideoAsset) -> Cow<'_, [u8]> {
+        let bytes = self.video.native_bytes(asset);
+        let unit = match asset {
+            VideoAsset::ObjTiles => OBJ_TILE_BYTES,
+            VideoAsset::ObjAttributes => 1,
+            VideoAsset::ObjPalettes | VideoAsset::MasterPalette => return bytes,
+        };
         let used = bytes
-            .as_chunks::<OBJ_TILE_BYTES>()
-            .0
-            .iter()
+            .chunks(unit)
             .rposition(|tile| tile.iter().any(|&b| b != 0))
-            .map_or(0, |last| (last + 1) * OBJ_TILE_BYTES);
-        &bytes[..used.max(self.origin.file_len.unwrap_or(0))]
+            .map_or(0, |last| (last + 1) * unit);
+        let original = self.origin.file_lens[asset.index()].unwrap_or(0);
+        prefix(bytes, used.max(original))
     }
 
-    /// `sprites.bin` as it is on disk now.
-    pub fn disk_tiles(cartridge: &LoadedCartridge) -> Result<DiskTiles, CartridgeError> {
-        cartridge.read_obj_tiles().map(DiskTiles)
-    }
-
-    /// Writes the tiles to `sprites.bin`, provided it still holds exactly
-    /// what the document was read from or last saved to. A file that was
-    /// absent is created only now that there are changes to save.
+    /// Writes every modified asset to its file, provided each still holds
+    /// exactly what the document was read from or last saved to. A file
+    /// that was absent is created only once its asset differs from the
+    /// default it stood in for.
     ///
-    /// On success the saved tiles become the baseline and the document is
-    /// unmodified; the history is kept. On any error nothing changes, in
-    /// the document or on disk.
+    /// Every file to write is checked first, and a conflict or read error
+    /// there writes nothing. The files are then replaced one at a time, in
+    /// a fixed order; each saved asset becomes its new baseline at once.
+    /// The first failure stops the save, reporting what was written: the
+    /// assets after it keep their unsaved changes, and saving again writes
+    /// only those. The history is kept either way.
+    ///
+    /// Each replacement compares its file once more just before it takes
+    /// effect, so a change made after the first check is a conflict for
+    /// that file. No lock is taken: a change in the instant between that
+    /// last comparison and the replacement is overwritten.
     pub fn save(&mut self, cartridge: &LoadedCartridge) -> Result<Saved, SaveError> {
-        self.history.close();
-        if !self.is_modified() {
-            return Ok(Saved::NothingToSave);
-        }
-        let disk = Self::disk_tiles(cartridge).map_err(SaveError::Cartridge)?;
-        if let Some(conflict) = self.conflict(disk) {
-            return Err(SaveError::Conflict(conflict));
-        }
-        let expected = self.origin.file_bytes().map(<[u8]>::to_vec);
-        self.write_file(cartridge, expected.as_deref())
+        self.write_files(cartridge, &[])
     }
 
-    /// Writes the tiles over `sprites.bin` although it changed outside
-    /// Glaux, provided it still holds exactly `seen`. A further change
-    /// is another [`SaveError::Conflict`].
+    /// Like [`save`](Self::save), but writes the assets in `seen` although
+    /// their files changed outside Glaux, provided each still holds exactly
+    /// what was seen. A further change is another conflict.
     pub fn overwrite(
         &mut self,
         cartridge: &LoadedCartridge,
-        seen: &DiskTiles,
+        seen: &[DiskAsset],
     ) -> Result<Saved, SaveError> {
-        self.history.close();
-        self.write_file(cartridge, seen.0.as_deref())
+        self.write_files(cartridge, seen)
     }
 
-    /// Discards the tiles and their history and reads `sprites.bin` again,
-    /// or starts from empty tiles when it is gone. The other assets stay as
-    /// they are. On error the document is unchanged.
-    pub fn reload_tiles(&mut self, cartridge: &LoadedCartridge) -> Result<(), VideoLoadError> {
-        let disk = Self::disk_tiles(cartridge).map_err(VideoLoadError::Cartridge)?;
-        self.replace_tiles(disk)
+    /// Discards the changes to `assets` and the history steps involving
+    /// them, and reads their files again; an absent file reads as the
+    /// asset's default. The other assets keep their changes. On error the
+    /// document is unchanged.
+    pub fn reload(
+        &mut self,
+        cartridge: &LoadedCartridge,
+        assets: &[VideoAsset],
+        defaults: &CartridgeVideoDefaults,
+    ) -> Result<(), VideoLoadError> {
+        self.history.close();
+        let mut fresh = self.video.clone();
+        let mut lens = self.origin.file_lens;
+        for &asset in assets {
+            let bytes = cartridge
+                .read_asset(asset)
+                .map_err(VideoLoadError::Cartridge)?;
+            fresh.decode_asset(asset, bytes.as_deref(), defaults)?;
+            lens[asset.index()] = bytes.as_ref().map(Vec::len);
+        }
+        for &asset in assets {
+            self.adopt(&fresh, asset, lens[asset.index()]);
+            self.history.invalidate(asset);
+            tracing::info!(file = asset.file_name(), "asset reloaded");
+        }
+        Ok(())
     }
 
     /// Brings the document up to date with the cartridge's files when the
-    /// workspace opens again, never discarding unsaved edits:
+    /// workspace opens again, never discarding unsaved changes. Each asset
+    /// is treated on its own:
     ///
-    /// - `sprites.bin` unchanged: the document and history are kept, and
-    ///   the read-only assets are read afresh.
-    /// - changed under unsaved edits: nothing is touched; the conflict is
-    ///   returned for the user to settle.
-    /// - changed with no unsaved edits: the tiles are reloaded and the
-    ///   history, which no longer applies to them, is cleared.
+    /// - file unchanged: the asset and its history are kept.
+    /// - file changed, asset unmodified: the asset is read again, and the
+    ///   history steps involving it are dropped.
+    /// - file changed under unsaved changes: the asset is not touched; the
+    ///   conflict is returned for the user to settle.
+    ///
+    /// When a file can't be read, or a changed file to read again is
+    /// invalid, nothing changes and the reason is returned.
     pub fn reopen(
         &mut self,
         cartridge: &LoadedCartridge,
         defaults: &CartridgeVideoDefaults,
-    ) -> Reopened {
+    ) -> Result<Reopened, String> {
         self.history.close();
-        let files = match VideoFiles::read(cartridge) {
-            Ok(files) => files,
-            Err(err) => return Reopened::Failed(err.to_string()),
-        };
-        let disk = DiskTiles(files.obj_tiles.clone());
-        match self.conflict(disk.clone()) {
-            None => match self.refresh_read_only(&files, defaults) {
-                Ok(()) => Reopened::Unchanged,
-                Err(err) => Reopened::Failed(err.to_string()),
-            },
-            Some(conflict) if self.is_modified() => Reopened::Conflict(conflict),
-            Some(_) => {
-                let history_cleared = self.can_undo() || self.can_redo();
-                if let Err(err) = self.replace_tiles(disk) {
-                    return Reopened::Failed(err.to_string());
-                }
-                match self.refresh_read_only(&files, defaults) {
-                    Ok(()) => Reopened::Reloaded { history_cleared },
-                    Err(err) => Reopened::Failed(err.to_string()),
-                }
+        let files = VideoFiles::read(cartridge).map_err(|err| err.to_string())?;
+        let mut fresh = self.video.clone();
+        let mut reopened = Reopened::default();
+        for asset in VideoAsset::ALL {
+            let disk = files.get(asset);
+            let Some(kind) = self.conflict_kind(asset, disk) else {
+                continue;
+            };
+            if self.is_asset_modified(asset) {
+                reopened.conflicts.push(Conflict {
+                    kind,
+                    disk: DiskAsset {
+                        asset,
+                        bytes: disk.map(<[u8]>::to_vec),
+                    },
+                });
+            } else {
+                fresh
+                    .decode_asset(asset, disk, defaults)
+                    .map_err(|err| err.to_string())?;
+                reopened.reloaded.push(asset);
             }
         }
+        for &asset in &reopened.reloaded {
+            self.adopt(&fresh, asset, files.get(asset).map(<[u8]>::len));
+            reopened.history_trimmed |= self.history.invalidate(asset);
+            tracing::info!(file = asset.file_name(), "asset changed on disk, reloaded");
+        }
+        Ok(reopened)
     }
 
-    /// How `disk` differs from the baseline, if it does.
-    fn conflict(&self, disk: DiskTiles) -> Option<Conflict> {
-        let kind = match (self.origin.file_bytes(), disk.0.as_deref()) {
+    /// How `disk` differs from `asset`'s baseline, if it does.
+    fn conflict_kind(&self, asset: VideoAsset, disk: Option<&[u8]>) -> Option<ConflictKind> {
+        Some(match (self.origin.file_bytes(asset).as_deref(), disk) {
             (a, b) if a == b => return None,
             (Some(_), None) => ConflictKind::Deleted,
             (None, Some(_)) => ConflictKind::Created,
             _ => ConflictKind::Modified,
-        };
-        Some(Conflict { kind, disk })
+        })
     }
 
-    /// Replaces `sprites.bin`, provided it holds `expected`, and makes the
-    /// written tiles the baseline.
-    fn write_file(
+    /// The conflict `disk` makes with `asset`'s baseline. A file that
+    /// matches the baseline but not what an overwrite expected still
+    /// changed since it was seen.
+    fn conflict(&self, asset: VideoAsset, disk: Option<Vec<u8>>) -> Conflict {
+        Conflict {
+            kind: self
+                .conflict_kind(asset, disk.as_deref())
+                .unwrap_or(ConflictKind::Modified),
+            disk: DiskAsset { asset, bytes: disk },
+        }
+    }
+
+    /// Saves every modified asset, expecting its file to hold what `seen`
+    /// says, or else its baseline. See [`save`](Self::save).
+    fn write_files(
         &mut self,
         cartridge: &LoadedCartridge,
-        expected: Option<&[u8]>,
+        seen: &[DiskAsset],
     ) -> Result<Saved, SaveError> {
-        let bytes = self.save_bytes();
-        let len = bytes.len();
-        match cartridge.replace_obj_tiles(bytes, expected) {
-            Ok(()) => {}
-            Err(ObjTilesWriteError::Failed(err)) => return Err(SaveError::Cartridge(err)),
-            Err(ObjTilesWriteError::Changed(current)) => {
-                let disk = DiskTiles(current);
-                return Err(SaveError::Conflict(self.conflict(disk.clone()).unwrap_or(
-                    Conflict {
-                        kind: ConflictKind::Modified,
-                        disk,
-                    },
-                )));
+        self.history.close();
+        let dirty: Vec<VideoAsset> = SAVE_ORDER
+            .into_iter()
+            .filter(|&asset| self.is_asset_modified(asset))
+            .collect();
+        if dirty.is_empty() {
+            return Ok(Saved::NothingToSave);
+        }
+        let expected = |asset: VideoAsset| -> Option<Vec<u8>> {
+            match seen.iter().find(|disk| disk.asset == asset) {
+                Some(disk) => disk.bytes.clone(),
+                None => self.origin.file_bytes(asset).map(Cow::into_owned),
+            }
+        };
+        let expected: Vec<Option<Vec<u8>>> = dirty.iter().map(|&asset| expected(asset)).collect();
+
+        let mut conflicts = Vec::new();
+        for (&asset, expected) in dirty.iter().zip(&expected) {
+            let disk = cartridge.read_asset(asset).map_err(|err| SaveError {
+                written: Vec::new(),
+                cause: SaveFailure::Cartridge(err),
+            })?;
+            if disk != *expected {
+                conflicts.push(self.conflict(asset, disk));
             }
         }
-        self.origin = TileOrigin {
-            bank: self.tiles().clone(),
-            file_len: Some(len),
-        };
-        self.changed_pixels = 0;
-        tracing::info!(bytes = len, "sprites.bin saved");
-        Ok(Saved::Written { bytes: len })
+        if !conflicts.is_empty() {
+            return Err(SaveError {
+                written: Vec::new(),
+                cause: SaveFailure::Conflict(conflicts),
+            });
+        }
+
+        let mut written = Vec::new();
+        for (asset, expected) in dirty.into_iter().zip(expected) {
+            let bytes = self.save_bytes(asset);
+            let len = bytes.len();
+            let result = cartridge.replace_asset(asset, &bytes, expected.as_deref());
+            drop(bytes);
+            let cause = match result {
+                Ok(()) => {
+                    self.mark_saved(asset, len);
+                    tracing::info!(file = asset.file_name(), bytes = len, "asset saved");
+                    written.push(SavedFile { asset, bytes: len });
+                    continue;
+                }
+                Err(AssetWriteError::Failed(err)) => SaveFailure::Cartridge(err),
+                Err(AssetWriteError::Changed(current)) => {
+                    SaveFailure::Conflict(vec![self.conflict(asset, current)])
+                }
+            };
+            if !written.is_empty() {
+                tracing::warn!(
+                    saved = %file_list(written.iter().map(|file| file.asset)),
+                    failed = asset.file_name(),
+                    "save stopped partway"
+                );
+            }
+            return Err(SaveError { written, cause });
+        }
+        Ok(Saved::Written(written))
     }
 
-    /// Makes `disk` the tiles and the baseline, clearing the history.
-    fn replace_tiles(&mut self, disk: DiskTiles) -> Result<(), VideoLoadError> {
-        let bank = match &disk.0 {
-            Some(bytes) => ObjTileBank::from_bytes(bytes).map_err(VideoAssetError::from)?,
-            None => ObjTileBank::new(),
-        };
-        *self.video.obj.tiles_mut() = bank.clone();
-        self.origin = TileOrigin {
-            bank,
-            file_len: disk.0.as_ref().map(Vec::len),
-        };
-        self.changed_pixels = 0;
-        self.history = History::default();
-        tracing::info!("sprites.bin reloaded");
-        Ok(())
+    /// Makes the current state of `asset`, just written as `len` bytes, its
+    /// baseline.
+    fn mark_saved(&mut self, asset: VideoAsset, len: usize) {
+        self.origin.video.copy_asset(&self.video, asset);
+        self.origin.file_lens[asset.index()] = Some(len);
+        self.changed[asset.index()] = 0;
     }
 
-    /// Takes the read-only assets from `files`, keeping the tiles.
-    fn refresh_read_only(
-        &mut self,
-        files: &VideoFiles,
-        defaults: &CartridgeVideoDefaults,
-    ) -> Result<(), VideoAssetError> {
-        let fresh = CartridgeVideo::decode(
-            &VideoFiles {
-                obj_tiles: None,
-                ..files.clone()
-            },
-            defaults,
-        )?;
-        self.video.palette = fresh.palette;
-        self.video.obj = ObjVram::new(
-            self.tiles().clone(),
-            fresh.obj.attributes().clone(),
-            fresh.obj.palettes().clone(),
-        );
-        Ok(())
+    /// Makes `asset` as `fresh` holds it, read from a file of `len` bytes,
+    /// both the current state and the baseline.
+    fn adopt(&mut self, fresh: &CartridgeVideo, asset: VideoAsset, len: Option<usize>) {
+        self.video.copy_asset(fresh, asset);
+        self.origin.video.copy_asset(fresh, asset);
+        self.origin.file_lens[asset.index()] = len;
+        self.changed[asset.index()] = 0;
     }
 
-    /// Writes one pixel, keeping the count of changed pixels. Returns the
-    /// previous index if the pixel changed.
-    fn write(&mut self, tile: usize, x: usize, y: usize, index: u8) -> Option<u8> {
+    /// Adds a change to the open edit, or makes it an edit of its own.
+    fn record(&mut self, change: Change) {
+        match &mut self.history.open {
+            Some(edit) => edit.record(change),
+            None => {
+                self.history.redo.clear();
+                self.history.push_undo(Edit(vec![change]));
+            }
+        }
+    }
+
+    /// Writes the `after` value of `change`, as undo and redo do.
+    fn apply(&mut self, change: Change) {
+        match change {
+            Change::Pixel {
+                tile, x, y, after, ..
+            } => {
+                self.write_pixel(tile.into(), x.into(), y.into(), after);
+            }
+            Change::TileBank { tile, after, .. } => {
+                self.write_tile_bank(tile.into(), after);
+            }
+            Change::ObjColor {
+                bank, local, after, ..
+            } => {
+                self.write_obj_color(bank, local, after);
+            }
+            Change::MasterColor { index, after, .. } => {
+                self.write_master_color(index, after);
+            }
+        }
+    }
+
+    /// Counts a value of `asset` going from `previous` to `new` against
+    /// its baseline value `original`.
+    fn track<T: PartialEq>(&mut self, asset: VideoAsset, original: T, previous: T, new: T) {
+        let changed = &mut self.changed[asset.index()];
+        if original == previous {
+            *changed += 1;
+        } else if original == new {
+            *changed -= 1;
+        }
+    }
+
+    /// Writes one pixel. Returns the previous index if the pixel changed.
+    fn write_pixel(&mut self, tile: usize, x: usize, y: usize, index: u8) -> Option<u8> {
         let previous = self.video.obj.tiles_mut().set_pixel(tile, x, y, index)?;
         if previous == index {
             return None;
         }
-        let original = self.origin.bank.pixel(tile, x, y);
-        if original == Some(previous) {
-            self.changed_pixels += 1;
-        } else if original == Some(index) {
-            self.changed_pixels -= 1;
+        let original = self.origin.video.obj.tiles().pixel(tile, x, y);
+        self.track(VideoAsset::ObjTiles, original, Some(previous), Some(index));
+        Some(previous)
+    }
+
+    /// Writes one tile's bank. Returns the previous bank if it changed.
+    fn write_tile_bank(&mut self, tile: usize, bank: ObjBank) -> Option<ObjBank> {
+        let previous = self.video.obj.attributes_mut().set_bank(tile, bank)?;
+        if previous == bank {
+            return None;
         }
+        let original = self.origin.video.obj.attributes().bank(tile);
+        self.track(VideoAsset::ObjAttributes, original, previous, bank);
+        Some(previous)
+    }
+
+    /// Writes one object palette entry. Returns the previous master index
+    /// if it changed.
+    fn write_obj_color(&mut self, bank: ObjBank, local: u8, master: u8) -> Option<u8> {
+        let previous = self.video.obj.palettes_mut().set(bank, local, master)?;
+        if previous == master {
+            return None;
+        }
+        let original = self.origin.video.obj.palettes().resolve(bank, local);
+        self.track(
+            VideoAsset::ObjPalettes,
+            original,
+            Some(previous),
+            Some(master),
+        );
+        Some(previous)
+    }
+
+    /// Writes one master color. Returns the previous color if it changed.
+    fn write_master_color(&mut self, index: u8, color: Rgb) -> Option<Rgb> {
+        let previous = self.video.palette.set(index, color);
+        if previous == color {
+            return None;
+        }
+        let original = self.origin.video.palette.get(index);
+        self.track(VideoAsset::MasterPalette, original, previous, color);
         Some(previous)
     }
 }

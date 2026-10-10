@@ -1,6 +1,20 @@
 use super::*;
+use glaux_machine::obj_palette::ObjPalettes;
+use glaux_machine::palette::{PALETTE_RGB888_BYTES, Palette};
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_TILE_BYTES};
 use pretty_assertions::assert_eq;
+
+const TILES: VideoAsset = VideoAsset::ObjTiles;
+const ATTRIBUTES: VideoAsset = VideoAsset::ObjAttributes;
+const OBP: VideoAsset = VideoAsset::ObjPalettes;
+const PALETTE: VideoAsset = VideoAsset::MasterPalette;
+
+const BLUE: Rgb = Rgb::from_hex(0x3978a8);
+const RED: Rgb = Rgb::from_hex(0xe6482e);
+
+fn bank(n: u8) -> ObjBank {
+    ObjBank::new(n).unwrap()
+}
 
 fn defaults() -> CartridgeVideoDefaults {
     CartridgeVideoDefaults::from_rom(&crate::rom::load().unwrap())
@@ -258,15 +272,134 @@ fn the_history_keeps_only_the_newest_edits() {
     assert_eq!(doc.pixel(10, 0, 0), Some(0));
 }
 
+// Palettes and attributes.
+
+/// A `palette.bin` that is the provisional palette with master 42 blue.
+fn blue_42() -> Vec<u8> {
+    let mut palette = Palette::provisional();
+    palette.set(42, BLUE);
+    palette.to_rgb888().to_vec()
+}
+
+fn modified(doc: &SpriteDocument) -> Vec<VideoAsset> {
+    doc.modified_assets().collect()
+}
+
+#[test]
+fn every_asset_is_clean_again_once_restored_by_hand() {
+    let files = VideoFiles {
+        master_palette: Some(blue_42()),
+        ..VideoFiles::default()
+    };
+    let mut doc = SpriteDocument::from_files(&files, &defaults()).unwrap();
+    let obp_2_4 = doc.obj().palettes().resolve(bank(2), 4).unwrap();
+
+    assert!(doc.set_master_color(42, RED));
+    assert_eq!(modified(&doc), [PALETTE]);
+    assert!(doc.set_master_color(42, BLUE));
+    assert!(!doc.is_modified());
+
+    assert!(doc.set_tile_bank(5, bank(3)));
+    assert_eq!(modified(&doc), [ATTRIBUTES]);
+    assert!(doc.set_tile_bank(5, bank(6)));
+    assert!(doc.set_tile_bank(5, ObjBank::ZERO));
+    assert!(!doc.is_modified());
+
+    assert!(doc.set_obj_color(bank(2), 4, 200));
+    assert!(doc.set_pixel(0, 0, 0, 1));
+    assert_eq!(modified(&doc), [TILES, OBP]);
+    assert!(doc.set_obj_color(bank(2), 4, obp_2_4));
+    assert_eq!(modified(&doc), [TILES]);
+    assert!(doc.can_undo(), "manual restores are edits of their own");
+}
+
+#[test]
+fn an_edit_across_assets_undoes_and_redoes_as_one() {
+    let mut doc = document(None);
+    let original = doc.clone();
+    doc.begin_edit();
+    doc.set_pixel(3, 1, 1, 9);
+    doc.set_tile_bank(3, bank(4));
+    doc.set_obj_color(bank(4), 9, 77);
+    doc.set_master_color(77, RED);
+    doc.set_master_color(77, BLUE);
+    doc.end_edit();
+    let edited = doc.clone();
+    assert_eq!(modified(&doc), [TILES, ATTRIBUTES, OBP, PALETTE]);
+
+    assert!(doc.undo());
+    assert_eq!(doc.video(), original.video());
+    assert!(!doc.is_modified() && !doc.can_undo());
+    assert!(doc.redo());
+    assert_eq!(doc.video(), edited.video());
+    assert_eq!(doc.video().palette.get(77), BLUE, "the last write wins");
+    assert_eq!(modified(&doc), [TILES, ATTRIBUTES, OBP, PALETTE]);
+}
+
+#[test]
+fn rejected_or_unchanged_palette_writes_leave_no_history() {
+    let mut doc = document(None);
+    let current = doc.video().palette.get(42);
+    assert!(!doc.set_master_color(42, current));
+    assert!(!doc.set_obj_color(bank(1), 0, 9), "local 0 is transparent");
+    assert!(!doc.set_obj_color(bank(1), 16, 9));
+    assert!(!doc.set_tile_bank(1024, bank(1)));
+    assert!(!doc.set_tile_bank(0, ObjBank::ZERO));
+    assert_eq!(doc.obj().palettes().as_bytes()[16], 0);
+
+    doc.begin_edit();
+    doc.set_master_color(42, RED);
+    doc.set_tile_bank(9, bank(2));
+    doc.set_master_color(42, current);
+    doc.set_tile_bank(9, ObjBank::ZERO);
+    doc.end_edit();
+    assert!(!doc.is_modified() && !doc.can_undo());
+}
+
+#[test]
+fn a_new_palette_edit_drops_the_redo_steps() {
+    let mut doc = document(None);
+    doc.set_pixel(0, 0, 0, 1);
+    doc.undo();
+    assert!(doc.can_redo());
+    doc.set_master_color(1, RED);
+    assert!(!doc.can_redo());
+    assert!(doc.undo());
+    assert!(!doc.undo(), "the undone pixel edit is gone");
+}
+
+#[test]
+fn the_history_change_budget_drops_old_edits_but_keeps_the_newest() {
+    let mut doc = document(None);
+    doc.set_pixel(0, 0, 0, 1);
+    // Every pixel of the bank and one master color: one change over the
+    // budget, in one edit.
+    doc.begin_edit();
+    for tile in 0..1024 {
+        for y in 0..8 {
+            for x in 0..8 {
+                doc.set_pixel(tile, x, y, 2);
+            }
+        }
+    }
+    doc.set_master_color(0, RED);
+    doc.end_edit();
+
+    assert!(doc.undo());
+    assert!(!doc.undo(), "the older edit was forgotten");
+    assert_eq!(doc.pixel(1023, 7, 7), Some(0));
+    assert_eq!(doc.pixel(0, 0, 0), Some(1), "only the kept edit was undone");
+}
+
 // Persistence.
 
 use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use std::fs;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
-/// A loaded cartridge on disk whose `sprites.bin` holds `tiles`, if
-/// given, beside an `obp.bin` of all zeros.
+/// A loaded cartridge on disk.
 struct Disk {
     _fixture: Fixture,
     dir: PathBuf,
@@ -274,13 +407,23 @@ struct Disk {
 }
 
 impl Disk {
+    /// A cartridge whose `sprites.bin` holds `tiles`, if given, beside an
+    /// `obp.bin` of all zeros.
     fn new(name: &str, tiles: Option<&[u8]>) -> Self {
+        let obp = [0; 128];
+        match tiles {
+            Some(tiles) => Self::with(name, &[(TILES, tiles), (OBP, &obp)]),
+            None => Self::with(name, &[(OBP, &obp)]),
+        }
+    }
+
+    /// A cartridge holding exactly `assets` beside its manifest and entry.
+    fn with(name: &str, assets: &[(VideoAsset, &[u8])]) -> Self {
         let fixture = Fixture::new(name);
         let dir = fixture.root().join("owl");
         write_cartridge(&dir, "Owl");
-        fs::write(dir.join("obp.bin"), [0; 128]).unwrap();
-        if let Some(tiles) = tiles {
-            fs::write(dir.join("sprites.bin"), tiles).unwrap();
+        for (asset, bytes) in assets {
+            fs::write(dir.join(asset.file_name()), bytes).unwrap();
         }
         let cartridge = LoadedCartridge::load(&fixture.storage(), "owl").unwrap();
         Self {
@@ -290,42 +433,102 @@ impl Disk {
         }
     }
 
+    /// A cartridge with every asset file: tile 0 solid local 1, tile 0 on
+    /// OBP0 in an 8-byte `objattr.bin`, linear banks and master 42 blue.
+    fn full(name: &str) -> Self {
+        Self::with(
+            name,
+            &[
+                (TILES, &[0x11; 32]),
+                (ATTRIBUTES, &[0; 8]),
+                (OBP, ObjPalettes::linear().as_bytes()),
+                (PALETTE, &blue_42()),
+            ],
+        )
+    }
+
     fn document(&self) -> SpriteDocument {
         SpriteDocument::load(&self.cartridge, &defaults()).unwrap()
     }
 
+    fn path(&self, asset: VideoAsset) -> PathBuf {
+        self.dir.join(asset.file_name())
+    }
+
+    fn read(&self, asset: VideoAsset) -> Option<Vec<u8>> {
+        fs::read(self.path(asset)).ok()
+    }
+
+    fn write(&self, asset: VideoAsset, bytes: &[u8]) {
+        fs::write(self.path(asset), bytes).unwrap();
+    }
+
+    fn remove(&self, asset: VideoAsset) {
+        fs::remove_file(self.path(asset)).unwrap();
+    }
+
     fn tiles(&self) -> Option<Vec<u8>> {
-        fs::read(self.dir.join("sprites.bin")).ok()
+        self.read(TILES)
     }
 
-    fn write_tiles(&self, bytes: &[u8]) {
-        fs::write(self.dir.join("sprites.bin"), bytes).unwrap();
-    }
-
-    fn remove_tiles(&self) {
-        fs::remove_file(self.dir.join("sprites.bin")).unwrap();
-    }
-
-    /// Every file but `sprites.bin`, with its contents.
-    fn others(&self) -> Vec<(String, Vec<u8>)> {
-        let mut out: Vec<_> = ["cartridge.ron", "code/main.luau", "obp.bin"]
+    /// Every file of the cartridge with its contents and modification
+    /// time.
+    fn snapshot(&self) -> Vec<(String, Vec<u8>, SystemTime)> {
+        let mut out: Vec<_> = ["cartridge.ron", "code/main.luau"]
             .into_iter()
-            .map(|name| (name.to_owned(), fs::read(self.dir.join(name)).unwrap()))
+            .map(str::to_owned)
+            .chain(VideoAsset::ALL.map(|asset| asset.file_name().to_owned()))
+            .filter_map(|name| {
+                let path = self.dir.join(&name);
+                let modified = fs::metadata(&path).ok()?.modified().unwrap();
+                Some((name, fs::read(path).unwrap(), modified))
+            })
             .collect();
         out.sort();
         out
     }
+
+    /// [`snapshot`](Self::snapshot) without `asset`'s file.
+    fn others(&self, asset: VideoAsset) -> Vec<(String, Vec<u8>, SystemTime)> {
+        let mut out = self.snapshot();
+        out.retain(|(name, ..)| name != asset.file_name());
+        out
+    }
+
+    fn set_readonly(&self, asset: VideoAsset, readonly: bool) {
+        let path = self.path(asset);
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        // Both directions are needed: a test makes a file read-only, then
+        // writable again so the save can be retried and the fixture removed.
+        permissions.set_readonly(readonly);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
 }
 
-fn written(bytes: usize) -> Result<Saved, SaveError> {
-    Ok(Saved::Written { bytes })
+fn written(files: &[(VideoAsset, usize)]) -> Result<Saved, SaveError> {
+    Ok(Saved::Written(
+        files
+            .iter()
+            .map(|&(asset, bytes)| SavedFile { asset, bytes })
+            .collect(),
+    ))
+}
+
+fn conflict(kind: ConflictKind, asset: VideoAsset, bytes: Option<&[u8]>) -> Conflict {
+    Conflict {
+        kind,
+        disk: DiskAsset {
+            asset,
+            bytes: bytes.map(<[u8]>::to_vec),
+        },
+    }
 }
 
 #[test]
 fn saving_writes_the_native_bytes_and_keeps_the_file_length() {
     let original: Vec<u8> = (0..3 * OBJ_TILE_BYTES as u8).collect();
     let disk = Disk::new("doc-save", Some(&original));
-    let others = disk.others();
+    let others = disk.others(TILES);
     let mut doc = disk.document();
     doc.set_pixel(1, 0, 0, 0xf);
     // Erasing a whole tile inside the file keeps its bytes in the file.
@@ -336,14 +539,14 @@ fn saving_writes_the_native_bytes_and_keeps_the_file_length() {
         }
     }
 
-    assert_eq!(doc.save(&disk.cartridge), written(96));
+    assert_eq!(doc.save(&disk.cartridge), written(&[(TILES, 96)]));
     let saved = disk.tiles().unwrap();
     assert_eq!(saved, doc.tiles().as_bytes()[..96]);
     assert_eq!(saved[32], 0xf0 | (original[32] & 0x0f));
     assert_eq!(saved[64..], [0; 32]);
     assert!(!doc.is_modified());
-    assert_eq!(doc.origin().file_bytes(), Some(&saved[..]));
-    assert_eq!(disk.others(), others, "other assets untouched");
+    assert_eq!(doc.origin().file_bytes(TILES).as_deref(), Some(&saved[..]));
+    assert_eq!(disk.others(TILES), others, "other files untouched");
 
     let reloaded = disk.document();
     assert_eq!(reloaded.tiles(), doc.tiles());
@@ -355,7 +558,10 @@ fn edits_past_the_end_grow_the_file_by_whole_tiles() {
     let disk = Disk::new("doc-grow", Some(&[0x11; OBJ_TILE_BYTES]));
     let mut doc = disk.document();
     doc.set_pixel(5, 7, 7, 2);
-    assert_eq!(doc.save(&disk.cartridge), written(6 * OBJ_TILE_BYTES));
+    assert_eq!(
+        doc.save(&disk.cartridge),
+        written(&[(TILES, 6 * OBJ_TILE_BYTES)])
+    );
     let saved = disk.tiles().unwrap();
     assert_eq!(saved[..32], [0x11; 32]);
     assert_eq!(saved[32..191], [0; 159]);
@@ -374,8 +580,77 @@ fn a_missing_file_is_created_only_once_there_are_edits() {
     assert_eq!(disk.tiles(), None);
 
     doc.set_pixel(1, 1, 0, 4);
-    assert_eq!(doc.save(&disk.cartridge), written(64));
+    assert_eq!(doc.save(&disk.cartridge), written(&[(TILES, 64)]));
     assert_eq!(disk.tiles().unwrap()[32], 0x04);
+}
+
+#[test]
+fn only_modified_assets_are_written() {
+    let disk = Disk::full("doc-save-one");
+    let others = disk.others(PALETTE);
+    let mut doc = disk.document();
+    doc.set_master_color(42, RED);
+    assert_eq!(
+        doc.save(&disk.cartridge),
+        written(&[(PALETTE, PALETTE_RGB888_BYTES)])
+    );
+    let saved = disk.read(PALETTE).unwrap();
+    assert_eq!(saved[42 * 3..43 * 3], [0xe6, 0x48, 0x2e]);
+    let mut expected = blue_42();
+    expected[42 * 3..43 * 3].copy_from_slice(&saved[42 * 3..43 * 3]);
+    assert_eq!(saved, expected, "every other color as it was");
+    assert_eq!(disk.others(PALETTE), others, "other files untouched");
+    assert!(!doc.is_modified());
+}
+
+#[test]
+fn absent_palette_files_are_created_only_from_real_changes() {
+    let disk = Disk::with("doc-create-palettes", &[]);
+    let mut doc = disk.document();
+    let defaults_doc = doc.clone();
+    doc.set_master_color(42, RED);
+    doc.set_obj_color(bank(1), 3, 42);
+    doc.set_tile_bank(5, bank(1));
+    doc.set_tile_bank(9, bank(2));
+    doc.set_tile_bank(9, ObjBank::ZERO);
+    assert_eq!(
+        doc.save(&disk.cartridge),
+        written(&[(PALETTE, PALETTE_RGB888_BYTES), (OBP, 128), (ATTRIBUTES, 6)])
+    );
+
+    let mut palette = defaults_doc.video().palette.clone();
+    palette.set(42, RED);
+    assert_eq!(disk.read(PALETTE), Some(palette.to_rgb888().to_vec()));
+    let mut obp = defaults_doc.obj().palettes().clone();
+    obp.set(bank(1), 3, 42);
+    assert_eq!(disk.read(OBP), Some(obp.as_bytes().to_vec()));
+    assert_eq!(disk.read(ATTRIBUTES), Some(vec![0, 0, 0, 0, 0, 1]));
+    assert_eq!(disk.tiles(), None, "unchanged tiles create no file");
+    assert_eq!(disk.document().video(), doc.video());
+}
+
+#[test]
+fn attributes_keep_their_file_length_and_bytes() {
+    let disk = Disk::with("doc-attributes", &[(ATTRIBUTES, &[1, 2, 3, 0, 0, 0, 0, 0])]);
+    let mut doc = disk.document();
+    doc.set_tile_bank(1, bank(7));
+    assert_eq!(doc.save(&disk.cartridge), written(&[(ATTRIBUTES, 8)]));
+    assert_eq!(disk.read(ATTRIBUTES), Some(vec![1, 7, 3, 0, 0, 0, 0, 0]));
+}
+
+#[test]
+fn several_assets_save_together_in_a_fixed_order() {
+    let disk = Disk::full("doc-save-several");
+    let mut doc = disk.document();
+    doc.set_pixel(0, 0, 0, 2);
+    doc.set_obj_color(ObjBank::ZERO, 1, 42);
+    assert_eq!(
+        doc.save(&disk.cartridge),
+        written(&[(OBP, 128), (TILES, 32)])
+    );
+    assert_eq!(disk.tiles().unwrap()[0], 0x21);
+    assert_eq!(disk.read(OBP).unwrap()[1], 42);
+    assert_eq!(disk.document().video(), doc.video());
 }
 
 #[test]
@@ -383,17 +658,17 @@ fn saving_keeps_the_history_and_undo_moves_off_the_saved_state() {
     let disk = Disk::new("doc-save-history", None);
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 1);
-    doc.set_pixel(0, 1, 0, 2);
+    doc.set_master_color(3, RED);
     doc.save(&disk.cartridge).unwrap();
     assert!(!doc.is_modified());
 
     assert!(doc.undo());
-    assert!(doc.is_modified(), "the saved file has the undone pixel");
+    assert_eq!(modified(&doc), [PALETTE], "the saved file has the color");
     assert!(doc.redo());
     assert!(!doc.is_modified(), "back to exactly what was saved");
     assert!(doc.undo());
     assert!(doc.undo());
-    assert!(doc.is_modified());
+    assert_eq!(modified(&doc), [TILES, PALETTE]);
     doc.save(&disk.cartridge).unwrap();
     assert_eq!(disk.tiles(), Some(vec![0; 32]), "the saved length stays");
     assert!(doc.redo());
@@ -405,27 +680,65 @@ fn a_failed_write_changes_nothing() {
     let disk = Disk::new("doc-save-fail", Some(&[0x33; OBJ_TILE_BYTES]));
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 9);
-    let path = disk.dir.join("sprites.bin");
-    let mut permissions = fs::metadata(&path).unwrap().permissions();
-    permissions.set_readonly(true);
-    fs::set_permissions(&path, permissions.clone()).unwrap();
+    disk.set_readonly(TILES, true);
 
     let before = doc.clone();
     assert_eq!(
         doc.save(&disk.cartridge),
-        Err(SaveError::Cartridge(CartridgeError::ObjTilesReadOnly))
+        Err(SaveError {
+            written: Vec::new(),
+            cause: SaveFailure::Cartridge(CartridgeError::AssetReadOnly(TILES)),
+        })
     );
     assert_eq!(doc, before);
     assert!(doc.is_modified() && doc.can_undo());
     assert_eq!(disk.tiles(), Some(vec![0x33; 32]));
 
-    #[expect(
-        clippy::permissions_set_readonly_false,
-        reason = "restores the test file so the fixture can be removed"
-    )]
-    permissions.set_readonly(false);
-    fs::set_permissions(&path, permissions).unwrap();
-    assert_eq!(doc.save(&disk.cartridge), written(32));
+    disk.set_readonly(TILES, false);
+    assert_eq!(doc.save(&disk.cartridge), written(&[(TILES, 32)]));
+}
+
+#[test]
+fn a_failure_partway_keeps_what_was_saved_and_a_retry_saves_the_rest() {
+    let disk = Disk::full("doc-save-partial");
+    let mut doc = disk.document();
+    doc.begin_edit();
+    doc.set_master_color(42, RED);
+    doc.set_obj_color(bank(1), 1, 42);
+    doc.end_edit();
+    disk.set_readonly(OBP, true);
+
+    assert_eq!(
+        doc.save(&disk.cartridge),
+        Err(SaveError {
+            written: vec![SavedFile {
+                asset: PALETTE,
+                bytes: PALETTE_RGB888_BYTES,
+            }],
+            cause: SaveFailure::Cartridge(CartridgeError::AssetReadOnly(OBP)),
+        })
+    );
+    assert_eq!(disk.read(PALETTE).unwrap()[42 * 3], 0xe6);
+    assert_eq!(
+        disk.read(OBP),
+        Some(ObjPalettes::linear().as_bytes().to_vec())
+    );
+    assert_eq!(modified(&doc), [OBP]);
+    assert!(doc.can_undo(), "the history is kept");
+
+    let palette = disk.snapshot();
+    disk.set_readonly(OBP, false);
+    assert_eq!(doc.save(&disk.cartridge), written(&[(OBP, 128)]));
+    assert_eq!(disk.read(OBP).unwrap()[16 + 1], 42);
+    assert_eq!(
+        disk.others(OBP),
+        palette
+            .into_iter()
+            .filter(|(name, ..)| name != "obp.bin")
+            .collect::<Vec<_>>(),
+        "the retry wrote only obp.bin"
+    );
+    assert!(!doc.is_modified());
 }
 
 #[test]
@@ -433,10 +746,13 @@ fn an_unreadable_file_is_an_error_not_a_conflict() {
     let disk = Disk::new("doc-save-unreadable", None);
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 1);
-    fs::create_dir(disk.dir.join("sprites.bin")).unwrap();
+    fs::create_dir(disk.path(TILES)).unwrap();
     assert_eq!(
         doc.save(&disk.cartridge),
-        Err(SaveError::Cartridge(CartridgeError::ObjTilesNotAFile))
+        Err(SaveError {
+            written: Vec::new(),
+            cause: SaveFailure::Cartridge(CartridgeError::AssetNotAFile(TILES)),
+        })
     );
     assert!(doc.is_modified());
 }
@@ -466,16 +782,16 @@ fn outside_changes_are_conflicts_by_kind() {
         let mut doc = disk.document();
         doc.set_pixel(0, 0, 0, 7);
         match now {
-            Some(bytes) => disk.write_tiles(bytes),
-            None => disk.remove_tiles(),
+            Some(bytes) => disk.write(TILES, bytes),
+            None => disk.remove(TILES),
         }
         let before = doc.clone();
         assert_eq!(
             doc.save(&disk.cartridge),
-            Err(SaveError::Conflict(Conflict {
-                kind,
-                disk: DiskTiles(now.map(<[u8]>::to_vec)),
-            })),
+            Err(SaveError {
+                written: Vec::new(),
+                cause: SaveFailure::Conflict(vec![conflict(kind, TILES, now)]),
+            }),
             "{name}"
         );
         assert_eq!(doc, before, "{name}");
@@ -484,25 +800,70 @@ fn outside_changes_are_conflicts_by_kind() {
 }
 
 #[test]
+fn any_conflict_found_before_writing_writes_nothing() {
+    let disk = Disk::full("doc-conflict-several");
+    let mut doc = disk.document();
+    doc.set_pixel(0, 0, 0, 7);
+    doc.set_obj_color(bank(1), 1, 9);
+    doc.set_master_color(42, RED);
+    disk.write(OBP, &[0; 128]);
+    disk.remove(PALETTE);
+    let before = disk.snapshot();
+
+    assert_eq!(
+        doc.save(&disk.cartridge),
+        Err(SaveError {
+            written: Vec::new(),
+            cause: SaveFailure::Conflict(vec![
+                conflict(ConflictKind::Deleted, PALETTE, None),
+                conflict(ConflictKind::Modified, OBP, Some(&[0; 128])),
+            ]),
+        })
+    );
+    assert_eq!(
+        disk.snapshot(),
+        before,
+        "sprites.bin was not written either"
+    );
+    assert_eq!(modified(&doc), [TILES, OBP, PALETTE]);
+}
+
+#[test]
 fn overwrite_replaces_exactly_the_version_shown() {
     let disk = Disk::new("doc-overwrite", Some(&[0x11; 32]));
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 7);
-    disk.write_tiles(&[0x22; 64]);
-    let Err(SaveError::Conflict(conflict)) = doc.save(&disk.cartridge) else {
+    disk.write(TILES, &[0x22; 64]);
+    let Err(SaveError {
+        cause: SaveFailure::Conflict(conflicts),
+        ..
+    }) = doc.save(&disk.cartridge)
+    else {
         panic!("expected a conflict");
     };
+    let seen: Vec<DiskAsset> = conflicts.into_iter().map(|c| c.disk).collect();
 
     // A further change after the dialog appeared is not overwritten.
-    disk.write_tiles(&[0x33; 64]);
-    let Err(SaveError::Conflict(again)) = doc.overwrite(&disk.cartridge, &conflict.disk) else {
+    disk.write(TILES, &[0x33; 64]);
+    let Err(SaveError {
+        cause: SaveFailure::Conflict(again),
+        ..
+    }) = doc.overwrite(&disk.cartridge, &seen)
+    else {
         panic!("expected a second conflict");
     };
-    assert_eq!(again.disk, DiskTiles(Some(vec![0x33; 64])));
+    assert_eq!(
+        again,
+        [conflict(ConflictKind::Modified, TILES, Some(&[0x33; 64]))]
+    );
     assert_eq!(disk.tiles(), Some(vec![0x33; 64]));
     assert!(doc.is_modified());
 
-    assert_eq!(doc.overwrite(&disk.cartridge, &again.disk), written(32));
+    let seen: Vec<DiskAsset> = again.into_iter().map(|c| c.disk).collect();
+    assert_eq!(
+        doc.overwrite(&disk.cartridge, &seen),
+        written(&[(TILES, 32)])
+    );
     assert_eq!(disk.tiles().unwrap()[0], 0x71);
     assert!(!doc.is_modified());
     assert!(doc.can_undo(), "overwriting keeps the history");
@@ -510,17 +871,48 @@ fn overwrite_replaces_exactly_the_version_shown() {
 }
 
 #[test]
-fn overwrite_recreates_a_deleted_file() {
-    let disk = Disk::new("doc-overwrite-deleted", Some(&[0x11; 32]));
+fn overwrite_saves_the_other_modified_assets_against_their_baselines() {
+    let disk = Disk::full("doc-overwrite-mixed");
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 7);
-    disk.remove_tiles();
-    let Err(SaveError::Conflict(conflict)) = doc.save(&disk.cartridge) else {
+    doc.set_master_color(42, RED);
+    disk.remove(TILES);
+    let seen = [DiskAsset {
+        asset: TILES,
+        bytes: None,
+    }];
+
+    // palette.bin was not part of the conflict: an outside change to it is
+    // a new conflict, and nothing is written.
+    disk.write(PALETTE, &[0; PALETTE_RGB888_BYTES]);
+    let Err(SaveError {
+        written: saved,
+        cause: SaveFailure::Conflict(conflicts),
+    }) = doc.overwrite(&disk.cartridge, &seen)
+    else {
         panic!("expected a conflict");
     };
-    assert_eq!(conflict.kind, ConflictKind::Deleted);
-    assert_eq!(doc.overwrite(&disk.cartridge, &conflict.disk), written(32));
-    assert_eq!(disk.tiles().unwrap()[0], 0x71);
+    assert!(saved.is_empty());
+    assert_eq!(
+        conflicts,
+        [conflict(
+            ConflictKind::Modified,
+            PALETTE,
+            Some(&[0; PALETTE_RGB888_BYTES])
+        )]
+    );
+    assert_eq!(disk.tiles(), None);
+
+    disk.write(PALETTE, &blue_42());
+    assert_eq!(
+        doc.overwrite(&disk.cartridge, &seen),
+        written(&[(PALETTE, PALETTE_RGB888_BYTES), (TILES, 32)])
+    );
+    assert_eq!(
+        disk.tiles().unwrap()[0],
+        0x71,
+        "the deleted file is recreated"
+    );
 }
 
 #[test]
@@ -528,98 +920,213 @@ fn reloading_discards_edits_and_history() {
     let disk = Disk::new("doc-reload", Some(&[0x11; 32]));
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 7);
-    disk.write_tiles(&[0x22; 64]);
-    doc.reload_tiles(&disk.cartridge).unwrap();
+    disk.write(TILES, &[0x22; 64]);
+    doc.reload(&disk.cartridge, &[TILES], &defaults()).unwrap();
     assert_eq!(rows(&doc, 1)[0], "22222222");
     assert!(!doc.is_modified() && !doc.can_undo() && !doc.can_redo());
-    assert_eq!(doc.origin().file_bytes(), Some(&[0x22; 64][..]));
+    assert_eq!(
+        doc.origin().file_bytes(TILES).as_deref(),
+        Some(&[0x22; 64][..])
+    );
 
     doc.set_pixel(0, 0, 0, 7);
-    disk.remove_tiles();
-    doc.reload_tiles(&disk.cartridge).unwrap();
+    disk.remove(TILES);
+    doc.reload(&disk.cartridge, &[TILES], &defaults()).unwrap();
     assert_eq!(
         rows(&doc, 0)[0],
         "00000000",
         "a deleted file reads as empty tiles"
     );
-    assert_eq!(doc.origin().file_bytes(), None);
+    assert_eq!(doc.origin().file_bytes(TILES), None);
     assert_eq!(doc.obj().palettes(), disk.document().obj().palettes());
 }
 
 #[test]
-fn a_failed_reload_keeps_the_document() {
-    let disk = Disk::new("doc-reload-invalid", Some(&[0x11; 32]));
+fn reloading_one_asset_keeps_the_changes_to_the_others() {
+    let disk = Disk::full("doc-reload-one");
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 7);
-    disk.write_tiles(&[0x22; 33]);
+    doc.set_master_color(42, RED);
+    doc.reload(&disk.cartridge, &[PALETTE], &defaults())
+        .unwrap();
+    assert_eq!(doc.video().palette.get(42), BLUE);
+    assert_eq!(modified(&doc), [TILES]);
+    assert_eq!(doc.pixel(0, 0, 0), Some(7));
+}
+
+#[test]
+fn a_failed_reload_keeps_the_document() {
+    let disk = Disk::full("doc-reload-invalid");
+    let mut doc = disk.document();
+    doc.set_pixel(0, 0, 0, 7);
+    doc.set_master_color(42, RED);
+    disk.write(TILES, &[0x22; 33]);
     let before = doc.clone();
-    assert!(doc.reload_tiles(&disk.cartridge).is_err());
-    assert_eq!(doc, before);
+    assert!(
+        doc.reload(&disk.cartridge, &[PALETTE, TILES], &defaults())
+            .is_err()
+    );
+    assert_eq!(doc, before, "not even the valid palette.bin was taken");
+}
+
+// History across reloads.
+
+#[test]
+fn reloading_an_asset_drops_its_undo_steps_and_every_older_one() {
+    let disk = Disk::full("doc-reload-undo");
+    let mut doc = disk.document();
+    doc.set_pixel(0, 0, 0, 2);
+    doc.begin_edit();
+    doc.set_pixel(0, 1, 0, 3);
+    doc.set_master_color(42, RED);
+    doc.end_edit();
+    doc.set_pixel(0, 2, 0, 4);
+
+    doc.reload(&disk.cartridge, &[PALETTE], &defaults())
+        .unwrap();
+    assert_eq!(rows(&doc, 0)[0], "23411111", "the edits themselves stay");
+    assert!(doc.undo());
+    assert_eq!(rows(&doc, 0)[0], "23111111");
+    assert!(
+        !doc.undo(),
+        "the grouped edit and the one before it are gone"
+    );
+    assert_eq!(modified(&doc), [TILES]);
+}
+
+#[test]
+fn reopening_drops_redo_steps_that_involve_a_reloaded_asset() {
+    let disk = Disk::full("doc-reopen-redo");
+    let mut doc = disk.document();
+    doc.set_pixel(0, 0, 0, 2);
+    doc.begin_edit();
+    doc.set_pixel(0, 1, 0, 3);
+    doc.set_master_color(42, RED);
+    doc.end_edit();
+    doc.set_pixel(0, 2, 0, 4);
+    doc.undo();
+    doc.undo();
+    assert_eq!(modified(&doc), [TILES]);
+
+    let mut outside = Palette::from_rgb888(&blue_42()).unwrap();
+    outside.set(7, RED);
+    disk.write(PALETTE, &outside.to_rgb888());
+    assert_eq!(
+        doc.reopen(&disk.cartridge, &defaults()),
+        Ok(Reopened {
+            reloaded: vec![PALETTE],
+            history_trimmed: true,
+            conflicts: Vec::new(),
+        })
+    );
+    assert_eq!(doc.video().palette, outside);
+    assert!(
+        !doc.can_redo(),
+        "both undone edits would be redone after it"
+    );
+    assert!(doc.undo(), "the unrelated older edit stays");
+    assert!(!doc.is_modified());
 }
 
 // Reopening the workspace.
 
 #[test]
-fn reopening_over_an_unchanged_file_keeps_edits_and_history() {
+fn reopening_over_unchanged_files_keeps_edits_and_history() {
     let disk = Disk::new("doc-reopen-same", Some(&[0x11; 32]));
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 7);
     doc.undo();
     doc.set_pixel(0, 1, 0, 7);
     let obp: [u8; 128] = std::array::from_fn(|i| if i % 16 == 0 { 0 } else { 40 });
-    fs::write(disk.dir.join("obp.bin"), obp).unwrap();
+    disk.write(OBP, &obp);
     assert_eq!(
         doc.reopen(&disk.cartridge, &defaults()),
-        Reopened::Unchanged
+        Ok(Reopened {
+            reloaded: vec![OBP],
+            history_trimmed: false,
+            conflicts: Vec::new(),
+        })
     );
     assert!(doc.is_modified() && doc.can_undo());
     assert_eq!(rows(&doc, 0)[0], "17111111");
     assert_eq!(
         doc.obj().palettes(),
         disk.document().obj().palettes(),
-        "read-only assets are read afresh"
+        "a changed unmodified asset is read afresh"
     );
 }
 
 #[test]
 fn reopening_never_drops_unsaved_edits() {
-    let disk = Disk::new("doc-reopen-conflict", Some(&[0x11; 32]));
+    let disk = Disk::full("doc-reopen-conflict");
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 7);
-    disk.write_tiles(&[0x22; 32]);
+    doc.set_obj_color(bank(3), 2, 9);
+    disk.write(TILES, &[0x22; 32]);
+    disk.remove(OBP);
     let before = doc.clone();
     assert_eq!(
         doc.reopen(&disk.cartridge, &defaults()),
-        Reopened::Conflict(Conflict {
-            kind: ConflictKind::Modified,
-            disk: DiskTiles(Some(vec![0x22; 32])),
+        Ok(Reopened {
+            reloaded: Vec::new(),
+            history_trimmed: false,
+            conflicts: vec![
+                conflict(ConflictKind::Modified, TILES, Some(&[0x22; 32])),
+                conflict(ConflictKind::Deleted, OBP, None),
+            ],
         })
     );
     assert_eq!(doc, before);
 }
 
 #[test]
+fn reopening_reloads_unmodified_assets_beside_a_conflict() {
+    let disk = Disk::full("doc-reopen-mixed");
+    let mut doc = disk.document();
+    doc.set_obj_color(bank(3), 2, 9);
+    doc.set_pixel(0, 0, 0, 7);
+    disk.write(OBP, &[0; 128]);
+    disk.write(PALETTE, &[0; PALETTE_RGB888_BYTES]);
+    assert_eq!(
+        doc.reopen(&disk.cartridge, &defaults()),
+        Ok(Reopened {
+            reloaded: vec![PALETTE],
+            history_trimmed: false,
+            conflicts: vec![conflict(ConflictKind::Modified, OBP, Some(&[0; 128]))],
+        })
+    );
+    assert_eq!(doc.video().palette.get(42), Rgb::from_hex(0));
+    assert_eq!(doc.obj().palettes().resolve(bank(3), 2), Some(9));
+    assert_eq!(modified(&doc), [TILES, OBP]);
+    assert!(doc.undo() && doc.undo(), "their history is kept");
+}
+
+#[test]
 fn reopening_a_clean_document_over_a_changed_file_reloads_it() {
     let disk = Disk::new("doc-reopen-clean", Some(&[0x11; 32]));
     let mut doc = disk.document();
-    disk.write_tiles(&[0x22; 32]);
+    disk.write(TILES, &[0x22; 32]);
     assert_eq!(
         doc.reopen(&disk.cartridge, &defaults()),
-        Reopened::Reloaded {
-            history_cleared: false
-        }
+        Ok(Reopened {
+            reloaded: vec![TILES],
+            history_trimmed: false,
+            conflicts: Vec::new(),
+        })
     );
     assert_eq!(rows(&doc, 0)[0], "22222222");
 
     // Saved edits leave history that no longer fits a changed file.
     doc.set_pixel(0, 0, 0, 7);
     doc.save(&disk.cartridge).unwrap();
-    disk.write_tiles(&[0x33; 32]);
+    disk.write(TILES, &[0x33; 32]);
     assert_eq!(
         doc.reopen(&disk.cartridge, &defaults()),
-        Reopened::Reloaded {
-            history_cleared: true
-        }
+        Ok(Reopened {
+            reloaded: vec![TILES],
+            history_trimmed: true,
+            conflicts: Vec::new(),
+        })
     );
     assert!(!doc.can_undo());
     assert_eq!(rows(&doc, 0)[0], "33333333");
@@ -627,24 +1134,20 @@ fn reopening_a_clean_document_over_a_changed_file_reloads_it() {
 
 #[test]
 fn reopening_over_unreadable_or_invalid_files_keeps_everything() {
-    let disk = Disk::new("doc-reopen-fail", Some(&[0x11; 32]));
+    let disk = Disk::full("doc-reopen-fail");
     let mut doc = disk.document();
     doc.set_pixel(0, 0, 0, 7);
     doc.save(&disk.cartridge).unwrap();
     let before = doc.clone();
 
-    disk.write_tiles(&[0x22; 33]);
-    assert!(matches!(
-        doc.reopen(&disk.cartridge, &defaults()),
-        Reopened::Failed(_)
-    ));
+    // A valid change to one file is not taken while another is invalid.
+    disk.write(PALETTE, &[0; PALETTE_RGB888_BYTES]);
+    disk.write(TILES, &[0x22; 33]);
+    assert!(doc.reopen(&disk.cartridge, &defaults()).is_err());
     assert_eq!(doc, before);
 
-    disk.remove_tiles();
-    fs::create_dir(disk.dir.join("sprites.bin")).unwrap();
-    assert!(matches!(
-        doc.reopen(&disk.cartridge, &defaults()),
-        Reopened::Failed(_)
-    ));
+    disk.remove(TILES);
+    fs::create_dir(disk.path(TILES)).unwrap();
+    assert!(doc.reopen(&disk.cartridge, &defaults()).is_err());
     assert_eq!(doc, before);
 }
