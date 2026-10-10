@@ -552,6 +552,25 @@ mod tests {
     }
 
     #[test]
+    fn deferred_startup_maximize_keeps_saved_geometry() {
+        let mut saved = state(960, 720, Some((100, 50)));
+        saved.maximized = true;
+        let placement = plan(SessionKind::X11, Some(&saved), &[FULL_HD]);
+        let mut tracker = WindowTracker::new(SessionKind::X11, Some(&saved), placement);
+
+        // The first frame is presented at the normal size, then maximized.
+        tracker.observe(snapshot((960, 720), (100, 50)));
+        tracker.observe(WindowSnapshot {
+            size: (1920, 1050),
+            position: Some((0, 30)),
+            maximized: true,
+            minimized: false,
+        });
+
+        assert_eq!(tracker.finish(), Some(saved));
+    }
+
+    #[test]
     fn rejected_position_is_not_saved_back() {
         let mut saved = state(960, 720, Some((-1000, -100)));
         saved.maximized = true;

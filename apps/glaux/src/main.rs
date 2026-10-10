@@ -128,9 +128,7 @@ fn run(
     let mut host = RaylibHost::new("Glaux", size, PRESENTATION)?;
     let placement = window_state::plan(session, saved.as_ref(), &host.monitors());
     host.place(placement);
-    if saved.is_some_and(|state| state.maximized) {
-        host.maximize();
-    }
+    let mut maximize_pending = saved.is_some_and(|state| state.maximized);
     let mut tracker = WindowTracker::new(session, saved.as_ref(), placement);
 
     // Declared before the output that borrows it, so it is dropped after.
@@ -172,6 +170,12 @@ fn run(
             .copy_from_slice(machine.framebuffer().as_bytes());
         system.draw_cursor(&mut presented, &rom, pointer);
         host.present(&IndexedFrame::new(&presented, system.frame_palette(&rom)))?;
+        // Maximize only once a frame has mapped the window at its normal
+        // size. A Wayland window maximized before it is mapped has no normal
+        // geometry, so un-maximizing it would keep the maximized size.
+        if std::mem::take(&mut maximize_pending) {
+            host.maximize();
+        }
         pending.extend(host.poll_input(system.input_mode()));
 
         let now = Instant::now();

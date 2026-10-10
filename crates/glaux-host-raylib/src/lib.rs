@@ -231,6 +231,10 @@ impl RaylibHost {
     }
 
     /// Maximizes the window.
+    ///
+    /// Call it after the first [`present`](Self::present): on Wayland a
+    /// window maximized before it is mapped leaves the compositor with no
+    /// normal size to restore it to.
     pub fn maximize(&mut self) {
         self.rl.maximize_window();
     }
