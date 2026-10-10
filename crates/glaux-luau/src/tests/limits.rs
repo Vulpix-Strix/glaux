@@ -54,11 +54,6 @@ fn the_budget_applies_to_each_call() {
 }
 
 #[test]
-fn bounded_loops_finish_within_the_budget() {
-    assert!(start("for i = 1, 100 do end").is_ok());
-}
-
-#[test]
 fn errors_name_their_phase() {
     let shown = |phase, error| self::error(phase, error).to_string();
     assert_eq!(

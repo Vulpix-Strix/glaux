@@ -46,34 +46,35 @@ fn t_is_frame_over_the_tick_rate() {
 }
 
 #[test]
-fn completed_ticks_advance_the_counter() {
-    let mut runtime = started("function tick() end function draw() end");
-    assert_eq!(runtime.ticks(), 0);
-    for _ in 0..TICK_RATE {
-        runtime.tick(NO_INPUT).unwrap();
-    }
-    assert_eq!(runtime.ticks(), u64::from(TICK_RATE));
-}
-
-#[test]
 fn failed_tick_does_not_advance_time() {
-    let mut runtime = started(r#"function tick() if frame() == 1 then error("x") end end"#);
+    let mut runtime = started(
+        r#"
+        local failed = false
+        function tick()
+            log.info(frame())
+            if frame() == 1 and not failed then failed = true error("x") end
+        end
+        "#,
+    );
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.ticks(), 1);
     assert_eq!(runtime.tick(NO_INPUT).unwrap_err().phase, Phase::Tick);
-    assert_eq!(runtime.ticks(), 1);
+    runtime.tick(NO_INPUT).unwrap();
+    assert_eq!(texts(runtime.take_output()), ["0", "1", "1"]);
 }
 
 #[test]
 fn failed_draw_does_not_advance_time() {
     let mut runtime = started(
         r#"
-        function tick() end
-        function draw() if frame() == 1 then error("x") end end
+        local failed = false
+        function tick() log.info(frame()) end
+        function draw()
+            if frame() == 1 and not failed then failed = true error("x") end
+        end
         "#,
     );
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.ticks(), 1);
     assert_eq!(runtime.tick(NO_INPUT).unwrap_err().phase, Phase::Draw);
-    assert_eq!(runtime.ticks(), 1);
+    runtime.tick(NO_INPUT).unwrap();
+    assert_eq!(texts(runtime.take_output()), ["0", "1", "1"]);
 }

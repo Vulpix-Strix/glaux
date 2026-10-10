@@ -4,11 +4,6 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
-fn starts_a_script_without_output() {
-    assert_eq!(start_output("local x = 1 + 2"), Vec::<String>::new());
-}
-
-#[test]
 fn entry_and_boot_run_once_each_at_start() {
     let mut runtime = started(
         r#"

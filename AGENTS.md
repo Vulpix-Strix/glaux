@@ -139,16 +139,56 @@ mise run test
 
 Use `mise run check` when a full test run is unnecessary or while iterating on compilation errors.
 
+Mutation testing is optional and not part of `mise run test`:
+
+```sh
+mise run mutants                                      # glaux-machine
+mise run mutants -- --file crates/glaux-video/src/draw.rs
+```
+
+It can consume several GB of memory, especially when a mutation allocates inside frequently executed code. Apply an OS-level memory limit where available (for example `systemd-run --user --scope -p MemoryMax=8G` on Linux).
+
 ## Tests
 
-Prefer the following test styles:
+Tests must protect meaningful behavior, not merely increase test count or coverage.
 
-* Unit tests for isolated machine, video, cartridge, runtime, and utility behavior.
-* Integration tests inside the crate whose public API is being exercised.
-* Use fake or minimal ROM data in tests instead of depending on production assets where possible.
-* Test observable machine behavior rather than implementation details.
+Before writing a test, ask: **What plausible regression would make this test fail?** If there is no clear answer, reconsider its value.
 
-For graphics code, prefer assertions over logical framebuffer state, palette indices, and small deterministic regions instead of tests that require a visible host window.
+### Quality
+
+- Test observable behavior, contracts, invariants, and known regressions rather than implementation details.
+- Prefer precise assertions with independently derived expected results.
+- Do not mirror production algorithms, verify test setup, or test behavior guaranteed by Rust's type system.
+- Ensure invalid inputs fail for the intended reason, not an unrelated error.
+- Cover relevant boundaries, state transitions, and failure paths, including unchanged state after rejected operations.
+- Avoid redundant tests unless they protect distinct scenarios or architectural boundaries.
+- Prefer strengthening existing tests over adding superficial ones.
+- Keep simple tests when they protect meaningful contracts.
+
+### Organization
+
+- Keep tests in dedicated files, using colocated `#[cfg(test)] mod tests;` modules when private access is needed.
+- Use crate-level `tests/` for integration tests exercising public APIs.
+- Keep fixtures close to their consumers and share them only when useful.
+- Do not widen production visibility solely for testing.
+
+### Tools and strategies
+
+- Use unit tests for isolated behavior and integration tests for interactions between components.
+- Use `proptest` selectively for meaningful invariants over large input spaces. Keep failures reproducible.
+- Use `cargo-mutants` to investigate test effectiveness in critical code. Do not run it routinely or chase mutation scores.
+- Use `insta` only when snapshots improve verification of complex outputs. Review snapshot changes carefully.
+- Prefer deterministic framebuffer and palette assertions for graphics. Isolate real Raylib/GPU/windowing tests from the normal suite.
+- Use minimal fixtures unless real assets or formats are part of the behavior being tested.
+
+### Maintenance
+
+- Add regression tests for bugs when they can reproduce the failure.
+- Update tests when intended behavior changes; remove obsolete tests and unused helpers.
+- Never weaken assertions merely to make tests pass.
+- Do not require a new test for every code change when existing coverage is sufficient.
+
+**Every test should have a clear purpose and detect a meaningful regression.**
 
 ## Dependencies
 

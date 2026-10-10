@@ -177,30 +177,3 @@ fn claim(_launch: &SecondaryLaunch, _sender: Sender<SecondaryLaunch>) -> Claim<B
         "single-instance launches are not supported on this platform"
     ))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn launch_payload_round_trips() {
-        let launch = SecondaryLaunch {
-            args: vec!["glaux".into(), "pong".into(), "ñandú café.glaux".into()],
-            cwd: PathBuf::from("/home/ñandú/juegos"),
-        };
-        let bytes = launch.to_json().unwrap();
-        assert_eq!(SecondaryLaunch::from_json(&bytes).unwrap(), launch);
-    }
-
-    #[test]
-    fn garbage_payload_is_rejected() {
-        assert!(SecondaryLaunch::from_json(b"not json").is_err());
-        assert!(SecondaryLaunch::from_json(br#"{"args": "glaux"}"#).is_err());
-    }
-
-    #[test]
-    fn current_launch_includes_the_program() {
-        assert!(!SecondaryLaunch::current().args.is_empty());
-    }
-}

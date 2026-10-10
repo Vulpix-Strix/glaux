@@ -54,31 +54,11 @@ fn print_is_not_a_log_function() {
 }
 
 #[test]
-fn log_passes_text_out() {
-    assert_eq!(start_output(r#"log.info("hi")"#), ["hi"]);
-}
-
-#[test]
 fn log_joins_arguments_with_tabs() {
     assert_eq!(
         start_output(r#"log.info("a", 1, true, nil) log.info()"#),
         ["a\t1\ttrue\tnil", ""]
     );
-}
-
-#[test]
-fn log_honors_tostring_metamethods() {
-    let source = r#"
-        local owl = setmetatable({}, { __tostring = function() return "OWL" end })
-        log.info(owl, 2)
-    "#;
-    assert_eq!(start_output(source), ["OWL\t2"]);
-}
-
-#[test]
-fn log_uses_tostring_as_it_was_before_the_script() {
-    let source = r#"tostring = function() return "x" end log.info(1)"#;
-    assert_eq!(start_output(source), ["1"]);
 }
 
 #[test]

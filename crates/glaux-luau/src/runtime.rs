@@ -277,12 +277,6 @@ impl Runtime {
         })
     }
 
-    /// Logical ticks completed so far.
-    #[cfg(test)]
-    pub(crate) fn ticks(&self) -> u64 {
-        self.ticks.get()
-    }
-
     /// The modules this runtime has tried to load.
     #[cfg(test)]
     pub(crate) fn modules(&self) -> std::cell::Ref<'_, Modules> {

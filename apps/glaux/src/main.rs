@@ -7,6 +7,8 @@ mod desktop;
 mod logging;
 mod platform;
 mod rom;
+#[cfg(test)]
+mod scratch_dir;
 mod system;
 mod tooling;
 

@@ -148,7 +148,12 @@ fn a_draw_that_records_nothing_publishes_an_empty_frame() {
 
 #[test]
 fn a_failing_draw_keeps_the_previous_frame() {
-    for failure in [r#"error("boom")"#, "while true do end"] {
+    // A runtime error, the interrupt budget and the draw-cost cap.
+    for failure in [
+        r#"error("boom")"#,
+        "while true do end",
+        "spr(0, 0, 0, 16, 64)",
+    ] {
         let mut runtime = started(&format!(
             r#"
             local n = 0
@@ -163,23 +168,6 @@ fn a_failing_draw_keeps_the_previous_frame() {
         assert!(runtime.tick(NO_INPUT).is_err(), "{failure}");
         assert_eq!(runtime.frame(), [DrawCommand::Clear(1)], "{failure}");
     }
-}
-
-#[test]
-fn a_failing_draw_does_not_publish_sprite_commands() {
-    let mut runtime = started(
-        r#"
-        local n = 0
-        function draw()
-            n += 1
-            cls(n)
-            if n == 2 then spr(7, 10, 20) error("boom") end
-        end
-        "#,
-    );
-    runtime.tick(NO_INPUT).unwrap();
-    assert!(runtime.tick(NO_INPUT).is_err());
-    assert_eq!(runtime.frame(), [DrawCommand::Clear(1)]);
 }
 
 #[test]
@@ -455,13 +443,17 @@ fn sprite_blocks_must_fit_the_object_tile_grid() {
 }
 
 #[test]
-fn sprite_flips_default_to_false() {
+fn omitted_or_nil_sprite_options_use_their_defaults() {
     assert_eq!(
-        drawn("spr(0, 0, 0) spr(0, 0, 0, nil, nil, nil, nil) spr(0, 0, 0, 2, 2, false)"),
+        drawn(
+            "spr(0, 0, 0) spr(0, 0, 0, nil, nil, nil, nil, nil) \
+             spr(0, 0, 0, 2, 2, false) spr(3, 0, 0, 1, 1, false, false, nil)"
+        ),
         [
             sprite(0, 0, 0),
             sprite(0, 0, 0),
             sprite_block(0, 0, 0, 2, 2),
+            sprite(3, 0, 0),
         ]
     );
 }
@@ -515,14 +507,6 @@ fn sprite_flips_must_be_booleans() {
             "{call}"
         );
     }
-}
-
-#[test]
-fn sprite_palettes_default_to_each_tiles_bank() {
-    assert_eq!(
-        drawn("spr(3, 0, 0, 1, 1, false, false, nil)"),
-        [sprite(3, 0, 0)]
-    );
 }
 
 #[test]
@@ -794,23 +778,6 @@ fn sprite_blocks_cost_sixty_four_units_per_tile() {
 
     assert_eq!(drawn("spr(0, 0, 0, 16, 64)").len(), 1);
     assert!(draw_error("spr(0, 0, 0, 16, 64) cls(0)").contains("too many draw commands"));
-}
-
-#[test]
-fn a_failing_draw_does_not_publish_sprite_blocks() {
-    let mut runtime = started(
-        r#"
-        local n = 0
-        function draw()
-            n += 1
-            spr(0, 0, 0, 2, 2)
-            if n == 2 then spr(0, 0, 0, 16, 64) end
-        end
-        "#,
-    );
-    runtime.tick(NO_INPUT).unwrap();
-    assert!(runtime.tick(NO_INPUT).is_err());
-    assert_eq!(runtime.frame(), [sprite_block(0, 0, 0, 2, 2)]);
 }
 
 #[test]

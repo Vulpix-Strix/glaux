@@ -1,0 +1,8 @@
+# cargo-mutants configuration, used by `mise run mutants`.
+test_tool = "nextest"
+additional_cargo_test_args = ["--test-threads", "2"]
+# Default scope; `--file` on the command line replaces it.
+examine_globs = ["crates/glaux-machine/src/**/*.rs"]
+# Run only the mutated package's tests. Workspace-wide test runs multiply the
+# memory cost of leaking mutants (the app tests run thousands of ticks).
+test_workspace = false
