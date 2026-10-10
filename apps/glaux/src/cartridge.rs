@@ -11,7 +11,7 @@ use glaux_modules::{MODULE_ROOT, ModuleLoadError, ModulePath, ModuleSource};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
-use crate::cartridge_fs::{CartridgeFs, CartridgeStorage, FsError};
+use crate::cartridge_fs::{CartridgeFs, CartridgeStorage, FsError, ReplaceError};
 
 /// Path of the manifest from the cartridge root.
 const MANIFEST: &str = "/cartridge.ron";
@@ -94,6 +94,10 @@ pub enum CartridgeError {
     ObjTilesNotAFile,
     #[error("Cannot read sprites.bin")]
     ObjTilesUnreadable,
+    #[error("Cannot write sprites.bin")]
+    ObjTilesUnwritable,
+    #[error("sprites.bin is read-only")]
+    ObjTilesReadOnly,
     #[error("objattr.bin is not a file")]
     ObjAttributesNotAFile,
     #[error("Cannot read objattr.bin")]
@@ -374,6 +378,7 @@ impl LoadedCartridge {
                 FsError::Unreadable(_)
                 | FsError::AlreadyExists(_)
                 | FsError::Unwritable(_)
+                | FsError::ReadOnly(_)
                 | FsError::Unavailable,
             ) => {
                 return Err(CartridgeError::ManifestUnreadable);
@@ -457,6 +462,38 @@ impl LoadedCartridge {
         )
     }
 
+    /// Replaces `sprites.bin` with `bytes`, provided it still holds
+    /// `expected` (`None`: provided it is absent). See
+    /// [`CartridgeFs::replace_file`]: the file is replaced whole or not at
+    /// all, and a read-only file is never replaced.
+    pub fn replace_obj_tiles(
+        &self,
+        bytes: &[u8],
+        expected: Option<&[u8]>,
+    ) -> Result<(), ObjTilesWriteError> {
+        self.files
+            .replace_file(OBJ_TILES, bytes, expected)
+            .map_err(|err| match err {
+                ReplaceError::Changed(current) => ObjTilesWriteError::Changed(current),
+                ReplaceError::Fs(FsError::ReadOnly(_)) => {
+                    ObjTilesWriteError::Failed(CartridgeError::ObjTilesReadOnly)
+                }
+                ReplaceError::Fs(FsError::NotAFile(_)) => {
+                    ObjTilesWriteError::Failed(CartridgeError::ObjTilesNotAFile)
+                }
+                ReplaceError::Fs(FsError::Unreadable(_)) => {
+                    ObjTilesWriteError::Failed(CartridgeError::ObjTilesUnreadable)
+                }
+                ReplaceError::Fs(
+                    FsError::NotFound(_)
+                    | FsError::NotADirectory(_)
+                    | FsError::AlreadyExists(_)
+                    | FsError::Unwritable(_)
+                    | FsError::Unavailable,
+                ) => ObjTilesWriteError::Failed(CartridgeError::ObjTilesUnwritable),
+            })
+    }
+
     /// Reads an optional root file: `None` when it does not exist.
     fn read_optional(
         &self,
@@ -472,10 +509,21 @@ impl LoadedCartridge {
                 FsError::Unreadable(_)
                 | FsError::AlreadyExists(_)
                 | FsError::Unwritable(_)
+                | FsError::ReadOnly(_)
                 | FsError::Unavailable,
             ) => Err(unreadable),
         }
     }
+}
+
+/// A failed [`LoadedCartridge::replace_obj_tiles`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObjTilesWriteError {
+    /// The file could not be checked or written.
+    Failed(CartridgeError),
+    /// `sprites.bin` no longer holds what the caller expected. Holds what
+    /// it holds now, `None` when it is absent.
+    Changed(Option<Vec<u8>>),
 }
 
 /// Module files of one cartridge, confined to its real `code/` directory.
@@ -502,6 +550,7 @@ impl ModuleSource for CartridgeModules {
             | FsError::Unreadable(_)
             | FsError::AlreadyExists(_)
             | FsError::Unwritable(_)
+            | FsError::ReadOnly(_)
             | FsError::Unavailable => ModuleLoadError::Unreadable,
         })
     }
@@ -517,6 +566,7 @@ fn entry_error(err: FsError, entry: &str) -> CartridgeError {
         FsError::Unreadable(_)
         | FsError::AlreadyExists(_)
         | FsError::Unwritable(_)
+        | FsError::ReadOnly(_)
         | FsError::Unavailable => CartridgeError::EntryUnreadable(entry.to_owned()),
     }
 }

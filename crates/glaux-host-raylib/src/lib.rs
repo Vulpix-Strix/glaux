@@ -11,7 +11,9 @@ pub use audio::{AudioDevice, AudioError, AudioOutput};
 use crt::CrtPass;
 use glaux_input::{InputEvent, InputMode, Point};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
-use keyboard::{EditKeys, GameKeys, KeyState, Modifiers, TextKeys, retain_for_mode};
+use keyboard::{
+    EditKeys, GameKeys, KeyState, Modifiers, TextKeys, retain_for_mode, shortcut_events,
+};
 use pointer::{ButtonFrame, PointerFrame, PointerTracker};
 use raylib::core::error::{LoadTextureError, UpdateTextureError};
 use raylib::core::input::key_from_i32;
@@ -331,6 +333,7 @@ impl RaylibHost {
             elapsed,
             &mut events,
         );
+        shortcut_events(|key| rl.is_key_pressed(key), modifiers, &mut events);
         self.game_keys
             .events(&pressed, |key| rl.is_key_down(key), &mut events);
         retain_for_mode(mode, &mut events);

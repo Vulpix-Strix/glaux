@@ -19,7 +19,7 @@ pub use boot::Boot;
 pub use shell::Shell;
 use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
-use workspace::{Workspace, WorkspaceVideo};
+use workspace::{Workspace, WorkspaceRequest, WorkspaceVideo};
 
 use glaux_input::{InputEvent, InputMode, Point};
 use glaux_luau::RuntimeError;
@@ -556,9 +556,12 @@ fn discard_sprites(sprites: &mut Option<SpriteDocument>) {
     }
 }
 
-/// Makes the workspace the active UI on `cartridge`. A document with
-/// unsaved edits is kept as it is; otherwise the video assets are read
-/// afresh, so the editors show the files as they are now.
+/// Makes the workspace the active UI on `cartridge`.
+///
+/// A document kept from an earlier visit is brought up to date with the
+/// files without losing unsaved edits or, while `sprites.bin` is unchanged,
+/// its undo history; see [`SpriteDocument::reopen`]. Without one, the video
+/// assets are read afresh.
 fn open_workspace(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
@@ -568,10 +571,13 @@ fn open_workspace(
 ) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
     tracing::info!(cartridge = %identity, tab = ?workspace.tab(), "workspace opened");
-    workspace.end_stroke();
+    workspace.end_stroke(sprites.as_mut());
     let document = match sprites.take() {
-        Some(document) if document.is_modified() => Ok(document),
-        _ => SpriteDocument::load(&cartridge, video_defaults).map_err(|err| err.to_string()),
+        Some(mut document) => {
+            workspace.reopened(document.reopen(&cartridge, video_defaults));
+            Ok(document)
+        }
+        None => SpriteDocument::load(&cartridge, video_defaults).map_err(|err| err.to_string()),
     };
     let video = match document {
         Ok(document) => workspace.prepare_video(sprites.insert(document)),
@@ -584,9 +590,11 @@ fn open_workspace(
     }
 }
 
-/// Feeds `input` to the workspace. Break returns to the shell with the
-/// cartridge still loaded; events after it in the same tick are dropped,
-/// so nothing meant for the workspace reaches the shell.
+/// Feeds `input` to the workspace and carries out the file work it asks
+/// for. Break returns to the shell with the cartridge still loaded, unless
+/// a dialog is open, which takes it as Escape. Events after a Break that
+/// leaves are dropped, so nothing meant for the workspace reaches the
+/// shell.
 fn workspace_tick(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
@@ -595,9 +603,10 @@ fn workspace_tick(
     sprites: &mut Option<SpriteDocument>,
     input: &[InputEvent],
 ) -> SystemState {
+    workspace.tick();
     for &event in input {
-        if event == InputEvent::Break {
-            workspace.end_stroke();
+        if event == InputEvent::Break && !workspace.has_modal() {
+            workspace.end_stroke(sprites.as_mut());
             tracing::info!("workspace closed");
             return SystemState::Shell {
                 shell,
@@ -606,7 +615,23 @@ fn workspace_tick(
         }
         // The editors only change what they can show.
         let document = sprites.as_mut().filter(|_| video.is_ready());
-        workspace.handle_input(event, document);
+        let Some(request) = workspace.handle_input(event, document) else {
+            continue;
+        };
+        let Some(document) = sprites.as_mut().filter(|_| video.is_ready()) else {
+            continue;
+        };
+        match request {
+            WorkspaceRequest::Save => workspace.saved(document.save(&cartridge)),
+            WorkspaceRequest::Overwrite(seen) => {
+                workspace.saved(document.overwrite(&cartridge, &seen));
+            }
+            WorkspaceRequest::Reload => workspace.reloaded(
+                document
+                    .reload_tiles(&cartridge)
+                    .map_err(|err| err.to_string()),
+            ),
+        }
     }
     SystemState::Workspace {
         shell,
@@ -3642,6 +3667,7 @@ mod tests {
         let system = press_break(edited(&fixture));
         std::fs::write(fixture.root().join("pong/sprites.bin"), [0x77; 32]).unwrap();
         let system = press_break(system);
+        assert!(modal(&system).is_some(), "the change is not ignored");
         assert_eq!(document(&system).pixel(0, 0, 0), Some(1));
         assert_eq!(document(&system).pixel(0, 1, 0), Some(3));
     }
@@ -3777,8 +3803,216 @@ mod tests {
         assert_eq!(document(&system).pixel(0, 1, 6), Some(3));
     }
 
+    fn tiles_on_disk(fixture: &Fixture) -> Vec<u8> {
+        std::fs::read(fixture.root().join("pong/sprites.bin")).unwrap()
+    }
+
+    fn modal(system: &System) -> Option<(String, Vec<String>)> {
+        workspace::tests_support::modal(&system.workspace).map(|(title, labels)| {
+            (
+                title.to_owned(),
+                labels.into_iter().map(str::to_owned).collect(),
+            )
+        })
+    }
+
+    fn conflict_labels() -> Vec<String> {
+        ["OVERWRITE DISK", "DISCARD & RELOAD", "CANCEL"]
+            .map(str::to_owned)
+            .to_vec()
+    }
+
+    /// An edited system whose `sprites.bin` was then rewritten outside
+    /// Glaux and whose save attempt opened the conflict dialog.
+    fn in_conflict(fixture: &Fixture) -> System {
+        let system = edited(fixture);
+        std::fs::write(fixture.root().join("pong/sprites.bin"), [0x77; 64]).unwrap();
+        let system = system.update(&[InputEvent::Save]);
+        assert_eq!(
+            modal(&system),
+            Some(("FILE CONFLICT".to_owned(), conflict_labels()))
+        );
+        system
+    }
+
     #[test]
-    fn using_the_sprite_editor_never_writes_the_cartridge() {
+    fn ctrl_s_writes_the_tiles_and_undo_still_works_after() {
+        let fixture = Fixture::new("sys-sprites-save");
+        let system = edited(&fixture).update(&[InputEvent::Save]);
+        let saved = tiles_on_disk(&fixture);
+        assert_eq!(saved.len(), 64 * 32, "the file keeps its length");
+        assert_eq!(saved[0], 0x13);
+        assert!(!document(&system).is_modified());
+        assert_eq!(
+            workspace::tests_support::notice(&system.workspace),
+            Some("Saved sprites.bin (2048 bytes)")
+        );
+        assert_eq!(modal(&system), None);
+
+        let system = system.update(&[InputEvent::Undo]);
+        assert!(document(&system).is_modified());
+        let system = system.update(&[InputEvent::Save]);
+        assert_eq!(tiles_on_disk(&fixture)[0], 0x33);
+        let system = system.update(&[InputEvent::Save]);
+        assert_eq!(
+            workspace::tests_support::notice(&system.workspace),
+            Some("Nothing to save")
+        );
+    }
+
+    #[test]
+    fn notices_fade_after_a_few_seconds() {
+        let fixture = Fixture::new("sys-sprites-notice");
+        let system = edited(&fixture).update(&[InputEvent::Save]);
+        let system = ticks(system, 3 * glaux_machine::machine::TICK_RATE as usize);
+        assert_eq!(workspace::tests_support::notice(&system.workspace), None);
+    }
+
+    #[test]
+    fn history_survives_a_trip_to_the_shell_when_the_file_is_unchanged() {
+        let fixture = Fixture::new("sys-sprites-history-shell");
+        let system = edited(&fixture).update(&[InputEvent::Save]);
+        let system = press_break(press_break(system));
+        assert!(is_workspace(&system));
+        assert_eq!(modal(&system), None);
+        let system = system.update(&[InputEvent::Undo]);
+        assert_eq!(document(&system).pixel(0, 0, 0), Some(3));
+        assert!(document(&system).is_modified());
+    }
+
+    #[test]
+    fn a_conflict_dialog_takes_all_input_and_escape_cancels_it() {
+        let fixture = Fixture::new("sys-sprites-conflict-cancel");
+        let system = in_conflict(&fixture);
+        let before = document(&system).clone();
+        let canvas = workspace::tests_support::sprite_pixel(&system.workspace, 5, 5);
+        let mut events = vec![
+            InputEvent::Text('e'),
+            InputEvent::NextView,
+            InputEvent::Undo,
+            InputEvent::Save,
+        ];
+        events.extend(click(canvas));
+        events.extend(click(tab_centre(Tab::Code)));
+        let system = system.update(&events);
+        assert_eq!(document(&system), &before);
+        assert_eq!(workspace_tab(&system), Tab::Sprites);
+        assert!(modal(&system).is_some());
+
+        let system = press_break(system);
+        assert!(
+            is_workspace(&system),
+            "Escape closed the dialog, not the workspace"
+        );
+        assert_eq!(modal(&system), None);
+        assert_eq!(document(&system), &before);
+        assert_eq!(tiles_on_disk(&fixture), [0x77; 64]);
+
+        // Editing works again, and a second Escape leaves.
+        let system = click_pixel(system, 2, 0);
+        assert_eq!(document(&system).pixel(0, 2, 0), Some(1));
+        assert!(!is_workspace(&press_break(system)));
+    }
+
+    #[test]
+    fn overwrite_disk_writes_the_edits_over_the_outside_change() {
+        let fixture = Fixture::new("sys-sprites-conflict-overwrite");
+        let system = in_conflict(&fixture);
+        let system = system.update(&[InputEvent::Up, InputEvent::Up, InputEvent::Enter]);
+        assert_eq!(modal(&system), None);
+        let saved = tiles_on_disk(&fixture);
+        assert_eq!(saved, document(&system).tiles().as_bytes()[..2048]);
+        assert_eq!(saved[0], 0x13);
+        assert!(!document(&system).is_modified());
+        assert!(document(&system).can_undo());
+    }
+
+    #[test]
+    fn overwrite_after_a_further_change_asks_again() {
+        let fixture = Fixture::new("sys-sprites-conflict-again");
+        let system = in_conflict(&fixture);
+        std::fs::write(fixture.root().join("pong/sprites.bin"), [0x66; 32]).unwrap();
+        let system = system.update(&[InputEvent::Up, InputEvent::Up, InputEvent::Enter]);
+        assert_eq!(
+            modal(&system),
+            Some(("FILE CONFLICT".to_owned(), conflict_labels()))
+        );
+        assert_eq!(tiles_on_disk(&fixture), [0x66; 32]);
+        assert!(document(&system).is_modified());
+    }
+
+    #[test]
+    fn discard_and_reload_is_chosen_by_pointer_and_resets_history() {
+        let fixture = Fixture::new("sys-sprites-conflict-reload");
+        let system = in_conflict(&fixture);
+        let layout = workspace::tests_support::modal_layout(&system.workspace).unwrap();
+        let reload = layout.buttons[1];
+        let at = Point::new(
+            (reload.x + reload.width / 2) as u16,
+            (reload.y + reload.height / 2) as u16,
+        );
+        let system = system.update(&click(at));
+        assert_eq!(modal(&system), None);
+        assert_eq!(document(&system).pixel(0, 0, 0), Some(7));
+        assert_eq!(document(&system).pixel(1, 0, 0), Some(7));
+        assert!(!document(&system).is_modified());
+        assert!(!document(&system).can_undo());
+        assert_eq!(tiles_on_disk(&fixture), [0x77; 64]);
+    }
+
+    #[test]
+    fn reopening_over_a_changed_file_asks_before_touching_edits() {
+        let fixture = Fixture::new("sys-sprites-reopen-conflict");
+        let system = press_break(edited(&fixture));
+        std::fs::remove_file(fixture.root().join("pong/sprites.bin")).unwrap();
+        let system = press_break(system);
+        assert_eq!(
+            modal(&system),
+            Some(("FILE CONFLICT".to_owned(), conflict_labels()))
+        );
+        assert!(document(&system).is_modified());
+        // Enter on the focused CANCEL keeps the edits.
+        let system = system.update(&[InputEvent::Enter]);
+        assert_eq!(modal(&system), None);
+        assert_eq!(document(&system).pixel(0, 0, 0), Some(1));
+    }
+
+    #[test]
+    fn a_failed_save_explains_itself_and_keeps_the_edits() {
+        let fixture = Fixture::new("sys-sprites-save-fail");
+        let system = edited(&fixture);
+        let path = fixture.root().join("pong/sprites.bin");
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions.clone()).unwrap();
+
+        let system = system.update(&[InputEvent::Save]);
+        assert_eq!(
+            modal(&system),
+            Some(("SAVE FAILED".to_owned(), vec!["OK".to_owned()]))
+        );
+        let fb = render(&system);
+        let layout = workspace::tests_support::modal_layout(&system.workspace).unwrap();
+        assert_eq!(
+            fb.pixel(layout.title_bar.x, layout.title_bar.y),
+            Some(BACKGROUND),
+            "the dialog is drawn over the editor"
+        );
+        let system = system.update(&[InputEvent::Enter]);
+        assert_eq!(modal(&system), None);
+        assert!(document(&system).is_modified());
+        assert_eq!(tiles_on_disk(&fixture)[0], 0x33);
+
+        #[expect(
+            clippy::permissions_set_readonly_false,
+            reason = "restores the test file so the fixture can be removed"
+        )]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&path, permissions).unwrap();
+    }
+
+    #[test]
+    fn editing_without_saving_never_writes_the_cartridge() {
         let fixture = Fixture::new("sys-sprites-readonly");
         let system = with_video_assets(&fixture);
         let before = snapshot(&fixture.root().join("pong"));
@@ -3799,12 +4033,15 @@ mod tests {
         ];
         for round in 0..2 {
             system = system.update(&keys);
-            // Click everywhere below the tab bar: canvas, sheet, tools,
-            // swatches, bank cells and options buttons.
+            // Click everywhere below the tab bar but the Save button:
+            // canvas, sheet, tools, swatches, bank cells and options
+            // buttons.
+            let save = workspace::tests_support::sprite_save_button(&system.workspace);
             for y in (16..240).step_by(3) {
                 let row: Vec<InputEvent> = (0..320)
                     .step_by(5)
-                    .flat_map(|x| click(Point::new(x, y)))
+                    .filter(|&x| !save.contains_xy(x, y))
+                    .flat_map(|x| click(Point::new(x as u16, y as u16)))
                     .collect();
                 system = system.update(&row);
             }

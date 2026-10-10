@@ -104,6 +104,9 @@ impl LineEditor {
             | InputEvent::KeyUp(_)
             | InputEvent::NextView
             | InputEvent::PreviousView
+            | InputEvent::Undo
+            | InputEvent::Redo
+            | InputEvent::Save
             | InputEvent::PointerMove(_)
             | InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }

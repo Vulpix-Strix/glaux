@@ -111,6 +111,38 @@ const EDIT_KEYS: [EditKey; 12] = [
     },
 ];
 
+/// Ctrl shortcuts for editing commands, each fired once per press and never
+/// repeated. Raylib key codes name physical positions, so on layouts other
+/// than QWERTY the shortcut follows the key where the letter sits on QWERTY.
+const SHORTCUTS: [(KeyboardKey, KeyEvent); 3] = [
+    (KeyboardKey::KEY_Z, |m| {
+        if m.shift {
+            InputEvent::Redo
+        } else {
+            InputEvent::Undo
+        }
+    }),
+    (KeyboardKey::KEY_Y, |_| InputEvent::Redo),
+    (KeyboardKey::KEY_S, |_| InputEvent::Save),
+];
+
+/// Appends the command events of the shortcuts pressed this frame to `out`.
+/// Shortcuts need Ctrl; without it the same keys only type.
+pub(crate) fn shortcut_events(
+    pressed: impl Fn(KeyboardKey) -> bool,
+    modifiers: Modifiers,
+    out: &mut Vec<InputEvent>,
+) {
+    if !modifiers.ctrl {
+        return;
+    }
+    for (key, event) in SHORTCUTS {
+        if pressed(key) {
+            out.push(event(modifiers));
+        }
+    }
+}
+
 /// One key's state for the current frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct KeyState {
@@ -428,7 +460,8 @@ impl GameKeys {
 }
 
 /// Drops the events `mode` does not consume. [`InputEvent::Break`] is kept
-/// in every mode; view switching and pointer events only in
+/// in every mode; view switching, editing commands and pointer events only
+/// in
 /// [`InputMode::Workspace`].
 pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
     events.retain(|event| {
@@ -439,8 +472,15 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                 | InputEvent::KeyDown(_)
                 | InputEvent::KeyUp(_)
         );
-        let workspace =
-            event.is_pointer() || matches!(event, InputEvent::NextView | InputEvent::PreviousView);
+        let workspace = event.is_pointer()
+            || matches!(
+                event,
+                InputEvent::NextView
+                    | InputEvent::PreviousView
+                    | InputEvent::Undo
+                    | InputEvent::Redo
+                    | InputEvent::Save
+            );
         match mode {
             InputMode::Text => !game && !workspace,
             InputMode::Game => game || *event == InputEvent::Break,
@@ -617,6 +657,47 @@ mod tests {
             [InputEvent::Break, InputEvent::ButtonDown(Button::A)]
         );
         assert_eq!(kept(InputMode::Workspace), all[..6]);
+    }
+
+    fn shortcuts(keys: &[KeyboardKey], shift: bool, ctrl: bool) -> Vec<InputEvent> {
+        let mut out = Vec::new();
+        shortcut_events(
+            |key| keys.contains(&key),
+            Modifiers { shift, ctrl },
+            &mut out,
+        );
+        out
+    }
+
+    #[test]
+    fn ctrl_shortcuts_become_editing_commands() {
+        assert_eq!(shortcuts(&[KEY_Z], false, true), [InputEvent::Undo]);
+        assert_eq!(shortcuts(&[KEY_Z], true, true), [InputEvent::Redo]);
+        assert_eq!(shortcuts(&[KEY_Y], false, true), [InputEvent::Redo]);
+        assert_eq!(shortcuts(&[KEY_Y], true, true), [InputEvent::Redo]);
+        assert_eq!(shortcuts(&[KEY_S], false, true), [InputEvent::Save]);
+        assert_eq!(shortcuts(&[KEY_Q], false, true), []);
+    }
+
+    #[test]
+    fn shortcut_keys_without_ctrl_are_not_commands() {
+        for shift in [false, true] {
+            assert_eq!(shortcuts(&[KEY_Z, KEY_Y, KEY_S], shift, false), []);
+        }
+    }
+
+    #[test]
+    fn editing_commands_are_kept_only_in_workspace_mode() {
+        let all = [InputEvent::Undo, InputEvent::Redo, InputEvent::Save];
+        for (mode, kept) in [
+            (InputMode::Text, 0),
+            (InputMode::Game, 0),
+            (InputMode::Workspace, 3),
+        ] {
+            let mut events = all.to_vec();
+            retain_for_mode(mode, &mut events);
+            assert_eq!(events, all[..kept], "{mode:?}");
+        }
     }
 
     #[test]

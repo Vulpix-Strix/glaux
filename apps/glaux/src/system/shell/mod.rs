@@ -170,6 +170,9 @@ impl Shell {
                 | InputEvent::KeyUp(_)
                 | InputEvent::NextView
                 | InputEvent::PreviousView
+                | InputEvent::Undo
+                | InputEvent::Redo
+                | InputEvent::Save
         ) && !event.is_pointer()
         {
             self.blink = 0;
@@ -216,6 +219,9 @@ impl Shell {
             | InputEvent::KeyUp(_)
             | InputEvent::NextView
             | InputEvent::PreviousView
+            | InputEvent::Undo
+            | InputEvent::Redo
+            | InputEvent::Save
             | InputEvent::PointerMove(_)
             | InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }

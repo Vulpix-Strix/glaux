@@ -60,6 +60,9 @@ pub enum FsError {
     AlreadyExists(String),
     #[error("Cannot write {0}")]
     Unwritable(String),
+    /// The file is marked read-only, so it is left as it is.
+    #[error("Read-only: {0}")]
+    ReadOnly(String),
     #[error("Cartridge storage unavailable")]
     Unavailable,
 }
@@ -73,6 +76,21 @@ pub enum CreateDirError<E> {
 }
 
 impl<E> From<FsError> for CreateDirError<E> {
+    fn from(err: FsError) -> Self {
+        Self::Fs(err)
+    }
+}
+
+/// A failed [`CartridgeFs::replace_file`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplaceError {
+    Fs(FsError),
+    /// The file no longer holds what the caller expected. Holds what it
+    /// holds now, `None` when it is absent.
+    Changed(Option<Vec<u8>>),
+}
+
+impl From<FsError> for ReplaceError {
     fn from(err: FsError) -> Self {
         Self::Fs(err)
     }
@@ -316,6 +334,100 @@ impl CartridgeFs {
         fs::read(&file).map_err(|err| io_failure(err, &target))
     }
 
+    /// Replaces the regular file at `path`, absolute or relative to the
+    /// current directory, with `contents`, provided it still holds
+    /// `expected` (`None`: provided it does not exist).
+    ///
+    /// The file is written in full to a hidden staging file beside it,
+    /// synced, and renamed over it, so `path` holds either its old contents
+    /// or `contents`, never a mix. A file reached through a symlink inside
+    /// the root is replaced at its target. Unreachable names (links leading
+    /// out of the root or nowhere) are never replaced.
+    ///
+    /// A file marked read-only is [`FsError::ReadOnly`] and is left alone,
+    /// even where the platform would let a rename replace it.
+    ///
+    /// The file is compared with `expected` once more just before the
+    /// rename. No portable primitive makes that comparison and the rename
+    /// one step, so a write landing in between is still replaced.
+    pub fn replace_file(
+        &self,
+        path: &str,
+        contents: &[u8],
+        expected: Option<&[u8]>,
+    ) -> Result<(), ReplaceError> {
+        let target = self.resolve(path)?;
+        let Some((name, parent)) = target.split_last() else {
+            return Err(FsError::NotAFile(virtual_path(&target)).into());
+        };
+        if name.starts_with(STAGING_PREFIX) {
+            return Err(FsError::Unwritable(virtual_path(&target)).into());
+        }
+        let (dest, permissions) = match self.locate(&target) {
+            Ok((host, EntryKind::File)) => {
+                let meta = writable_file(&host, &target)?;
+                (host, Some(meta.permissions()))
+            }
+            Ok((_, EntryKind::Directory)) => {
+                return Err(FsError::NotAFile(virtual_path(&target)).into());
+            }
+            Err(Lookup::Missing) => {
+                let dest = self.directory(parent)?.join(name);
+                // Something unreachable holds the name: a dangling link or
+                // one leading out of the root.
+                match fs::symlink_metadata(&dest) {
+                    Ok(_) => return Err(FsError::Unwritable(virtual_path(&target)).into()),
+                    Err(err) if err.kind() == ErrorKind::NotFound => {}
+                    Err(err) => return Err(io_failure(err, &target).into()),
+                }
+                (dest, None)
+            }
+            Err(Lookup::Io(err)) => return Err(io_failure(err, &target).into()),
+        };
+        let Some(dir) = dest.parent() else {
+            return Err(FsError::Unwritable(virtual_path(&target)).into());
+        };
+        sweep_stale_staging(dir);
+        let (staging, mut file) =
+            create_staging_file(dir, name).map_err(|err| write_failure(err, &target))?;
+        let result = (|| {
+            file.write_all(contents)
+                .and_then(|()| match &permissions {
+                    Some(permissions) => file.set_permissions(permissions.clone()),
+                    None => Ok(()),
+                })
+                .and_then(|()| file.sync_all())
+                .map_err(|err| write_failure(err, &target))?;
+            drop(file);
+            let current = current_contents(&dest, &target)?;
+            if current.as_deref() != expected {
+                return Err(ReplaceError::Changed(current));
+            }
+            fs::rename(&staging, &dest).map_err(|err| write_failure(err, &target))?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                if let Err(err) = sync_dir(dir) {
+                    tracing::warn!(path = %virtual_path(&target), error = %err, "failed to sync a replaced file's directory");
+                }
+                Ok(())
+            }
+            Err(err) => {
+                if let Err(remove) = fs::remove_file(&staging)
+                    && remove.kind() != ErrorKind::NotFound
+                {
+                    tracing::warn!(
+                        staging = %staging.display(),
+                        error = %remove,
+                        "failed to remove a staging file"
+                    );
+                }
+                Err(err)
+            }
+        }
+    }
+
     /// Creates the directory `name` in the current directory holding
     /// `files`, given as `/`-separated paths relative to it, and returns its
     /// virtual path.
@@ -473,6 +585,42 @@ impl CartridgeFs {
     }
 }
 
+/// Metadata of the regular file at `host`, failing if it is anything else
+/// or marked read-only. `components` names it in errors.
+fn writable_file(host: &Path, components: &[String]) -> Result<fs::Metadata, FsError> {
+    let meta = fs::symlink_metadata(host).map_err(|err| io_failure(err, components))?;
+    if !meta.is_file() {
+        return Err(FsError::NotAFile(virtual_path(components)));
+    }
+    if meta.permissions().readonly() {
+        return Err(FsError::ReadOnly(virtual_path(components)));
+    }
+    Ok(meta)
+}
+
+/// What the file at `host` holds now, `None` when it is absent.
+fn current_contents(host: &Path, components: &[String]) -> Result<Option<Vec<u8>>, FsError> {
+    match fs::symlink_metadata(host) {
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(io_failure(err, components)),
+        Ok(_) => {}
+    }
+    writable_file(host, components)?;
+    fs::read(host)
+        .map(Some)
+        .map_err(|err| io_failure(err, components))
+}
+
+/// Makes renames and new entries in `dir` durable where the platform allows
+/// syncing a directory.
+fn sync_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    fs::File::open(dir)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
+}
+
 /// Writes `files` into `staging`, validates the result and publishes it as
 /// `target`. `components` is the virtual path of `target`, for errors.
 fn stage_and_publish<E>(
@@ -512,16 +660,8 @@ fn write_new_file(path: &Path, contents: &[u8]) -> io::Result<()> {
 
 /// Creates a fresh staging directory for `name` inside `parent`.
 fn create_staging(parent: &Path, name: &str) -> io::Result<PathBuf> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
     loop {
-        let nanos = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or(0, |since| since.as_nanos());
-        let count = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = parent.join(format!(
-            "{STAGING_PREFIX}{name}-{}-{nanos}-{count}",
-            std::process::id()
-        ));
+        let path = staging_path(parent, name);
         match fs::create_dir(&path) {
             Ok(()) => return Ok(path),
             Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
@@ -530,8 +670,33 @@ fn create_staging(parent: &Path, name: &str) -> io::Result<PathBuf> {
     }
 }
 
-/// Removes staging directories in `parent` that an interrupted creation
-/// left behind. Failures are only logged.
+/// Creates a fresh staging file for `name` inside `dir`.
+fn create_staging_file(dir: &Path, name: &str) -> io::Result<(PathBuf, fs::File)> {
+    loop {
+        let path = staging_path(dir, name);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// A unique staging name for `name` inside `parent`.
+fn staging_path(parent: &Path, name: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    parent.join(format!(
+        "{STAGING_PREFIX}{name}-{}-{nanos}-{count}",
+        std::process::id()
+    ))
+}
+
+/// Removes staging directories and files in `parent` that an interrupted
+/// creation or replacement left behind. Failures are only logged.
 fn sweep_stale_staging(parent: &Path) {
     let Ok(entries) = fs::read_dir(parent) else {
         return;
@@ -542,25 +707,32 @@ fn sweep_stale_staging(parent: &Path) {
             .to_str()
             .is_some_and(|name| name.starts_with(STAGING_PREFIX));
         // `DirEntry::file_type` does not follow symlinks, so a link is
-        // never mistaken for a staging directory.
-        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        // never mistaken for a staging entry.
+        let kind = entry.file_type().ok();
+        let is_dir = kind.is_some_and(|kind| kind.is_dir());
+        let is_file = kind.is_some_and(|kind| kind.is_file());
         let stale = entry
             .metadata()
             .and_then(|meta| meta.modified())
             .ok()
             .and_then(|modified| modified.elapsed().ok())
             .is_some_and(|age| age >= STALE_STAGING);
-        if !(staged && is_dir && stale) {
+        if !(staged && (is_dir || is_file) && stale) {
             continue;
         }
-        match fs::remove_dir_all(entry.path()) {
+        let removed = if is_dir {
+            fs::remove_dir_all(entry.path())
+        } else {
+            fs::remove_file(entry.path())
+        };
+        match removed {
             Ok(()) => {
-                tracing::info!(path = %entry.path().display(), "removed a stale staging directory")
+                tracing::info!(path = %entry.path().display(), "removed a stale staging entry")
             }
             Err(err) => tracing::warn!(
                 path = %entry.path().display(),
                 error = %err,
-                "failed to remove a stale staging directory"
+                "failed to remove a stale staging entry"
             ),
         }
     }
@@ -1132,6 +1304,110 @@ mod tests {
         );
     }
 
+    /// Names in the host directory `dir` that are staging entries.
+    fn staged(dir: &Path) -> Vec<String> {
+        host_names(dir)
+            .into_iter()
+            .filter(|name| name.starts_with(STAGING_PREFIX))
+            .collect()
+    }
+
+    #[test]
+    fn replace_file_swaps_contents_that_match_the_expectation() {
+        let fixture = Fixture::new("replace");
+        let fs = fixture.open();
+        fs::write(fixture.root().join("tools/data"), b"old").unwrap();
+        assert_eq!(
+            fs.replace_file("tools/data", b"new contents", Some(b"old")),
+            Ok(())
+        );
+        assert_eq!(fs.read_file("tools/data"), Ok(b"new contents".to_vec()));
+        assert_eq!(staged(&fixture.root().join("tools")), Vec::<String>::new());
+    }
+
+    #[test]
+    fn replace_file_creates_a_file_expected_to_be_absent() {
+        let fixture = Fixture::new("replace-create");
+        let fs = fixture.open();
+        assert_eq!(fs.replace_file("/tools/fresh", b"hi", None), Ok(()));
+        assert_eq!(fs.read_file("/tools/fresh"), Ok(b"hi".to_vec()));
+        assert_eq!(
+            fs.replace_file("/nope/fresh", b"hi", None),
+            Err(ReplaceError::Fs(not_found("/nope")))
+        );
+    }
+
+    #[test]
+    fn replace_file_refuses_contents_that_changed() {
+        let fixture = Fixture::new("replace-changed");
+        let fs = fixture.open();
+        let path = fixture.root().join("tools/data");
+        fs::write(&path, b"theirs").unwrap();
+        assert_eq!(
+            fs.replace_file("tools/data", b"mine", Some(b"old")),
+            Err(ReplaceError::Changed(Some(b"theirs".to_vec())))
+        );
+        // Absent and empty are different states.
+        assert_eq!(
+            fs.replace_file("tools/data", b"mine", None),
+            Err(ReplaceError::Changed(Some(b"theirs".to_vec())))
+        );
+        fs::write(&path, b"").unwrap();
+        assert_eq!(
+            fs.replace_file("tools/data", b"mine", None),
+            Err(ReplaceError::Changed(Some(Vec::new())))
+        );
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            fs.replace_file("tools/data", b"mine", Some(b"")),
+            Err(ReplaceError::Changed(None))
+        );
+        assert!(!path.exists());
+        assert_eq!(staged(&fixture.root().join("tools")), Vec::<String>::new());
+    }
+
+    #[test]
+    fn replace_file_refuses_directories_and_staging_names() {
+        let fixture = Fixture::new("replace-kinds");
+        let fs = fixture.open();
+        assert_eq!(
+            fs.replace_file("tools", b"x", None),
+            Err(ReplaceError::Fs(FsError::NotAFile("/tools".into())))
+        );
+        assert_eq!(
+            fs.replace_file("/", b"x", None),
+            Err(ReplaceError::Fs(FsError::NotAFile("/".into())))
+        );
+        let staging = format!("{STAGING_PREFIX}x");
+        assert!(matches!(
+            fs.replace_file(&staging, b"x", None),
+            Err(ReplaceError::Fs(FsError::Unwritable(_)))
+        ));
+        assert!(!fixture.root().join(staging).exists());
+    }
+
+    #[test]
+    fn stale_staging_files_are_swept_by_the_next_replace() {
+        let fixture = Fixture::new("replace-stale");
+        let fs = fixture.open();
+        let stale = fixture.root().join(format!("{STAGING_PREFIX}data-1-2-3"));
+        let fresh = fixture.root().join(format!("{STAGING_PREFIX}data-4-5-6"));
+        fs::write(&stale, b"").unwrap();
+        fs::write(&fresh, b"").unwrap();
+        let old = SystemTime::now() - STALE_STAGING - Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(!ls(&fs, None).iter().any(|n| n.starts_with(STAGING_PREFIX)));
+
+        fs.replace_file("data", b"x", None).unwrap();
+        assert!(!stale.exists());
+        assert!(fresh.exists());
+    }
+
     #[cfg(unix)]
     mod symlinks {
         use super::*;
@@ -1258,6 +1534,113 @@ mod tests {
                 fs.ensure_file("sock"),
                 Err(FsError::NotAFile("/sock".into()))
             );
+        }
+
+        #[test]
+        fn replace_file_writes_through_links_inside_the_root() {
+            let fixture = Fixture::new("replace-link");
+            let root = fixture.root();
+            fs::write(root.join("tools/real"), b"old").unwrap();
+            symlink("tools/real", root.join("alias")).unwrap();
+            let fs = fixture.open();
+            fs.replace_file("alias", b"new", Some(b"old")).unwrap();
+            assert!(
+                fs::symlink_metadata(root.join("alias"))
+                    .unwrap()
+                    .is_symlink()
+            );
+            assert_eq!(fs::read(root.join("tools/real")).unwrap(), b"new");
+        }
+
+        #[test]
+        fn replace_file_never_replaces_unreachable_links() {
+            let fixture = Fixture::new("replace-escape");
+            let root = fixture.root();
+            symlink(fixture.outside().join("secret"), root.join("out")).unwrap();
+            symlink("missing", root.join("dangling")).unwrap();
+            let fs = fixture.open();
+            for name in ["out", "dangling"] {
+                assert_eq!(
+                    fs.replace_file(name, b"x", None),
+                    Err(ReplaceError::Fs(FsError::Unwritable(format!("/{name}")))),
+                    "{name}"
+                );
+                assert!(fs::symlink_metadata(root.join(name)).unwrap().is_symlink());
+            }
+            assert_eq!(fs::read(fixture.outside().join("secret")).unwrap(), b"");
+            assert_eq!(staged(&root), Vec::<String>::new());
+        }
+
+        /// Sets `path`'s Unix mode, restoring `restore` on drop so the
+        /// fixture can be removed.
+        struct Mode {
+            path: PathBuf,
+            restore: u32,
+        }
+
+        impl Mode {
+            fn set(path: &Path, mode: u32, restore: u32) -> Self {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+                Self {
+                    path: path.to_owned(),
+                    restore,
+                }
+            }
+        }
+
+        impl Drop for Mode {
+            fn drop(&mut self) {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&self.path, fs::Permissions::from_mode(self.restore));
+            }
+        }
+
+        /// Whether this process can create files in `dir` despite its mode,
+        /// as root can. Permission tests are meaningless then.
+        fn bypasses_permissions(dir: &Path) -> bool {
+            let probe = dir.join("probe");
+            let created = fs::write(&probe, b"").is_ok();
+            let _ = fs::remove_file(&probe);
+            created
+        }
+
+        #[test]
+        fn a_read_only_file_is_never_replaced() {
+            use std::os::unix::fs::MetadataExt;
+            let fixture = Fixture::new("replace-read-only");
+            let path = fixture.root().join("tools/data");
+            fs::write(&path, b"old").unwrap();
+            let inode = fs::metadata(&path).unwrap().ino();
+            let _mode = Mode::set(&path, 0o444, 0o644);
+            let fs = fixture.open();
+            // The directory stays writable, so a rename could replace the
+            // file; the read-only flag alone keeps it.
+            assert_eq!(
+                fs.replace_file("tools/data", b"new", Some(b"old")),
+                Err(ReplaceError::Fs(FsError::ReadOnly("/tools/data".into())))
+            );
+            assert_eq!(fs::read(&path).unwrap(), b"old");
+            assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+            assert_eq!(staged(&fixture.root().join("tools")), Vec::<String>::new());
+        }
+
+        #[test]
+        fn a_read_only_directory_is_unwritable() {
+            let fixture = Fixture::new("replace-read-only-dir");
+            let dir = fixture.root().join("tools");
+            fs::write(dir.join("data"), b"old").unwrap();
+            let _mode = Mode::set(&dir, 0o555, 0o755);
+            if bypasses_permissions(&dir) {
+                return;
+            }
+            let fs = fixture.open();
+            assert_eq!(
+                fs.replace_file("tools/data", b"new", Some(b"old")),
+                Err(ReplaceError::Fs(FsError::Unwritable("/tools/data".into())))
+            );
+            assert_eq!(fs::read(dir.join("data")).unwrap(), b"old");
+            assert_eq!(staged(&dir), Vec::<String>::new());
         }
 
         #[test]

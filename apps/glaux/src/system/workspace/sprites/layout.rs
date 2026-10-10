@@ -105,6 +105,7 @@ pub enum Hit {
     AdvancedButton,
     ZoomOut,
     ZoomIn,
+    SaveButton,
     None,
 }
 
@@ -129,6 +130,8 @@ pub struct SpriteLayout {
     pub zoom_out: Rect,
     pub zoom_label: Rect,
     pub zoom_in: Rect,
+    /// Saves the tiles; under the canvas caption, as wide as the canvas.
+    pub save_button: Rect,
     /// Tops of the palette panel's rows, the swatch row's first.
     pub swatch_y: i32,
     /// The 16 local color cells, by local index.
@@ -236,6 +239,14 @@ impl SpriteLayout {
         let advanced_button = button(text_cells("Advanced"), BUTTON_PAD, GAP);
         let grid_button = button(text_cells("Grid"), BUTTON_PAD, 0);
 
+        let caption_y = canvas_frame.bottom() + 2;
+        let save_button = Rect {
+            x: canvas_frame.x,
+            y: caption_y + cell_h + 2,
+            width: canvas_frame.width,
+            height: bar,
+        };
+
         let swatch_x = MARGIN + LABEL_CELLS * cell_w;
         let pitch = (2 * cell_w).max(cell_h) + SWATCH_GAP;
         let row = |n: i32| palette.y + 2 + n * cell_h;
@@ -258,7 +269,7 @@ impl SpriteLayout {
             palette,
             canvas_frame,
             canvas,
-            caption_y: canvas_frame.bottom() + 2,
+            caption_y,
             sheet,
             visible,
             tools,
@@ -267,6 +278,7 @@ impl SpriteLayout {
             zoom_out,
             zoom_label,
             zoom_in,
+            save_button,
             swatch_y,
             swatches: std::array::from_fn(|i| cell(i, swatch_y)),
             banks: std::array::from_fn(|i| cell(i, bank_y)),
@@ -306,6 +318,7 @@ impl SpriteLayout {
             (self.advanced_button, Hit::AdvancedButton),
             (self.zoom_out, Hit::ZoomOut),
             (self.zoom_in, Hit::ZoomIn),
+            (self.save_button, Hit::SaveButton),
         ];
         if let Some(&(_, hit)) = buttons.iter().find(|(rect, _)| rect.contains(point)) {
             return hit;
@@ -382,6 +395,7 @@ mod tests {
             ("palette".into(), layout.palette),
             ("canvas".into(), layout.canvas_frame),
             ("sheet".into(), layout.sheet.inset(-1)),
+            ("save".into(), layout.save_button),
         ];
         out.extend(layout.tools.iter().map(|(t, r)| (format!("{t:?}"), *r)));
         out

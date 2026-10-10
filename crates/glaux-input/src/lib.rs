@@ -57,6 +57,12 @@ pub enum InputEvent {
     /// Switch to the previous view of the active context (Ctrl+Shift+Tab on
     /// desktop).
     PreviousView,
+    /// Reverse the last edit (Ctrl+Z on desktop).
+    Undo,
+    /// Reapply the last reversed edit (Ctrl+Y or Ctrl+Shift+Z on desktop).
+    Redo,
+    /// Write the open document to the cartridge (Ctrl+S on desktop).
+    Save,
     /// The logical pixel under the pointer changed. `None` means the pointer
     /// is outside the logical viewport and no button is captured.
     ///
@@ -156,8 +162,9 @@ pub enum InputMode {
     Text,
     /// Button and key transitions, for a running cartridge.
     Game,
-    /// Text and editing events, view switching and pointer events, for the
-    /// system's editor workspace.
+    /// Text and editing events, view switching, editing commands such as
+    /// [`InputEvent::Save`] and pointer events, for the system's editor
+    /// workspace.
     Workspace,
 }
 

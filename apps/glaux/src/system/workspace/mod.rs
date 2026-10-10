@@ -4,25 +4,32 @@
 //! system lends it the cartridge and the documents the editors change for
 //! each tick and frame; the workspace keeps only its own UI state, so the
 //! selected tab and each editor's view survive tab switches and trips to the
-//! shell.
+//! shell. File work the editors ask for goes back to the system as a
+//! [`WorkspaceRequest`], and its outcome comes back as a brief notice or a
+//! modal [`Dialog`].
 
+mod dialog;
 mod sprites;
 
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::{BitmapFont, FontMetrics};
-use glaux_machine::framebuffer::{Framebuffer, WIDTH};
+use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::ink_image::INK_SLOTS;
+use glaux_machine::machine::TICK_RATE;
 use glaux_machine::palette::Palette;
 use glaux_machine::system_rom::{Cursor, SystemIcon, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 use glaux_video::preview::ObjPreviewPalette;
 
-use super::sprite_document::SpriteDocument;
-use super::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
-use crate::cartridge::LoadedCartridge;
+use super::sprite_document::{
+    Conflict, ConflictKind, DiskTiles, Reopened, SaveError, Saved, SpriteDocument,
+};
+use super::{ACCENT, BACKGROUND, DIM, OK, PALE, TEXT};
+use crate::cartridge::{CartridgeError, LoadedCartridge};
 use crate::rom::ICON_SIZE;
-use sprites::SpriteEditor;
+use dialog::Dialog;
 pub use sprites::SpriteSource;
+use sprites::{SpriteEditor, SpriteRequest};
 
 /// Entries of the workspace's frame palette that keep the system palette's
 /// colors. Every UI color index is below it; the cartridge's object colors
@@ -51,6 +58,47 @@ const NAME_PAD: i32 = 4;
 const MIN_NAME_CELLS: usize = 4;
 /// Marks a cartridge name cut short to fit the bar.
 const ELLIPSIS: &str = "..";
+/// How long a notice stays in the status bar, in ticks.
+const NOTICE_TICKS: u32 = 3 * TICK_RATE;
+
+/// File work the workspace asks the system to do on the loaded cartridge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceRequest {
+    /// Save the sprite document to `sprites.bin`.
+    Save,
+    /// Write the sprite document over `sprites.bin`, which changed outside
+    /// Glaux, provided it still holds what the user was shown.
+    Overwrite(DiskTiles),
+    /// Discard the sprite edits and their history and read `sprites.bin`
+    /// again.
+    Reload,
+}
+
+/// What a workspace dialog's buttons do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Choice {
+    Overwrite,
+    Reload,
+    Cancel,
+    /// Close a message that offers no decision.
+    Dismiss,
+}
+
+/// The open dialog and what its choice acts on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Modal {
+    dialog: Dialog<Choice>,
+    /// The disk state a conflict dialog showed, which Overwrite may replace.
+    conflict: Option<DiskTiles>,
+}
+
+/// A short message in the status bar answering what the user just did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Notice {
+    text: String,
+    color: u8,
+    ticks_left: u32,
+}
 
 /// One editor view of the workspace.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -147,7 +195,7 @@ impl Rect {
     }
 
     #[cfg(test)]
-    fn contains_xy(self, x: i32, y: i32) -> bool {
+    pub(crate) fn contains_xy(self, x: i32, y: i32) -> bool {
         (self.x..self.right()).contains(&x) && (self.y..self.bottom()).contains(&y)
     }
 
@@ -211,6 +259,17 @@ impl Layout {
         last.right() + HINT_GAP
     }
 
+    /// The screen below the tab bar, where the views and dialogs go.
+    fn view_area(self) -> Rect {
+        let top = self.bar_height();
+        Rect {
+            x: 0,
+            y: top,
+            width: WIDTH as i32,
+            height: HEIGHT as i32 - top,
+        }
+    }
+
     /// Text row origin within the bar.
     fn text_y(self) -> i32 {
         (self.bar_height() - self.cell_h) / 2 + 1
@@ -242,6 +301,51 @@ fn fit_name(name: &str, cells: usize) -> Option<String> {
     }
     let kept = cells.checked_sub(ELLIPSIS.len())?;
     (kept >= MIN_NAME_CELLS).then(|| name.chars().take(kept).chain(ELLIPSIS.chars()).collect())
+}
+
+/// `text` broken into lines of at most `columns` characters, at spaces
+/// where possible.
+fn wrap(text: &str, columns: usize) -> Vec<String> {
+    let columns = columns.max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let mut word: Vec<char> = word.chars().collect();
+        while word.len() > columns {
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            lines.push(word.drain(..columns).collect());
+        }
+        let word: String = word.into_iter().collect();
+        let len = line.chars().count();
+        if len > 0 && len + 1 + word.chars().count() > columns {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(&word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// What to tell the user when writing `sprites.bin` failed.
+fn write_advice(err: &CartridgeError) -> String {
+    match err {
+        CartridgeError::ObjTilesReadOnly => {
+            "sprites.bin is read-only. Make it writable, then save again.".to_owned()
+        }
+        CartridgeError::ObjTilesUnwritable => "Glaux could not write sprites.bin. Check the cartridge folder's permissions and free space, then save again.".to_owned(),
+        CartridgeError::ObjTilesUnreadable => "Glaux could not read sprites.bin to check it for outside changes. Check its permissions, then save again.".to_owned(),
+        CartridgeError::ObjTilesNotAFile => {
+            "sprites.bin is not a regular file. Move it aside, then save again.".to_owned()
+        }
+        other => other.to_string(),
+    }
 }
 
 /// Draws `cursor` with its hotspot on `pointer`, if any. Drawn over the
@@ -309,6 +413,9 @@ pub struct Workspace {
     layout: Layout,
     tab: Tab,
     sprites: SpriteEditor,
+    /// While open, the dialog takes every input and the views take none.
+    modal: Option<Modal>,
+    notice: Option<Notice>,
     /// The system palette, whose first [`SYSTEM_COLORS`] entries the UI is
     /// drawn with.
     system_palette: Palette,
@@ -327,6 +434,8 @@ impl Workspace {
                 cell_h: layout.cell_h,
                 top: layout.bar_height(),
             }),
+            modal: None,
+            notice: None,
             system_palette,
         }
     }
@@ -356,36 +465,165 @@ impl Workspace {
         self.tab
     }
 
-    /// Applies `event`, letting the sprite editor change `sprites`.
-    /// Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs, and a primary press on a
-    /// tab selects it. Everything else goes to the open view's editor, if it
-    /// has one.
-    pub fn handle_input(&mut self, event: InputEvent, sprites: Option<&mut SpriteDocument>) {
+    /// Applies `event`, letting the sprite editor change `sprites`, and
+    /// returns the file work it calls for, if any.
+    ///
+    /// While a dialog is open it takes every event, Escape included.
+    /// Otherwise Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs, a primary
+    /// press on a tab selects it, and everything else goes to the open
+    /// view's editor, if it has one.
+    pub fn handle_input(
+        &mut self,
+        event: InputEvent,
+        sprites: Option<&mut SpriteDocument>,
+    ) -> Option<WorkspaceRequest> {
+        if let Some(modal) = &mut self.modal {
+            let layout = modal.dialog.layout(
+                self.layout.view_area(),
+                self.layout.cell_w,
+                self.layout.cell_h,
+            );
+            let choice = modal.dialog.handle_input(event, &layout)?;
+            let modal = self.modal.take()?;
+            return match choice {
+                Choice::Overwrite => modal.conflict.map(WorkspaceRequest::Overwrite),
+                Choice::Reload => Some(WorkspaceRequest::Reload),
+                Choice::Cancel | Choice::Dismiss => None,
+            };
+        }
         match event {
-            InputEvent::NextView => self.switch_to(self.tab.next()),
-            InputEvent::PreviousView => self.switch_to(self.tab.previous()),
+            InputEvent::NextView => self.switch_to(self.tab.next(), sprites),
+            InputEvent::PreviousView => self.switch_to(self.tab.previous(), sprites),
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
             } if self.layout.tab_at(at).is_some() => {
                 if let Some(tab) = self.layout.tab_at(at) {
-                    self.switch_to(tab);
+                    self.switch_to(tab, sprites);
                 }
             }
-            _ if self.tab == Tab::Sprites => self.sprites.handle_input(event, sprites),
+            _ if self.tab == Tab::Sprites => match self.sprites.handle_input(event, sprites)? {
+                SpriteRequest::Save => return Some(WorkspaceRequest::Save),
+                SpriteRequest::Notice(text) => self.notify(text, PALE),
+            },
             _ => {}
+        }
+        None
+    }
+
+    /// Whether a dialog is open and taking all input.
+    pub fn has_modal(&self) -> bool {
+        self.modal.is_some()
+    }
+
+    /// Advances time-limited UI state by one tick.
+    pub fn tick(&mut self) {
+        if let Some(notice) = &mut self.notice {
+            notice.ticks_left = notice.ticks_left.saturating_sub(1);
+            if notice.ticks_left == 0 {
+                self.notice = None;
+            }
         }
     }
 
-    /// Ends any drag in progress, which must not outlive the view or the
-    /// visit it started in.
-    pub fn end_stroke(&mut self) {
-        self.sprites.end_stroke();
+    /// Reports how a save, or an overwrite after a conflict, went.
+    pub fn saved(&mut self, result: Result<Saved, SaveError>) {
+        match result {
+            Ok(Saved::Written { bytes }) => {
+                self.notify(format!("Saved sprites.bin ({bytes} bytes)"), OK);
+            }
+            Ok(Saved::NothingToSave) => self.notify("Nothing to save", PALE),
+            Err(SaveError::Conflict(conflict)) => self.open_conflict(conflict),
+            Err(SaveError::Cartridge(err)) => self.open_error("SAVE FAILED", write_advice(&err)),
+        }
     }
 
-    fn switch_to(&mut self, tab: Tab) {
+    /// Reports how discarding the edits and reloading `sprites.bin` went.
+    pub fn reloaded(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => self.notify("Reloaded sprites.bin from disk", OK),
+            Err(message) => self.open_error("RELOAD FAILED", message),
+        }
+    }
+
+    /// Reports what reopening the workspace found on disk.
+    pub fn reopened(&mut self, reopened: Reopened) {
+        match reopened {
+            Reopened::Unchanged
+            | Reopened::Reloaded {
+                history_cleared: false,
+            } => {}
+            Reopened::Reloaded {
+                history_cleared: true,
+            } => {
+                self.notify("sprites.bin changed on disk: reloaded, undo cleared", PALE);
+            }
+            Reopened::Conflict(conflict) => self.open_conflict(conflict),
+            Reopened::Failed(message) => self.open_error("CANNOT READ FILES", message),
+        }
+    }
+
+    /// Asks whether to overwrite `sprites.bin`, discard the edits for it,
+    /// or leave both as they are. Cancel is focused so a stray Enter loses
+    /// nothing.
+    fn open_conflict(&mut self, conflict: Conflict) {
+        let what = match conflict.kind {
+            ConflictKind::Modified => "sprites.bin changed outside Glaux.",
+            ConflictKind::Deleted => "sprites.bin was deleted outside Glaux.",
+            ConflictKind::Created => "A new sprites.bin appeared outside Glaux.",
+        };
+        let dialog = Dialog::new(
+            "FILE CONFLICT",
+            vec![
+                what.to_owned(),
+                "Your unsaved edits are still in memory.".to_owned(),
+                "OVERWRITE DISK replaces the file with your edits. DISCARD & RELOAD throws away your unsaved edits and undo history.".to_owned(),
+            ],
+            vec![
+                ("OVERWRITE DISK", Choice::Overwrite),
+                ("DISCARD & RELOAD", Choice::Reload),
+                ("CANCEL", Choice::Cancel),
+            ],
+            2,
+            Some(Choice::Cancel),
+        );
+        self.modal = Some(Modal {
+            dialog,
+            conflict: Some(conflict.disk),
+        });
+    }
+
+    fn open_error(&mut self, title: &str, message: String) {
+        let dialog = Dialog::new(
+            title,
+            vec![message, "Your edits are still in memory.".to_owned()],
+            vec![("OK", Choice::Dismiss)],
+            0,
+            Some(Choice::Dismiss),
+        );
+        self.modal = Some(Modal {
+            dialog,
+            conflict: None,
+        });
+    }
+
+    fn notify(&mut self, text: impl Into<String>, color: u8) {
+        self.notice = Some(Notice {
+            text: text.into(),
+            color,
+            ticks_left: NOTICE_TICKS,
+        });
+    }
+
+    /// Ends any drag in progress, closing its edit in `sprites`. A drag
+    /// must not outlive the view or the visit it started in.
+    pub fn end_stroke(&mut self, sprites: Option<&mut SpriteDocument>) {
+        self.sprites.end_stroke(sprites);
+    }
+
+    fn switch_to(&mut self, tab: Tab, sprites: Option<&mut SpriteDocument>) {
         if tab != self.tab {
-            self.end_stroke();
+            self.end_stroke(sprites);
         }
         self.tab = tab;
     }
@@ -407,6 +645,8 @@ impl Workspace {
         clear(framebuffer, BACKGROUND);
         fill_rect(framebuffer, 0, 0, WIDTH as i32, layout.bar_height(), BAR);
 
+        // Nothing under an open dialog reacts to the pointer.
+        let pointer = pointer.filter(|_| self.modal.is_none());
         let hovered = pointer.and_then(|at| layout.tab_at(at));
         for (tab, rect) in layout.tabs() {
             let active = tab == self.tab;
@@ -461,9 +701,22 @@ impl Workspace {
             draw_text(framebuffer, font, &name, x, layout.text_y(), PALE);
         }
 
+        let notice = self
+            .notice
+            .as_ref()
+            .map(|notice| (notice.text.as_str(), notice.color));
         match self.tab {
-            Tab::Sprites => self.sprites.render(framebuffer, font, ui, sprites, pointer),
+            Tab::Sprites => self
+                .sprites
+                .render(framebuffer, font, ui, sprites, pointer, notice),
             _ => self.render_placeholder(framebuffer, font),
+        }
+        if let Some(modal) = &self.modal {
+            let dialog_layout =
+                modal
+                    .dialog
+                    .layout(layout.view_area(), layout.cell_w, layout.cell_h);
+            modal.dialog.render(framebuffer, font, &dialog_layout);
         }
     }
 
@@ -504,6 +757,29 @@ pub(super) mod tests_support {
     /// Where the sprite editor draws the enlarged tile.
     pub fn sprite_canvas(workspace: &Workspace) -> Rect {
         workspace.sprites.canvas_rect()
+    }
+
+    /// The open dialog's title and button labels.
+    pub fn modal(workspace: &Workspace) -> Option<(&str, Vec<&str>)> {
+        let dialog = &workspace.modal.as_ref()?.dialog;
+        Some((dialog.title(), dialog.labels()))
+    }
+
+    /// Where the open dialog draws its window and buttons.
+    pub fn modal_layout(workspace: &Workspace) -> Option<dialog::DialogLayout> {
+        let layout = workspace.layout;
+        let dialog = &workspace.modal.as_ref()?.dialog;
+        Some(dialog.layout(layout.view_area(), layout.cell_w, layout.cell_h))
+    }
+
+    /// The status bar notice, if one is showing.
+    pub fn notice(workspace: &Workspace) -> Option<&str> {
+        workspace.notice.as_ref().map(|notice| notice.text.as_str())
+    }
+
+    /// Where the sprite editor's Save button is.
+    pub fn sprite_save_button(workspace: &Workspace) -> Rect {
+        workspace.sprites.save_button_rect()
     }
 
     /// The middle of tile pixel `(x, y)` on the sprite editor's canvas.

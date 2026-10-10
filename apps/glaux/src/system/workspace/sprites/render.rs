@@ -17,7 +17,7 @@ use super::layout::{ADVANCED_LABELS, CANVAS_ZOOM, Hit, SCROLLBAR, SpriteLayout, 
 use super::sheet::{SheetView, Visible, grid_position};
 use super::{SpriteEditor, SpriteSource};
 use crate::rom::ICON_SIZE;
-use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect};
+use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 
 /// The two colors of the checkerboard behind transparent pixels.
@@ -34,10 +34,13 @@ const IDLE_TOOL_INKS: [u8; 3] = [OUTLINE, IDLE_SHADE, DIM];
 /// Shown in the options bar while the tiles differ from the cartridge's
 /// files.
 const MODIFIED: &str = "MODIFIED";
+/// The Save button's label, naming its shortcut.
+const SAVE_LABEL: &str = "Save  Ctrl+S";
 
 impl SpriteEditor {
     /// Draws the editor below the tab bar from `source`, or explains why
-    /// there is nothing to show. `pointer` highlights what it hovers.
+    /// there is nothing to show. `pointer` highlights what it hovers, and
+    /// `notice`, when given, takes the status bar's left side in its color.
     pub fn render(
         &self,
         framebuffer: &mut Framebuffer,
@@ -45,6 +48,7 @@ impl SpriteEditor {
         ui: &SystemUi,
         source: Result<SpriteSource<'_>, &str>,
         pointer: Option<Point>,
+        notice: Option<(&str, u8)>,
     ) {
         let layout = self.layout();
         let hover = pointer.map_or(Hit::None, |at| layout.hit(at, &self.sheet));
@@ -60,16 +64,24 @@ impl SpriteEditor {
         match source {
             Ok(source) => {
                 painter.canvas(self, &source, hover);
+                painter.save_button(source.modified, hover);
                 painter.sheet(self, &source, hover);
                 painter.palette(self, &source, hover);
             }
             Err(message) => painter.unavailable(message),
         }
         let (left, right) = self.status(source.ok().as_ref(), hover);
-        // A hint about the control under the pointer matters more than the
-        // tile summary when both don't fit.
-        let control = !matches!(hover, Hit::None | Hit::Canvas { .. });
-        painter.status_bar(&left, &right, control);
+        match notice {
+            // A notice answers what the user just did, so it wins over the
+            // hint when both don't fit.
+            Some((text, color)) => painter.status_bar(text, color, &right, false),
+            None => {
+                // A hint about the control under the pointer matters more
+                // than the tile summary when both don't fit.
+                let control = !matches!(hover, Hit::None | Hit::Canvas { .. });
+                painter.status_bar(&left, PALE, &right, control);
+            }
+        }
     }
 
     /// The status bar's text: what is selected or under the pointer on the
@@ -117,6 +129,10 @@ impl SpriteEditor {
                 Some(_) => "+: zoom the sheet in".to_owned(),
                 None => "The sheet is at its largest".to_owned(),
             },
+            Hit::SaveButton if source.is_some_and(|s| s.modified) => {
+                "Ctrl+S: write sprites.bin".to_owned()
+            }
+            Hit::SaveButton => "No unsaved edits".to_owned(),
             Hit::None if source.is_none() => String::new(),
             Hit::None if self.sheet.zoom().zoomed_out().is_some() => {
                 "Wheel: scroll  Shift+wheel: pan".to_owned()
@@ -524,21 +540,39 @@ impl Painter<'_> {
         self.text("Fix the file, then reopen the workspace.", 4, y, DIM);
     }
 
-    fn status_bar(&mut self, left: &str, right: &str, prefer_right: bool) {
+    /// The status bar: `left` in `left_color`, and `right` if both fit.
+    fn status_bar(&mut self, left: &str, left_color: u8, right: &str, prefer_right: bool) {
         let bar = self.layout.status;
         self.fill(bar, BAR);
         let y = self.bar_text_y(bar.y, bar.height);
         let columns = (bar.width - 8) / self.layout.metrics.cell_w;
         let (left_len, right_len) = (left.chars().count() as i32, right.chars().count() as i32);
         if left_len + 2 + right_len <= columns {
-            self.text(left, 4, y, PALE);
+            self.text(left, 4, y, left_color);
             let x = bar.right() - 4 - self.cells(right);
             self.text(right, x, y, DIM);
         } else if prefer_right {
             self.text(right, 4, y, PALE);
         } else {
-            self.text(left, 4, y, PALE);
+            self.text(left, 4, y, left_color);
         }
+    }
+
+    /// The Save button, which only looks pressable while there is
+    /// something to save.
+    fn save_button(&mut self, modified: bool, hover: Hit) {
+        let rect = self.layout.save_button;
+        let hovered = modified && hover == Hit::SaveButton;
+        self.fill(rect, if hovered { HOVER_SHADE } else { BAR });
+        self.outline(rect, if modified { DIM } else { BAR });
+        let color = match (modified, hovered) {
+            (false, _) => CHECK_LIGHT,
+            (true, true) => TEXT,
+            (true, false) => PALE,
+        };
+        let x = rect.x + (rect.width - self.cells(SAVE_LABEL)) / 2;
+        let y = self.bar_text_y(rect.y, rect.height);
+        self.text(SAVE_LABEL, x, y, color);
     }
 }
 
@@ -570,36 +604,6 @@ fn selection_text(source: &SpriteSource<'_>, bank: ObjBank, local: u8) -> String
 fn contrasting(color: Rgb) -> u8 {
     let luma = 299 * u32::from(color.r) + 587 * u32::from(color.g) + 114 * u32::from(color.b);
     if luma > 140_000 { BACKGROUND } else { TEXT }
-}
-
-/// `text` broken into lines of at most `columns` characters, at spaces
-/// where possible.
-fn wrap(text: &str, columns: usize) -> Vec<String> {
-    let columns = columns.max(1);
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        let mut word: Vec<char> = word.chars().collect();
-        while word.len() > columns {
-            if !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
-            }
-            lines.push(word.drain(..columns).collect());
-        }
-        let word: String = word.into_iter().collect();
-        let len = line.chars().count();
-        if len > 0 && len + 1 + word.chars().count() > columns {
-            lines.push(std::mem::take(&mut line));
-        }
-        if !line.is_empty() {
-            line.push(' ');
-        }
-        line.push_str(&word);
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
 }
 
 #[cfg(test)]
@@ -679,6 +683,7 @@ mod tests {
             &font,
             &SystemUi::default(),
             Ok(fixture.source()),
+            None,
             None,
         );
         fb
@@ -863,7 +868,7 @@ mod tests {
                 modified,
                 ..fixture.source()
             };
-            editor.render(&mut fb, &font, &SystemUi::default(), Ok(source), None);
+            editor.render(&mut fb, &font, &SystemUi::default(), Ok(source), None, None);
             pixels(&fb, bar)
         };
         let accents = |pixels: Vec<u8>| pixels.iter().filter(|&&p| p == ACCENT).count();
