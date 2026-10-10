@@ -1,13 +1,42 @@
 # System palettes
 
-`system.hex` is the master palette: 256 RGB colors, one per line. Entries
-0–31 are [Zughy 32](https://lospec.com/palette-list/zughy-32) by Zughy in its
-published order; entries 32–255 are debug magenta (`#ff00ff`) so that stray
-indices stand out.
+`system.hex` is the master palette: 256 RGB colors, one per line, all
+distinct. Entries 0–31 are [Zughy 32](https://lospec.com/palette-list/zughy-32)
+by Zughy in its published order. Entries 32–255 extend it with colors designed
+for Glaux, two groups of eight per row of sixteen:
+
+| Entries | Colors                                    |
+|---------|-------------------------------------------|
+| 32–47   | warm greys, cool greys                    |
+| 48–63   | light skin, deep skin                     |
+| 64–79   | crimson, rust                             |
+| 80–95   | amber, gold                               |
+| 96–111  | lime, grass                               |
+| 112–127 | forest, moss                              |
+| 128–143 | teal, mint                                |
+| 144–159 | sky, azure                                |
+| 160–175 | cobalt, indigo                            |
+| 176–191 | violet, lilac                             |
+| 192–207 | magenta, rose                             |
+| 208–223 | bark, sand                                |
+| 224–239 | stone; muted mid-tones for backgrounds    |
+| 240–255 | muted darks; black, white, bright accents |
+
+Every group up to 231 is a ramp, dark to light, hue-shifted like the banks
+below: shadows lean toward plum, indigo or teal, highlights toward cream or
+cool white, and saturation peaks in the middle. No color is more saturated
+than Zughy's own brightest. 248 and 249 are pure black and white, which Zughy
+32 lacks.
+
+`glaux_machine::palette::Palette::default()` holds the same colors, for code
+that runs without the System ROM; a test keeps the two equal.
 
 `obp.txt` holds the object palette banks a cartridge starts with when it has
 no `obp.bin`. Each line maps tile-local indices 1–15 of one bank to master
-indices; local 0 is always transparent.
+indices; local 0 is always transparent. The banks use only Zughy 32:
+`glaux import sprites` rewrites entries from 32 up with each sheet's colors,
+so a bank pointing there would change color in cartridges with imported
+sprites.
 
 ## Slot layout
 

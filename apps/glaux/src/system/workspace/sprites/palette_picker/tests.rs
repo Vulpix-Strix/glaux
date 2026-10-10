@@ -2,7 +2,7 @@ use super::*;
 use glaux_machine::font::FontMetrics;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::obj_palette::ObjPalettes;
-use glaux_machine::palette::{DEBUG_MAGENTA, Palette};
+use glaux_machine::palette::Palette;
 use glaux_machine::sprite::{OBJ_TILE_BYTES, ObjTileAttributes, ObjTileBank, ObjVram};
 use glaux_video::preview::ObjPreviewPalette;
 use pretty_assertions::assert_eq;
@@ -210,14 +210,10 @@ impl Fixture {
             attributes,
             palettes,
         );
-        let master = Palette::provisional();
-        let preview = ObjPreviewPalette::new(
-            &Palette::provisional(),
-            SYSTEM_COLORS,
-            &master,
-            obj.palettes(),
-        )
-        .unwrap();
+        let master = Palette::default();
+        let preview =
+            ObjPreviewPalette::new(&Palette::default(), SYSTEM_COLORS, &master, obj.palettes())
+                .unwrap();
         Self {
             obj,
             master,
@@ -287,7 +283,7 @@ fn every_row_shows_its_bank_and_the_tile_through_it() {
 }
 
 /// The System ROM banks share master colors between banks; every swatch
-/// still shows its own bank's color and none shows debug magenta.
+/// still shows its own bank's color.
 #[test]
 fn rom_default_banks_show_their_colors_in_every_row() {
     let rom = crate::rom::load().unwrap();
@@ -301,7 +297,6 @@ fn rom_default_banks_show_their_colors_in_every_row() {
             let swatch = layout.swatch(row, local);
             let color = shown(swatch.x + 3, swatch.y + 5);
             assert_eq!(color, rom.palette().get(master), "bank {n} local {local}");
-            assert_ne!(color, DEBUG_MAGENTA, "bank {n} local {local}");
         }
     }
 }

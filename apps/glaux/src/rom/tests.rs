@@ -1,5 +1,6 @@
 use super::*;
 use glaux_machine::obj_palette::ObjBank;
+use glaux_machine::palette::ZUGHY_32;
 use pretty_assertions::assert_eq;
 
 fn tiny_bdf(glyphs: &str) -> String {
@@ -130,7 +131,8 @@ fn embedded_rom_loads() {
     assert_eq!(rom.version(), &Version::new(0, 1, 0));
     assert_eq!(rom.copyright(), "(C) 2026 CUERVOLU");
 
-    assert_eq!(rom.palette(), &Palette::provisional());
+    // The machine's own default palette is the one the ROM ships.
+    assert_eq!(rom.palette(), &Palette::default());
 
     let font = rom.font();
     assert_eq!(font.metrics(), FontMetrics::SYSTEM);
@@ -157,18 +159,20 @@ fn embedded_obp0_is_the_identity_mapping() {
     );
 }
 
+// `glaux import sprites` rewrites master entries from 32 up with each
+// sheet's colors, so a default bank that pointed there would change color in
+// every cartridge with imported sprites. Zughy 32 stays the same in all of them.
 #[test]
-fn embedded_banks_are_transparent_at_zero_and_show_defined_colors() {
+fn embedded_banks_are_transparent_at_zero_and_use_distinct_zughy_colors() {
     let rom = load().unwrap();
     for bank in (0..OBJ_PALETTE_BANKS as u8).filter_map(ObjBank::new) {
         assert_eq!(rom.obj_palettes().resolve(bank, 0), None, "{bank:?}");
         let mut masters = Vec::new();
         for local in 1..OBJ_PALETTE_COLORS as u8 {
             let master = rom.obj_palettes().resolve(bank, local).unwrap();
-            assert_ne!(
-                rom.palette().get(master),
-                DEBUG_MAGENTA,
-                "{bank:?} local {local}"
+            assert!(
+                usize::from(master) < ZUGHY_32.len(),
+                "{bank:?} local {local} is master {master}"
             );
             masters.push(master);
         }
@@ -193,7 +197,7 @@ fn obj_palettes_are_read_in_order_with_comments() {
     for bank in 0..8 {
         text += &format!("{}  # bank {bank}\n", row(bank));
     }
-    let banks = parse_obj_palettes(&text, &Palette::provisional()).unwrap();
+    let banks = parse_obj_palettes(&text).unwrap();
     let bank = ObjBank::new(7).unwrap();
     assert_eq!(banks.resolve(bank, 0), None);
     assert_eq!(banks.resolve(bank, 1), Some(7));
@@ -213,10 +217,6 @@ fn invalid_obj_palettes_name_the_asset_and_the_problem() {
         (
             format!("{}1 2 3 4 5 6 7 8 9 10 11 12 13 14 256\n", good.repeat(7)),
             "\"256\" is not a master index".to_owned(),
-        ),
-        (
-            format!("{}1 2 3 4 5 6 7 8 9 10 11 12 13 14 32\n", good.repeat(7)),
-            "line 8: master index 32 is undefined".to_owned(),
         ),
     ] {
         let err = build("0.1.0", COPYRIGHT, PALETTE_HEX, &text, FONT_BDF).unwrap_err();

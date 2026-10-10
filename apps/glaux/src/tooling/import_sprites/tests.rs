@@ -4,7 +4,6 @@ use super::*;
 use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::tooling::import_publish::{RECORD, STAGING};
-use glaux_machine::obj_palette::ObjPalettes;
 use pretty_assertions::assert_eq;
 
 fn rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) {
@@ -88,29 +87,31 @@ fn imports_a_png_into_its_cartridge_and_reimports_identically() {
     assert_eq!(written(&cart.dir), first);
 }
 
+/// The imported examples are what importing their PNG with the current
+/// System ROM writes: master entries past the sheet's colors hold the ROM
+/// palette and unused banks the ROM banks.
 #[test]
-fn reimporting_the_example_reproduces_its_committed_assets() {
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/palettes");
-    let fixture = Fixture::new("import-example");
-    let dir = fixture.root().join("palettes");
-    fs::create_dir_all(&dir).unwrap();
-    for name in ["cartridge.ron", "sprites.png", "sprites.sprites.ron"] {
-        fs::copy(example.join(name), dir.join(name)).unwrap();
+fn reimporting_the_examples_reproduces_their_committed_assets() {
+    for name in ["palettes", "signal-lost"] {
+        let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples")
+            .join(name);
+        let fixture = Fixture::new(&format!("import-example-{name}"));
+        let dir = fixture.root().join(name);
+        fs::create_dir_all(&dir).unwrap();
+        for file in ["cartridge.ron", "sprites.png", "sprites.sprites.ron"] {
+            fs::copy(example.join(file), dir.join(file)).unwrap();
+        }
+        import(
+            &ImportOptions {
+                input: dir.join("sprites.png"),
+                ..ImportOptions::default()
+            },
+            &rom(),
+        )
+        .unwrap();
+        assert_eq!(written(&dir), written(&example), "{name}");
     }
-    let input = dir.join("sprites.png");
-    // The example was imported while the ROM's default banks were linear,
-    // and its unused banks keep those. Explicit obp.bin files are not
-    // rewritten when the ROM defaults change.
-    let rom = rom().with_obj_palettes(ObjPalettes::linear());
-    import(
-        &ImportOptions {
-            input,
-            ..ImportOptions::default()
-        },
-        &rom,
-    )
-    .unwrap();
-    assert_eq!(written(&dir), written(&example));
 }
 
 #[test]

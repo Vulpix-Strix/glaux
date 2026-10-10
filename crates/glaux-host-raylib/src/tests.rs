@@ -1,6 +1,6 @@
 use super::*;
 use glaux_machine::framebuffer::Framebuffer;
-use glaux_machine::palette::{DEBUG_MAGENTA, Palette, ZUGHY_32};
+use glaux_machine::palette::{Palette, ZUGHY_32};
 use pretty_assertions::assert_eq;
 
 fn rect(r: Rectangle) -> (f32, f32, f32, f32) {
@@ -13,16 +13,16 @@ fn resolves_indices_to_opaque_rgba() {
     fb.clear(3);
     fb.set_pixel(0, 0, 31);
     fb.set_pixel(1, 0, 200);
-    let palette = Palette::provisional();
+    let palette = Palette::default();
     let mut out = vec![0; RGBA_LEN];
 
     resolve_rgba(&IndexedFrame::new(&fb, &palette), &mut out);
 
     let c31 = ZUGHY_32[31];
     let c3 = ZUGHY_32[3];
-    let m = DEBUG_MAGENTA;
+    let c200 = palette.get(200);
     assert_eq!(out[0..4], [c31.r, c31.g, c31.b, 255]);
-    assert_eq!(out[4..8], [m.r, m.g, m.b, 255]);
+    assert_eq!(out[4..8], [c200.r, c200.g, c200.b, 255]);
     assert_eq!(out[8..12], [c3.r, c3.g, c3.b, 255]);
     assert_eq!(out[RGBA_LEN - 4..], [c3.r, c3.g, c3.b, 255]);
 }

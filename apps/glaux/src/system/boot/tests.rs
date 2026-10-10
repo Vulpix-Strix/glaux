@@ -146,7 +146,7 @@ fn rom_with(version: Version, copyright: &str) -> SystemRom {
     SystemRom::new(
         version,
         copyright.into(),
-        glaux_machine::palette::Palette::provisional(),
+        glaux_machine::palette::Palette::default(),
         block_font(),
     )
 }

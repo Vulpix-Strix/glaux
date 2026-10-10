@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 fn rendered(overlay: &PauseOverlay, color: u8) -> Framebuffer {
     let mut fb = Framebuffer::new();
     clear(&mut fb, color);
-    overlay.render(&mut fb, &Palette::provisional(), &Palette::provisional());
+    overlay.render(&mut fb, &Palette::default(), &Palette::default());
     fb
 }
 
@@ -34,7 +34,7 @@ fn plate_sits_in_the_upper_right_corner_with_a_margin() {
 
 #[test]
 fn the_frame_outside_the_plate_is_darkened() {
-    let palette = Palette::provisional();
+    let palette = Palette::default();
     let shaded = shade_table(&palette, KEEP_PERCENT);
     let fb = rendered(&PauseOverlay::new(), 15);
     assert_ne!(shaded[15], 15);

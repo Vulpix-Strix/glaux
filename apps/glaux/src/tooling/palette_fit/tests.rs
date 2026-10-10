@@ -39,7 +39,7 @@ fn tiles_with(palettes: &[&[usize]]) -> Sheet {
 }
 
 fn rom_palette() -> Palette {
-    Palette::provisional()
+    Palette::default()
 }
 
 fn fit_with(sheet: &Sheet, groups: &[SpriteGroup], current: &Palette) -> Result<Fitted, FitError> {

@@ -4,7 +4,7 @@ use proptest::prelude::*;
 
 #[test]
 fn rgb888_round_trips_in_channel_order() {
-    let palette = Palette::provisional();
+    let palette = Palette::default();
     let bytes = palette.to_rgb888();
     assert_eq!(bytes[..3], [0x47, 0x2d, 0x3c]);
     assert_eq!(Palette::from_rgb888(&bytes), Ok(palette));
@@ -12,14 +12,15 @@ fn rgb888_round_trips_in_channel_order() {
 
 #[test]
 fn set_replaces_one_entry_and_encodes_at_its_offset() {
-    let mut palette = Palette::provisional();
-    let red = Rgb::from_hex(0xe6482e);
-    assert_eq!(palette.set(42, red), DEBUG_MAGENTA);
-    assert_eq!(palette.set(255, red), DEBUG_MAGENTA);
+    let mut palette = Palette::default();
+    // #ff00ff is an ordinary color, not a reserved marker.
+    let magenta = Rgb::from_hex(0xff00ff);
+    assert_eq!(palette.set(42, magenta), Rgb::from_hex(0x383b4a));
+    assert_eq!(palette.set(255, magenta), Rgb::from_hex(0xab73e4));
     let bytes = palette.to_rgb888();
-    assert_eq!(bytes[42 * 3..43 * 3], [0xe6, 0x48, 0x2e]);
-    assert_eq!(bytes[255 * 3..], [0xe6, 0x48, 0x2e]);
-    assert_eq!(bytes[41 * 3..42 * 3], [0xff, 0x00, 0xff]);
+    assert_eq!(bytes[42 * 3..43 * 3], [0xff, 0x00, 0xff]);
+    assert_eq!(bytes[255 * 3..], [0xff, 0x00, 0xff]);
+    assert_eq!(bytes[41 * 3..42 * 3], [0x24, 0x25, 0x32]);
 }
 
 #[test]
@@ -34,7 +35,7 @@ fn rgb888_rejects_wrong_lengths() {
 
 #[test]
 fn first_32_entries_are_zughy_32() {
-    let palette = Palette::provisional();
+    let palette = Palette::default();
     assert_eq!(palette.entries()[..32], ZUGHY_32);
     assert_eq!(
         palette.get(0),
@@ -54,20 +55,15 @@ fn first_32_entries_are_zughy_32() {
     );
 }
 
+// Every entry is a real color: no placeholder fills the extension and no
+// two indices share a color.
 #[test]
-fn unused_entries_are_debug_magenta() {
-    let palette = Palette::provisional();
-    assert_eq!(
-        DEBUG_MAGENTA,
-        Rgb {
-            r: 255,
-            g: 0,
-            b: 255
-        }
-    );
-    for index in 32..=255u8 {
-        assert_eq!(palette.get(index), DEBUG_MAGENTA, "entry {index}");
-    }
+fn default_entries_are_all_distinct() {
+    let palette = Palette::default();
+    let mut colors = palette.entries().to_vec();
+    colors.sort_unstable_by_key(|c| (c.r, c.g, c.b));
+    colors.dedup();
+    assert_eq!(colors.len(), PALETTE_LEN);
 }
 
 proptest! {

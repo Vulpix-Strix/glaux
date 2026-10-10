@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use glaux_luau::ScriptError;
-use glaux_machine::obj_palette::ObjPalettes;
+use glaux_machine::obj_palette::{ObjBank, ObjPalettes};
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -95,7 +95,7 @@ fn sprites_resolve_through_the_cartridge_palette_assets() {
     let mut obp = *ObjPalettes::linear().as_bytes();
     obp[2 * 16 + 3] = 200;
     fs::write(dir.join("obp.bin"), obp).unwrap();
-    let mut palette = *Palette::provisional().entries();
+    let mut palette = *Palette::default().entries();
     palette[200] = glaux_machine::palette::Rgb::from_hex(0x123456);
     let palette = Palette::new(palette);
     fs::write(dir.join("palette.bin"), palette.to_rgb888()).unwrap();
@@ -127,8 +127,8 @@ fn missing_video_assets_fall_back_to_the_rom() {
 }
 
 /// A cartridge without `obp.bin` keeps drawing OBP0 tiles with their local
-/// indices as master indices, and every other default bank shows defined
-/// colors.
+/// indices as master indices, and every bank resolves through the System
+/// ROM's curated banks.
 #[test]
 fn rom_default_banks_render_without_obp_bin() {
     let fixture = Fixture::new("running-default-banks");
@@ -162,11 +162,9 @@ fn rom_default_banks_render_without_obp_bin() {
             if bank == 0 {
                 assert_eq!(i32::from(master), local, "OBP0 local {local}");
             }
-            assert_ne!(
-                rom.palette().get(master),
-                glaux_machine::palette::DEBUG_MAGENTA,
-                "OBP{bank} local {local}"
-            );
+            let expected =
+                ObjBank::new(bank as u8).and_then(|b| rom.obj_palettes().resolve(b, local as u8));
+            assert_eq!(Some(master), expected, "OBP{bank} local {local}");
         }
         // Local 0 stays transparent.
         assert_eq!(framebuffer.pixel(bank * 8, 0), Some(255), "OBP{bank}");
@@ -215,6 +213,56 @@ fn the_imported_example_shows_its_png_colors() {
         opaque += 1;
     }
     assert!(opaque > 300, "{opaque} opaque pixels");
+}
+
+/// Every pixel of each imported example's PNG resolves through the
+/// cartridge's tiles, tile banks, object palettes and master palette to the
+/// PNG's own color, and every transparent pixel to local index 0.
+#[test]
+fn imported_examples_resolve_every_png_pixel_to_its_color() {
+    use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH};
+
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let root = fs::canonicalize(examples).unwrap();
+    let storage = crate::cartridge_fs::CartridgeStorage::Available(
+        crate::cartridge_fs::CartridgeFs::new(root.clone()),
+    );
+    for name in ["palettes", "signal-lost"] {
+        let cartridge = LoadedCartridge::load(&storage, name).unwrap();
+        let running =
+            RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+        let obj = &running.video.obj;
+
+        let file = fs::File::open(root.join(name).join("sprites.png")).unwrap();
+        let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+            .read_info()
+            .unwrap();
+        let mut rgba = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut rgba).unwrap();
+        assert_eq!(info.color_type, png::ColorType::Rgba, "{name}");
+        let width = info.width as usize;
+        for (offset, &[r, g, b, alpha]) in rgba.as_chunks::<4>().0.iter().enumerate() {
+            let (x, y) = (offset % width, offset / width);
+            let tile = (y / OBJ_TILE_HEIGHT) * OBJ_GRID_COLUMNS + x / OBJ_TILE_WIDTH;
+            let local = obj
+                .tiles()
+                .pixel(tile, x % OBJ_TILE_WIDTH, y % OBJ_TILE_HEIGHT)
+                .unwrap();
+            if alpha == 0 {
+                assert_eq!(local, 0, "{name} pixel ({x}, {y})");
+                continue;
+            }
+            let master = obj
+                .palettes()
+                .resolve(obj.attributes().bank(tile), local)
+                .unwrap();
+            assert_eq!(
+                running.palette().get(master),
+                glaux_machine::palette::Rgb { r, g, b },
+                "{name} pixel ({x}, {y})"
+            );
+        }
+    }
 }
 
 /// Signal Lost (`examples/signal-lost`), driven through the real loader,

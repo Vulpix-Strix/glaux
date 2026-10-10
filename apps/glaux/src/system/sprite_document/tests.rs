@@ -274,9 +274,9 @@ fn the_history_keeps_only_the_newest_edits() {
 
 // Palettes and attributes.
 
-/// A `palette.bin` that is the provisional palette with master 42 blue.
+/// A `palette.bin` that is the default palette with master 42 blue.
 fn blue_42() -> Vec<u8> {
-    let mut palette = Palette::provisional();
+    let mut palette = Palette::default();
     palette.set(42, BLUE);
     palette.to_rgb888().to_vec()
 }

@@ -10,7 +10,7 @@ use glaux_audio::{Envelope, Tone, Waveform};
 use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
 use glaux_machine::ink_image::InkImage;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjPalettes};
-use glaux_machine::palette::{DEBUG_MAGENTA, PALETTE_LEN, Palette, Rgb};
+use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
 use glaux_machine::system_rom::{Cursor, SystemIcon, SystemRom, SystemSounds, SystemUi};
 use png::{BitDepth, ColorType, Transformations};
 use semver::Version;
@@ -83,8 +83,7 @@ fn build(
         .with_context(|| format!("invalid rom/version: {:?}", version.trim()))?;
     let copyright = parse_copyright(copyright).context("invalid rom/copyright")?;
     let palette = parse_palette(palette).context("invalid rom/palette/system.hex")?;
-    let obj_palettes =
-        parse_obj_palettes(obj_palettes, &palette).context("invalid rom/palette/obp.txt")?;
+    let obj_palettes = parse_obj_palettes(obj_palettes).context("invalid rom/palette/obp.txt")?;
     let font = parse_bdf(font, FontMetrics::SYSTEM).context("invalid rom/font/Tamzen5x9r.bdf")?;
     Ok(SystemRom::new(version, copyright, palette, font)
         .with_sounds(sounds()?)
@@ -347,11 +346,7 @@ fn parse_palette(text: &str) -> anyhow::Result<Palette> {
 /// Parses the default object palette banks: one line per bank holding the
 /// master indices of locals 1–15, with `#` starting a comment. Local 0 is
 /// implicit and transparent.
-///
-/// Every index must name a color `palette` defines. [`DEBUG_MAGENTA`] marks
-/// entries the ROM palette leaves undefined, so a default bank pointing at one
-/// is a mistake in the ROM data. Cartridge palettes are not held to this.
-fn parse_obj_palettes(text: &str, palette: &Palette) -> anyhow::Result<ObjPalettes> {
+fn parse_obj_palettes(text: &str) -> anyhow::Result<ObjPalettes> {
     let mut bytes = [0; OBJ_PALETTE_BANKS * OBJ_PALETTE_COLORS];
     let mut bank = 0;
 
@@ -373,15 +368,9 @@ fn parse_obj_palettes(text: &str, palette: &Palette) -> anyhow::Result<ObjPalett
         );
         let row = &mut bytes[bank * OBJ_PALETTE_COLORS..(bank + 1) * OBJ_PALETTE_COLORS];
         for (slot, entry) in row[1..].iter_mut().zip(entries) {
-            let master: u8 = entry
+            *slot = entry
                 .parse()
                 .with_context(|| format!("line {number}: {entry:?} is not a master index 0-255"))?;
-            ensure!(
-                palette.get(master) != DEBUG_MAGENTA,
-                "line {number}: master index {master} is undefined (debug magenta) in the \
-                 system palette"
-            );
-            *slot = master;
         }
         bank += 1;
     }

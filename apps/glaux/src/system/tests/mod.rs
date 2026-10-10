@@ -40,7 +40,7 @@ fn fake_rom() -> SystemRom {
     SystemRom::new(
         Version::new(0, 1, 0),
         "(C) 2026 TEST".into(),
-        Palette::provisional(),
+        Palette::default(),
         font,
     )
     .with_ui(fake_ui())

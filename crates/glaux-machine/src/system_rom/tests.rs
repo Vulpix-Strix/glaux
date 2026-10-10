@@ -15,7 +15,7 @@ fn ui_images_are_empty_unless_injected_and_found_by_icon() {
     let rom = SystemRom::new(
         Version::new(0, 1, 0),
         notice(),
-        Palette::provisional(),
+        Palette::default(),
         empty_font(),
     );
     assert_eq!(rom.ui(), &SystemUi::default());
@@ -48,7 +48,7 @@ fn a_rom_built_without_sounds_plays_nothing() {
     let rom = SystemRom::new(
         Version::new(0, 1, 0),
         notice(),
-        Palette::provisional(),
+        Palette::default(),
         empty_font(),
     );
     assert!(rom.sounds().get(SystemSfx::Boot).steps().is_empty());

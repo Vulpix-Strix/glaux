@@ -32,7 +32,7 @@ fn contents(dir: &Path) -> Vec<Option<Vec<u8>>> {
 }
 
 fn rom() -> Palette {
-    Palette::provisional()
+    Palette::default()
 }
 
 #[test]

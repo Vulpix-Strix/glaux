@@ -38,16 +38,12 @@ impl Fixture {
             ObjTileAttributes::new(),
             ObjPalettes::from_bytes(&obp).unwrap(),
         );
-        let mut entries = *Palette::provisional().entries();
+        let mut entries = *Palette::default().entries();
         entries[202] = Rgb::from_hex(0x62a7d5);
         let master = Palette::new(entries);
-        let preview = ObjPreviewPalette::new(
-            &Palette::provisional(),
-            SYSTEM_COLORS,
-            &master,
-            obj.palettes(),
-        )
-        .unwrap();
+        let preview =
+            ObjPreviewPalette::new(&Palette::default(), SYSTEM_COLORS, &master, obj.palettes())
+                .unwrap();
         Self {
             obj,
             master,

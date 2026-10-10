@@ -131,7 +131,8 @@ colors the sprites use into the cartridge's master palette (entries 32–52)
 and packs them into two object palettes: the characters and the flask share
 OBP0, and the items, walls, floor, coin and skull share OBP1. Every sprite is
 one sprite group, covering all of its animation frames, so drawing it with
-an explicit palette recolors the whole animation.
+an explicit palette recolors the whole animation. The rest of the master
+palette and OBP2–OBP7 keep the System ROM defaults.
 
 The first version of the game predates object palettes: sprites were drawn
 with Zughy 32 entries 1–15, and the sheet builder mapped every source color to
