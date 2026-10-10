@@ -16,7 +16,9 @@ use super::SpriteSource;
 use super::layout::Metrics;
 use super::render::{checker, contrasting, outline};
 use crate::system::ERROR;
-use crate::system::sprite_document::{ColorTarget, ColorUses};
+use crate::system::sprite_document::{
+    CODE_COLORS, ColorScope, ColorTarget, ColorUses, Spare, spare_master,
+};
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
     AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,
@@ -70,9 +72,8 @@ const CHECKER: i32 = 3;
 const SV_STEP: u8 = 8;
 const HUE_STEP: u16 = HUE_STEPS / HUE_CELLS as u16;
 const SHIFT_STEPS: u8 = 4;
-/// Master indices below this are the default palette's first colors, the
-/// likeliest to be drawn directly by game code.
-const CODE_COLORS: u8 = 32;
+/// Side of the scope rows' radio marker.
+const RADIO: i32 = 5;
 
 /// Frame palette entries the dialog draws its gradients and new color
 /// with: the field's cells, then the hue strip's, then the new color.
@@ -87,8 +88,8 @@ const NEW_SLOT: u8 = (PALETTE_LEN - 1) as u8;
 /// What closing the dialog asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorOutcome {
-    /// Make the edited color this.
-    Apply(Rgb),
+    /// Make the edited color `color`, as far as `scope` reaches.
+    Apply { color: Rgb, scope: ColorScope },
     /// Leave the document as it is.
     Cancel,
 }
@@ -99,25 +100,35 @@ pub enum Control {
     SatVal,
     Hue,
     Field(Field),
+    /// The choice between changing every palette or only this one.
+    Scope,
     Cancel,
     Apply,
 }
 
 impl Control {
-    const ORDER: [Self; 8] = [
+    const ORDER: [Self; 9] = [
         Self::SatVal,
         Self::Hue,
         Self::Field(Field::Hex),
         Self::Field(Field::Red),
         Self::Field(Field::Green),
         Self::Field(Field::Blue),
+        Self::Scope,
         Self::Cancel,
         Self::Apply,
     ];
 
-    fn next(self) -> Self {
+    /// The control after this one, skipping [`Scope`](Self::Scope) unless
+    /// the dialog offers a choice of scope.
+    fn next(self, scoped: bool) -> Self {
         let at = Self::ORDER.iter().position(|&c| c == self).unwrap_or(0);
-        Self::ORDER[(at + 1) % Self::ORDER.len()]
+        let next = Self::ORDER[(at + 1) % Self::ORDER.len()];
+        if next == Self::Scope && !scoped {
+            next.next(scoped)
+        } else {
+            next
+        }
     }
 }
 
@@ -248,6 +259,9 @@ pub struct ColorEditor {
     /// Where the pickers' markers sit. It keeps hue and saturation through
     /// colors that leave them undefined, which `rgb` cannot.
     hsv: Hsv,
+    /// The chosen scope, `None` when there is no choice to make because no
+    /// other palette shows the master; applying then changes the master.
+    scope: Option<ColorScope>,
     focus: Control,
     /// Text typed into the focused field, while unconfirmed.
     typing: Option<Typing>,
@@ -260,7 +274,11 @@ pub struct ColorEditor {
 impl ColorEditor {
     /// A dialog editing `target`, the color `old`, as seen on `tile`, with
     /// `uses` saying what else shows its master.
+    ///
+    /// When another palette shows the master, the dialog offers to change
+    /// only the target's palette, and starts with that choice.
     pub fn new(tile: usize, target: ColorTarget, uses: ColorUses, old: Rgb) -> Self {
+        let scope = (!uses.other_banks(target.bank).is_empty()).then_some(ColorScope::Palette);
         Self {
             tile,
             target,
@@ -268,6 +286,7 @@ impl ColorEditor {
             old,
             rgb: old,
             hsv: Hsv::from_rgb(old, Hsv { h: 0, s: 0, v: 0 }),
+            scope,
             focus: Control::SatVal,
             typing: None,
             drag: None,
@@ -282,6 +301,32 @@ impl ColorEditor {
     #[cfg(test)]
     pub fn color(&self) -> Rgb {
         self.rgb
+    }
+
+    /// The chosen scope, if the dialog offers a choice.
+    #[cfg(test)]
+    pub fn scope(&self) -> Option<ColorScope> {
+        self.scope
+    }
+
+    /// The scope applying uses.
+    fn applied_scope(&self) -> ColorScope {
+        self.scope.unwrap_or(ColorScope::All)
+    }
+
+    fn apply(&self) -> ColorOutcome {
+        ColorOutcome::Apply {
+            color: self.rgb,
+            scope: self.applied_scope(),
+        }
+    }
+
+    /// Switches between the two scopes, when there is a choice.
+    fn toggle_scope(&mut self) {
+        self.scope = self.scope.map(|scope| match scope {
+            ColorScope::All => ColorScope::Palette,
+            ColorScope::Palette => ColorScope::All,
+        });
     }
 
     #[cfg(test)]
@@ -304,7 +349,7 @@ impl ColorEditor {
 
     /// The confirm button's label: it says when other colors change too.
     pub fn apply_label(&self) -> &'static str {
-        if self.uses.is_shared() {
+        if self.uses.is_shared() && self.applied_scope() == ColorScope::All {
             APPLY_TO_ALL
         } else {
             APPLY
@@ -344,8 +389,9 @@ impl ColorEditor {
     ///
     /// Pressing the field or the hue strip picks there, and dragging keeps
     /// picking, clamped to its edges, until the release. Tab moves the
-    /// focus. Arrows step the focused picker, and Up and Down the focused
-    /// RGB channel. Typing into a field changes the color as soon as the
+    /// focus. Arrows step the focused picker, Up and Down the focused RGB
+    /// channel, and any arrow switches the focused scope choice; a press on
+    /// a scope row chooses it. Typing into a field changes the color as soon as the
     /// text is valid. Enter confirms the text being typed, or else chooses
     /// the focused button, APPLY unless CANCEL is focused. Escape restores
     /// the color the typing began from, or else cancels.
@@ -355,14 +401,14 @@ impl ColorEditor {
         layout: &ColorEditorLayout,
     ) -> Option<ColorOutcome> {
         match event {
-            InputEvent::Tab => self.focus_on(self.focus.next()),
+            InputEvent::Tab => self.focus_on(self.focus.next(self.scope.is_some())),
             InputEvent::Enter => {
                 if self.typing.take().is_some() {
                     return None;
                 }
                 return Some(match self.focus {
                     Control::Cancel => ColorOutcome::Cancel,
-                    _ => ColorOutcome::Apply(self.rgb),
+                    _ => self.apply(),
                 });
             }
             InputEvent::Break => match self.typing.take() {
@@ -403,7 +449,7 @@ impl ColorEditor {
                 if armed.is_some() && armed == layout.button_at(at) {
                     return armed.map(|button| match button {
                         Button::Cancel => ColorOutcome::Cancel,
-                        Button::Apply => ColorOutcome::Apply(self.rgb),
+                        Button::Apply => self.apply(),
                     });
                 }
             }
@@ -485,6 +531,7 @@ impl ColorEditor {
             }
             Control::Cancel => self.focus = Control::Apply,
             Control::Apply => self.focus = Control::Cancel,
+            Control::Scope => self.toggle_scope(),
             Control::Field(_) => {}
         }
     }
@@ -504,6 +551,7 @@ impl ColorEditor {
                 self.typing = None;
                 self.set_rgb(field.step(self.rgb, up));
             }
+            Control::Scope => self.toggle_scope(),
             Control::Hue | Control::Cancel | Control::Apply => {}
         }
     }
@@ -519,6 +567,9 @@ impl ColorEditor {
             self.drag_to(at, layout);
         } else if let Some(field) = layout.field_at(at) {
             self.focus_on(Control::Field(field));
+        } else if let Some(scope) = layout.scope_at(at).filter(|_| self.scope.is_some()) {
+            self.scope = Some(scope);
+            self.focus_on(Control::Scope);
         } else if let Some(button) = layout.button_at(at) {
             self.armed = Some(button);
             self.focus_on(match button {
@@ -715,12 +766,57 @@ impl ColorEditor {
             text(framebuffer, &shown, rect.x + 3, text_y, ink);
         }
 
-        for (line, y) in impact_lines(self.target, &self.uses, layout.advanced)
-            .iter()
-            .zip(layout.impact_ys())
-        {
-            let line = fit(line, layout.columns());
-            text(framebuffer, &line, layout.text_x, y, INK);
+        match self.scope {
+            None => {
+                for (line, y) in impact_lines(self.target, &self.uses, layout.advanced)
+                    .iter()
+                    .zip(layout.impact_ys())
+                {
+                    let line = fit(line, layout.columns());
+                    text(framebuffer, &line, layout.text_x, y, INK);
+                }
+            }
+            Some(scope) => {
+                let spare = spare_master(
+                    source.master,
+                    source.obj.palettes(),
+                    self.uses.master,
+                    self.rgb,
+                );
+                let lines = scope_lines(self.target, &self.uses, scope, spare, layout.advanced);
+                let indent = 2 * cell_w;
+                let row_columns = layout.columns().saturating_sub(2);
+                for ((row, line), row_scope) in layout
+                    .scope_rows()
+                    .into_iter()
+                    .zip(&lines)
+                    .zip([ColorScope::All, ColorScope::Palette])
+                {
+                    let chosen = row_scope == scope;
+                    let ink = if chosen && self.focus == Control::Scope {
+                        fill(framebuffer, row, INK);
+                        BODY
+                    } else {
+                        INK
+                    };
+                    let marker = Rect {
+                        x: row.x + 1,
+                        y: row.y + (row.height - RADIO) / 2,
+                        width: RADIO,
+                        height: RADIO,
+                    };
+                    outline(framebuffer, marker, ink);
+                    if chosen {
+                        fill(framebuffer, marker.inset(1), ink);
+                    }
+                    let line = fit(line, row_columns);
+                    text(framebuffer, &line, row.x + indent, row.y, ink);
+                }
+                if let Some(y) = layout.impact_ys().nth(2) {
+                    let line = fit(&lines[2], layout.columns());
+                    text(framebuffer, &line, layout.text_x, y, INK);
+                }
+            }
         }
 
         draw_button(
@@ -792,27 +888,18 @@ pub fn impact_lines(
     let master = uses.master;
     let entries = uses.entries.len();
     let banks = uses.other_banks(target.bank);
-    let tiles = match uses.tiles {
-        0 => "no other tiles".to_owned(),
-        n => counted(n, "other tile", "other tiles"),
-    };
-    // Code may draw any master index directly, and every frame starts
-    // cleared to master 0; the document sees neither.
-    let scope = match (advanced, master) {
-        (false, 0) => "Game background; code may use it too.".to_owned(),
-        (false, _) => "Game code may use it too.".to_owned(),
-        (true, 0) => "Background and code using 0 change too.".to_owned(),
-        (true, _) => format!("Code drawing color {master} changes too."),
-    };
+    let tiles = other_tiles(uses.tiles);
     let scope = if uses.is_shared() || master < CODE_COLORS {
-        scope
+        code_note(master, advanced)
     } else {
         String::new()
     };
 
     if !uses.is_shared() {
+        // The count only sees stored banks; code may draw more tiles with
+        // this palette, so no count is shown as "only this tile".
         let first = if uses.tiles == 0 {
-            String::new()
+            "Changes it in every tile that uses it.".to_owned()
         } else {
             format!("Also shows in {tiles}.")
         };
@@ -840,12 +927,7 @@ pub fn impact_lines(
             .map(|entry| format!("OBP{} L{:X}", entry.bank.get(), entry.local))
             .collect();
         let second = format!("  {}", list.join(", "));
-        let third = match (uses.tiles, master) {
-            (0, _) => scope,
-            (_, 0) => format!("{}; code, background too.", capitalized(&tiles)),
-            _ => format!("{}; code using {master} too.", capitalized(&tiles)),
-        };
-        return [first, second, third];
+        return [first, second, advanced_tiles_note(uses)];
     }
 
     let colors = counted(entries, "palette color", "palette colors");
@@ -867,6 +949,88 @@ pub fn impact_lines(
         )
     };
     [first, second, scope]
+}
+
+/// What the scope rows say, the first for [`ColorScope::All`] and the
+/// second for [`ColorScope::Palette`], and what the chosen `scope` means
+/// beyond them, given `spare`, where [`ColorScope::Palette`] would put the
+/// color.
+pub fn scope_lines(
+    target: ColorTarget,
+    uses: &ColorUses,
+    scope: ColorScope,
+    spare: Spare,
+    advanced: bool,
+) -> [String; IMPACT_LINES] {
+    let master = uses.master;
+    let bank = target.bank.get();
+    let all = if advanced {
+        format!(
+            "All: master ${master:02X}, {}",
+            counted(uses.entries.len(), "more entry", "more entries")
+        )
+    } else {
+        format!(
+            "All {} palettes, {}",
+            uses.other_banks(target.bank).len() + 1,
+            other_tiles(uses.tiles)
+        )
+    };
+    let index = spare.master();
+    let only = if advanced {
+        format!("OBP{bank} only: master ${index:02X} ({index})")
+    } else {
+        format!("Only Palette {bank}, {}", other_tiles(uses.palette_tiles))
+    };
+    // A spare no palette maps may still be drawn by number from code.
+    let consequence = match (scope, spare, advanced) {
+        (ColorScope::All, _, false) => code_note(master, false),
+        (ColorScope::All, _, true) => advanced_tiles_note(uses),
+        (ColorScope::Palette, Spare::Reused(_), false) => {
+            "Other palettes keep the old color.".to_owned()
+        }
+        (ColorScope::Palette, Spare::Reused(_), true) => {
+            format!("${index:02X} already has this color.")
+        }
+        (ColorScope::Palette, Spare::Unmapped(_), false) => {
+            "Code using that color number changes.".to_owned()
+        }
+        (ColorScope::Palette, Spare::Unmapped(_), true) => {
+            format!("Code drawing {index} changes too.")
+        }
+    };
+    [all, only, consequence]
+}
+
+/// `count` other tiles, in words.
+fn other_tiles(count: usize) -> String {
+    match count {
+        0 => "no other tiles".to_owned(),
+        n => counted(n, "other tile", "other tiles"),
+    }
+}
+
+/// What changing `master` itself means beyond the document: code may draw
+/// any master index directly, and every frame starts cleared to master 0;
+/// the document sees neither.
+fn code_note(master: u8, advanced: bool) -> String {
+    match (advanced, master) {
+        (false, 0) => "Game background; code may use it too.".to_owned(),
+        (false, _) => "Game code may use it too.".to_owned(),
+        (true, 0) => "Background and code using 0 change too.".to_owned(),
+        (true, _) => format!("Code drawing color {master} changes too."),
+    }
+}
+
+/// Advanced mode's note on the other tiles and the code a shared master
+/// reaches.
+fn advanced_tiles_note(uses: &ColorUses) -> String {
+    let tiles = other_tiles(uses.tiles);
+    match (uses.tiles, uses.master) {
+        (0, master) => code_note(master, true),
+        (_, 0) => format!("{}; code, background too.", capitalized(&tiles)),
+        (_, master) => format!("{}; code using {master} too.", capitalized(&tiles)),
+    }
 }
 
 fn capitalized(text: &str) -> String {
@@ -1097,6 +1261,28 @@ impl ColorEditorLayout {
     /// Tops of the impact note's lines.
     fn impact_ys(&self) -> impl Iterator<Item = i32> + '_ {
         (0..IMPACT_LINES as i32).map(|n| self.impact_y + n * self.cell_h)
+    }
+
+    /// The scope rows, top to bottom for [`ColorScope::All`] and
+    /// [`ColorScope::Palette`]: the impact note's first two lines.
+    pub fn scope_rows(&self) -> [Rect; 2] {
+        [0, 1].map(|n| Rect {
+            x: self.text_x,
+            y: self.impact_y + n * self.cell_h,
+            width: self.text_right - self.text_x,
+            height: self.cell_h,
+        })
+    }
+
+    fn scope_at(&self, point: Point) -> Option<ColorScope> {
+        let [all, palette] = self.scope_rows();
+        if all.contains(point) {
+            Some(ColorScope::All)
+        } else if palette.contains(point) {
+            Some(ColorScope::Palette)
+        } else {
+            None
+        }
     }
 
     /// Text columns between the window's padding.

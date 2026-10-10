@@ -11,6 +11,8 @@ const PALETTE: VideoAsset = VideoAsset::MasterPalette;
 
 const BLUE: Rgb = Rgb::from_hex(0x3978a8);
 const RED: Rgb = Rgb::from_hex(0xe6482e);
+/// A color no default palette entry holds.
+const ODD: Rgb = Rgb::from_hex(0x010203);
 
 fn bank(n: u8) -> ObjBank {
     ObjBank::new(n).unwrap()
@@ -412,6 +414,7 @@ fn color_uses_count_entries_banks_and_tiles_apart() {
         "two entries, one other bank"
     );
     assert_eq!(uses.tiles, 2, "tiles 1 and 2; never the edited tile 0");
+    assert_eq!(uses.palette_tiles, 1, "tile 1 is on OBP0; tile 2 on OBP3");
     assert!(uses.is_shared());
 
     // Counted from another tile, the edited tile 0 is one of the uses.
@@ -434,7 +437,7 @@ fn recolor_changes_the_shared_master_as_one_undoable_edit() {
     let mut doc = shared_master_document();
     let before = doc.clone();
     let old = doc.video().palette.get(1);
-    assert!(doc.recolor(color(3, 4), RED));
+    assert!(doc.recolor(color(3, 4), RED, ColorScope::All));
     assert_eq!(doc.video().palette.get(1), RED);
     assert_eq!(doc.obj().palettes(), before.obj().palettes());
     assert!(doc.is_asset_modified(PALETTE));
@@ -457,9 +460,152 @@ fn recoloring_to_the_same_color_or_transparency_records_nothing() {
         .resolve(target.bank, target.local)
         .unwrap();
     let current = doc.video().palette.get(master);
-    assert!(!doc.recolor(target, current));
-    assert!(!doc.recolor(color(2, 0), RED));
+    for scope in [ColorScope::All, ColorScope::Palette] {
+        assert!(!doc.recolor(target, current, scope), "{scope:?}");
+        assert!(!doc.recolor(color(2, 0), RED, scope), "{scope:?}");
+    }
     assert!(!doc.is_modified() && !doc.can_undo());
+}
+
+/// The color tile `tile` shows at `(x, y)` through its stored bank.
+fn shown(doc: &SpriteDocument, tile: usize, x: usize, y: usize) -> Option<Rgb> {
+    let bank = doc.obj().attributes().bank(tile);
+    let master = doc.obj().palettes().resolve(bank, doc.pixel(tile, x, y)?)?;
+    Some(doc.video().palette.get(master))
+}
+
+/// Every master some object palette entry maps.
+fn mapped(doc: &SpriteDocument) -> Vec<u8> {
+    let palettes = doc.obj().palettes();
+    let mut masters: Vec<u8> = (0..8)
+        .flat_map(|b| (1..16).filter_map(move |l| palettes.resolve(bank(b), l)))
+        .collect();
+    masters.sort_unstable();
+    masters.dedup();
+    masters
+}
+
+#[test]
+fn only_this_palette_keeps_other_palettes_and_their_tiles() {
+    let mut doc = shared_master_document();
+    let before = doc.clone();
+    let was_mapped = mapped(&doc);
+    assert!(doc.recolor(color(0, 1), ODD, ColorScope::Palette));
+
+    let palettes = doc.obj().palettes();
+    let spare = palettes.resolve(bank(0), 1).unwrap();
+    assert_eq!(
+        palettes.resolve(bank(0), 2),
+        Some(spare),
+        "the whole palette moves together"
+    );
+    assert!(
+        spare >= CODE_COLORS && !was_mapped.contains(&spare),
+        "{spare}"
+    );
+    assert_eq!(doc.video().palette.get(spare), ODD);
+    assert_eq!(palettes.resolve(bank(3), 4), Some(1));
+    assert_eq!(
+        doc.video().palette.get(1),
+        before.video().palette.get(1),
+        "the shared master, and code drawing it, keep the old color"
+    );
+
+    assert_eq!(shown(&doc, 0, 0, 0), Some(ODD));
+    assert_eq!(shown(&doc, 1, 3, 3), Some(ODD), "OBP0 L2 on tile 1");
+    for (tile, x, y) in [(2, 7, 7), (3, 0, 0), (4, 0, 0)] {
+        assert_eq!(
+            shown(&doc, tile, x, y),
+            shown(&before, tile, x, y),
+            "tile {tile} on another palette"
+        );
+    }
+    assert_eq!(doc.tiles(), before.tiles(), "no pixel is remapped");
+    assert_eq!(doc.obj().attributes(), before.obj().attributes());
+    assert!(doc.is_asset_modified(PALETTE));
+}
+
+#[test]
+fn only_this_palette_reuses_a_master_with_the_exact_color() {
+    let mut doc = shared_master_document();
+    doc.set_master_color(0, ODD);
+    doc.set_master_color(200, ODD);
+    let palette = doc.video().palette.clone();
+    assert!(doc.recolor(color(3, 4), ODD, ColorScope::Palette));
+    assert_eq!(
+        doc.obj().palettes().resolve(bank(3), 4),
+        Some(200),
+        "never the background master 0"
+    );
+    assert_eq!(doc.video().palette, palette, "no master color changes");
+    assert_eq!(doc.obj().palettes().resolve(bank(0), 1), Some(1));
+}
+
+#[test]
+fn the_spare_master_skips_every_mapped_and_code_color() {
+    // The densest mapping there can be: all 120 entries on distinct
+    // masters, from 136 to 255.
+    let mut bytes = [0; 128];
+    let mut next = 136u16;
+    for (offset, byte) in bytes.iter_mut().enumerate() {
+        if offset % 16 != 0 {
+            *byte = next as u8;
+            next += 1;
+        }
+    }
+    let banks = ObjPalettes::from_bytes(&bytes).unwrap();
+    let palette = Palette::default();
+    assert_eq!(
+        spare_master(&palette, &banks, 136, ODD),
+        Spare::Unmapped(135)
+    );
+    let mut palette = palette;
+    palette.set(140, ODD);
+    assert_eq!(
+        spare_master(&palette, &banks, 136, ODD),
+        Spare::Reused(140),
+        "a master that already has the color changes nothing"
+    );
+}
+
+#[test]
+fn a_scoped_recolor_undoes_and_redoes_as_one_step() {
+    let mut doc = shared_master_document();
+    let before = doc.clone();
+    assert!(doc.recolor(color(0, 1), ODD, ColorScope::Palette));
+    let applied = doc.clone();
+    assert_eq!(modified(&doc), [TILES, ATTRIBUTES, OBP, PALETTE]);
+
+    assert!(doc.undo());
+    assert_eq!(
+        doc.video(),
+        before.video(),
+        "one undo restores both palettes"
+    );
+    assert_eq!(
+        modified(&doc),
+        [TILES, ATTRIBUTES, OBP],
+        "only the setup's changes are left"
+    );
+    assert!(doc.redo());
+    assert_eq!(doc.video(), applied.video());
+    assert!(!doc.can_redo());
+}
+
+#[test]
+fn a_scoped_recolor_saves_every_affected_file() {
+    let disk = Disk::full("doc-save-scoped");
+    let mut doc = disk.document();
+    doc.set_obj_color(bank(5), 1, 1);
+    doc.save(&disk.cartridge).unwrap();
+    assert!(doc.recolor(color(0, 1), ODD, ColorScope::Palette));
+    assert_eq!(
+        doc.save(&disk.cartridge),
+        written(&[(PALETTE, PALETTE_RGB888_BYTES), (OBP, 128)])
+    );
+    let reloaded = disk.document();
+    assert_eq!(reloaded.video(), doc.video());
+    assert_eq!(reloaded.obj().palettes().resolve(bank(5), 1), Some(1));
 }
 
 #[test]

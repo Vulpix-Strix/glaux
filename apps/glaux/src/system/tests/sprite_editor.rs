@@ -1,4 +1,6 @@
 use super::*;
+use glaux_machine::obj_palette::ObjBank;
+use glaux_machine::palette::Rgb;
 use pretty_assertions::assert_eq;
 
 fn open_sprites(system: System) -> System {
@@ -898,8 +900,13 @@ fn edit_color_previews_through_the_frame_palette_only() {
 fn an_applied_color_saves_undoes_and_keeps_the_ui_colors() {
     let fixture = Fixture::new("sys-color-apply");
     let rom = fake_rom();
-    let system = type_hex(editing_color(with_video_assets(&fixture)), "e6482e")
-        .update(&[InputEvent::Enter, InputEvent::Enter]);
+    // Every bank maps local 3 to master 103: choose to change them all.
+    let system =
+        type_hex(editing_color(with_video_assets(&fixture)), "e6482e").update(&[InputEvent::Enter]);
+    let [all, _] = workspace::tests_support::color_editor_scope_rows(&system.workspace);
+    let system = system
+        .update(&click(centre(all)))
+        .update(&[InputEvent::Enter]);
     assert!(!system.workspace.has_modal());
     assert_eq!(document(&system).video().palette.get(103), RED);
     assert_eq!(system.frame_palette(&rom).get(SLOT_LOCAL_3), RED);
@@ -967,4 +974,51 @@ fn editing_a_low_master_never_touches_the_ui_entry_of_that_index() {
     let palette = system.frame_palette(&rom);
     assert_eq!(palette.entries()[..32], rom.palette().entries()[..32]);
     assert_eq!(palette.get(SLOT_LOCAL_3), RED);
+}
+
+#[test]
+fn only_this_palette_keeps_the_other_palettes_and_saves_both_files() {
+    let fixture = Fixture::new("sys-color-only-palette");
+    let rom = fake_rom();
+    // Every bank maps local 3 to master 103; tile 0 is on OBP0.
+    let system =
+        type_hex(editing_color(with_video_assets(&fixture)), "010203").update(&[InputEvent::Enter]);
+    let fb = render(&system);
+    let (preview, _, _) = workspace::tests_support::color_editor_parts(&system.workspace);
+    assert_eq!(fb.pixel(preview.x + 3, preview.y + 3), Some(NEW_SLOT));
+    let system = system.update(&[InputEvent::Enter]);
+    assert!(!system.workspace.has_modal());
+
+    let doc = document(&system);
+    let palettes = doc.obj().palettes();
+    let moved = palettes.resolve(ObjBank::ZERO, 3).unwrap();
+    assert_ne!(moved, 103);
+    assert_eq!(doc.video().palette.get(moved), Rgb::from_hex(0x010203));
+    for bank in 1..8 {
+        assert_eq!(palettes.resolve(ObjBank::new(bank).unwrap(), 3), Some(103));
+    }
+    assert_eq!(doc.video().palette.get(103), distinct_palette().get(103));
+    assert_eq!(
+        system.frame_palette(&rom).get(SLOT_LOCAL_3),
+        Rgb::from_hex(0x010203),
+        "the workspace shows tile 0's palette with the new color"
+    );
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(
+        workspace::tests_support::notice(&system.workspace),
+        Some("Saved palette.bin, obp.bin")
+    );
+    let obp = std::fs::read(fixture.root().join("pong/obp.bin")).unwrap();
+    assert_eq!(obp[3], moved);
+    assert_eq!(obp[16 + 3], 103);
+
+    let system = system.update(&[InputEvent::Undo]);
+    let doc = document(&system);
+    assert_eq!(doc.obj().palettes().resolve(ObjBank::ZERO, 3), Some(103));
+    assert_eq!(
+        system.frame_palette(&rom).get(SLOT_LOCAL_3),
+        distinct_palette().get(103),
+        "one undo puts both files' changes back"
+    );
 }

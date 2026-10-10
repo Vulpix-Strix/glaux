@@ -4,8 +4,8 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 
-use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjBank};
-use glaux_machine::palette::Rgb;
+use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjBank, ObjPalettes};
+use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
 use glaux_machine::sprite::{
     OBJ_TILE_BYTES, OBJ_TILE_CAPACITY, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjTileBank, ObjVram,
 };
@@ -37,6 +37,17 @@ const SAVE_ORDER: [VideoAsset; 4] = [
 ];
 
 const ASSETS: usize = VideoAsset::ALL.len();
+
+/// Master indices below this are the default palette's first colors, the
+/// likeliest to be drawn directly by game code. Master 0 is among them:
+/// every frame starts cleared to it.
+pub const CODE_COLORS: u8 = 32;
+
+// At most this many masters are mapped by object palette entries, fewer
+// than the masters from CODE_COLORS on, so `spare_master` always finds one
+// no entry maps.
+const _: () =
+    assert!(OBJ_PALETTE_BANKS * (OBJ_PALETTE_COLORS - 1) < PALETTE_LEN - CODE_COLORS as usize);
 
 /// What the asset files held when the document read or last saved them:
 /// the state saving compares the disk against.
@@ -195,6 +206,9 @@ pub struct ColorUses {
     /// Tiles, besides the one being edited, with at least one pixel that
     /// resolves to `master` through the tile's stored default bank.
     pub tiles: usize,
+    /// Those of [`tiles`](Self::tiles) whose stored default bank is the
+    /// target's.
+    pub palette_tiles: usize,
 }
 
 impl ColorUses {
@@ -218,6 +232,62 @@ impl ColorUses {
     }
 }
 
+/// How far changing a color through [`SpriteDocument::recolor`] reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorScope {
+    /// The master color itself changes: every palette entry that resolves
+    /// to it, and every direct use of its number by game code.
+    All,
+    /// Only the target's bank changes: each of its entries resolving to the
+    /// target's master moves to a [`spare_master`] holding the new color.
+    /// Other banks, and game code using the old master's number, keep the
+    /// old color.
+    Palette,
+}
+
+/// The master [`ColorScope::Palette`] moves a bank's entries to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Spare {
+    /// This master already holds the new color, so no master color
+    /// changes.
+    Reused(u8),
+    /// No object palette entry maps this master, so its color can change
+    /// without changing any palette. Game code may still draw it by its
+    /// number, and would then show the new color.
+    Unmapped(u8),
+}
+
+impl Spare {
+    pub fn master(self) -> u8 {
+        match self {
+            Self::Reused(master) | Self::Unmapped(master) => master,
+        }
+    }
+}
+
+/// Where [`ColorScope::Palette`] puts `color` for entries now resolving to
+/// `master`: the lowest other master already holding `color`, never the
+/// background master 0, or else the highest master from [`CODE_COLORS`] on
+/// that no entry of `banks` maps.
+pub fn spare_master(palette: &Palette, banks: &ObjPalettes, master: u8, color: Rgb) -> Spare {
+    if let Some(reused) = (1..=u8::MAX).find(|&i| i != master && palette.get(i) == color) {
+        return Spare::Reused(reused);
+    }
+    let mut mapped = [false; PALETTE_LEN];
+    for bank in (0..OBJ_PALETTE_BANKS as u8).filter_map(ObjBank::new) {
+        for local in 1..OBJ_PALETTE_COLORS as u8 {
+            if let Some(index) = banks.resolve(bank, local) {
+                mapped[usize::from(index)] = true;
+            }
+        }
+    }
+    let unmapped = (CODE_COLORS..=u8::MAX)
+        .rev()
+        .find(|&i| !mapped[usize::from(i)])
+        .expect("fewer masters are mapped than there are from CODE_COLORS on");
+    Spare::Unmapped(unmapped)
+}
+
 /// What one change wrote to: a single value of one asset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Target {
@@ -239,10 +309,6 @@ impl Target {
 }
 
 /// One value an edit changed, with what it held before and after.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no editor control changes palettes yet")
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Change {
     /// A tile-local palette index.
@@ -598,10 +664,6 @@ impl SpriteDocument {
     /// locals above 15 change nothing.
     ///
     /// Outside an open edit, the write is an edit of its own.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no editor control changes palettes yet")
-    )]
     pub fn set_obj_color(&mut self, bank: ObjBank, local: u8, master: u8) -> bool {
         let Some(previous) = self.write_obj_color(bank, local, master) else {
             return false;
@@ -653,36 +715,66 @@ impl SpriteDocument {
             }
         }
         let attributes = self.obj().attributes();
-        let tiles = (0..OBJ_TILE_CAPACITY)
-            .filter(|&tile| tile != edited)
-            .filter(|&tile| {
-                let locals = &shows[usize::from(attributes.bank(tile).get())];
-                locals.contains(&true)
-                    && (0..OBJ_TILE_HEIGHT).any(|y| {
-                        (0..OBJ_TILE_WIDTH).any(|x| {
-                            self.pixel(tile, x, y)
-                                .is_some_and(|local| locals[usize::from(local)])
-                        })
+        let (mut tiles, mut palette_tiles) = (0, 0);
+        for tile in (0..OBJ_TILE_CAPACITY).filter(|&tile| tile != edited) {
+            let bank = attributes.bank(tile);
+            let locals = &shows[usize::from(bank.get())];
+            let shown = locals.contains(&true)
+                && (0..OBJ_TILE_HEIGHT).any(|y| {
+                    (0..OBJ_TILE_WIDTH).any(|x| {
+                        self.pixel(tile, x, y)
+                            .is_some_and(|local| locals[usize::from(local)])
                     })
-            })
-            .count();
+                });
+            if shown {
+                tiles += 1;
+                palette_tiles += usize::from(bank == target.bank);
+            }
+        }
         Some(ColorUses {
             master,
             entries,
             tiles,
+            palette_tiles,
         })
     }
 
-    /// Sets the master color `target` resolves to, so every entry sharing
-    /// that master changes with it. Returns whether anything changed; the
-    /// transparent local 0 and locals above 15 change nothing.
+    /// Makes the color `target` shows `color`, as far as `scope` reaches.
+    /// Returns whether anything changed; the transparent local 0, locals
+    /// above 15 and the color already shown change nothing.
     ///
-    /// Outside an open edit, the change is an edit of its own.
-    pub fn recolor(&mut self, target: ColorTarget, color: Rgb) -> bool {
+    /// [`ColorScope::Palette`] may change both the object palettes and the
+    /// master palette. Outside an open edit, the change is an edit of its
+    /// own either way.
+    pub fn recolor(&mut self, target: ColorTarget, color: Rgb, scope: ColorScope) -> bool {
         let Some(master) = self.obj().palettes().resolve(target.bank, target.local) else {
             return false;
         };
-        self.set_master_color(master, color)
+        if self.video.palette.get(master) == color {
+            return false;
+        }
+        match scope {
+            ColorScope::All => self.set_master_color(master, color),
+            ColorScope::Palette => {
+                let spare = spare_master(&self.video.palette, self.obj().palettes(), master, color);
+                let standalone = self.history.open.is_none();
+                if standalone {
+                    self.begin_edit();
+                }
+                for local in 1..OBJ_PALETTE_COLORS as u8 {
+                    if self.obj().palettes().resolve(target.bank, local) == Some(master) {
+                        self.set_obj_color(target.bank, local, spare.master());
+                    }
+                }
+                if let Spare::Unmapped(index) = spare {
+                    self.set_master_color(index, color);
+                }
+                if standalone {
+                    self.end_edit();
+                }
+                true
+            }
+        }
     }
 
     /// Replaces the pixels of `tile` connected to `(x, y)` through edges,

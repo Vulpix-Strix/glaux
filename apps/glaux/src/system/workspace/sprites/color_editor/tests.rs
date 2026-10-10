@@ -1,4 +1,5 @@
 use super::*;
+use crate::system::sprite_document::ColorScope;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::obj_palette::ObjBank;
 use pretty_assertions::assert_eq;
@@ -36,12 +37,22 @@ fn uses(master: u8, entries: &[(u8, u8)], tiles: usize) -> ColorUses {
         master,
         entries: entries.iter().map(|&(b, l)| target(b, l)).collect(),
         tiles,
+        palette_tiles: 0,
     }
 }
 
 /// An editor on color 5 of palette 2, whose master no other color shares.
 fn editor() -> ColorEditor {
     ColorEditor::new(7, target(2, 5), uses(155, &[], 0), OLD)
+}
+
+/// An editor on color 5 of palette 2, whose master palette 4 also shows.
+fn shared_editor() -> ColorEditor {
+    ColorEditor::new(7, target(2, 5), uses(27, &[(2, 9), (4, 1)], 3), OLD)
+}
+
+fn apply(color: Rgb, scope: ColorScope) -> ColorOutcome {
+    ColorOutcome::Apply { color, scope }
 }
 
 fn point(x: i32, y: i32) -> Point {
@@ -237,7 +248,7 @@ fn enter_applies_the_exact_color_unless_cancel_is_focused() {
     editor.handle_input(InputEvent::Enter, &layout);
     assert_eq!(
         editor.handle_input(InputEvent::Enter, &layout),
-        Some(ColorOutcome::Apply(Rgb::from_hex(0x123456)))
+        Some(apply(Rgb::from_hex(0x123456), ColorScope::All))
     );
 
     let mut editor = ColorEditor::new(7, target(2, 5), uses(155, &[], 0), OLD);
@@ -254,14 +265,19 @@ fn enter_applies_the_exact_color_unless_cancel_is_focused() {
 #[test]
 fn tab_visits_every_control_and_wraps() {
     let layout = layout(false);
-    let mut editor = editor();
-    let mut seen = vec![editor.focus()];
-    for _ in 0..8 {
-        editor.handle_input(InputEvent::Tab, &layout);
-        seen.push(editor.focus());
+    for (mut editor, scoped) in [(editor(), false), (shared_editor(), true)] {
+        let mut seen = vec![editor.focus()];
+        for _ in 0..Control::ORDER.len() {
+            editor.handle_input(InputEvent::Tab, &layout);
+            seen.push(editor.focus());
+        }
+        let order: Vec<Control> = Control::ORDER
+            .into_iter()
+            .filter(|&c| scoped || c != Control::Scope)
+            .collect();
+        assert_eq!(seen[..order.len()], order, "scoped: {scoped}");
+        assert_eq!(seen[order.len()], Control::SatVal, "scoped: {scoped}");
     }
-    assert_eq!(seen[..8], Control::ORDER);
-    assert_eq!(seen[8], Control::SatVal);
 }
 
 #[test]
@@ -283,7 +299,7 @@ fn a_button_chooses_only_when_pressed_and_released_on_it() {
     editor.handle_input(press(centre(layout.apply)), &layout);
     assert_eq!(
         editor.handle_input(release(centre(layout.apply)), &layout),
-        Some(ColorOutcome::Apply(OLD))
+        Some(apply(OLD, ColorScope::All))
     );
 }
 
@@ -362,7 +378,8 @@ fn an_unshared_color_warns_only_about_what_the_document_cannot_see() {
     assert_eq!(
         impact_lines(target(2, 5), &uses(155, &[], 0), true),
         [
-            String::new(),
+            // Stored banks show no other tile, but code may draw more.
+            "Changes it in every tile that uses it.".to_owned(),
             "Master $9B (155) is not shared.".to_owned(),
             String::new()
         ]
@@ -441,9 +458,191 @@ fn the_layout_fits_the_area_without_overlapping_parts() {
                 assert!(!a.overlaps(*b), "{a:?} overlaps {b:?}");
             }
         }
+        for row in layout.scope_rows() {
+            assert!(window.inset(1).contains_xy(row.x, row.y), "{row:?}");
+            assert!(layout.fields.iter().all(|field| !field.overlaps(row)));
+            assert!(!row.overlaps(layout.cancel) && !row.overlaps(layout.apply));
+        }
         let last_impact = layout.impact_y + IMPACT_LINES as i32 * METRICS.cell_h;
         assert!(layout.fields[0].bottom() <= layout.impact_y);
         assert!(last_impact <= layout.apply.y);
         assert!(layout.columns() >= 38, "the impact note needs its columns");
+    }
+}
+
+// Choosing how far the change reaches.
+
+#[test]
+fn a_scope_is_offered_only_when_another_palette_shows_the_color() {
+    assert_eq!(editor().scope(), None, "not shared");
+    let same_bank = ColorEditor::new(7, target(2, 5), uses(40, &[(2, 9)], 1), OLD);
+    assert_eq!(same_bank.scope(), None, "only this palette shows it");
+    assert_eq!(same_bank.apply_label(), "APPLY TO ALL");
+    assert_eq!(
+        impact_lines(target(2, 5), &uses(40, &[(2, 9)], 1), false)[..2],
+        [
+            "! Shared with 1 other color of".to_owned(),
+            "  this palette; 1 other tile.".to_owned(),
+        ],
+        "an ordinary APPLY still tells what else changes"
+    );
+    assert_eq!(
+        shared_editor().scope(),
+        Some(ColorScope::Palette),
+        "the narrower scope comes first"
+    );
+}
+
+#[test]
+fn the_scope_rows_choose_what_apply_changes() {
+    let layout = layout(false);
+    let mut editor = shared_editor();
+    assert_eq!(editor.apply_label(), "APPLY");
+    let [all, palette] = layout.scope_rows();
+
+    editor.handle_input(press(centre(all)), &layout);
+    editor.handle_input(release(centre(all)), &layout);
+    assert_eq!(editor.scope(), Some(ColorScope::All));
+    assert_eq!(editor.focus(), Control::Scope);
+    assert_eq!(editor.apply_label(), "APPLY TO ALL");
+    assert_eq!(
+        editor.handle_input(InputEvent::Enter, &layout),
+        Some(apply(OLD, ColorScope::All))
+    );
+
+    editor.handle_input(press(centre(palette)), &layout);
+    assert_eq!(
+        editor.handle_input(InputEvent::Enter, &layout),
+        Some(apply(OLD, ColorScope::Palette))
+    );
+
+    // Without a choice, the rows are only text.
+    let mut unshared = self::editor();
+    unshared.handle_input(press(centre(all)), &layout);
+    assert_eq!(
+        (unshared.scope(), unshared.focus()),
+        (None, Control::SatVal)
+    );
+}
+
+#[test]
+fn arrows_switch_the_focused_scope() {
+    let layout = layout(false);
+    let mut editor = shared_editor();
+    while editor.focus() != Control::Scope {
+        editor.handle_input(InputEvent::Tab, &layout);
+    }
+    for (event, scope) in [
+        (InputEvent::Up, ColorScope::All),
+        (InputEvent::Down, ColorScope::Palette),
+        (InputEvent::Left { select: false }, ColorScope::All),
+        (InputEvent::Right { select: false }, ColorScope::Palette),
+    ] {
+        editor.handle_input(event, &layout);
+        assert_eq!(editor.scope(), Some(scope), "{event:?}");
+    }
+    assert_eq!(editor.color(), OLD, "the color is left alone");
+}
+
+#[test]
+fn cancelling_after_choosing_a_scope_and_color_still_cancels() {
+    let layout = layout(false);
+    let mut editor = shared_editor();
+    editor.handle_input(press(centre(layout.scope_rows()[0])), &layout);
+    focus_field(&mut editor, Field::Hex, &layout);
+    type_text(&mut editor, "123456", &layout);
+    editor.handle_input(InputEvent::Enter, &layout);
+    assert_eq!(
+        editor.handle_input(InputEvent::Break, &layout),
+        Some(ColorOutcome::Cancel)
+    );
+
+    let mut editor = shared_editor();
+    editor.handle_input(press(centre(layout.cancel)), &layout);
+    assert_eq!(
+        editor.handle_input(release(centre(layout.cancel)), &layout),
+        Some(ColorOutcome::Cancel)
+    );
+}
+
+#[test]
+fn scope_lines_tell_each_reach_in_plain_words() {
+    let shared = ColorUses {
+        palette_tiles: 3,
+        ..uses(27, &[(1, 3), (2, 7), (4, 7)], 14)
+    };
+    let lines = |scope, spare| scope_lines(target(2, 5), &shared, scope, spare, false);
+    let rows = [
+        "All 3 palettes, 14 other tiles".to_owned(),
+        "Only Palette 2, 3 other tiles".to_owned(),
+    ];
+    assert_eq!(
+        lines(ColorScope::All, Spare::Unmapped(247)),
+        [
+            rows[0].clone(),
+            rows[1].clone(),
+            "Game code may use it too.".to_owned()
+        ]
+    );
+    assert_eq!(
+        lines(ColorScope::Palette, Spare::Reused(42))[2],
+        "Other palettes keep the old color."
+    );
+    // A master no palette maps may still be drawn by number from code.
+    let unmapped = lines(ColorScope::Palette, Spare::Unmapped(247));
+    assert_eq!(unmapped[2], "Code using that color number changes.");
+    assert!(
+        unmapped
+            .iter()
+            .all(|line| !line.contains("247") && !line.contains("aster") && !line.contains("OBP")),
+        "normal mode needs no palette internals: {unmapped:?}"
+    );
+}
+
+#[test]
+fn advanced_scope_lines_name_the_masters() {
+    let shared = uses(27, &[(1, 3), (4, 7)], 14);
+    let lines = |scope, spare| scope_lines(target(2, 5), &shared, scope, spare, true);
+    assert_eq!(
+        lines(ColorScope::Palette, Spare::Unmapped(247)),
+        [
+            "All: master $1B, 2 more entries".to_owned(),
+            "OBP2 only: master $F7 (247)".to_owned(),
+            "Code drawing 247 changes too.".to_owned(),
+        ]
+    );
+    assert_eq!(
+        lines(ColorScope::Palette, Spare::Reused(42))[2],
+        "$2A already has this color."
+    );
+    assert_eq!(
+        lines(ColorScope::All, Spare::Reused(42))[2],
+        "14 other tiles; code using 27 too."
+    );
+}
+
+#[test]
+fn every_scope_line_fits_the_window() {
+    let layout = layout(true);
+    // The longest counts the document can report.
+    let busy = ColorUses {
+        palette_tiles: 1023,
+        ..uses(
+            255,
+            &[(1, 15), (3, 15), (4, 15), (5, 15), (6, 15), (7, 15)],
+            1023,
+        )
+    };
+    for advanced in [false, true] {
+        for scope in [ColorScope::All, ColorScope::Palette] {
+            for spare in [Spare::Reused(255), Spare::Unmapped(255)] {
+                let lines = scope_lines(target(0, 15), &busy, scope, spare, advanced);
+                for (n, line) in lines.iter().enumerate() {
+                    // The rows give two columns to the radio marker.
+                    let room = layout.columns() - if n < 2 { 2 } else { 0 };
+                    assert!(line.chars().count() <= room, "{line:?}");
+                }
+            }
+        }
     }
 }

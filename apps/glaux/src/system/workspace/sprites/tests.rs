@@ -480,6 +480,7 @@ fn save_is_asked_for_only_with_unsaved_edits() {
 
 // Choosing a tile's palette.
 
+use crate::system::sprite_document::ColorScope;
 use glaux_machine::obj_palette::ObjBank;
 
 fn centre_of(rect: crate::system::workspace::Rect) -> Point {
@@ -771,32 +772,89 @@ fn cancelling_edit_color_leaves_the_document_exactly_as_it_was() {
 }
 
 #[test]
-fn applying_edit_color_is_one_undoable_edit() {
+fn cancelling_after_choosing_a_scope_changes_nothing() {
     let mut editor = editor();
     let mut doc = document();
-    let red = Rgb::from_hex(0xe6482e);
-    let master = doc.obj().palettes().resolve(ObjBank::ZERO, 5).unwrap();
-    let old = doc.video().palette.get(master);
-    tap_swatch_twice(&mut editor, &mut doc, 5, 0);
+    share_local_5(&mut doc);
+    let before = doc.clone();
+    type_color_5(&mut editor, &mut doc, "010203");
     let layout = editor.color_editor_layout();
-    tap(&mut editor, &mut doc, centre_of(layout.fields[0]));
-    for c in "E6482E".chars() {
-        command(&mut editor, &mut doc, InputEvent::Text(c));
+    for row in layout.scope_rows() {
+        tap(&mut editor, &mut doc, centre_of(row));
+        assert_eq!(doc, before);
     }
-    assert_eq!(doc.video().palette.get(master), old, "nothing applied yet");
+    tap(&mut editor, &mut doc, centre_of(layout.cancel));
+    assert!(!editor.has_dialog());
+    assert_eq!(doc, before, "no palette, master or history change");
+}
+
+/// Makes OBP1 local 5 show OBP0 local 5's master, so that color is shared
+/// across palettes. Returns that master.
+fn share_local_5(doc: &mut SpriteDocument) -> u8 {
+    let master = doc.obj().palettes().resolve(ObjBank::ZERO, 5).unwrap();
+    doc.set_obj_color(ObjBank::new(1).unwrap(), 5, master);
+    doc.end_edit();
+    master
+}
+
+/// Opens EDIT COLOR on swatch 5 and types `hex`, confirmed.
+fn type_color_5(editor: &mut SpriteEditor, doc: &mut SpriteDocument, hex: &str) {
+    tap_swatch_twice(editor, doc, 5, 0);
+    let layout = editor.color_editor_layout();
+    tap(editor, doc, centre_of(layout.fields[0]));
+    for c in hex.chars() {
+        command(editor, doc, InputEvent::Text(c));
+    }
+    command(editor, doc, InputEvent::Enter);
+}
+
+#[test]
+fn applying_only_this_palette_is_one_undoable_edit() {
+    let mut editor = editor();
+    let mut doc = document();
+    let master = share_local_5(&mut doc);
+    let before = doc.clone();
+    let old = doc.video().palette.get(master);
+    // No default master holds this color, so a spare one takes it.
+    let new = Rgb::from_hex(0x010203);
+    type_color_5(&mut editor, &mut doc, "010203");
+    assert_eq!(doc, before, "nothing applied yet");
+    assert_eq!(
+        editor.color_editor().unwrap().scope(),
+        Some(ColorScope::Palette)
+    );
     command(&mut editor, &mut doc, InputEvent::Enter);
+    assert!(!editor.has_dialog());
+
+    let palettes = doc.obj().palettes();
+    let moved = palettes.resolve(ObjBank::ZERO, 5).unwrap();
+    assert_eq!(doc.video().palette.get(moved), new);
+    assert_eq!(palettes.resolve(ObjBank::new(1).unwrap(), 5), Some(master));
+    assert_eq!(doc.video().palette.get(master), old, "OBP1 keeps its color");
+
+    assert_eq!(command(&mut editor, &mut doc, InputEvent::Undo), None);
+    assert_eq!(doc.video(), before.video(), "one undo restores everything");
+    assert_eq!(command(&mut editor, &mut doc, InputEvent::Redo), None);
+    assert_eq!(doc.obj().palettes().resolve(ObjBank::ZERO, 5), Some(moved));
+}
+
+#[test]
+fn applying_to_all_changes_the_shared_master_as_one_edit() {
+    let mut editor = editor();
+    let mut doc = document();
+    let master = share_local_5(&mut doc);
+    let before = doc.clone();
+    let red = Rgb::from_hex(0xe6482e);
+    type_color_5(&mut editor, &mut doc, "E6482E");
+    let [all, _] = editor.color_editor_layout().scope_rows();
+    tap(&mut editor, &mut doc, centre_of(all));
     command(&mut editor, &mut doc, InputEvent::Enter);
     assert!(!editor.has_dialog());
     assert_eq!(doc.video().palette.get(master), red);
-    assert!(doc.is_modified());
+    assert_eq!(doc.obj().palettes(), before.obj().palettes());
 
     assert_eq!(command(&mut editor, &mut doc, InputEvent::Undo), None);
-    assert_eq!(doc.video().palette.get(master), old);
-    assert!(!doc.is_modified());
-    assert_eq!(
-        command(&mut editor, &mut doc, InputEvent::Undo),
-        Some(SpriteRequest::Notice("Nothing to undo"))
-    );
+    assert_eq!(doc.video(), before.video());
 }
 
 #[test]

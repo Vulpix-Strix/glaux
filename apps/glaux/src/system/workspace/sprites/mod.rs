@@ -24,7 +24,7 @@ use layout::{Hit, SpriteLayout, ToolSlot};
 use palette_picker::{PalettePicker, PickerLayout, PickerOutcome};
 use sheet::{SheetView, grid_position};
 
-use crate::system::sprite_document::{ColorTarget, SpriteDocument};
+use crate::system::sprite_document::{ColorScope, ColorTarget, SpriteDocument};
 
 /// Most ticks between the presses of a double click.
 const DOUBLE_CLICK_TICKS: u32 = TICK_RATE * 2 / 5;
@@ -63,7 +63,7 @@ enum EditorDialog {
 /// What closing a dialog asks of the document.
 enum DialogResult {
     Bank(usize, ObjBank),
-    Color(ColorTarget, Rgb),
+    Color(ColorTarget, Rgb, ColorScope),
     Nothing,
 }
 
@@ -367,7 +367,9 @@ impl SpriteEditor {
                     return;
                 };
                 Some(match outcome {
-                    ColorOutcome::Apply(color) => DialogResult::Color(editor.target(), color),
+                    ColorOutcome::Apply { color, scope } => {
+                        DialogResult::Color(editor.target(), color, scope)
+                    }
                     ColorOutcome::Cancel => DialogResult::Nothing,
                 })
             }
@@ -384,8 +386,8 @@ impl SpriteEditor {
             DialogResult::Bank(tile, bank) => {
                 document.set_tile_bank(tile, bank);
             }
-            DialogResult::Color(target, color) => {
-                document.recolor(target, color);
+            DialogResult::Color(target, color, scope) => {
+                document.recolor(target, color, scope);
             }
             DialogResult::Nothing => {}
         }

@@ -84,3 +84,9 @@ pub fn color_editor_color(workspace: &Workspace) -> Option<glaux_machine::palett
         .color_editor()
         .map(|editor| editor.color())
 }
+
+/// Where the open EDIT COLOR dialog draws its scope rows: all palettes,
+/// then only this palette.
+pub fn color_editor_scope_rows(workspace: &Workspace) -> [Rect; 2] {
+    workspace.sprites.color_editor_layout().scope_rows()
+}
