@@ -9,7 +9,8 @@ use glaux_audio::sfx::{Sfx, SfxAction, SfxStep};
 use glaux_audio::{Envelope, Tone, Waveform};
 use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
 use glaux_machine::ink_image::InkImage;
-use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
+use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjPalettes};
+use glaux_machine::palette::{DEBUG_MAGENTA, PALETTE_LEN, Palette, Rgb};
 use glaux_machine::system_rom::{Cursor, SystemIcon, SystemRom, SystemSounds, SystemUi};
 use png::{BitDepth, ColorType, Transformations};
 use semver::Version;
@@ -27,6 +28,7 @@ macro_rules! embed {
 const VERSION: &str = include_str!("../../../rom/version");
 const COPYRIGHT: &str = include_str!("../../../rom/copyright");
 const PALETTE_HEX: &str = include_str!("../../../rom/palette/system.hex");
+const OBP_TXT: &str = include_str!("../../../rom/palette/obp.txt");
 const FONT_BDF: &str = include_str!("../../../rom/font/Tamzen5x9r.bdf");
 
 /// The pointer, then the icons in `SystemIcon` order.
@@ -55,7 +57,7 @@ const CURSOR_INKS: [(u32, u8); 2] = [(0x2e222f, 1), (0xffffff, 2)];
 
 /// Decodes the embedded System ROM assets.
 pub fn load() -> anyhow::Result<SystemRom> {
-    let rom = build(VERSION, COPYRIGHT, PALETTE_HEX, FONT_BDF)?;
+    let rom = build(VERSION, COPYRIGHT, PALETTE_HEX, OBP_TXT, FONT_BDF)?;
     let metrics = rom.font().metrics();
     tracing::info!(rom_version = %rom.version(), "System ROM loaded");
     tracing::debug!(
@@ -70,15 +72,24 @@ pub fn load() -> anyhow::Result<SystemRom> {
 
 /// Builds a System ROM from the text of its assets. Errors name the asset
 /// that failed to decode.
-fn build(version: &str, copyright: &str, palette: &str, font: &str) -> anyhow::Result<SystemRom> {
+fn build(
+    version: &str,
+    copyright: &str,
+    palette: &str,
+    obj_palettes: &str,
+    font: &str,
+) -> anyhow::Result<SystemRom> {
     let version = Version::parse(version.trim())
         .with_context(|| format!("invalid rom/version: {:?}", version.trim()))?;
     let copyright = parse_copyright(copyright).context("invalid rom/copyright")?;
     let palette = parse_palette(palette).context("invalid rom/palette/system.hex")?;
+    let obj_palettes =
+        parse_obj_palettes(obj_palettes, &palette).context("invalid rom/palette/obp.txt")?;
     let font = parse_bdf(font, FontMetrics::SYSTEM).context("invalid rom/font/Tamzen5x9r.bdf")?;
     Ok(SystemRom::new(version, copyright, palette, font)
         .with_sounds(sounds()?)
-        .with_ui(ui()?))
+        .with_ui(ui()?)
+        .with_obj_palettes(obj_palettes))
 }
 
 /// The System ROM UI images.
@@ -331,6 +342,55 @@ fn parse_palette(text: &str) -> anyhow::Result<Palette> {
         "expected {PALETTE_LEN} colors, found {count}"
     );
     Ok(Palette::new(entries))
+}
+
+/// Parses the default object palette banks: one line per bank holding the
+/// master indices of locals 1–15, with `#` starting a comment. Local 0 is
+/// implicit and transparent.
+///
+/// Every index must name a color `palette` defines. [`DEBUG_MAGENTA`] marks
+/// entries the ROM palette leaves undefined, so a default bank pointing at one
+/// is a mistake in the ROM data. Cartridge palettes are not held to this.
+fn parse_obj_palettes(text: &str, palette: &Palette) -> anyhow::Result<ObjPalettes> {
+    let mut bytes = [0; OBJ_PALETTE_BANKS * OBJ_PALETTE_COLORS];
+    let mut bank = 0;
+
+    for (number, line) in text.lines().enumerate().map(|(i, l)| (i + 1, l)) {
+        let line = line.split_once('#').map_or(line, |(data, _)| data).trim();
+        if line.is_empty() {
+            continue;
+        }
+        ensure!(
+            bank < OBJ_PALETTE_BANKS,
+            "line {number}: more than {OBJ_PALETTE_BANKS} banks"
+        );
+        let entries = line.split_whitespace().collect::<Vec<_>>();
+        ensure!(
+            entries.len() == OBJ_PALETTE_COLORS - 1,
+            "line {number}: expected {} master indices, got {}",
+            OBJ_PALETTE_COLORS - 1,
+            entries.len()
+        );
+        let row = &mut bytes[bank * OBJ_PALETTE_COLORS..(bank + 1) * OBJ_PALETTE_COLORS];
+        for (slot, entry) in row[1..].iter_mut().zip(entries) {
+            let master: u8 = entry
+                .parse()
+                .with_context(|| format!("line {number}: {entry:?} is not a master index 0-255"))?;
+            ensure!(
+                palette.get(master) != DEBUG_MAGENTA,
+                "line {number}: master index {master} is undefined (debug magenta) in the \
+                 system palette"
+            );
+            *slot = master;
+        }
+        bank += 1;
+    }
+
+    ensure!(
+        bank == OBJ_PALETTE_BANKS,
+        "expected {OBJ_PALETTE_BANKS} banks, found {bank}"
+    );
+    Ok(ObjPalettes::from_bytes(&bytes)?)
 }
 
 /// Parses the subset of BDF used by fixed-cell fonts such as Tamzen.

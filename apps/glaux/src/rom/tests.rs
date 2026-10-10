@@ -1,4 +1,5 @@
 use super::*;
+use glaux_machine::obj_palette::ObjBank;
 use pretty_assertions::assert_eq;
 
 fn tiny_bdf(glyphs: &str) -> String {
@@ -29,7 +30,7 @@ fn invalid_copyright_names_the_asset() {
         ("(C) 2026 BÚHO", "'Ú'"),
         ("A\nB", "'\\n'"),
     ] {
-        let err = build("0.1.0", text, PALETTE_HEX, FONT_BDF).unwrap_err();
+        let err = build("0.1.0", text, PALETTE_HEX, OBP_TXT, FONT_BDF).unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains("rom/copyright"), "{message}");
         assert!(message.contains(detail), "{message}");
@@ -38,7 +39,7 @@ fn invalid_copyright_names_the_asset() {
 
 #[test]
 fn invalid_version_names_the_asset() {
-    let err = build("zero.one", COPYRIGHT, PALETTE_HEX, FONT_BDF).unwrap_err();
+    let err = build("zero.one", COPYRIGHT, PALETTE_HEX, OBP_TXT, FONT_BDF).unwrap_err();
     let message = format!("{err:#}");
     assert!(message.contains("rom/version"), "{message}");
     assert!(message.contains("zero.one"), "{message}");
@@ -142,6 +143,87 @@ fn embedded_rom_loads() {
     );
     assert_eq!(rom.sounds(), &sounds().unwrap());
     assert_eq!(rom.ui(), &ui().unwrap());
+}
+
+// Cartridges without obp.bin, including sheets from `glaux convert sprites`,
+// store master indices 1-15 directly as tile-local indices.
+#[test]
+fn embedded_obp0_is_the_identity_mapping() {
+    let rom = load().unwrap();
+    let obp0 = &rom.obj_palettes().as_bytes()[..OBJ_PALETTE_COLORS];
+    assert_eq!(
+        obp0,
+        &ObjPalettes::linear().as_bytes()[..OBJ_PALETTE_COLORS]
+    );
+}
+
+#[test]
+fn embedded_banks_are_transparent_at_zero_and_show_defined_colors() {
+    let rom = load().unwrap();
+    for bank in (0..OBJ_PALETTE_BANKS as u8).filter_map(ObjBank::new) {
+        assert_eq!(rom.obj_palettes().resolve(bank, 0), None, "{bank:?}");
+        let mut masters = Vec::new();
+        for local in 1..OBJ_PALETTE_COLORS as u8 {
+            let master = rom.obj_palettes().resolve(bank, local).unwrap();
+            assert_ne!(
+                rom.palette().get(master),
+                DEBUG_MAGENTA,
+                "{bank:?} local {local}"
+            );
+            masters.push(master);
+        }
+        masters.sort_unstable();
+        masters.dedup();
+        assert_eq!(
+            masters.len(),
+            OBJ_PALETTE_COLORS - 1,
+            "{bank:?} repeats a color"
+        );
+    }
+}
+
+#[test]
+fn obj_palettes_are_read_in_order_with_comments() {
+    let row = |first: u8| -> String {
+        (first..first + 15)
+            .map(|m| format!("{m} "))
+            .collect::<String>()
+    };
+    let mut text = String::from("# header\n\n");
+    for bank in 0..8 {
+        text += &format!("{}  # bank {bank}\n", row(bank));
+    }
+    let banks = parse_obj_palettes(&text, &Palette::provisional()).unwrap();
+    let bank = ObjBank::new(7).unwrap();
+    assert_eq!(banks.resolve(bank, 0), None);
+    assert_eq!(banks.resolve(bank, 1), Some(7));
+    assert_eq!(banks.resolve(bank, 15), Some(21));
+}
+
+#[test]
+fn invalid_obj_palettes_name_the_asset_and_the_problem() {
+    let good = "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15\n";
+    for (text, detail) in [
+        (good.repeat(7), "expected 8 banks, found 7".to_owned()),
+        (good.repeat(9), "line 9: more than 8 banks".to_owned()),
+        (
+            format!("{}1 2 3\n", good.repeat(7)),
+            "line 8: expected 15 master indices, got 3".to_owned(),
+        ),
+        (
+            format!("{}1 2 3 4 5 6 7 8 9 10 11 12 13 14 256\n", good.repeat(7)),
+            "\"256\" is not a master index".to_owned(),
+        ),
+        (
+            format!("{}1 2 3 4 5 6 7 8 9 10 11 12 13 14 32\n", good.repeat(7)),
+            "line 8: master index 32 is undefined".to_owned(),
+        ),
+    ] {
+        let err = build("0.1.0", COPYRIGHT, PALETTE_HEX, &text, FONT_BDF).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("rom/palette/obp.txt"), "{message}");
+        assert!(message.contains(&detail), "{message}");
+    }
 }
 
 /// Encodes RGBA rows as a PNG.

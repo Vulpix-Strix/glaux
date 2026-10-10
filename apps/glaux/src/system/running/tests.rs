@@ -126,6 +126,53 @@ fn missing_video_assets_fall_back_to_the_rom() {
     assert_eq!(running.video.obj.palettes(), rom.obj_palettes());
 }
 
+/// A cartridge without `obp.bin` keeps drawing OBP0 tiles with their local
+/// indices as master indices, and every other default bank shows defined
+/// colors.
+#[test]
+fn rom_default_banks_render_without_obp_bin() {
+    let fixture = Fixture::new("running-default-banks");
+    let dir = fixture.root().join("pong");
+    write_cartridge(&dir, "Pong");
+    fs::write(
+        dir.join("code/main.luau"),
+        "function draw() cls(255) for bank = 0, 7 do spr(0, bank * 8, 0, 1, 1, false, false, bank) end end",
+    )
+    .unwrap();
+    // Tile 0's top two rows hold local indices 0 to 15 in order.
+    let mut tile = [0; 32];
+    for (offset, byte) in tile[..8].iter_mut().enumerate() {
+        let left = offset as u8 * 2;
+        *byte = (left << 4) | (left + 1);
+    }
+    fs::write(dir.join("sprites.bin"), tile).unwrap();
+    let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+
+    let mut running =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+    running.tick(&[]).unwrap();
+    let rom = crate::rom::load().unwrap();
+    let mut framebuffer = Framebuffer::new();
+    running.render(&mut framebuffer, rom.font());
+
+    for bank in 0..8 {
+        for local in 1..16 {
+            let (x, y) = (bank * 8 + local % 8, local / 8);
+            let master = framebuffer.pixel(x, y).unwrap();
+            if bank == 0 {
+                assert_eq!(i32::from(master), local, "OBP0 local {local}");
+            }
+            assert_ne!(
+                rom.palette().get(master),
+                glaux_machine::palette::DEBUG_MAGENTA,
+                "OBP{bank} local {local}"
+            );
+        }
+        // Local 0 stays transparent.
+        assert_eq!(framebuffer.pixel(bank * 8, 0), Some(255), "OBP{bank}");
+    }
+}
+
 /// The imported example (`examples/palettes`) shows every opaque pixel
 /// of its PNG in the PNG's own color once its frame is resolved through
 /// the cartridge palette.

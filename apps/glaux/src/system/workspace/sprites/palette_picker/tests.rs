@@ -2,7 +2,7 @@ use super::*;
 use glaux_machine::font::FontMetrics;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::obj_palette::ObjPalettes;
-use glaux_machine::palette::Palette;
+use glaux_machine::palette::{DEBUG_MAGENTA, Palette};
 use glaux_machine::sprite::{OBJ_TILE_BYTES, ObjTileAttributes, ObjTileBank, ObjVram};
 use glaux_video::preview::ObjPreviewPalette;
 use pretty_assertions::assert_eq;
@@ -194,6 +194,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_palettes(ObjPalettes::linear())
+    }
+
+    fn with_palettes(palettes: ObjPalettes) -> Self {
         let mut tiles = vec![0; (TILE + 1) * OBJ_TILE_BYTES];
         let tile = &mut tiles[TILE * OBJ_TILE_BYTES..];
         tile.fill(0x77);
@@ -204,7 +208,7 @@ impl Fixture {
         let obj = ObjVram::new(
             ObjTileBank::from_bytes(&tiles).unwrap(),
             attributes,
-            ObjPalettes::linear(),
+            palettes,
         );
         let master = Palette::provisional();
         let preview = ObjPreviewPalette::new(
@@ -280,6 +284,26 @@ fn every_row_shows_its_bank_and_the_tile_through_it() {
         fixture.slot(16 + 1),
         "banks look different"
     );
+}
+
+/// The System ROM banks share master colors between banks; every swatch
+/// still shows its own bank's color and none shows debug magenta.
+#[test]
+fn rom_default_banks_show_their_colors_in_every_row() {
+    let rom = crate::rom::load().unwrap();
+    let fixture = Fixture::with_palettes(rom.obj_palettes().clone());
+    let fb = render(&PalettePicker::new(TILE, bank(2)), &fixture, None);
+    let layout = layout(false);
+    let shown = |x: i32, y: i32| fixture.preview.palette().get(fb.pixel(x, y).unwrap());
+    for (n, &row) in layout.rows.iter().enumerate() {
+        for local in 1..16 {
+            let master = rom.obj_palettes().resolve(bank(n as u8), local).unwrap();
+            let swatch = layout.swatch(row, local);
+            let color = shown(swatch.x + 3, swatch.y + 5);
+            assert_eq!(color, rom.palette().get(master), "bank {n} local {local}");
+            assert_ne!(color, DEBUG_MAGENTA, "bank {n} local {local}");
+        }
+    }
 }
 
 #[test]

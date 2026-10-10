@@ -1,4 +1,5 @@
 use super::*;
+use glaux_machine::obj_palette::OBJ_PALETTES_BYTES;
 use pretty_assertions::assert_eq;
 
 /// Distinct, easily recognized test colors.
@@ -167,12 +168,40 @@ fn kept_entries_come_from_the_cartridge_and_the_region_from_the_rom() {
 }
 
 #[test]
-fn unused_banks_keep_the_rom_defaults() {
-    let fitted = fit_sheet(&tiles_with(&[&range(0, 3)])).unwrap();
-    let linear = ObjPalettes::linear();
+fn unused_banks_keep_the_rom_defaults_and_used_banks_hold_only_sheet_colors() {
+    // Curated-style ROM banks: every bank points somewhere in 0..32, and
+    // nothing matches `linear()`.
+    let mut rom_bytes = [0; OBJ_PALETTES_BYTES];
+    for (offset, byte) in rom_bytes.iter_mut().enumerate() {
+        if offset % OBJ_PALETTE_COLORS != 0 {
+            *byte = (31 - offset % 32) as u8;
+        }
+    }
+    let rom_obj_palettes = ObjPalettes::from_bytes(&rom_bytes).unwrap();
+    let zughy_3 = rom_palette().get(3);
+    let sheet = sheet(1, 1, |_, _, x, _| match x {
+        0 => Some(zughy_3),
+        1 => Some(color(0)),
+        _ => None,
+    });
+    let fitted = fit(&FitInput {
+        sheet: &sheet,
+        groups: &[],
+        current: &rom_palette(),
+        rom_palette: &rom_palette(),
+        rom_obj_palettes: &rom_obj_palettes,
+    })
+    .unwrap();
+
+    let bytes = fitted.obj_palettes.as_bytes();
+    // The reused Zughy entry and the allocated entry, then nothing left over
+    // from the ROM bank the sheet took.
+    let mut bank0 = [0; OBJ_PALETTE_COLORS];
+    bank0[1..3].copy_from_slice(&[3, 32]);
+    assert_eq!(bytes[..OBJ_PALETTE_COLORS], bank0);
     assert_eq!(
-        fitted.obj_palettes.as_bytes()[16..],
-        linear.as_bytes()[16..]
+        bytes[OBJ_PALETTE_COLORS..],
+        rom_obj_palettes.as_bytes()[OBJ_PALETTE_COLORS..]
     );
 }
 

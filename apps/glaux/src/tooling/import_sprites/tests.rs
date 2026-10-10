@@ -4,6 +4,7 @@ use super::*;
 use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::tooling::import_publish::{RECORD, STAGING};
+use glaux_machine::obj_palette::ObjPalettes;
 use pretty_assertions::assert_eq;
 
 fn rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) {
@@ -97,12 +98,16 @@ fn reimporting_the_example_reproduces_its_committed_assets() {
         fs::copy(example.join(name), dir.join(name)).unwrap();
     }
     let input = dir.join("sprites.png");
+    // The example was imported while the ROM's default banks were linear,
+    // and its unused banks keep those. Explicit obp.bin files are not
+    // rewritten when the ROM defaults change.
+    let rom = rom().with_obj_palettes(ObjPalettes::linear());
     import(
         &ImportOptions {
             input,
             ..ImportOptions::default()
         },
-        &rom(),
+        &rom,
     )
     .unwrap();
     assert_eq!(written(&dir), written(&example));
