@@ -38,8 +38,11 @@ use semver::Version;
 use sfx::SystemSound;
 use shell::{CartridgeSlot, ShellRequest, cartridge_identity};
 
+use std::path::PathBuf;
+
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge_fs::CartridgeStorage;
+use crate::sprite_import::SheetSource;
 
 // System UI colors, as indices into the system palette (Zughy 32).
 const BACKGROUND: u8 = 11;
@@ -123,6 +126,26 @@ fn identity_line(rom_version: &Version) -> String {
     format!("{NAME} {GENERATION}  SYSTEM ROM {rom_version}")
 }
 
+/// Work the system asks of the host, outside the machine: see
+/// [`System::take_host_request`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostRequest {
+    /// Show the host's file dialog to choose one PNG file, opening in
+    /// `directory`. Answer with [`System::file_picked`].
+    PickPng { directory: PathBuf },
+}
+
+/// How the host's file dialog answered a [`HostRequest::PickPng`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickedFile {
+    Chosen(PathBuf),
+    /// Closed without a file. The host may not tell this apart from a
+    /// dialog that failed to show.
+    Cancelled,
+    /// The dialog could not be shown, for this reason.
+    Unavailable(String),
+}
+
 /// Why a cartridge's VM was disposed of.
 enum StopReason {
     /// The user stopped the paused cartridge.
@@ -160,6 +183,8 @@ pub struct System {
     /// or paused: it is dropped whenever that cartridge is replaced or
     /// unloaded, which the shell refuses while it holds unsaved edits.
     sprites: Option<SpriteDocument>,
+    /// Host work asked for and not yet taken by the host.
+    host_request: Option<HostRequest>,
 }
 
 impl System {
@@ -187,6 +212,7 @@ impl System {
             video_defaults,
             workspace: Workspace::new(font, palette),
             sprites: None,
+            host_request: None,
         }
     }
 
@@ -244,6 +270,7 @@ impl System {
             video_defaults,
             mut workspace,
             mut sprites,
+            mut host_request,
         } = self;
         let state = match state {
             SystemState::Boot {
@@ -276,15 +303,19 @@ impl System {
                 shell,
                 cartridge,
                 video,
-            } => workspace_tick(
-                shell,
-                cartridge,
-                video,
-                &mut workspace,
-                &mut sprites,
-                &video_defaults,
-                input,
-            ),
+            } => {
+                let (state, request) = workspace_tick(
+                    shell,
+                    cartridge,
+                    video,
+                    &mut workspace,
+                    &mut sprites,
+                    &video_defaults,
+                    input,
+                );
+                host_request = request.or(host_request);
+                state
+            }
             SystemState::Running { shell, running } => running_tick(shell, running, input),
             SystemState::Paused {
                 shell,
@@ -306,6 +337,54 @@ impl System {
             video_defaults,
             workspace,
             sprites,
+            host_request,
+        }
+    }
+
+    /// Takes the work the system last asked of the host, if any. Call it
+    /// after every [`update`](Self::update).
+    pub fn take_host_request(&mut self) -> Option<HostRequest> {
+        self.host_request.take()
+    }
+
+    /// Hands the system the answer to a [`HostRequest::PickPng`]. A chosen
+    /// file is read and converted for import into the sprite document,
+    /// which only changes once the user confirms. An answer nobody waits
+    /// for any more, because the wait was stopped or the workspace closed,
+    /// is ignored.
+    pub fn file_picked(&mut self, picked: PickedFile) {
+        let SystemState::Workspace { video, .. } = &mut self.state else {
+            tracing::info!(
+                ?picked,
+                "file dialog answered outside the workspace, ignored"
+            );
+            return;
+        };
+        if !self.workspace.awaits_file() {
+            tracing::info!(
+                ?picked,
+                "file dialog answered after the wait stopped, ignored"
+            );
+            return;
+        }
+        match picked {
+            PickedFile::Cancelled => self.workspace.file_dialog_closed(),
+            PickedFile::Unavailable(message) => self.workspace.file_dialog_failed(&message),
+            PickedFile::Chosen(path) => {
+                let Some(document) = self.sprites.as_ref().filter(|_| video.is_ready()) else {
+                    self.workspace.file_dialog_closed();
+                    return;
+                };
+                tracing::info!(path = %path.display(), "reading spritesheet to import");
+                let name = path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                let read = SheetSource::read(&path, None);
+                self.workspace
+                    .sheet_read(name, read, document, &self.video_defaults);
+                self.workspace.refresh_video(video, document);
+            }
         }
     }
 
@@ -601,7 +680,7 @@ fn open_workspace(
 }
 
 /// Feeds `input` to the workspace and carries out the file work it asks
-/// for. Break returns to the shell with the cartridge still loaded, unless
+/// for, returning the work it asks of the host, if any. Break returns to the shell with the cartridge still loaded, unless
 /// a dialog is open, which takes it as Escape. Events after a Break that
 /// leaves are dropped, so nothing meant for the workspace reaches the
 /// shell.
@@ -613,16 +692,18 @@ fn workspace_tick(
     sprites: &mut Option<SpriteDocument>,
     video_defaults: &CartridgeVideoDefaults,
     input: &[InputEvent],
-) -> SystemState {
+) -> (SystemState, Option<HostRequest>) {
     workspace.tick();
+    let mut host_request = None;
     for &event in input {
         if event == InputEvent::Break && !workspace.has_modal() {
             workspace.end_stroke(sprites.as_mut());
             tracing::info!("workspace closed");
-            return SystemState::Shell {
+            let state = SystemState::Shell {
                 shell,
                 loaded: Some(cartridge),
             };
+            return (state, host_request);
         }
         // The editors only change what they can show.
         let document = sprites.as_mut().filter(|_| video.is_ready());
@@ -643,16 +724,22 @@ fn workspace_tick(
                     .map_err(|err| err.to_string());
                 workspace.reloaded(&assets, result);
             }
+            WorkspaceRequest::PickSpritesheet => {
+                host_request = Some(HostRequest::PickPng {
+                    directory: cartridge.host_dir().to_path_buf(),
+                });
+            }
         }
     }
     if let Some(document) = sprites.as_ref() {
         workspace.refresh_video(&mut video, document);
     }
-    SystemState::Workspace {
+    let state = SystemState::Workspace {
         shell,
         cartridge,
         video,
-    }
+    };
+    (state, host_request)
 }
 
 /// Starts `cartridge`, reporting its start or failure and what it logged.

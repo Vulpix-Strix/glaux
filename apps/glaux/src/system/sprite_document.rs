@@ -19,12 +19,14 @@ use crate::cartridge::{AssetWriteError, CartridgeError, LoadedCartridge, VideoAs
 /// Edits the history keeps. Older ones are forgotten first.
 pub const HISTORY_LIMIT: usize = 256;
 
-/// Changes the undo and redo steps may hold together, about 512 KiB. Older
+/// Changes the undo and redo steps may hold together, about 1 MiB. Older
 /// edits are forgotten first while there are more, but the newest edit is
 /// always kept whatever its size. Editor strokes and fills stay inside one
-/// tile, so they hold at most 64 changes and never reach this; it bounds
-/// edits grouped across many tiles or assets.
-pub const HISTORY_CHANGE_LIMIT: usize = 65_536;
+/// tile, so they hold at most 64 changes; replacing every asset at once, as
+/// importing a spritesheet does, holds at most about 67,000, which fits
+/// within this alone. How many earlier edits survive such a replacement
+/// depends on their size.
+pub const HISTORY_CHANGE_LIMIT: usize = 131_072;
 
 /// The order saving writes assets in. It is fixed so that saves are
 /// reproducible; it does not keep the files consistent with each other if
@@ -286,6 +288,43 @@ pub fn spare_master(palette: &Palette, banks: &ObjPalettes, master: u8, color: R
         .find(|&i| !mapped[usize::from(i)])
         .expect("fewer masters are mapped than there are from CODE_COLORS on");
     Spare::Unmapped(unmapped)
+}
+
+/// What [`SpriteDocument::replace_video`] would change, as counted from the
+/// stored assets.
+///
+/// Only the document's own data is counted: what game code draws by tile
+/// or color number is beyond what the document can know.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReplaceImpact {
+    /// Tiles with at least one pixel that changes.
+    pub tiles_changed: usize,
+    /// Tiles with a pixel drawn now that are left empty.
+    pub drawn_tiles_erased: usize,
+    /// Tiles whose default object palette bank changes.
+    pub attributes_changed: usize,
+    /// Object palette banks with at least one entry that changes.
+    pub banks_changed: usize,
+    /// Master palette entries whose color changes.
+    pub masters_changed: usize,
+    /// The lowest and highest of those entries.
+    pub master_range: Option<(u8, u8)>,
+}
+
+impl ReplaceImpact {
+    pub fn changes_anything(&self) -> bool {
+        self.tiles_changed > 0
+            || self.attributes_changed > 0
+            || self.banks_changed > 0
+            || self.masters_changed > 0
+    }
+}
+
+/// The local indices of `tile`'s pixels, row by row.
+fn tile_pixels(video: &CartridgeVideo, tile: usize) -> impl Iterator<Item = u8> + '_ {
+    (0..OBJ_TILE_HEIGHT)
+        .flat_map(|y| (0..OBJ_TILE_WIDTH).map(move |x| (x, y)))
+        .map(move |(x, y)| video.obj.tiles().pixel(tile, x, y).unwrap_or(0))
 }
 
 /// What one change wrote to: a single value of one asset.
@@ -816,6 +855,76 @@ impl SpriteDocument {
             self.end_edit();
         }
         true
+    }
+
+    /// Makes every asset as `new` holds it: all tiles, their attributes,
+    /// the object palette banks and the master palette. Returns whether
+    /// anything changed.
+    ///
+    /// The replacement is one edit of its own, undone and redone whole;
+    /// any edit still open is closed first. Only values that differ are
+    /// recorded, so replacing with the current state leaves no history.
+    pub fn replace_video(&mut self, new: &CartridgeVideo) -> bool {
+        self.begin_edit();
+        let mut changed = false;
+        for tile in 0..OBJ_TILE_CAPACITY {
+            for y in 0..OBJ_TILE_HEIGHT {
+                for x in 0..OBJ_TILE_WIDTH {
+                    if let Some(index) = new.obj.tiles().pixel(tile, x, y) {
+                        changed |= self.set_pixel(tile, x, y, index);
+                    }
+                }
+            }
+            changed |= self.set_tile_bank(tile, new.obj.attributes().bank(tile));
+        }
+        for bank in (0..OBJ_PALETTE_BANKS as u8).filter_map(ObjBank::new) {
+            for local in 1..OBJ_PALETTE_COLORS as u8 {
+                if let Some(master) = new.obj.palettes().resolve(bank, local) {
+                    changed |= self.set_obj_color(bank, local, master);
+                }
+            }
+        }
+        for (index, &color) in new.palette.entries().iter().enumerate() {
+            // The palette has PALETTE_LEN entries, so every index fits.
+            changed |= self.set_master_color(index as u8, color);
+        }
+        self.end_edit();
+        changed
+    }
+
+    /// What [`replace_video`](Self::replace_video) with `new` would change.
+    pub fn replacement_impact(&self, new: &CartridgeVideo) -> ReplaceImpact {
+        let (old, new) = (&self.video, new);
+        let mut impact = ReplaceImpact::default();
+        for tile in 0..OBJ_TILE_CAPACITY {
+            if !tile_pixels(old, tile).eq(tile_pixels(new, tile)) {
+                impact.tiles_changed += 1;
+                if tile_pixels(old, tile).any(|p| p != 0) && tile_pixels(new, tile).all(|p| p == 0)
+                {
+                    impact.drawn_tiles_erased += 1;
+                }
+            }
+            if old.obj.attributes().bank(tile) != new.obj.attributes().bank(tile) {
+                impact.attributes_changed += 1;
+            }
+        }
+        impact.banks_changed = (0..OBJ_PALETTE_BANKS as u8)
+            .filter_map(ObjBank::new)
+            .filter(|&bank| {
+                (1..OBJ_PALETTE_COLORS as u8).any(|local| {
+                    old.obj.palettes().resolve(bank, local)
+                        != new.obj.palettes().resolve(bank, local)
+                })
+            })
+            .count();
+        for index in 0..=u8::MAX {
+            if old.palette.get(index) != new.palette.get(index) {
+                impact.masters_changed += 1;
+                let (low, _) = impact.master_range.unwrap_or((index, index));
+                impact.master_range = Some((low, index));
+            }
+        }
+        impact
     }
 
     /// Reverses the newest edit, closing any still open first. Returns

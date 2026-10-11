@@ -9,6 +9,7 @@ mod platform;
 mod rom;
 #[cfg(test)]
 mod scratch_dir;
+mod sprite_import;
 mod system;
 mod tooling;
 
@@ -18,6 +19,7 @@ use std::time::Instant;
 
 use cartridge_fs::CartridgeStorage;
 use clock::TickClock;
+use desktop::file_picker::FilePicker;
 use desktop::single_instance::{self, PrimaryInstance, SecondaryLaunch, Startup};
 use desktop::window_state::{self, WindowSnapshot, WindowTracker};
 use glaux_host_raylib::{AudioDevice, AudioOutput, Presentation, RaylibHost};
@@ -26,7 +28,7 @@ use glaux_machine::machine::Machine;
 use glaux_machine::psg::{SAMPLE_RATE, SAMPLES_PER_TICK};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
 use platform::SessionKind;
-use system::{CartridgeVideoDefaults, System, SystemInfo};
+use system::{CartridgeVideoDefaults, HostRequest, PickedFile, System, SystemInfo};
 
 /// Window size, as a multiple of the logical resolution, when no saved
 /// state applies.
@@ -152,6 +154,7 @@ fn run(
     let mut pending = Vec::new();
     let mut last = Instant::now();
     let mut presented = Framebuffer::new();
+    let mut picker = FilePicker::new();
     // Render before updating so the initial state is the first frame shown.
     while !host.should_close() {
         tracker.observe(snapshot(&host, &tracker));
@@ -186,6 +189,7 @@ fn run(
         for _ in 0..ticks {
             system = system.update(&pending);
             pending.clear();
+            serve_host_request(&mut system, &mut picker);
             system.audio(machine.psg_mut());
             machine.psg_mut().render(&mut samples);
             if let Some(output) = &mut audio {
@@ -193,6 +197,9 @@ fn run(
             }
         }
         pump_audio(&mut audio);
+        if let Some(picked) = picker.poll() {
+            system.file_picked(picked);
+        }
     }
 
     if let (Some(dir), Some(state)) = (config_dir, tracker.finish()) {
@@ -204,6 +211,17 @@ fn run(
         }
     }
     Ok(())
+}
+
+/// Carries out the work the system asked of the host during its last tick.
+fn serve_host_request(system: &mut System, picker: &mut FilePicker) {
+    if let Some(HostRequest::PickPng { directory }) = system.take_host_request()
+        && !picker.open_png(&directory)
+    {
+        system.file_picked(PickedFile::Unavailable(
+            "A file dialog is already open.".to_owned(),
+        ));
+    }
 }
 
 /// Feeds the device the samples queued so far. A failed stream is closed

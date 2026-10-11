@@ -608,27 +608,132 @@ fn a_scoped_recolor_saves_every_affected_file() {
     assert_eq!(reloaded.obj().palettes().resolve(bank(5), 1), Some(1));
 }
 
-#[test]
-fn the_history_change_budget_drops_old_edits_but_keeps_the_newest() {
-    let mut doc = document(None);
-    doc.set_pixel(0, 0, 0, 1);
-    // Every pixel of the bank and one master color: one change over the
-    // budget, in one edit.
+/// One edit setting every pixel of the bank to `index`.
+fn paint_bank(doc: &mut SpriteDocument, index: u8) {
     doc.begin_edit();
     for tile in 0..1024 {
         for y in 0..8 {
             for x in 0..8 {
-                doc.set_pixel(tile, x, y, 2);
+                doc.set_pixel(tile, x, y, index);
             }
         }
     }
-    doc.set_master_color(0, RED);
     doc.end_edit();
+}
+
+#[test]
+fn the_history_change_budget_drops_old_edits_but_keeps_the_newest() {
+    let mut doc = document(None);
+    doc.set_pixel(0, 0, 0, 1);
+    // Two edits of every pixel of the bank fill the budget exactly, so
+    // the one-pixel edit before them is one change too many.
+    paint_bank(&mut doc, 2);
+    paint_bank(&mut doc, 3);
 
     assert!(doc.undo());
-    assert!(!doc.undo(), "the older edit was forgotten");
+    assert!(doc.undo());
+    assert!(!doc.undo(), "the oldest edit was forgotten");
     assert_eq!(doc.pixel(1023, 7, 7), Some(0));
-    assert_eq!(doc.pixel(0, 0, 0), Some(1), "only the kept edit was undone");
+    assert_eq!(
+        doc.pixel(0, 0, 0),
+        Some(1),
+        "only the kept edits were undone"
+    );
+}
+
+// Replacing every asset.
+
+/// `video` with every pixel of every tile set to `index`, every tile on
+/// bank 3, local 1 of bank 2 mapped to master 77 and master 40 `ODD`.
+fn repainted(video: &CartridgeVideo, index: u8) -> CartridgeVideo {
+    let mut new = video.clone();
+    for tile in 0..1024 {
+        for y in 0..8 {
+            for x in 0..8 {
+                new.obj.tiles_mut().set_pixel(tile, x, y, index);
+            }
+        }
+        new.obj.attributes_mut().set_bank(tile, bank(3));
+    }
+    new.obj.palettes_mut().set(bank(2), 1, 77);
+    new.palette.set(40, ODD);
+    new
+}
+
+#[test]
+fn replacing_every_asset_is_one_step_undone_and_redone_whole() {
+    let mut doc = document(Some(vec![0x11; 4 * OBJ_TILE_BYTES]));
+    doc.set_pixel(0, 0, 0, 9);
+    let before = doc.video().clone();
+    let new = repainted(&before, 5);
+
+    assert!(doc.replace_video(&new));
+    assert_eq!(doc.video(), &new);
+    assert_eq!(modified(&doc), VideoAsset::ALL.to_vec());
+
+    assert!(doc.undo());
+    assert_eq!(doc.video(), &before);
+    assert_eq!(
+        doc.pixel(0, 0, 0),
+        Some(9),
+        "the earlier edit is not undone"
+    );
+    assert!(doc.redo());
+    assert_eq!(doc.video(), &new);
+    assert!(doc.undo());
+    assert!(doc.undo());
+    assert!(!doc.is_modified());
+}
+
+#[test]
+fn replacing_clears_drawn_tiles_the_new_sheet_lacks() {
+    let mut doc = document(Some(vec![0x11; 41 * OBJ_TILE_BYTES]));
+    let new = CartridgeVideo {
+        obj: ObjVram::new(
+            ObjTileBank::from_bytes(&[0x22; OBJ_TILE_BYTES]).unwrap(),
+            doc.obj().attributes().clone(),
+            doc.obj().palettes().clone(),
+        ),
+        palette: doc.video().palette.clone(),
+    };
+    let impact = doc.replacement_impact(&new);
+    assert_eq!(impact.tiles_changed, 41);
+    assert_eq!(impact.drawn_tiles_erased, 40);
+    assert_eq!(impact.masters_changed, 0);
+
+    doc.replace_video(&new);
+    assert_eq!(doc.pixel(0, 0, 0), Some(2));
+    assert_eq!(rows(&doc, 40), vec!["00000000"; 8]);
+    assert_eq!(modified(&doc), vec![TILES]);
+}
+
+#[test]
+fn replacing_with_the_current_state_records_nothing() {
+    let mut doc = document(Some(vec![0x11; OBJ_TILE_BYTES]));
+    let same = doc.video().clone();
+    assert!(!doc.replace_video(&same));
+    assert!(!doc.is_modified());
+    assert!(!doc.can_undo());
+    assert!(!doc.replacement_impact(&same).changes_anything());
+}
+
+#[test]
+fn the_replacement_impact_counts_attributes_banks_and_masters() {
+    let doc = document(None);
+    let mut new = repainted(doc.video(), 0);
+    new.palette.set(200, Rgb::from_hex(0x020304));
+    let impact = doc.replacement_impact(&new);
+    assert_eq!(
+        impact,
+        ReplaceImpact {
+            tiles_changed: 0,
+            drawn_tiles_erased: 0,
+            attributes_changed: 1024,
+            banks_changed: 1,
+            masters_changed: 2,
+            master_range: Some((40, 200)),
+        }
+    );
 }
 
 // Persistence.

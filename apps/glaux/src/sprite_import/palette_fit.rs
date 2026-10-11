@@ -18,7 +18,7 @@ use serde::Deserialize;
 /// First master-palette entry the importer allocates. Entries below it keep
 /// the colors the cartridge already gives them; entries from it up are
 /// rebuilt by every import.
-pub(super) const CART_COLOR_START: usize = 32;
+pub(crate) const CART_COLOR_START: usize = 32;
 
 /// Opaque colors one object palette bank holds next to transparent index 0.
 const BANK_COLORS: usize = OBJ_PALETTE_COLORS - 1;
@@ -32,7 +32,7 @@ const _: () = assert!(MAX_SHEET_COLORS <= PALETTE_LEN - CART_COLOR_START);
 /// Why a sheet cannot be imported as it is. Messages speak to the person who
 /// drew the sheet, in pixel and tile coordinates of the image.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(super) enum FitError {
+pub(crate) enum FitError {
     #[error(
         "{count} pixels are partly transparent, the first at ({x}, {y}) with alpha {alpha}; \
          sprite pixels must be fully opaque or fully transparent"
@@ -102,7 +102,7 @@ pub(super) enum FitError {
 
 /// A sheet's pixels in row-major order: `None` is transparent.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Sheet {
+pub(crate) struct Sheet {
     width: usize,
     height: usize,
     pixels: Vec<Option<Rgb>>,
@@ -114,7 +114,7 @@ impl Sheet {
     /// transparent too.
     ///
     /// `rgba` must hold exactly `width * height` pixels.
-    pub(super) fn from_rgba(
+    pub(crate) fn from_rgba(
         width: usize,
         height: usize,
         rgba: &[u8],
@@ -162,52 +162,55 @@ impl Sheet {
 /// that drawing it with an explicit palette recolors all of it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct SpriteGroup {
-    pub(super) name: String,
+pub(crate) struct SpriteGroup {
+    pub(crate) name: String,
     /// Top-left tile, in sheet tile coordinates.
-    pub(super) tile: (usize, usize),
+    pub(crate) tile: (usize, usize),
     /// Width and height in tiles.
-    pub(super) size: (usize, usize),
+    pub(crate) size: (usize, usize),
 }
 
 /// What [`fit`] works from.
-pub(super) struct FitInput<'a> {
-    pub(super) sheet: &'a Sheet,
-    pub(super) groups: &'a [SpriteGroup],
+pub(crate) struct FitInput<'a> {
+    pub(crate) sheet: &'a Sheet,
+    pub(crate) groups: &'a [SpriteGroup],
     /// The cartridge's current master palette. Entries below
     /// [`CART_COLOR_START`] are kept; the rest are rebuilt.
-    pub(super) current: &'a Palette,
+    pub(crate) current: &'a Palette,
     /// The System ROM palette, which the rebuilt entries start from.
-    pub(super) rom_palette: &'a Palette,
+    pub(crate) rom_palette: &'a Palette,
     /// The System ROM object palette banks, kept for banks the sheet does
     /// not use.
-    pub(super) rom_obj_palettes: &'a ObjPalettes,
+    pub(crate) rom_obj_palettes: &'a ObjPalettes,
 }
 
 /// The native assets a sheet imports to, and facts about them.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Fitted {
+pub(crate) struct Fitted {
     /// `sprites.bin`: whole grid rows of 4 bpp tiles.
-    pub(super) tiles: Vec<u8>,
+    pub(crate) tiles: Vec<u8>,
     /// `objattr.bin`: one attribute per tile of `tiles`.
-    pub(super) attributes: Vec<u8>,
-    pub(super) obj_palettes: ObjPalettes,
-    pub(super) palette: Palette,
-    pub(super) summary: FitSummary,
+    pub(crate) attributes: Vec<u8>,
+    pub(crate) obj_palettes: ObjPalettes,
+    pub(crate) palette: Palette,
+    pub(crate) summary: FitSummary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct FitSummary {
-    pub(super) source_tiles: usize,
+pub(crate) struct FitSummary {
+    pub(crate) source_tiles: usize,
+    /// The sheet's size in tiles.
+    pub(crate) tiles_wide: usize,
+    pub(crate) tiles_high: usize,
     /// Distinct opaque colors in the sheet.
-    pub(super) colors: usize,
+    pub(crate) colors: usize,
     /// Colors found among the kept master entries.
-    pub(super) reused: usize,
+    pub(crate) reused: usize,
     /// Master entries the other colors were written to.
-    pub(super) allocated: Option<RangeInclusive<usize>>,
-    pub(super) banks_used: usize,
+    pub(crate) allocated: Option<RangeInclusive<usize>>,
+    pub(crate) banks_used: usize,
     /// Each group's bank, in sidecar order.
-    pub(super) group_banks: Vec<(String, ObjBank)>,
+    pub(crate) group_banks: Vec<(String, ObjBank)>,
 }
 
 /// Tiles that must share one bank: a sprite group or a lone tile.
@@ -229,7 +232,7 @@ struct Unit {
 /// the bank it adds the fewest colors to without exceeding 15, ties going
 /// to the lowest bank, or opens a new bank. Within a bank, colors take
 /// local indices from 1 in the order they join it.
-pub(super) fn fit(input: &FitInput) -> Result<Fitted, FitError> {
+pub(crate) fn fit(input: &FitInput) -> Result<Fitted, FitError> {
     let sheet = input.sheet;
     let (width, height) = (sheet.width, sheet.height);
     if !width.is_multiple_of(OBJ_TILE_WIDTH) || !height.is_multiple_of(OBJ_TILE_HEIGHT) {
@@ -426,6 +429,8 @@ pub(super) fn fit(input: &FitInput) -> Result<Fitted, FitError> {
         palette,
         summary: FitSummary {
             source_tiles: tiles_x * tiles_y,
+            tiles_wide: tiles_x,
+            tiles_high: tiles_y,
             colors: distinct.len(),
             reused: distinct.len() - allocated.as_ref().map_or(0, |range| range.clone().count()),
             allocated,

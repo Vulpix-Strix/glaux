@@ -27,6 +27,9 @@ const BUTTON_PAD: i32 = 2;
 const SWATCH_GAP: i32 = 3;
 /// Character cells reserved for the palette panel's row labels.
 const LABEL_CELLS: i32 = 7;
+/// The labels of the buttons under the canvas caption.
+pub const SAVE_LABEL: &str = "Save";
+pub const IMPORT_LABEL: &str = "Import";
 /// Row labels of the palette panel in Advanced mode, top to bottom.
 pub const ADVANCED_LABELS: [&str; 3] = ["OBP", "Local", "Master"];
 
@@ -106,6 +109,8 @@ pub enum Hit {
     ZoomOut,
     ZoomIn,
     SaveButton,
+    /// Replaces the sprites with a PNG spritesheet.
+    ImportButton,
     /// Opens the palette picker for the selected tile.
     PaletteButton,
     None,
@@ -132,9 +137,12 @@ pub struct SpriteLayout {
     pub zoom_out: Rect,
     pub zoom_label: Rect,
     pub zoom_in: Rect,
-    /// Saves the changes; under the canvas caption, as wide as the canvas.
+    /// Saves the changes; the left half of the row under the canvas
+    /// caption.
     pub save_button: Rect,
-    /// Opens the palette picker; under the Save button, as wide as it.
+    /// Imports a spritesheet; the right half of that row.
+    pub import_button: Rect,
+    /// Opens the palette picker; under that row, as wide as the canvas.
     pub palette_button: Rect,
     /// Tops of the palette panel's rows, the swatch row's first.
     pub swatch_y: i32,
@@ -244,15 +252,25 @@ impl SpriteLayout {
         let grid_button = button(text_cells("Grid"), BUTTON_PAD, 0);
 
         let caption_y = canvas_frame.bottom() + 2;
-        let save_button = Rect {
+        let button_row = Rect {
             x: canvas_frame.x,
             y: caption_y + cell_h + 2,
             width: canvas_frame.width,
             height: bar,
         };
+        let half = (button_row.width - GAP) / 2;
+        let save_button = Rect {
+            width: half,
+            ..button_row
+        };
+        let import_button = Rect {
+            x: button_row.right() - half,
+            width: half,
+            ..button_row
+        };
         let palette_button = Rect {
-            y: save_button.bottom() + 2,
-            ..save_button
+            y: button_row.bottom() + 2,
+            ..button_row
         };
 
         let swatch_x = MARGIN + LABEL_CELLS * cell_w;
@@ -287,6 +305,7 @@ impl SpriteLayout {
             zoom_label,
             zoom_in,
             save_button,
+            import_button,
             palette_button,
             swatch_y,
             swatches: std::array::from_fn(|i| cell(i, swatch_y)),
@@ -328,6 +347,7 @@ impl SpriteLayout {
             (self.zoom_out, Hit::ZoomOut),
             (self.zoom_in, Hit::ZoomIn),
             (self.save_button, Hit::SaveButton),
+            (self.import_button, Hit::ImportButton),
             (self.palette_button, Hit::PaletteButton),
         ];
         if let Some(&(_, hit)) = buttons.iter().find(|(rect, _)| rect.contains(point)) {

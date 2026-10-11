@@ -3,6 +3,7 @@
 //! those edits, and asks for them to be saved.
 
 mod color_editor;
+mod import_preview;
 mod layout;
 mod palette_picker;
 mod render;
@@ -19,6 +20,8 @@ use glaux_video::preview::ObjPreviewPalette;
 
 use color_editor::{ColorEditor, ColorEditorLayout, ColorOutcome};
 pub use color_editor::{SCRATCH_BASE, SCRATCH_COLORS};
+pub use import_preview::ImportPreview;
+use import_preview::{ImportLayout, ImportOutcome};
 pub use layout::Metrics;
 use layout::{Hit, SpriteLayout, ToolSlot};
 use palette_picker::{PalettePicker, PickerLayout, PickerOutcome};
@@ -46,6 +49,8 @@ pub struct SpriteSource<'a> {
 pub enum SpriteRequest {
     /// Save the document to the cartridge.
     Save,
+    /// Ask the host to choose a PNG spritesheet to import.
+    Import,
     /// Tell the user something briefly, such as that there is nothing to
     /// undo.
     Notice(&'static str),
@@ -58,12 +63,15 @@ enum EditorDialog {
     Palette(PalettePicker),
     /// EDIT COLOR.
     Color(ColorEditor),
+    /// IMPORT SPRITES.
+    Import(Box<ImportPreview>),
 }
 
 /// What closing a dialog asks of the document.
 enum DialogResult {
     Bank(usize, ObjBank),
     Color(ColorTarget, Rgb, ColorScope),
+    Replace(Box<crate::system::video::CartridgeVideo>),
     Nothing,
 }
 
@@ -94,6 +102,10 @@ pub struct SpriteEditor {
     /// The swatch last pressed, and for how many more ticks a press on it
     /// makes a double click.
     last_swatch_press: Option<(u8, u32)>,
+    /// Whether the host's file dialog was asked for a spritesheet and has
+    /// not answered. Until it does, or Escape stops the wait, the editor
+    /// takes no other input.
+    awaiting_file: bool,
 }
 
 impl SpriteEditor {
@@ -111,6 +123,7 @@ impl SpriteEditor {
             stroke: None,
             dialog: None,
             last_swatch_press: None,
+            awaiting_file: false,
         }
     }
 
@@ -124,9 +137,53 @@ impl SpriteEditor {
         self.advanced
     }
 
-    /// Whether a dialog is open and taking every input.
+    /// Whether a dialog is open, or the host's file dialog is awaited,
+    /// and taking every input.
     pub fn has_dialog(&self) -> bool {
-        self.dialog.is_some()
+        self.dialog.is_some() || self.awaiting_file
+    }
+
+    /// Whether the host's file dialog was asked for a spritesheet and has
+    /// not answered.
+    pub fn awaits_file(&self) -> bool {
+        self.awaiting_file
+    }
+
+    /// Stops waiting for the host's file dialog, which answered or will
+    /// not be listened to.
+    pub fn stop_awaiting_file(&mut self) {
+        self.awaiting_file = false;
+    }
+
+    /// Opens IMPORT SPRITES on `preview`, ending the wait for the file it
+    /// shows.
+    pub fn open_import(&mut self, preview: ImportPreview) {
+        self.awaiting_file = false;
+        self.dialog = Some(EditorDialog::Import(Box::new(preview)));
+    }
+
+    /// The open IMPORT SPRITES dialog, if any.
+    #[cfg(test)]
+    pub fn import_preview(&self) -> Option<&ImportPreview> {
+        match &self.dialog {
+            Some(EditorDialog::Import(preview)) => Some(preview),
+            _ => None,
+        }
+    }
+
+    /// Where the open IMPORT SPRITES dialog's parts sit.
+    #[cfg(test)]
+    pub fn import_preview_layout(&self) -> ImportLayout {
+        self.import_layout()
+    }
+
+    /// The palette frames are presented with while IMPORT SPRITES shows a
+    /// converted sheet.
+    pub fn import_frame_palette(&self) -> Option<&Palette> {
+        match &self.dialog {
+            Some(EditorDialog::Import(preview)) => preview.frame_palette(),
+            _ => None,
+        }
     }
 
     /// The open SELECT PALETTE dialog, if any.
@@ -204,6 +261,12 @@ impl SpriteEditor {
         layout.preview(layout.rows[bank])
     }
 
+    /// Where the Import button is drawn.
+    #[cfg(test)]
+    pub fn import_button_rect(&self) -> crate::system::workspace::Rect {
+        self.layout().import_button
+    }
+
     /// Where the Save button is drawn.
     #[cfg(test)]
     pub fn save_button_rect(&self) -> crate::system::workspace::Rect {
@@ -234,6 +297,11 @@ impl SpriteEditor {
         ColorEditorLayout::new(self.dialog_area(), self.metrics, self.advanced)
     }
 
+    /// The import dialog, over the editor's area.
+    fn import_layout(&self) -> ImportLayout {
+        ImportLayout::new(self.dialog_area(), self.metrics)
+    }
+
     /// Applies `event`, drawing on the selected tile of `document` when
     /// there is one. Returns what the workspace should do about it, if
     /// anything.
@@ -257,6 +325,13 @@ impl SpriteEditor {
         event: InputEvent,
         mut document: Option<&mut SpriteDocument>,
     ) -> Option<SpriteRequest> {
+        if self.awaiting_file {
+            if event == InputEvent::Break {
+                self.awaiting_file = false;
+                return Some(SpriteRequest::Notice("Stopped waiting for the file dialog"));
+            }
+            return None;
+        }
         if self.dialog.is_some() {
             self.dialog_input(event, document);
             return None;
@@ -285,6 +360,7 @@ impl SpriteEditor {
                     Hit::ZoomOut => self.zoom(-1),
                     Hit::ZoomIn => self.zoom(1),
                     Hit::SaveButton => return self.save(document),
+                    Hit::ImportButton => return self.import(document),
                     Hit::PaletteButton => self.open_picker(document, None),
                     Hit::Bank(bank) => self.open_picker(document, ObjBank::new(bank)),
                     Hit::None => {}
@@ -349,6 +425,7 @@ impl SpriteEditor {
     fn dialog_input(&mut self, event: InputEvent, document: Option<&mut SpriteDocument>) {
         let picker_layout = self.picker_layout();
         let color_layout = self.edit_color_layout();
+        let import_layout = self.import_layout();
         let outcome = match &mut self.dialog {
             Some(EditorDialog::Palette(picker)) => {
                 let Some(outcome) = picker.handle_input(event, &picker_layout) else {
@@ -373,6 +450,24 @@ impl SpriteEditor {
                     ColorOutcome::Cancel => DialogResult::Nothing,
                 })
             }
+            Some(EditorDialog::Import(preview)) => {
+                // The preview is only opened on a document; without one
+                // there is nothing to convert against or replace.
+                let outcome = match document.as_deref() {
+                    Some(document) => {
+                        let Some(outcome) = preview.handle_input(event, &import_layout, document)
+                        else {
+                            return;
+                        };
+                        outcome
+                    }
+                    None => ImportOutcome::Cancel,
+                };
+                Some(match outcome {
+                    ImportOutcome::Import(video) => DialogResult::Replace(video),
+                    ImportOutcome::Cancel => DialogResult::Nothing,
+                })
+            }
             None => None,
         };
         let Some(outcome) = outcome else {
@@ -388,6 +483,9 @@ impl SpriteEditor {
             }
             DialogResult::Color(target, color, scope) => {
                 document.recolor(target, color, scope);
+            }
+            DialogResult::Replace(video) => {
+                document.replace_video(&video);
             }
             DialogResult::Nothing => {}
         }
@@ -462,6 +560,16 @@ impl SpriteEditor {
             Some(_) => Some(SpriteRequest::Notice("Nothing to save")),
             None => None,
         }
+    }
+
+    /// Ends any drag, then asks the host for a spritesheet to import into
+    /// `document`, waiting for its answer. Without a document there is
+    /// nothing to import into.
+    fn import(&mut self, mut document: Option<&mut SpriteDocument>) -> Option<SpriteRequest> {
+        self.end_stroke(document.as_deref_mut());
+        document?;
+        self.awaiting_file = true;
+        Some(SpriteRequest::Import)
     }
 
     /// Uses the tool at tile pixel `at`, starting a drag if the tool keeps

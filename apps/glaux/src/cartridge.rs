@@ -5,6 +5,7 @@
 //! Loading only validates the cartridge; its entry script runs only when
 //! asked to, through [`LoadedCartridge::entry_source`].
 
+use std::path::Path;
 use std::sync::OnceLock;
 
 use glaux_modules::{MODULE_ROOT, ModuleLoadError, ModulePath, ModuleSource};
@@ -426,6 +427,12 @@ impl LoadedCartridge {
 
     pub fn manifest(&self) -> &CartridgeManifest {
         &self.manifest
+    }
+
+    /// The cartridge directory's host path, for host file dialogs to open
+    /// in. See [`CartridgeFs::host_root`].
+    pub fn host_dir(&self) -> &Path {
+        self.files.host_root()
     }
 
     /// Current contents of the entry script. The file is read on every call,

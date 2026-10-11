@@ -2,7 +2,6 @@
 
 mod import_publish;
 mod import_sprites;
-mod palette_fit;
 mod sprites;
 
 use std::path::PathBuf;

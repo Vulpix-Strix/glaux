@@ -2,7 +2,8 @@
 //! at `/`.
 //!
 //! Paths inside Glaux are virtual: `/`-separated components below the
-//! cartridge root. Host paths never leave this module except in logs.
+//! cartridge root. Host paths never leave this module except in logs and
+//! as the folder host file dialogs open in.
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
@@ -209,6 +210,12 @@ impl CartridgeFs {
             root,
             cwd: Vec::new(),
         }
+    }
+
+    /// The canonical host path of `/`, for host file dialogs to open in.
+    /// It is never shown in the shell or given to cartridges.
+    pub fn host_root(&self) -> &Path {
+        &self.root
     }
 
     /// The current directory as a virtual path.

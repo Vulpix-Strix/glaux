@@ -3,7 +3,7 @@ use glaux_machine::obj_palette::ObjBank;
 use glaux_machine::palette::Rgb;
 use pretty_assertions::assert_eq;
 
-fn open_sprites(system: System) -> System {
+pub(super) fn open_sprites(system: System) -> System {
     press_break(system).update(&click(tab_centre(Tab::Sprites)))
 }
 
@@ -12,7 +12,7 @@ fn open_sprites(system: System) -> System {
 fn distinct_palette() -> Palette {
     Palette::new(std::array::from_fn(|i| {
         let i = i as u8;
-        glaux_machine::palette::Rgb {
+        Rgb {
             r: i,
             g: 255 - i,
             b: i ^ 0x5a,
@@ -41,7 +41,7 @@ fn write_video_assets(fixture: &Fixture) {
     std::fs::write(dir.join("palette.bin"), distinct_palette().to_rgb888()).unwrap();
 }
 
-fn with_video_assets(fixture: &Fixture) -> System {
+pub(super) fn with_video_assets(fixture: &Fixture) -> System {
     let system = shell_with_cartridge(fixture, "");
     write_video_assets(fixture);
     enter(system, "load pong")
@@ -148,7 +148,7 @@ fn click_pixel(system: System, x: i32, y: i32) -> System {
     system.update(&click(at))
 }
 
-fn document(system: &System) -> &SpriteDocument {
+pub(super) fn document(system: &System) -> &SpriteDocument {
     system.sprites.as_ref().expect("a sprite document")
 }
 

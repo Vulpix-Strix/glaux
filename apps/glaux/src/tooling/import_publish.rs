@@ -21,7 +21,7 @@ use anyhow::{Context as _, bail};
 use glaux_machine::palette::Palette;
 use serde::{Deserialize, Serialize};
 
-use super::palette_fit::CART_COLOR_START;
+use crate::sprite_import::CART_COLOR_START;
 
 /// The import record, at the cartridge root.
 pub(super) const RECORD: &str = "sprites.import.ron";

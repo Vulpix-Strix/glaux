@@ -1,22 +1,9 @@
-use std::io::BufWriter;
-
 use super::*;
 use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
+use crate::sprite_import::fixture::rgba_png;
 use crate::tooling::import_publish::{RECORD, STAGING};
 use pretty_assertions::assert_eq;
-
-fn rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) {
-    let file = BufWriter::new(File::create(path).unwrap());
-    let mut encoder = png::Encoder::new(file, width, height);
-    encoder.set_color(ColorType::Rgba);
-    encoder.set_depth(BitDepth::Eight);
-    encoder
-        .write_header()
-        .unwrap()
-        .write_image_data(rgba)
-        .unwrap();
-}
 
 /// A 16x8 sheet: the left tile in 3 colors, the right tile in 3 others.
 fn two_tile_sheet() -> Vec<u8> {

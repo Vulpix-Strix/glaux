@@ -32,6 +32,7 @@ fn regions(layout: &SpriteLayout) -> Vec<(String, Rect)> {
         ("canvas".into(), layout.canvas_frame),
         ("sheet".into(), layout.sheet.inset(-1)),
         ("save".into(), layout.save_button),
+        ("import".into(), layout.import_button),
         ("palette button".into(), layout.palette_button),
     ];
     out.extend(layout.tools.iter().map(|(t, r)| (format!("{t:?}"), *r)));
@@ -134,6 +135,14 @@ fn every_region_hits_what_it_shows() {
             layout.hit(centre(layout.palette_button), &view),
             Hit::PaletteButton
         );
+        assert_eq!(
+            layout.hit(centre(layout.save_button), &view),
+            Hit::SaveButton
+        );
+        assert_eq!(
+            layout.hit(centre(layout.import_button), &view),
+            Hit::ImportButton
+        );
         for (tool, rect) in layout.tools {
             assert_eq!(layout.hit(centre(rect), &view), Hit::Tool(tool));
         }
@@ -201,4 +210,25 @@ fn advanced_mode_keeps_the_main_layout() {
     assert_eq!(advanced.options, normal.options);
     assert_eq!(advanced.palette_button, normal.palette_button);
     assert!(advanced.palette.height > normal.palette.height);
+}
+
+#[test]
+fn save_and_import_split_the_row_under_the_caption() {
+    for layout in layouts() {
+        let (save, import) = (layout.save_button, layout.import_button);
+        assert_eq!(save.y, import.y);
+        assert_eq!(save.height, import.height);
+        assert_eq!(save.width, import.width);
+        assert_eq!(save.x, layout.canvas_frame.x);
+        assert_eq!(import.right(), layout.canvas_frame.right());
+        assert!(save.right() < import.x, "a gap separates them");
+        assert_eq!(layout.palette_button.width, layout.canvas_frame.width);
+        assert!(layout.palette_button.y > save.bottom());
+        for label in [SAVE_LABEL, IMPORT_LABEL] {
+            assert!(
+                text_cells(label) * METRICS.cell_w + 2 * BUTTON_PAD <= save.width,
+                "{label} fits"
+            );
+        }
+    }
 }

@@ -15,7 +15,9 @@ use glaux_video::draw::{
     ObjPaletteChoice, draw_ink_image, draw_obj_tile_scaled, draw_text, fill_rect,
 };
 
-use super::layout::{ADVANCED_LABELS, CANVAS_ZOOM, Hit, SCROLLBAR, SpriteLayout, ToolSlot};
+use super::layout::{
+    ADVANCED_LABELS, CANVAS_ZOOM, Hit, IMPORT_LABEL, SAVE_LABEL, SCROLLBAR, SpriteLayout, ToolSlot,
+};
 use super::sheet::{SheetView, Visible, grid_position};
 use super::{EditorDialog, SpriteEditor, SpriteSource};
 use crate::rom::ICON_SIZE;
@@ -40,8 +42,10 @@ const IDLE_TOOL_INKS: [u8; 3] = [OUTLINE, IDLE_SHADE, DIM];
 /// Shown in the options bar while the tiles differ from the cartridge's
 /// files.
 const MODIFIED: &str = "MODIFIED";
-/// The Save button's label, naming its shortcut.
-const SAVE_LABEL: &str = "Save  Ctrl+S";
+/// The status bar hint while IMPORT SPRITES is open.
+const IMPORT_HINT: &str = "T: transparency  Enter: import  Esc: cancel";
+/// The status bar notice while the host's file dialog is open.
+pub(super) const WAITING_NOTICE: &str = "Waiting for the file dialog. Esc: stop waiting";
 
 impl SpriteEditor {
     /// Draws the editor below the tab bar from `source`, or explains why
@@ -59,9 +63,13 @@ impl SpriteEditor {
         let layout = self.layout();
         // Nothing under a dialog reacts to the pointer.
         let hover = match (&self.dialog, pointer) {
-            (None, Some(at)) => layout.hit(at, &self.sheet),
+            (None, Some(at)) if !self.awaiting_file => layout.hit(at, &self.sheet),
             _ => Hit::None,
         };
+        // The import preview's frame palette holds the colors of the sheet
+        // being imported, not the document's, so nothing drawn in the
+        // document's colors may show while it is open.
+        let importing = matches!(self.dialog, Some(EditorDialog::Import(_)));
         let mut painter = Painter {
             framebuffer,
             font,
@@ -73,11 +81,16 @@ impl SpriteEditor {
         painter.toolbar(ui, self.tool, hover);
         match source {
             Ok(source) => {
-                painter.canvas(self, &source, hover);
+                if !importing {
+                    painter.canvas(self, &source, hover);
+                }
                 painter.save_button(source.modified, hover);
+                painter.import_button(self.awaiting_file || importing, hover);
                 painter.palette_button(self, &source, hover);
-                painter.sheet(self, &source, hover);
-                painter.palette(self, &source, hover);
+                if !importing {
+                    painter.sheet(self, &source, hover);
+                    painter.palette(self, &source, hover);
+                }
             }
             Err(message) => painter.unavailable(message),
         }
@@ -85,8 +98,14 @@ impl SpriteEditor {
         match self.dialog {
             Some(EditorDialog::Palette(_)) => right = PICKER_HINT.to_owned(),
             Some(EditorDialog::Color(_)) => right = COLOR_HINT.to_owned(),
+            Some(EditorDialog::Import(_)) => right = IMPORT_HINT.to_owned(),
             None => {}
         }
+        let notice = if self.awaiting_file {
+            Some((WAITING_NOTICE, PALE))
+        } else {
+            notice
+        };
         match notice {
             // A notice answers what the user just did, so it wins over the
             // hint when both don't fit.
@@ -106,6 +125,10 @@ impl SpriteEditor {
             (Some(EditorDialog::Color(editor)), Ok(source)) => {
                 let layout = self.edit_color_layout();
                 editor.render(framebuffer, font, &layout, &source);
+            }
+            (Some(EditorDialog::Import(preview)), _) => {
+                let layout = self.import_layout();
+                preview.render(framebuffer, font, &layout);
             }
             _ => {}
         }
@@ -162,6 +185,7 @@ impl SpriteEditor {
                 "Ctrl+S: write the changed files".to_owned()
             }
             Hit::SaveButton => "No unsaved edits".to_owned(),
+            Hit::ImportButton => "Click: replace all sprites with a PNG sheet".to_owned(),
             Hit::None if source.is_none() => String::new(),
             Hit::None if self.sheet.zoom().zoomed_out().is_some() => {
                 "Wheel: scroll  Shift+wheel: pan".to_owned()
@@ -575,6 +599,23 @@ impl Painter<'_> {
         let x = rect.x + (rect.width - self.cells(&label)) / 2;
         let y = self.bar_text_y(rect.y, rect.height);
         self.text(&label, x, y, if hovered { TEXT } else { PALE });
+    }
+
+    /// The Import button, held down while its file dialog or preview is
+    /// open.
+    fn import_button(&mut self, held: bool, hover: Hit) {
+        let rect = self.layout.import_button;
+        let hovered = hover == Hit::ImportButton;
+        let (face, ink) = if held || hovered {
+            (HOVER_SHADE, TEXT)
+        } else {
+            (BAR, PALE)
+        };
+        self.fill(rect, face);
+        self.outline(rect, if held { TEXT } else { DIM });
+        let x = rect.x + (rect.width - self.cells(IMPORT_LABEL)) / 2;
+        let y = self.bar_text_y(rect.y, rect.height);
+        self.text(IMPORT_LABEL, x, y, ink);
     }
 
     /// The Save button, which only looks pressable while there is

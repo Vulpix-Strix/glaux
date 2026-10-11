@@ -25,6 +25,7 @@ mod pausing;
 mod rom_audio;
 mod shell_screen;
 mod sprite_editor;
+mod sprite_import;
 mod workspace_ui;
 
 const CELL_W: i32 = 4;

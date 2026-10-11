@@ -1042,7 +1042,7 @@ fn capitalized(text: &str) -> String {
 }
 
 /// `line` cut to `columns` characters, ending in `..` when cut.
-fn fit(line: &str, columns: usize) -> String {
+pub(super) fn fit(line: &str, columns: usize) -> String {
     if line.chars().count() <= columns {
         return line.to_owned();
     }

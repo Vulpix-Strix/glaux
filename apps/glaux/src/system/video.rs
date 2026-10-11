@@ -51,6 +51,16 @@ impl CartridgeVideoDefaults {
             obj_palettes: rom.obj_palettes().clone(),
         }
     }
+
+    /// The master palette of a cartridge without `palette.bin`.
+    pub fn palette(&self) -> &Palette {
+        &self.palette
+    }
+
+    /// The object palette banks of a cartridge without `obp.bin`.
+    pub fn obj_palettes(&self) -> &ObjPalettes {
+        &self.obj_palettes
+    }
 }
 
 /// The raw bytes of a cartridge's optional video asset files, each `None`

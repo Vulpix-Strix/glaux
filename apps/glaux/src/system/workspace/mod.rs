@@ -26,10 +26,16 @@ use super::sprite_document::{
     Conflict, ConflictKind, DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile,
     SpriteDocument, file_list,
 };
+use super::video::CartridgeVideoDefaults;
 use super::{ACCENT, BACKGROUND, DIM, OK, PALE, TEXT};
 use crate::cartridge::{CartridgeError, LoadedCartridge, VideoAsset};
 use crate::rom::ICON_SIZE;
+use crate::sprite_import::SheetSource;
 use dialog::Dialog;
+#[cfg(test)]
+pub use sprites::ImportPreview;
+#[cfg(not(test))]
+use sprites::ImportPreview;
 pub use sprites::SpriteSource;
 use sprites::{SpriteEditor, SpriteRequest};
 
@@ -79,6 +85,11 @@ pub enum WorkspaceRequest {
     /// Discard the changes to these assets, and the history steps involving
     /// them, and read their files again.
     Reload(Vec<VideoAsset>),
+    /// Ask the host's file dialog for a PNG spritesheet to import. The
+    /// workspace takes no other input until [`Workspace::sheet_read`] or
+    /// [`Workspace::file_dialog_closed`] answers it, or Escape stops the
+    /// wait.
+    PickSpritesheet,
 }
 
 /// What a workspace dialog's buttons do.
@@ -513,6 +524,10 @@ impl Workspace {
             *video = self.prepare_video(document);
         }
         if let Ok(prepared) = &mut video.0 {
+            if let Some(palette) = self.sprites.import_frame_palette() {
+                prepared.frame = palette.clone();
+                return;
+            }
             let mut frame = prepared.preview.palette().clone();
             if let Some(colors) = self.sprites.scratch_colors() {
                 for (offset, color) in colors.into_iter().enumerate() {
@@ -589,6 +604,7 @@ impl Workspace {
     ) -> Option<WorkspaceRequest> {
         match self.sprites.handle_input(event, sprites)? {
             SpriteRequest::Save => Some(WorkspaceRequest::Save),
+            SpriteRequest::Import => Some(WorkspaceRequest::PickSpritesheet),
             SpriteRequest::Notice(text) => {
                 self.notify(text, PALE);
                 None
@@ -646,6 +662,52 @@ impl Workspace {
                 OK,
             ),
             Err(message) => self.open_error("RELOAD FAILED", vec![message]),
+        }
+    }
+
+    /// Whether the host's file dialog was asked for a spritesheet and has
+    /// not answered.
+    pub fn awaits_file(&self) -> bool {
+        self.sprites.awaits_file()
+    }
+
+    /// The host's file dialog closed without a file: it was cancelled, or
+    /// it could not be shown.
+    pub fn file_dialog_closed(&mut self) {
+        self.sprites.stop_awaiting_file();
+        self.notify("No file chosen", PALE);
+    }
+
+    /// The host could not open its file dialog, for the reason in
+    /// `message`.
+    pub fn file_dialog_failed(&mut self, message: &str) {
+        self.sprites.stop_awaiting_file();
+        self.notify(message.to_owned(), PALE);
+    }
+
+    /// Opens IMPORT SPRITES on the spritesheet read from a file called
+    /// `name`, converted for `document`, or explains why it could not be
+    /// read. Conversion starts from the System ROM palettes in `defaults`.
+    pub fn sheet_read(
+        &mut self,
+        name: String,
+        read: anyhow::Result<SheetSource>,
+        document: &SpriteDocument,
+        defaults: &CartridgeVideoDefaults,
+    ) {
+        self.sprites.stop_awaiting_file();
+        match read {
+            Ok(source) => self.sprites.open_import(ImportPreview::new(
+                name,
+                source,
+                document,
+                defaults.clone(),
+                self.system_palette.clone(),
+            )),
+            Err(err) => self.open_message(
+                "CANNOT IMPORT",
+                vec![format!("{err:#}"), "Nothing was changed.".to_owned()],
+            ),
         }
     }
 
@@ -716,6 +778,11 @@ impl Workspace {
 
     fn open_error(&mut self, title: &str, mut lines: Vec<String>) {
         lines.push("Your edits are still in memory.".to_owned());
+        self.open_message(title, lines);
+    }
+
+    /// Shows `lines` under `title` until dismissed.
+    fn open_message(&mut self, title: &str, lines: Vec<String>) {
         let dialog = Dialog::new(
             title,
             lines,

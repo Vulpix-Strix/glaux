@@ -90,3 +90,25 @@ pub fn color_editor_color(workspace: &Workspace) -> Option<glaux_machine::palett
 pub fn color_editor_scope_rows(workspace: &Workspace) -> [Rect; 2] {
     workspace.sprites.color_editor_layout().scope_rows()
 }
+
+/// Where the sprite editor's Import button is.
+pub fn sprite_import_button(workspace: &Workspace) -> Rect {
+    workspace.sprites.import_button_rect()
+}
+
+/// The open IMPORT SPRITES dialog, if any.
+pub fn import_preview(workspace: &Workspace) -> Option<&sprites::ImportPreview> {
+    workspace.sprites.import_preview()
+}
+
+/// Where the open IMPORT SPRITES dialog draws the converted sheet, and its
+/// transparency, CANCEL and IMPORT buttons.
+pub fn import_preview_parts(workspace: &Workspace) -> (Rect, Rect, Rect, Rect) {
+    let layout = workspace.sprites.import_preview_layout();
+    (
+        layout.preview,
+        layout.transparency,
+        layout.cancel,
+        layout.import,
+    )
+}
