@@ -1,0 +1,17 @@
+(groups: [
+    (name: "knight_idle", tile: (0, 0), size: (8, 3)),
+    (name: "knight_run", tile: (8, 0), size: (8, 3)),
+    (name: "orc_run", tile: (0, 3), size: (8, 3)),
+    (name: "goblin_run", tile: (0, 6), size: (8, 2)),
+    (name: "axe", tile: (0, 8), size: (2, 2)),
+    (name: "heart_full", tile: (2, 8), size: (2, 2)),
+    (name: "heart_half", tile: (4, 8), size: (2, 2)),
+    (name: "heart_empty", tile: (6, 8), size: (2, 2)),
+    (name: "flask", tile: (8, 8), size: (2, 2)),
+    (name: "wall_mid", tile: (10, 8), size: (2, 2)),
+    (name: "wall_top", tile: (12, 8), size: (2, 2)),
+    (name: "floor", tile: (0, 10), size: (16, 2)),
+    (name: "ogre_run", tile: (0, 12), size: (16, 4)),
+    (name: "coin", tile: (0, 16), size: (4, 1)),
+    (name: "skull", tile: (4, 16), size: (1, 1)),
+])

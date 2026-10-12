@@ -168,6 +168,7 @@ impl Runtime {
 
         let mut engine = Engine::new();
         configure(&mut engine, &meter, &output);
+        api::compare::install(&mut engine);
         api::draw::install(&mut engine, &pending);
         api::log::install(&mut engine, &output);
         api::input::install(&mut engine, &input);

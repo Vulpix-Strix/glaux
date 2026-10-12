@@ -90,6 +90,34 @@ fn top_level_constants_are_visible_through_global_in_callbacks_and_helpers() {
     assert_eq!(texts(runtime.take_output()), ["9"]);
 }
 
+/// Rhai 1.26 marks a value read through `global::` or a module namespace
+/// as constant, and a field given it directly keeps the mark. Passing it
+/// through a parameter, as Signal Lost's `util::writable` does, clears it.
+#[test]
+fn a_field_given_a_constant_directly_stays_constant() {
+    let mut runtime = started(
+        r#"
+        const LOCK = 60;
+        fn writable(value) { value }
+        fn tick() {
+            this.copied = writable(global::LOCK);
+            this.copied -= 1;
+            log::info(this.copied);
+            this.direct = global::LOCK;
+            this.direct -= 1;
+        }
+        "#,
+    );
+    assert_eq!(
+        runtime.tick(NO_INPUT),
+        Err(runtime_error(
+            Phase::Tick,
+            "main.rhai:9: Cannot modify constant "
+        ))
+    );
+    assert_eq!(texts(runtime.take_output()), ["59"]);
+}
+
 #[test]
 fn private_callbacks_are_rejected_when_called() {
     let mut runtime = started("private fn tick() {}");
@@ -190,12 +218,14 @@ fn errors_inside_nested_calls_name_the_innermost_line() {
 }
 
 #[test]
-fn arithmetic_errors_name_the_script_and_operation() {
-    // Rhai 1.26 raises built-in operator errors without a position, so
-    // only the script, not the line, can be named.
+fn arithmetic_errors_name_the_script_line_and_operation() {
     assert_eq!(
         start_message("let zero = 0;\nlet x = 1 / zero;"),
-        "main.rhai: Division by zero: 1 / 0"
+        "main.rhai:2: Division by zero: 1 / 0"
+    );
+    assert_eq!(
+        start_message("let big = 9223372036854775807;\n\nlet x = big + 1;"),
+        "main.rhai:3: Addition overflow: 9223372036854775807 + 1"
     );
 }
 

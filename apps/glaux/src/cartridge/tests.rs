@@ -664,13 +664,15 @@ fn shipped_examples_load_with_their_assets() {
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
     let root = fs::canonicalize(examples).unwrap();
     let storage = CartridgeStorage::Available(CartridgeFs::new(root));
-    for example in ["sprites", "tile-viewer", "signal-lost", "palettes"] {
+    for (example, entry) in [
+        ("sprites", "code/main.luau"),
+        ("tile-viewer", "code/main.luau"),
+        ("signal-lost", "code/main.luau"),
+        ("signal-lost-rhai", "code/main.rhai"),
+        ("palettes", "code/main.luau"),
+    ] {
         let cartridge = LoadedCartridge::load(&storage, example).unwrap();
-        assert_eq!(
-            cartridge.manifest().runtime.entry,
-            "code/main.luau",
-            "{example}"
-        );
+        assert_eq!(cartridge.manifest().runtime.entry, entry, "{example}");
         assert!(!cartridge.entry_source().unwrap().is_empty(), "{example}");
         assert!(
             cartridge

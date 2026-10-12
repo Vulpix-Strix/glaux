@@ -72,6 +72,17 @@
 //!
 //! Numbers may be integers or floats wherever Luau accepts a number.
 //!
+//! `==`, `!=`, `<`, `<=`, `>` and `>=` compare floats, and floats with
+//! integers, exactly, as Luau does. Rhai's own operators allow a relative
+//! epsilon, under which `29.999999999999996 < 30` is `false`.
+//!
+//! A value read through `global::NAME` or a module's namespace is constant
+//! in Rhai 1.26, and a map field, array slot or literal entry given it
+//! directly stays constant: `this.lock = global::LOCK; this.lock -= 1;`
+//! fails with "Cannot modify constant". Passing the value through a
+//! function parameter, or binding it with `let` first, gives a writable
+//! copy.
+//!
 //! # Limits
 //!
 //! Each call runs under a [`Budget`] of Rhai operations. Running out stops
@@ -88,9 +99,8 @@
 //! call is bounded only by that call's budget.
 //!
 //! Errors are located as `script:line: message`. Rhai 1.26 raises some
-//! errors without a position, among them arithmetic errors of built-in
-//! operators (division by zero, overflow) and size errors found on `this`;
-//! those name the script only.
+//! errors without a position, among them size errors found on `this`; those
+//! name the script only.
 //!
 //! Names starting with `__glaux_` are reserved.
 //!

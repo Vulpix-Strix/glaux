@@ -1,6 +1,7 @@
 //! Tests of the runtime's observable behavior, grouped by subsystem.
 
 mod audio;
+mod compare;
 mod draw;
 mod input;
 mod isolation;

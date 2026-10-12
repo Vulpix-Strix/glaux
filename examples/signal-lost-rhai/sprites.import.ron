@@ -1,0 +1,89 @@
+(
+    format: 1,
+    source: "sprites.png",
+    groups: Some("sprites.sprites.ron"),
+    group_banks: [
+        (
+            name: "knight_idle",
+            bank: 0,
+        ),
+        (
+            name: "knight_run",
+            bank: 0,
+        ),
+        (
+            name: "orc_run",
+            bank: 0,
+        ),
+        (
+            name: "goblin_run",
+            bank: 0,
+        ),
+        (
+            name: "axe",
+            bank: 1,
+        ),
+        (
+            name: "heart_full",
+            bank: 1,
+        ),
+        (
+            name: "heart_half",
+            bank: 1,
+        ),
+        (
+            name: "heart_empty",
+            bank: 1,
+        ),
+        (
+            name: "flask",
+            bank: 0,
+        ),
+        (
+            name: "wall_mid",
+            bank: 1,
+        ),
+        (
+            name: "wall_top",
+            bank: 1,
+        ),
+        (
+            name: "floor",
+            bank: 1,
+        ),
+        (
+            name: "ogre_run",
+            bank: 0,
+        ),
+        (
+            name: "coin",
+            bank: 1,
+        ),
+        (
+            name: "skull",
+            bank: 1,
+        ),
+    ],
+    files: [
+        (
+            name: "sprites.bin",
+            length: 8704,
+            fnv1a64: 7598472952565979991,
+        ),
+        (
+            name: "objattr.bin",
+            length: 272,
+            fnv1a64: 2530729474761350096,
+        ),
+        (
+            name: "obp.bin",
+            length: 128,
+            fnv1a64: 10517235768563699506,
+        ),
+        (
+            name: "palette.bin",
+            length: 768,
+            fnv1a64: 6918866676079993705,
+        ),
+    ],
+)

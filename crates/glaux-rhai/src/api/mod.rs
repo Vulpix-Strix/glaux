@@ -2,6 +2,7 @@
 //! per area.
 
 pub(crate) mod audio;
+pub(crate) mod compare;
 pub(crate) mod draw;
 pub(crate) mod input;
 pub(crate) mod log;

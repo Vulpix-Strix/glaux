@@ -23,6 +23,7 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES_DIR = REPOSITORY_ROOT / "examples"
 ROOT_ASSETS = frozenset({"sprites.bin", "objattr.bin", "obp.bin", "palette.bin"})
+SCRIPT_SUFFIXES = frozenset({".luau", ".rhai"})
 
 
 class SyncError(Exception):
@@ -137,7 +138,7 @@ def runtime_files(root: Path) -> tuple[Path, ...]:
                 relative = path.relative_to(root)
                 if relative == Path("cartridge.ron"):
                     continue
-                is_runtime = path.suffix == ".luau" or (
+                is_runtime = path.suffix in SCRIPT_SUFFIXES or (
                     relative.parent == Path() and name in ROOT_ASSETS
                 )
                 if is_runtime and not path.is_file():

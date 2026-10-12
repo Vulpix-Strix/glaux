@@ -303,27 +303,38 @@ fn imported_examples_resolve_every_png_pixel_to_its_color() {
     }
 }
 
-/// Signal Lost (`examples/signal-lost`), driven through the real loader,
-/// module source and object-tile validation. Assertions look at drawn
-/// text and command counts rather than sprite tiles or coordinates.
+/// Signal Lost, driven through the real loader, module source and
+/// object-tile validation, in both its Luau original
+/// (`examples/signal-lost`) and its Rhai port (`examples/signal-lost-rhai`).
+/// Behavior assertions look at drawn text and command counts rather than
+/// sprite tiles or coordinates; the lockstep test holds the port to every
+/// command, sound and log line of the original.
 mod signal_lost {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use glaux_input::Button;
+    use glaux_script::LogLevel;
     use pretty_assertions::assert_eq;
 
     use super::*;
     use crate::cartridge_fs::{CartridgeFs, CartridgeStorage};
 
+    const LUAU: &str = "signal-lost";
+    const RHAI: &str = "signal-lost-rhai";
+    const EXAMPLES: [&str; 2] = [LUAU, RHAI];
+
     /// Ticks after starting a run after which an idle knight must have
     /// fallen; about two minutes of play.
     const IDLE_DEATH_LIMIT: usize = 7200;
 
-    fn start() -> RunningCartridge {
+    fn examples_dir() -> PathBuf {
         let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-        let root = fs::canonicalize(examples).unwrap();
-        let storage = CartridgeStorage::Available(CartridgeFs::new(root));
-        let cartridge = LoadedCartridge::load(&storage, "signal-lost").unwrap();
+        fs::canonicalize(examples).unwrap()
+    }
+
+    fn start(name: &str) -> RunningCartridge {
+        let storage = CartridgeStorage::Available(CartridgeFs::new(examples_dir()));
+        let cartridge = LoadedCartridge::load(&storage, name).unwrap();
         RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap()
     }
 
@@ -349,8 +360,8 @@ mod signal_lost {
     }
 
     /// Taps A on the title screen to begin the first run.
-    fn start_playing() -> RunningCartridge {
-        let mut running = start();
+    fn start_playing(name: &str) -> RunningCartridge {
+        let mut running = start(name);
         step(&mut running, &[down(Button::A)]);
         step(&mut running, &[up(Button::A)]);
         running
@@ -385,119 +396,275 @@ mod signal_lost {
 
     #[test]
     fn boots_to_a_drawn_title_screen() {
-        let mut running = start();
-        assert_eq!(texts(running.take_output()), ["Signal Lost ready"]);
+        for name in EXAMPLES {
+            let mut running = start(name);
+            assert_eq!(
+                texts(running.take_output()),
+                ["Signal Lost ready"],
+                "{name}"
+            );
 
-        idle(&mut running, 120);
-        assert!(shows(&running, "SIGNAL LOST"));
-        assert!(shows(&running, "X DASH"));
-        assert!(sprite_count(&running) > 0);
-        assert!(
-            running
-                .runtime
-                .frame()
-                .iter()
-                .any(|command| matches!(command, DrawCommand::Rect { .. }))
-        );
+            idle(&mut running, 120);
+            assert!(shows(&running, "SIGNAL LOST"), "{name}");
+            assert!(shows(&running, "X DASH"), "{name}");
+            assert!(sprite_count(&running) > 0, "{name}");
+            assert!(
+                running
+                    .runtime
+                    .frame()
+                    .iter()
+                    .any(|command| matches!(command, DrawCommand::Rect { .. })),
+                "{name}"
+            );
 
-        let rom = crate::rom::load().unwrap();
-        let mut framebuffer = Framebuffer::new();
-        running.render(&mut framebuffer, rom.font());
-        let first = framebuffer.as_bytes()[0];
-        assert!(framebuffer.as_bytes().iter().any(|&index| index != first));
+            let rom = crate::rom::load().unwrap();
+            let mut framebuffer = Framebuffer::new();
+            running.render(&mut framebuffer, rom.font());
+            let first = framebuffer.as_bytes()[0];
+            assert!(
+                framebuffer.as_bytes().iter().any(|&index| index != first),
+                "{name}"
+            );
+        }
     }
 
     #[test]
     fn pressing_a_starts_a_run_with_a_hud() {
-        let mut running = start_playing();
-        assert!(!shows(&running, "PRESS Z TO START"));
-        assert!(shows(&running, "SCORE 00000"));
-        assert!(shows(&running, "TIME"));
-        let band = DrawCommand::Rect {
-            x: 0,
-            y: 0,
-            width: 320,
-            height: 16,
-            color: 11,
-        };
-        assert!(running.runtime.frame().contains(&band));
+        for name in EXAMPLES {
+            let mut running = start_playing(name);
+            assert!(!shows(&running, "PRESS Z TO START"), "{name}");
+            assert!(shows(&running, "SCORE 00000"), "{name}");
+            assert!(shows(&running, "TIME"), "{name}");
+            let band = DrawCommand::Rect {
+                x: 0,
+                y: 0,
+                width: 320,
+                height: 16,
+                color: 11,
+            };
+            assert!(running.runtime.frame().contains(&band), "{name}");
 
-        let rom = crate::rom::load().unwrap();
-        let mut framebuffer = Framebuffer::new();
-        running.render(&mut framebuffer, rom.font());
-        assert_eq!(framebuffer.pixel(150, 14), Some(11));
+            let rom = crate::rom::load().unwrap();
+            let mut framebuffer = Framebuffer::new();
+            running.render(&mut framebuffer, rom.font());
+            assert_eq!(framebuffer.pixel(150, 14), Some(11), "{name}");
 
-        let output = texts(running.take_output());
-        assert!(output.contains(&"run 1 started".to_string()), "{output:?}");
+            let output = texts(running.take_output());
+            assert!(
+                output.contains(&"run 1 started".to_string()),
+                "{name}: {output:?}"
+            );
+        }
     }
 
     #[test]
     fn holding_a_direction_moves_the_knight() {
-        let mut moved = start_playing();
-        let mut still = start_playing();
-        step(&mut moved, &[down(Button::Right)]);
-        step(&mut still, &[]);
-        idle(&mut moved, 20);
-        idle(&mut still, 20);
-        assert_ne!(moved.runtime.frame(), still.runtime.frame());
+        for name in EXAMPLES {
+            let mut moved = start_playing(name);
+            let mut still = start_playing(name);
+            step(&mut moved, &[down(Button::Right)]);
+            step(&mut still, &[]);
+            idle(&mut moved, 20);
+            idle(&mut still, 20);
+            assert_ne!(moved.runtime.frame(), still.runtime.frame(), "{name}");
+        }
     }
 
     #[test]
     fn holding_a_throws_axes() {
-        let mut throwing = start_playing();
-        let mut still = start_playing();
-        step(&mut throwing, &[down(Button::A)]);
-        step(&mut still, &[]);
-        idle(&mut throwing, 20);
-        idle(&mut still, 20);
-        assert!(sprite_count(&throwing) > sprite_count(&still));
+        for name in EXAMPLES {
+            let mut throwing = start_playing(name);
+            let mut still = start_playing(name);
+            step(&mut throwing, &[down(Button::A)]);
+            step(&mut still, &[]);
+            idle(&mut throwing, 20);
+            idle(&mut still, 20);
+            assert!(sprite_count(&throwing) > sprite_count(&still), "{name}");
+        }
     }
 
     #[test]
     fn an_idle_knight_falls_and_the_game_restarts_in_the_same_vm() {
-        let mut running = start_playing();
-        let fell = (0..IDLE_DEATH_LIMIT).any(|_| {
-            step(&mut running, &[]);
-            shows(&running, "KILLS")
-        });
-        assert!(fell, "still alive after {IDLE_DEATH_LIMIT} ticks");
-        let output = texts(running.take_output());
-        assert!(
-            output
-                .iter()
-                .any(|line| line.starts_with("signal lost: score")),
-            "{output:?}"
-        );
+        for name in EXAMPLES {
+            let mut running = start_playing(name);
+            let fell = (0..IDLE_DEATH_LIMIT).any(|_| {
+                step(&mut running, &[]);
+                shows(&running, "KILLS")
+            });
+            assert!(fell, "{name}: still alive after {IDLE_DEATH_LIMIT} ticks");
+            let output = texts(running.take_output());
+            assert!(
+                output
+                    .iter()
+                    .any(|line| line.starts_with("signal lost: score")),
+                "{name}: {output:?}"
+            );
 
-        // A is ignored briefly so a held button cannot skip the screen.
-        step(&mut running, &[down(Button::A)]);
-        step(&mut running, &[up(Button::A)]);
-        assert!(shows(&running, "KILLS"));
+            // A is ignored briefly so a held button cannot skip the screen.
+            step(&mut running, &[down(Button::A)]);
+            step(&mut running, &[up(Button::A)]);
+            assert!(shows(&running, "KILLS"), "{name}");
 
-        // Once the game-over effects finish, no channel is left open.
-        idle(&mut running, 80);
-        let channels = *running.runtime.audio_mut().channels();
-        assert!(channels.iter().all(|channel| !channel.gate), "{channels:?}");
+            // Once the game-over effects finish, no channel is left open.
+            idle(&mut running, 80);
+            let channels = *running.runtime.audio_mut().channels();
+            assert!(
+                channels.iter().all(|channel| !channel.gate),
+                "{name}: {channels:?}"
+            );
 
-        step(&mut running, &[down(Button::A)]);
-        step(&mut running, &[up(Button::A)]);
-        assert!(!shows(&running, "KILLS"));
-        assert!(shows(&running, "SCORE 00000"));
-        assert!(texts(running.take_output()).contains(&"restart: run 2".to_string()));
+            step(&mut running, &[down(Button::A)]);
+            step(&mut running, &[up(Button::A)]);
+            assert!(!shows(&running, "KILLS"), "{name}");
+            assert!(shows(&running, "SCORE 00000"), "{name}");
+            assert!(
+                texts(running.take_output()).contains(&"restart: run 2".to_string()),
+                "{name}"
+            );
+        }
     }
 
     #[test]
     fn the_same_inputs_replay_the_same_game() {
-        let play = || {
-            let mut running = start_playing();
-            step(&mut running, &[down(Button::Right), down(Button::A)]);
-            idle(&mut running, 60);
-            step(&mut running, &[up(Button::Right), down(Button::Up)]);
-            step(&mut running, &[down(Button::B)]);
-            idle(&mut running, 120);
-            let output = texts(running.take_output());
-            (running.runtime.frame().to_vec(), output)
-        };
-        assert_eq!(play(), play());
+        for name in EXAMPLES {
+            let play = || {
+                let mut running = start_playing(name);
+                step(&mut running, &[down(Button::Right), down(Button::A)]);
+                idle(&mut running, 60);
+                step(&mut running, &[up(Button::Right), down(Button::Up)]);
+                step(&mut running, &[down(Button::B)]);
+                idle(&mut running, 120);
+                let output = texts(running.take_output());
+                (running.runtime.frame().to_vec(), output)
+            };
+            assert_eq!(play(), play(), "{name}");
+        }
+    }
+
+    /// The port reuses the original's graphics and palettes unchanged.
+    #[test]
+    fn the_rhai_port_ships_the_original_assets() {
+        let root = examples_dir();
+        for file in [
+            "sprites.png",
+            "sprites.bin",
+            "objattr.bin",
+            "obp.bin",
+            "palette.bin",
+            "sprites.import.ron",
+            "sprites.sprites.ron",
+        ] {
+            assert_eq!(
+                fs::read(root.join(RHAI).join(file)).unwrap(),
+                fs::read(root.join(LUAU).join(file)).unwrap(),
+                "{file}"
+            );
+        }
+    }
+
+    /// A log entry as the lockstep test compares it. Rhai's `debug` shows
+    /// strings quoted where Luau's `log.debug` does not; the quotes are the
+    /// only difference the port is allowed.
+    fn comparable(entries: Vec<LogEntry>, unquote_debug: bool) -> Vec<(LogLevel, String)> {
+        entries
+            .into_iter()
+            .map(|entry| {
+                let text = match entry.level {
+                    LogLevel::Debug if unquote_debug => entry
+                        .text
+                        .strip_prefix('"')
+                        .and_then(|text| text.strip_suffix('"'))
+                        .map_or(entry.text.clone(), str::to_owned),
+                    _ => entry.text,
+                };
+                (entry.level, text)
+            })
+            .collect()
+    }
+
+    /// Buttons held on tick `n` of a scripted session that walks a new
+    /// direction every 20 ticks, taps A every other tick so the aim follows
+    /// the walk, and dashes every 97 ticks. Tuned on the original so the
+    /// first run reaches the ogre waves before the knight falls; the A taps
+    /// also restart each run once the game-over lock ends.
+    fn scripted_buttons(n: usize) -> Vec<Button> {
+        const DIRECTIONS: [&[Button]; 8] = [
+            &[Button::Right],
+            &[Button::Right, Button::Down],
+            &[Button::Down],
+            &[Button::Down, Button::Left],
+            &[Button::Left],
+            &[Button::Left, Button::Up],
+            &[Button::Up],
+            &[Button::Up, Button::Right],
+        ];
+        let mut held = DIRECTIONS[(n / 20 * 3) % 8].to_vec();
+        if n % 2 == 1 {
+            held.push(Button::A);
+        }
+        if n.is_multiple_of(97) {
+            held.push(Button::B);
+        }
+        held
+    }
+
+    /// The input events that turn tick `n - 1`'s scripted buttons into
+    /// tick `n`'s.
+    fn scripted_input(n: usize) -> Vec<InputEvent> {
+        let before = n.checked_sub(1).map(scripted_buttons).unwrap_or_default();
+        let now = scripted_buttons(n);
+        let released = before.iter().filter(|b| !now.contains(b)).map(|&b| up(b));
+        let pressed = now.iter().filter(|b| !before.contains(b)).map(|&b| down(b));
+        released.chain(pressed).collect()
+    }
+
+    /// The Rhai port draws, sounds and logs exactly what the original does,
+    /// tick by tick, through runs that reach the ogre waves, the game-over
+    /// screen and restarts.
+    #[test]
+    fn the_rhai_port_plays_in_lockstep_with_the_original() {
+        const TICKS: usize = 7_000;
+        let mut luau = start(LUAU);
+        let mut rhai = start(RHAI);
+        assert_eq!(
+            comparable(rhai.take_output(), true),
+            comparable(luau.take_output(), false)
+        );
+
+        let mut ogres = 0;
+        let mut runs = 0;
+        for n in 0..TICKS {
+            let input = scripted_input(n);
+            luau.tick(&input).unwrap();
+            rhai.tick(&input).unwrap();
+            assert!(
+                luau.runtime.frame() == rhai.runtime.frame(),
+                "frames differ at tick {n}"
+            );
+            assert_eq!(
+                *rhai.runtime.audio_mut(),
+                *luau.runtime.audio_mut(),
+                "audio differs at tick {n}"
+            );
+            let lines = comparable(luau.take_output(), false);
+            assert_eq!(
+                comparable(rhai.take_output(), true),
+                lines,
+                "logs differ at tick {n}"
+            );
+
+            ogres += lines
+                .iter()
+                .filter(|(_, text)| text.starts_with("an ogre entered"))
+                .count();
+            runs += lines
+                .iter()
+                .filter(|(_, text)| text.starts_with("signal lost: score"))
+                .count();
+            luau.runtime.audio_mut().commit();
+            rhai.runtime.audio_mut().commit();
+        }
+        assert!(ogres > 0, "no ogre appeared");
+        assert!(runs > 1, "{runs} runs ended");
     }
 }
