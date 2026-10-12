@@ -95,6 +95,7 @@ fn a_chime_cut_off_by_the_shell_leaves_nothing_behind() {
         video_defaults: video_defaults(),
         workspace: Workspace::new(fake_rom().font().metrics(), fake_rom().palette().clone()),
         sprites: None,
+        code: None,
         host_request: None,
     };
     system = system.update(&[]);

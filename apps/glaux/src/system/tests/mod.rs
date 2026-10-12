@@ -17,6 +17,7 @@ use workspace::Tab;
 
 mod boot_sequence;
 mod cartridge_audio;
+mod code_tabs;
 mod drawing;
 mod input;
 mod lifecycle;

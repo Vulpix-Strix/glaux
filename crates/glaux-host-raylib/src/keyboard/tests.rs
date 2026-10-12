@@ -173,19 +173,59 @@ fn ctrl_shortcuts_become_editing_commands() {
 }
 
 #[test]
+fn ctrl_shortcuts_become_document_commands() {
+    assert_eq!(shortcuts(&[KEY_P], false, true), [InputEvent::OpenFile]);
+    assert_eq!(
+        shortcuts(&[KEY_W], false, true),
+        [InputEvent::CloseDocument]
+    );
+    assert_eq!(
+        shortcuts(&[KEY_PAGE_DOWN], false, true),
+        [InputEvent::NextDocument]
+    );
+    assert_eq!(
+        shortcuts(&[KEY_PAGE_UP], false, true),
+        [InputEvent::PreviousDocument]
+    );
+}
+
+#[test]
 fn shortcut_keys_without_ctrl_are_not_commands() {
     for shift in [false, true] {
-        assert_eq!(shortcuts(&[KEY_Z, KEY_Y, KEY_S], shift, false), []);
+        assert_eq!(
+            shortcuts(
+                &[
+                    KEY_Z,
+                    KEY_Y,
+                    KEY_S,
+                    KEY_P,
+                    KEY_W,
+                    KEY_PAGE_UP,
+                    KEY_PAGE_DOWN
+                ],
+                shift,
+                false
+            ),
+            []
+        );
     }
 }
 
 #[test]
 fn editing_commands_are_kept_only_in_workspace_mode() {
-    let all = [InputEvent::Undo, InputEvent::Redo, InputEvent::Save];
+    let all = [
+        InputEvent::Undo,
+        InputEvent::Redo,
+        InputEvent::Save,
+        InputEvent::OpenFile,
+        InputEvent::CloseDocument,
+        InputEvent::NextDocument,
+        InputEvent::PreviousDocument,
+    ];
     for (mode, kept) in [
         (InputMode::Text, 0),
         (InputMode::Game, 0),
-        (InputMode::Workspace, 3),
+        (InputMode::Workspace, all.len()),
     ] {
         let mut events = all.to_vec();
         retain_for_mode(mode, &mut events);

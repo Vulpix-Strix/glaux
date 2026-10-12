@@ -111,10 +111,11 @@ const EDIT_KEYS: [EditKey; 12] = [
     },
 ];
 
-/// Ctrl shortcuts for editing commands, each fired once per press and never
-/// repeated. Raylib key codes name physical positions, so on layouts other
-/// than QWERTY the shortcut follows the key where the letter sits on QWERTY.
-const SHORTCUTS: [(KeyboardKey, KeyEvent); 3] = [
+/// Ctrl shortcuts for editing and document commands, each fired once per
+/// press and never repeated. Raylib key codes name physical positions, so on
+/// layouts other than QWERTY the shortcut follows the key where the letter
+/// sits on QWERTY.
+const SHORTCUTS: [(KeyboardKey, KeyEvent); 7] = [
     (KeyboardKey::KEY_Z, |m| {
         if m.shift {
             InputEvent::Redo
@@ -124,6 +125,10 @@ const SHORTCUTS: [(KeyboardKey, KeyEvent); 3] = [
     }),
     (KeyboardKey::KEY_Y, |_| InputEvent::Redo),
     (KeyboardKey::KEY_S, |_| InputEvent::Save),
+    (KeyboardKey::KEY_P, |_| InputEvent::OpenFile),
+    (KeyboardKey::KEY_W, |_| InputEvent::CloseDocument),
+    (KeyboardKey::KEY_PAGE_DOWN, |_| InputEvent::NextDocument),
+    (KeyboardKey::KEY_PAGE_UP, |_| InputEvent::PreviousDocument),
 ];
 
 /// Appends the command events of the shortcuts pressed this frame to `out`.
@@ -460,9 +465,8 @@ impl GameKeys {
 }
 
 /// Drops the events `mode` does not consume. [`InputEvent::Break`] is kept
-/// in every mode; view switching, editing commands and pointer events only
-/// in
-/// [`InputMode::Workspace`].
+/// in every mode; view switching, editing and document commands and pointer
+/// events only in [`InputMode::Workspace`].
 pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
     events.retain(|event| {
         let game = matches!(
@@ -480,6 +484,10 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::Undo
                     | InputEvent::Redo
                     | InputEvent::Save
+                    | InputEvent::OpenFile
+                    | InputEvent::CloseDocument
+                    | InputEvent::NextDocument
+                    | InputEvent::PreviousDocument
             );
         match mode {
             InputMode::Text => !game && !workspace,

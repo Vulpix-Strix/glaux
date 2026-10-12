@@ -63,6 +63,14 @@ pub enum InputEvent {
     Redo,
     /// Write the open document to the cartridge (Ctrl+S on desktop).
     Save,
+    /// Ask to choose a file to open (Ctrl+P on desktop).
+    OpenFile,
+    /// Close the active document (Ctrl+W on desktop).
+    CloseDocument,
+    /// Switch to the next open document (Ctrl+PageDown on desktop).
+    NextDocument,
+    /// Switch to the previous open document (Ctrl+PageUp on desktop).
+    PreviousDocument,
     /// The logical pixel under the pointer changed. `None` means the pointer
     /// is outside the logical viewport and no button is captured.
     ///
@@ -162,9 +170,9 @@ pub enum InputMode {
     Text,
     /// Button and key transitions, for a running cartridge.
     Game,
-    /// Text and editing events, view switching, editing commands such as
-    /// [`InputEvent::Save`] and pointer events, for the system's editor
-    /// workspace.
+    /// Text and editing events, view switching, editing and document
+    /// commands such as [`InputEvent::Save`] and [`InputEvent::OpenFile`],
+    /// and pointer events, for the system's editor workspace.
     Workspace,
 }
 

@@ -8,6 +8,7 @@
 //! [`WorkspaceRequest`], and its outcome comes back as a brief notice or a
 //! modal [`Dialog`].
 
+mod code;
 mod dialog;
 mod sprites;
 
@@ -22,15 +23,20 @@ use glaux_machine::system_rom::{Cursor, SystemIcon, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 use glaux_video::preview::ObjPreviewPalette;
 
+use super::code_document::CodeDocumentError;
+use super::code_session::CodeSession;
 use super::sprite_document::{
     Conflict, ConflictKind, DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile,
     SpriteDocument, file_list,
 };
 use super::video::CartridgeVideoDefaults;
-use super::{ACCENT, BACKGROUND, DIM, OK, PALE, TEXT};
+use super::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
+use crate::cartridge::source::{ScriptListing, SourcePath};
 use crate::cartridge::{CartridgeError, LoadedCartridge, VideoAsset};
+use crate::cartridge_fs::FsError;
 use crate::rom::ICON_SIZE;
 use crate::sprite_import::SheetSource;
+use code::{CodeEditor, CodeRequest};
 use dialog::Dialog;
 #[cfg(test)]
 pub use sprites::ImportPreview;
@@ -90,6 +96,12 @@ pub enum WorkspaceRequest {
     /// [`Workspace::file_dialog_closed`] answers it, or Escape stops the
     /// wait.
     PickSpritesheet,
+    /// List the cartridge's scripts for OPEN FILE; answer with
+    /// [`Workspace::scripts_listed`].
+    ListScripts,
+    /// Open this script in a tab, or show its tab if it has one; answer
+    /// with [`Workspace::script_opened`].
+    OpenScript(SourcePath),
 }
 
 /// What a workspace dialog's buttons do.
@@ -156,7 +168,7 @@ impl Tab {
     /// What the view will edit, shown while it has no editor.
     fn purpose(self) -> &'static str {
         match self {
-            Self::Code => "Edit the cartridge's Luau scripts.",
+            Self::Code => "Edit the cartridge's Luau and Rhai scripts.",
             Self::Sprites => "Draw object tiles and their palettes.",
             Self::Map => "Lay out tiles into maps.",
             Self::Sfx => "Shape sound effects for the PSG.",
@@ -466,6 +478,7 @@ impl WorkspaceVideo {
 pub struct Workspace {
     layout: Layout,
     tab: Tab,
+    code: CodeEditor,
     sprites: SpriteEditor,
     /// While open, the dialog takes every input and the views take none.
     modal: Option<Modal>,
@@ -483,6 +496,11 @@ impl Workspace {
         Self {
             layout,
             tab: Tab::default(),
+            code: CodeEditor::new(code::Metrics {
+                cell_w: layout.cell_w,
+                cell_h: layout.cell_h,
+                top: layout.bar_height(),
+            }),
             sprites: SpriteEditor::new(sprites::Metrics {
                 cell_w: layout.cell_w,
                 cell_h: layout.cell_h,
@@ -544,21 +562,29 @@ impl Workspace {
         &self.sprites
     }
 
+    #[cfg(test)]
+    pub fn code(&self) -> &CodeEditor {
+        &self.code
+    }
+
     pub fn tab(&self) -> Tab {
         self.tab
     }
 
-    /// Applies `event`, letting the sprite editor change `sprites`, and
-    /// returns the file work it calls for, if any.
+    /// Applies `event`, letting the sprite editor change `sprites` and the
+    /// Code view change `code`, and returns the file work it calls for, if
+    /// any.
     ///
     /// While a dialog is open it takes every event, Escape included; so
-    /// do the sprite editor's own dialogs. Otherwise Ctrl+Tab and
-    /// Ctrl+Shift+Tab cycle the tabs, a primary press on a tab selects it,
-    /// and everything else goes to the open view's editor, if it has one.
+    /// do the sprite editor's own dialogs and the Code view's overlays.
+    /// Otherwise Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs, a primary
+    /// press on a tab selects it, and everything else goes to the open
+    /// view's editor, if it has one.
     pub fn handle_input(
         &mut self,
         event: InputEvent,
         sprites: Option<&mut SpriteDocument>,
+        code: Option<&mut CodeSession>,
     ) -> Option<WorkspaceRequest> {
         if let Some(modal) = &mut self.modal {
             let layout = modal.dialog.layout(
@@ -579,6 +605,9 @@ impl Workspace {
         if self.sprites.has_dialog() {
             return self.sprite_input(event, sprites);
         }
+        if self.code.has_overlay() {
+            return self.code_input(event, code);
+        }
         match event {
             InputEvent::NextView => self.switch_to(self.tab.next(), sprites),
             InputEvent::PreviousView => self.switch_to(self.tab.previous(), sprites),
@@ -591,9 +620,23 @@ impl Workspace {
                 }
             }
             _ if self.tab == Tab::Sprites => return self.sprite_input(event, sprites),
+            _ if self.tab == Tab::Code => return self.code_input(event, code),
             _ => {}
         }
         None
+    }
+
+    /// Hands `event` to the Code view and passes on the file work it asks
+    /// for.
+    fn code_input(
+        &mut self,
+        event: InputEvent,
+        code: Option<&mut CodeSession>,
+    ) -> Option<WorkspaceRequest> {
+        match self.code.handle_input(event, code)? {
+            CodeRequest::ListScripts => Some(WorkspaceRequest::ListScripts),
+            CodeRequest::Open(path) => Some(WorkspaceRequest::OpenScript(path)),
+        }
     }
 
     /// Hands `event` to the sprite editor and carries out what it asks.
@@ -612,10 +655,60 @@ impl Workspace {
         }
     }
 
-    /// Whether a dialog, or one of the sprite editor's, is open and
-    /// taking all input.
+    /// Whether a dialog, one of the sprite editor's, or one of the Code
+    /// view's overlays is open and taking all input.
     pub fn has_modal(&self) -> bool {
-        self.modal.is_some() || self.sprites.has_dialog()
+        self.modal.is_some() || self.sprites.has_dialog() || self.code.has_overlay()
+    }
+
+    /// Opens OPEN FILE on the cartridge's scripts, or on why they could
+    /// not be listed.
+    pub fn scripts_listed(&mut self, listing: Result<ScriptListing, FsError>) {
+        if let Ok(listing) = &listing
+            && !listing.gaps.is_empty()
+        {
+            tracing::info!(gaps = ?listing.gaps, "script listing is incomplete");
+        }
+        self.code.open_picker(listing);
+    }
+
+    /// Reports how opening `path` in `code` went, showing its tab if it
+    /// opened.
+    pub fn script_opened(
+        &mut self,
+        code: &mut CodeSession,
+        path: &SourcePath,
+        result: Result<(), CodeDocumentError>,
+    ) {
+        match result {
+            Ok(()) => self.code.reveal_active(code),
+            Err(err) => {
+                tracing::info!(file = %path, error = %err, "code document not opened");
+                self.notify(format!("Cannot open {path}: {err}"), ERROR);
+            }
+        }
+    }
+
+    /// Reports how opening the cartridge's entry script on the first visit
+    /// to the Code view went. The reason it failed stays in the empty view.
+    pub fn entry_opened(&mut self, code: &mut CodeSession, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                self.code.set_entry_error(None);
+                self.code.reveal_active(code);
+            }
+            Err(message) => {
+                tracing::info!(error = %message, "entry script not opened");
+                self.notify("Cannot open the entry script", ERROR);
+                self.code.set_entry_error(Some(message));
+            }
+        }
+    }
+
+    /// Drops what the Code view shows of a cartridge that is no longer
+    /// loaded.
+    pub fn forget_code(&mut self) {
+        self.code.forget();
     }
 
     /// Advances time-limited UI state by one tick.
@@ -808,6 +901,7 @@ impl Workspace {
     /// must not outlive the view or the visit it started in.
     pub fn end_stroke(&mut self, sprites: Option<&mut SpriteDocument>) {
         self.sprites.end_stroke(sprites);
+        self.code.end_drag();
     }
 
     fn switch_to(&mut self, tab: Tab, sprites: Option<&mut SpriteDocument>) {
@@ -818,9 +912,13 @@ impl Workspace {
     }
 
     /// Draws the tab bar and the selected view for `cartridge`, whose
-    /// sprites the editor shows from `sprites`, with what is under
-    /// `pointer` highlighted. The pointer itself is not drawn; see
-    /// [`draw_cursor`].
+    /// sprites the editor shows from `sprites` and whose scripts the Code
+    /// view shows from `code`, with what is under `pointer` highlighted.
+    /// The pointer itself is not drawn; see [`draw_cursor`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is a separate source the frame is drawn from"
+    )]
     pub fn render(
         &self,
         framebuffer: &mut Framebuffer,
@@ -828,6 +926,7 @@ impl Workspace {
         ui: &SystemUi,
         cartridge: &LoadedCartridge,
         sprites: Result<SpriteSource<'_>, &str>,
+        code: Option<&CodeSession>,
         pointer: Option<Point>,
     ) {
         let layout = self.layout;
@@ -838,7 +937,7 @@ impl Workspace {
         // sprite editor's dialog does while one is open.
         let pointer = pointer.filter(|_| self.modal.is_none());
         let hovered = pointer
-            .filter(|_| !self.sprites.has_dialog())
+            .filter(|_| !self.sprites.has_dialog() && !self.code.has_overlay())
             .and_then(|at| layout.tab_at(at));
         for (tab, rect) in layout.tabs() {
             let active = tab == self.tab;
@@ -901,6 +1000,7 @@ impl Workspace {
             Tab::Sprites => self
                 .sprites
                 .render(framebuffer, font, ui, sprites, pointer, notice),
+            Tab::Code => self.code.render(framebuffer, font, code, pointer, notice),
             _ => self.render_placeholder(framebuffer, font),
         }
         if let Some(modal) = &self.modal {

@@ -3,12 +3,17 @@
 use std::fmt;
 
 use super::{Language, LoadedCartridge, is_portable_path, is_script_of};
-use crate::cartridge_fs::FsError;
+use crate::cartridge_fs::{FsError, WalkGap, WalkLimits};
+
+/// How far [`LoadedCartridge::script_files`] searches.
+const SCRIPT_WALK: WalkLimits = WalkLimits {
+    max_depth: 16,
+    max_files: 1024,
+};
 
 /// The portable path of a script file from the cartridge root, as in
 /// `code/player.luau`. Its extension names its language, whatever language
 /// the manifest declares.
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourcePath {
     path: String,
@@ -16,7 +21,6 @@ pub struct SourcePath {
 }
 
 /// A path rejected by [`SourcePath::parse`]. Holds the path as given.
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SourcePathError {
     /// Not a portable path relative to the cartridge root.
@@ -27,7 +31,6 @@ pub enum SourcePathError {
     UnsupportedExtension(String),
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 impl SourcePath {
     /// Validates `path` as relative to the cartridge root under the same
     /// rules as the manifest's entry: `/`-separated plain names, no
@@ -54,6 +57,29 @@ impl SourcePath {
     pub fn language(&self) -> Language {
         self.language
     }
+
+    /// The last component, as in `player.luau`.
+    pub fn file_name(&self) -> &str {
+        self.path.rsplit('/').next().unwrap_or(&self.path)
+    }
+
+    /// The order paths are listed in: ignoring case, then exactly, so it
+    /// never depends on the order the host reports files in.
+    pub fn listing_order(&self, other: &Self) -> std::cmp::Ordering {
+        self.path
+            .to_lowercase()
+            .cmp(&other.path.to_lowercase())
+            .then_with(|| self.path.cmp(&other.path))
+    }
+}
+
+/// The script files of a cartridge, and the parts of it not searched.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScriptListing {
+    /// In [`SourcePath::listing_order`].
+    pub paths: Vec<SourcePath>,
+    /// Empty only when the whole cartridge was searched.
+    pub gaps: Vec<WalkGap>,
 }
 
 impl fmt::Display for SourcePath {
@@ -62,7 +88,6 @@ impl fmt::Display for SourcePath {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 impl LoadedCartridge {
     /// Current bytes of the script file at `path`, read on every call.
     ///
@@ -71,6 +96,34 @@ impl LoadedCartridge {
     /// [`FsError::NotFound`].
     pub fn read_source(&self, path: &SourcePath) -> Result<Vec<u8>, FsError> {
         self.files.read_file(&format!("/{path}"))
+    }
+
+    /// Every `.luau` and `.rhai` file in the cartridge, in any directory.
+    ///
+    /// Searched as [`CartridgeFs::walk_files`] searches, within depth and
+    /// file limits; whatever was not searched is reported in
+    /// [`ScriptListing::gaps`]. Fails only when the cartridge directory
+    /// itself cannot be listed.
+    ///
+    /// [`CartridgeFs::walk_files`]: crate::cartridge_fs::CartridgeFs::walk_files
+    pub fn script_files(&self) -> Result<ScriptListing, FsError> {
+        self.script_files_within(SCRIPT_WALK)
+    }
+
+    pub(crate) fn script_files_within(&self, limits: WalkLimits) -> Result<ScriptListing, FsError> {
+        let walk = self
+            .files
+            .walk_files(limits, |path| SourcePath::parse(path).is_ok())?;
+        let mut paths: Vec<SourcePath> = walk
+            .files
+            .iter()
+            .filter_map(|path| SourcePath::parse(path).ok())
+            .collect();
+        paths.sort_by(SourcePath::listing_order);
+        Ok(ScriptListing {
+            paths,
+            gaps: walk.gaps,
+        })
     }
 }
 

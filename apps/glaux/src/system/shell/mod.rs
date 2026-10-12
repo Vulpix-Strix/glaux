@@ -178,6 +178,10 @@ impl Shell {
                 | InputEvent::Undo
                 | InputEvent::Redo
                 | InputEvent::Save
+                | InputEvent::OpenFile
+                | InputEvent::CloseDocument
+                | InputEvent::NextDocument
+                | InputEvent::PreviousDocument
         ) && !event.is_pointer()
         {
             self.blink = 0;
@@ -227,6 +231,10 @@ impl Shell {
             | InputEvent::Undo
             | InputEvent::Redo
             | InputEvent::Save
+            | InputEvent::OpenFile
+            | InputEvent::CloseDocument
+            | InputEvent::NextDocument
+            | InputEvent::PreviousDocument
             | InputEvent::PointerMove(_)
             | InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }

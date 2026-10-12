@@ -494,6 +494,102 @@ fn stale_staging_files_are_swept_by_the_next_replace() {
     assert!(fresh.exists());
 }
 
+const WALK: WalkLimits = WalkLimits {
+    max_depth: 16,
+    max_files: 100,
+};
+
+fn walk(fs: &CartridgeFs, limits: WalkLimits) -> Walk {
+    fs.walk_files(limits, |_| true).unwrap()
+}
+
+/// Writes empty files at each of `paths` below the fixture's root.
+fn touch(fixture: &Fixture, paths: &[&str]) {
+    for path in paths {
+        let host = fixture.root().join(path);
+        fs::create_dir_all(host.parent().unwrap()).unwrap();
+        fs::write(host, "").unwrap();
+    }
+}
+
+#[test]
+fn walking_finds_files_in_every_directory() {
+    let fixture = Fixture::new("walk-all");
+    touch(&fixture, &["games/owl/code/main.luau", "tools/x/y/z.txt"]);
+    let found = walk(&fixture.open(), WALK);
+    assert_eq!(
+        found.files,
+        [
+            "games/owl/code/main.luau",
+            "tools/x/y/z.txt",
+            "A.txt",
+            "b.txt",
+            "readme",
+        ]
+    );
+    assert_eq!(found.gaps, []);
+}
+
+#[test]
+fn walking_keeps_only_what_the_filter_accepts() {
+    let fixture = Fixture::new("walk-filter");
+    touch(&fixture, &["tools/a.luau", "tools/b.png"]);
+    let found = fixture
+        .open()
+        .walk_files(WALK, |path| path.ends_with(".luau"))
+        .unwrap();
+    assert_eq!(found.files, ["tools/a.luau"]);
+}
+
+#[test]
+fn walking_reports_where_the_file_limit_stopped_it() {
+    let fixture = Fixture::new("walk-file-limit");
+    let limits = WalkLimits {
+        max_files: 2,
+        ..WALK
+    };
+    let found = walk(&fixture.open(), limits);
+    assert_eq!(found.files, ["A.txt", "b.txt"]);
+    assert_eq!(found.gaps, [WalkGap::FileLimit(2)]);
+
+    // Exactly as many files as the limit is complete.
+    let limits = WalkLimits {
+        max_files: 3,
+        ..WALK
+    };
+    assert_eq!(walk(&fixture.open(), limits).gaps, []);
+}
+
+#[test]
+fn walking_reports_directories_below_the_depth_limit() {
+    let fixture = Fixture::new("walk-depth");
+    touch(&fixture, &["tools/top.luau", "tools/deep/hidden.luau"]);
+    let limits = WalkLimits {
+        max_depth: 1,
+        ..WALK
+    };
+    let found = fixture
+        .open()
+        .walk_files(limits, |path| path.ends_with(".luau"))
+        .unwrap();
+    assert_eq!(found.files, ["tools/top.luau"]);
+    assert_eq!(
+        found.gaps,
+        [
+            WalkGap::TooDeep("/games/owl".into()),
+            WalkGap::TooDeep("/tools/deep".into()),
+        ]
+    );
+}
+
+#[test]
+fn walking_unavailable_storage_fails() {
+    let fixture = Fixture::new("walk-gone");
+    let fs = fixture.open();
+    std::fs::remove_dir_all(fixture.root()).unwrap();
+    assert!(fs.walk_files(WALK, |_| true).is_err());
+}
+
 #[cfg(unix)]
 mod symlinks {
     use super::*;
@@ -747,5 +843,43 @@ mod symlinks {
             fs.change_dir("/tools/b-link"),
             Err(FsError::NotADirectory("/tools/b-link".into()))
         );
+    }
+
+    #[test]
+    fn walking_skips_a_directory_reached_again_through_a_link() {
+        let fixture = Fixture::new("walk-cycle");
+        let root = fixture.root();
+        touch(&fixture, &["tools/a.luau"]);
+        // A link back up the tree would otherwise be walked forever.
+        symlink("..", root.join("tools/up")).unwrap();
+        let found = walk(&fixture.open(), WALK);
+        assert_eq!(found.files, ["tools/a.luau", "A.txt", "b.txt", "readme"]);
+        assert_eq!(found.gaps, [WalkGap::AlreadyWalked("/tools/up".into())]);
+    }
+
+    #[test]
+    fn walking_never_leaves_the_root() {
+        let fixture = Fixture::new("walk-escape");
+        symlink(fixture.outside(), fixture.root().join("tools/out")).unwrap();
+        let found = walk(&fixture.open(), WALK);
+        assert!(!found.files.iter().any(|file| file.contains("secret")));
+        assert_eq!(found.gaps, []);
+    }
+
+    #[test]
+    fn walking_reports_an_unreadable_directory_and_lists_the_rest() {
+        let fixture = Fixture::new("walk-unreadable");
+        touch(&fixture, &["tools/locked/a.luau", "Zeta/z.luau"]);
+        let locked = fixture.root().join("tools/locked");
+        let _mode = Mode::set(&locked, 0o000, 0o755);
+        if fs::read_dir(&locked).is_ok() {
+            return;
+        }
+        let found = fixture
+            .open()
+            .walk_files(WALK, |path| path.ends_with(".luau"))
+            .unwrap();
+        assert_eq!(found.files, ["Zeta/z.luau"]);
+        assert_eq!(found.gaps, [WalkGap::Unreadable("/tools/locked".into())]);
     }
 }

@@ -5,10 +5,11 @@
 //! cartridge root. Host paths never leave this module except in logs and
 //! as the folder host file dialogs open in.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{self, ErrorKind, Write};
+use std::ops::ControlFlow;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
@@ -42,6 +43,40 @@ pub enum EntryKind {
 pub struct DirEntry {
     pub name: String,
     pub kind: EntryKind,
+}
+
+/// Bounds on a [`CartridgeFs::walk_files`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WalkLimits {
+    /// Deepest directory searched, counting the root's subdirectories as
+    /// depth 1.
+    pub max_depth: usize,
+    /// Most files kept before the walk stops.
+    pub max_files: usize,
+}
+
+/// A part of the tree a [`Walk`] did not search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WalkGap {
+    /// More files matched than this limit; the walk stopped there.
+    FileLimit(usize),
+    /// This directory lies below the depth limit and was not searched.
+    TooDeep(String),
+    /// This directory could not be listed.
+    Unreadable(String),
+    /// This directory, reached through a symlink, was already searched
+    /// under another path.
+    AlreadyWalked(String),
+}
+
+/// The files found by [`CartridgeFs::walk_files`], with what it skipped.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Walk {
+    /// Paths from the root without a leading `/`, as in `code/main.luau`,
+    /// in walk order.
+    pub files: Vec<String>,
+    /// Empty only when every directory below the root was searched.
+    pub gaps: Vec<WalkGap>,
 }
 
 /// A failed filesystem request. Paths are virtual, so the message is safe to
@@ -324,6 +359,83 @@ impl CartridgeFs {
         // A canonical root joined with a plain name that is a real directory
         // is itself canonical.
         Ok(Self::new(dir))
+    }
+
+    /// Every file below the root whose path `keep` accepts, searching
+    /// subdirectories within `limits`.
+    ///
+    /// Entries are reached as [`list`](Self::list) reaches them, so nothing
+    /// outside the root is found. A directory reached a second time through
+    /// a symlink is skipped, which ends link cycles. Whatever is not
+    /// searched is reported in [`Walk::gaps`] rather than left out
+    /// silently. Fails only when the root itself cannot be listed.
+    pub fn walk_files(
+        &self,
+        limits: WalkLimits,
+        keep: impl Fn(&str) -> bool,
+    ) -> Result<Walk, FsError> {
+        let mut visited = HashSet::from([self.directory(&[])?]);
+        let entries = self.list(Some("/"))?;
+        let mut walk = Walk::default();
+        let _ = self.walk_dir(&[], entries, limits, &keep, &mut visited, &mut walk);
+        Ok(walk)
+    }
+
+    /// Adds `entries` of the directory at `dir` to `walk`, descending into
+    /// subdirectories. Breaks once the file limit is reached.
+    fn walk_dir(
+        &self,
+        dir: &[String],
+        entries: Vec<DirEntry>,
+        limits: WalkLimits,
+        keep: &impl Fn(&str) -> bool,
+        visited: &mut HashSet<PathBuf>,
+        walk: &mut Walk,
+    ) -> ControlFlow<()> {
+        for entry in entries {
+            let mut components = dir.to_vec();
+            components.push(entry.name);
+            match entry.kind {
+                EntryKind::File => {
+                    let path = components.join("/");
+                    if !keep(&path) {
+                        continue;
+                    }
+                    if walk.files.len() == limits.max_files {
+                        walk.gaps.push(WalkGap::FileLimit(limits.max_files));
+                        return ControlFlow::Break(());
+                    }
+                    walk.files.push(path);
+                }
+                EntryKind::Directory => {
+                    let path = virtual_path(&components);
+                    if components.len() > limits.max_depth {
+                        walk.gaps.push(WalkGap::TooDeep(path));
+                        continue;
+                    }
+                    // `locate` resolves every symlink, so equal host paths
+                    // are the same directory.
+                    let listed = self.directory(&components).and_then(|host| {
+                        if visited.insert(host) {
+                            self.list(Some(&path)).map(Some)
+                        } else {
+                            Ok(None)
+                        }
+                    });
+                    match listed {
+                        Ok(Some(entries)) => {
+                            self.walk_dir(&components, entries, limits, keep, visited, walk)?;
+                        }
+                        Ok(None) => {
+                            tracing::debug!(%path, "directory already walked, skipped");
+                            walk.gaps.push(WalkGap::AlreadyWalked(path));
+                        }
+                        Err(_) => walk.gaps.push(WalkGap::Unreadable(path)),
+                    }
+                }
+            }
+        }
+        ControlFlow::Continue(())
     }
 
     /// Fails unless `path`, absolute or relative to the current directory,

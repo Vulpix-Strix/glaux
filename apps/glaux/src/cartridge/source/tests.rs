@@ -1,4 +1,6 @@
 use super::*;
+use crate::cartridge::fixture::write_cartridge;
+use crate::cartridge_fs::fixture::Fixture;
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -54,4 +56,74 @@ fn rejects_paths_that_are_not_portable_and_relative() {
             "{path:?}"
         );
     }
+}
+
+/// A Luau cartridge at `/games/pong` with empty files at `paths`.
+fn cartridge_with(fixture: &Fixture, paths: &[&str]) -> LoadedCartridge {
+    let dir = fixture.root().join("games/pong");
+    write_cartridge(&dir, "Pong");
+    for path in paths {
+        let host = dir.join(path);
+        std::fs::create_dir_all(host.parent().unwrap()).unwrap();
+        std::fs::write(host, "").unwrap();
+    }
+    LoadedCartridge::load(&fixture.storage(), "games/pong").unwrap()
+}
+
+fn listed(listing: &ScriptListing) -> Vec<&str> {
+    listing.paths.iter().map(SourcePath::as_str).collect()
+}
+
+#[test]
+fn lists_every_script_in_any_directory_in_a_fixed_order() {
+    let fixture = Fixture::new("source-list");
+    let cart = cartridge_with(
+        &fixture,
+        &[
+            "code/ui/hud.rhai",
+            "code/Enemies/bat.luau",
+            "code/enemies/Ant.luau",
+            "lib.luau",
+            "code/notes.txt",
+            "code/LOUD.LUAU",
+            "sprites.bin",
+        ],
+    );
+    let listing = cart.script_files().unwrap();
+    assert_eq!(
+        listed(&listing),
+        [
+            "code/enemies/Ant.luau",
+            "code/Enemies/bat.luau",
+            "code/main.luau",
+            "code/ui/hud.rhai",
+            "lib.luau",
+        ]
+    );
+    assert_eq!(listing.gaps, []);
+}
+
+#[test]
+fn a_truncated_listing_says_so() {
+    let fixture = Fixture::new("source-list-limit");
+    let cart = cartridge_with(&fixture, &["code/a.luau", "code/b.rhai"]);
+    let limits = WalkLimits {
+        max_depth: 16,
+        max_files: 2,
+    };
+    let listing = cart.script_files_within(limits).unwrap();
+    assert_eq!(listing.paths.len(), 2);
+    assert_eq!(listing.gaps, [WalkGap::FileLimit(2)]);
+}
+
+#[test]
+fn file_names_are_the_last_component() {
+    assert_eq!(
+        SourcePath::parse("code/ui/hud.rhai").unwrap().file_name(),
+        "hud.rhai"
+    );
+    assert_eq!(
+        SourcePath::parse("main.luau").unwrap().file_name(),
+        "main.luau"
+    );
 }

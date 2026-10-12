@@ -13,24 +13,30 @@ use crate::cartridge_fs::FsError;
 /// opened again gets a new one. They mean nothing to any other store: a new
 /// store issues the same ids again, so references to documents must be
 /// dropped together with the store that holds them.
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DocumentId(u64);
+
+#[cfg(test)]
+impl DocumentId {
+    /// An id for tests of code that only stores and compares ids.
+    pub(crate) fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+}
 
 /// What a document's file held when it was read.
 ///
 /// It is the baseline unsaved changes and changes on disk are measured
 /// against, so it changes only once a save or a reload has completed, never
 /// while the text is edited or when a save fails.
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Origin {
     text: String,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 impl Origin {
     /// The file's exact bytes.
+    #[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
     pub fn bytes(&self) -> &[u8] {
         self.text.as_bytes()
     }
@@ -41,7 +47,6 @@ impl Origin {
 /// The text is the file's contents unaltered: line endings, a byte order
 /// mark and a missing final newline are all kept, so writing it back
 /// reproduces the file byte for byte.
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeDocument {
     id: DocumentId,
@@ -50,7 +55,6 @@ pub struct CodeDocument {
     origin: Origin,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 impl CodeDocument {
     pub fn id(&self) -> DocumentId {
         self.id
@@ -69,6 +73,7 @@ impl CodeDocument {
         &self.text
     }
 
+    #[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
     pub fn origin(&self) -> &Origin {
         &self.origin
     }
@@ -76,7 +81,6 @@ impl CodeDocument {
 
 /// A script file that could not be opened. Messages name the path from the
 /// cartridge root, so they are safe to show in the shell.
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CodeDocumentError {
     #[error("No such file: {0}")]
@@ -95,14 +99,12 @@ pub enum CodeDocumentError {
 /// Documents and their ids belong to the cartridge they were read from:
 /// when another cartridge is loaded, the store is replaced and every id it
 /// issued is discarded with it.
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 #[derive(Debug, Default)]
 pub struct CodeDocuments {
     next_id: u64,
     documents: Vec<CodeDocument>,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
 impl CodeDocuments {
     /// Opens the file at `path` of `cartridge` and returns its document's
     /// id.

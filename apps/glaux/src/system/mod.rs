@@ -7,6 +7,7 @@
 mod audio;
 mod boot;
 mod code_document;
+mod code_session;
 mod line_editor;
 mod pause;
 mod running;
@@ -19,10 +20,11 @@ mod video;
 mod workspace;
 
 pub use boot::Boot;
+use code_session::CodeSession;
 pub use shell::Shell;
 use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
-use workspace::{Workspace, WorkspaceRequest, WorkspaceVideo};
+use workspace::{Tab, Workspace, WorkspaceRequest, WorkspaceVideo};
 
 use glaux_input::{InputEvent, InputMode, Point};
 use glaux_machine::font::FontMetrics;
@@ -42,6 +44,7 @@ use shell::{CartridgeSlot, ShellRequest, cartridge_identity};
 use std::path::PathBuf;
 
 use crate::cartridge::LoadedCartridge;
+use crate::cartridge::source::SourcePath;
 use crate::cartridge_fs::CartridgeStorage;
 use crate::sprite_import::SheetSource;
 
@@ -184,6 +187,11 @@ pub struct System {
     /// or paused: it is dropped whenever that cartridge is replaced or
     /// unloaded, which the shell refuses while it holds unsaved edits.
     sprites: Option<SpriteDocument>,
+    /// The loaded cartridge's open scripts and the Code view's tabs over
+    /// them. Like `sprites`, it always belongs to the loaded cartridge and
+    /// is dropped only once another cartridge has loaded or this one is
+    /// unloaded, so a failed `load` keeps it.
+    code: Option<CodeSession>,
     /// Host work asked for and not yet taken by the host.
     host_request: Option<HostRequest>,
 }
@@ -213,6 +221,7 @@ impl System {
             video_defaults,
             workspace: Workspace::new(font, palette),
             sprites: None,
+            code: None,
             host_request: None,
         }
     }
@@ -271,6 +280,7 @@ impl System {
             video_defaults,
             mut workspace,
             mut sprites,
+            mut code,
             mut host_request,
         } = self;
         let state = match state {
@@ -298,7 +308,10 @@ impl System {
                 input,
                 &video_defaults,
                 &mut workspace,
-                &mut sprites,
+                Documents {
+                    sprites: &mut sprites,
+                    code: &mut code,
+                },
             ),
             SystemState::Workspace {
                 shell,
@@ -310,7 +323,10 @@ impl System {
                     cartridge,
                     video,
                     &mut workspace,
-                    &mut sprites,
+                    Documents {
+                        sprites: &mut sprites,
+                        code: &mut code,
+                    },
                     &video_defaults,
                     input,
                 );
@@ -338,6 +354,7 @@ impl System {
             video_defaults,
             workspace,
             sprites,
+            code,
             host_request,
         }
     }
@@ -498,6 +515,7 @@ impl System {
                     rom.ui(),
                     cartridge,
                     video.source(self.sprites.as_ref()),
+                    self.code.as_ref(),
                     pointer,
                 );
                 return;
@@ -568,16 +586,19 @@ fn shell_audio(shell: &Shell, psg: &mut Psg) {
 /// Break that opens the workspace, so keys meant for the shell never act
 /// on it.
 ///
-/// Replacing or unloading the cartridge drops `sprites`; the shell refuses
-/// to while it holds unsaved edits unless told to discard them.
+/// Replacing or unloading the cartridge drops its `documents`, once the
+/// new cartridge has loaded or the old one is unloaded; a `load` that
+/// fails keeps them. The shell refuses to while they hold unsaved edits
+/// unless told to discard them.
 fn shell_tick(
     mut shell: Box<Shell>,
     mut loaded: Option<LoadedCartridge>,
     input: &[InputEvent],
     video_defaults: &CartridgeVideoDefaults,
     workspace: &mut Workspace,
-    sprites: &mut Option<SpriteDocument>,
+    documents: Documents<'_>,
 ) -> SystemState {
+    let Documents { sprites, code } = documents;
     // Ticking before the input lets this tick's input restart the blink.
     shell.tick();
     // Input is deliberately not logged: user input stays out of
@@ -586,7 +607,13 @@ fn shell_tick(
         if event == InputEvent::Break {
             match loaded {
                 Some(cartridge) => {
-                    return open_workspace(shell, cartridge, workspace, sprites, video_defaults);
+                    return open_workspace(
+                        shell,
+                        cartridge,
+                        workspace,
+                        Documents { sprites, code },
+                        video_defaults,
+                    );
                 }
                 None => {
                     shell.report(NO_CARTRIDGE_HINT);
@@ -597,8 +624,9 @@ fn shell_tick(
         let unsaved = sprites.as_ref().is_some_and(SpriteDocument::is_modified);
         match shell.handle_input(event, CartridgeSlot::loaded(loaded.as_ref(), unsaved)) {
             None => {}
+            // The shell only asks to load a cartridge that already loaded.
             Some(ShellRequest::Load { cartridge, origin }) => {
-                discard_sprites(sprites);
+                discard_documents(sprites, code, workspace);
                 let cartridge = loaded.insert(*cartridge);
                 shell.announce_loaded(cartridge.manifest(), origin);
             }
@@ -606,7 +634,7 @@ fn shell_tick(
                 let Some(cartridge) = loaded.take() else {
                     unreachable!("UNLOAD was requested without a loaded cartridge");
                 };
-                discard_sprites(sprites);
+                discard_documents(sprites, code, workspace);
                 let identity = cartridge_identity(cartridge.manifest());
                 tracing::info!(cartridge = %identity, "cartridge unloaded");
                 shell.report(format!("Unloaded {identity}"));
@@ -623,7 +651,7 @@ fn shell_tick(
                         &input[index + 1..],
                         video_defaults,
                         workspace,
-                        sprites,
+                        Documents { sprites, code },
                     ),
                     state => state,
                 };
@@ -636,14 +664,29 @@ fn shell_tick(
     SystemState::Shell { shell, loaded }
 }
 
-/// Drops the document of a cartridge that is being replaced or unloaded.
-fn discard_sprites(sprites: &mut Option<SpriteDocument>) {
+/// The documents of the loaded cartridge, lent together.
+struct Documents<'a> {
+    sprites: &'a mut Option<SpriteDocument>,
+    code: &'a mut Option<CodeSession>,
+}
+
+/// Drops the documents of a cartridge that was replaced or unloaded, and
+/// everything the workspace showed of them.
+fn discard_documents(
+    sprites: &mut Option<SpriteDocument>,
+    code: &mut Option<CodeSession>,
+    workspace: &mut Workspace,
+) {
     if sprites
         .take()
         .is_some_and(|document| document.is_modified())
     {
         tracing::info!("unsaved graphics changes discarded");
     }
+    if code.take().is_some() {
+        tracing::info!("code documents closed");
+    }
+    workspace.forget_code();
 }
 
 /// Makes the workspace the active UI on `cartridge`.
@@ -652,13 +695,18 @@ fn discard_sprites(sprites: &mut Option<SpriteDocument>) {
 /// files without losing unsaved changes or, for assets whose files are
 /// unchanged, their undo history; see [`SpriteDocument::reopen`]. Without
 /// one, the video assets are read afresh.
+///
+/// The Code view's session is kept from earlier visits, or started, and the
+/// entry script opens if the workspace opens on the Code view for the
+/// first time.
 fn open_workspace(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
     workspace: &mut Workspace,
-    sprites: &mut Option<SpriteDocument>,
+    documents: Documents<'_>,
     video_defaults: &CartridgeVideoDefaults,
 ) -> SystemState {
+    let Documents { sprites, code } = documents;
     let identity = cartridge_identity(cartridge.manifest());
     tracing::info!(cartridge = %identity, tab = ?workspace.tab(), "workspace opened");
     workspace.end_stroke(sprites.as_mut());
@@ -673,6 +721,7 @@ fn open_workspace(
         Ok(document) => workspace.prepare_video(sprites.insert(document)),
         Err(message) => WorkspaceVideo::unavailable(message),
     };
+    open_entry_once(workspace, code.get_or_insert_default(), &cartridge);
     SystemState::Workspace {
         shell,
         cartridge,
@@ -690,10 +739,12 @@ fn workspace_tick(
     cartridge: LoadedCartridge,
     mut video: WorkspaceVideo,
     workspace: &mut Workspace,
-    sprites: &mut Option<SpriteDocument>,
+    documents: Documents<'_>,
     video_defaults: &CartridgeVideoDefaults,
     input: &[InputEvent],
 ) -> (SystemState, Option<HostRequest>) {
+    let Documents { sprites, code } = documents;
+    let code = code.get_or_insert_default();
     workspace.tick();
     let mut host_request = None;
     for &event in input {
@@ -708,8 +759,22 @@ fn workspace_tick(
         }
         // The editors only change what they can show.
         let document = sprites.as_mut().filter(|_| video.is_ready());
-        let Some(request) = workspace.handle_input(event, document) else {
+        let request = workspace.handle_input(event, document, Some(code));
+        open_entry_once(workspace, code, &cartridge);
+        let Some(request) = request else {
             continue;
+        };
+        let request = match request {
+            WorkspaceRequest::ListScripts => {
+                workspace.scripts_listed(cartridge.script_files());
+                continue;
+            }
+            WorkspaceRequest::OpenScript(path) => {
+                let result = code.open(&cartridge, &path).map(drop);
+                workspace.script_opened(code, &path, result);
+                continue;
+            }
+            request => request,
         };
         let Some(document) = sprites.as_mut().filter(|_| video.is_ready()) else {
             continue;
@@ -730,6 +795,9 @@ fn workspace_tick(
                     directory: cartridge.host_dir().to_path_buf(),
                 });
             }
+            WorkspaceRequest::ListScripts | WorkspaceRequest::OpenScript(_) => {
+                unreachable!("code requests are carried out above")
+            }
         }
     }
     if let Some(document) = sprites.as_ref() {
@@ -741,6 +809,24 @@ fn workspace_tick(
         video,
     };
     (state, host_request)
+}
+
+/// Opens the cartridge's entry script in `code` the first time the Code
+/// view shows, and never again: a session whose tabs were all closed stays
+/// empty.
+fn open_entry_once(workspace: &mut Workspace, code: &mut CodeSession, cartridge: &LoadedCartridge) {
+    if workspace.tab() != Tab::Code || !code.take_entry_request() {
+        return;
+    }
+    let entry = &cartridge.manifest().runtime.entry;
+    let result = SourcePath::parse(entry)
+        .map_err(|err| err.to_string())
+        .and_then(|path| {
+            code.open(cartridge, &path)
+                .map(drop)
+                .map_err(|err| err.to_string())
+        });
+    workspace.entry_opened(code, result);
 }
 
 /// Starts `cartridge`, reporting its start or failure and what it logged.

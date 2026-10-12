@@ -107,6 +107,10 @@ impl LineEditor {
             | InputEvent::Undo
             | InputEvent::Redo
             | InputEvent::Save
+            | InputEvent::OpenFile
+            | InputEvent::CloseDocument
+            | InputEvent::NextDocument
+            | InputEvent::PreviousDocument
             | InputEvent::PointerMove(_)
             | InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }
