@@ -96,7 +96,7 @@ fn a_chime_cut_off_by_the_shell_leaves_nothing_behind() {
         workspace: Workspace::new(fake_rom().font().metrics(), fake_rom().palette().clone()),
         sprites: None,
         code: None,
-        host_request: None,
+        host_requests: Default::default(),
     };
     system = system.update(&[]);
     system.audio(&mut psg);

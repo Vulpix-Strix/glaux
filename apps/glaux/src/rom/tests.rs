@@ -322,6 +322,7 @@ fn embedded_ui_images_load() {
         SystemIcon::Eraser,
         SystemIcon::Eyedropper,
         SystemIcon::Fill,
+        SystemIcon::Settings,
     ] {
         let image = ui.icon(icon);
         assert_eq!((image.width(), image.height()), (ICON_SIZE, ICON_SIZE));
@@ -331,6 +332,15 @@ fn embedded_ui_images_load() {
             .collect();
         assert!(used.contains(&1) && used.contains(&3), "{icon:?}: {used:?}");
         assert_eq!(image.pixel(0, 0), 0, "{icon:?} keeps its padding");
+    }
+
+    // The options bar fits only the cogwheel's central 12×12 pixels.
+    let settings = ui.icon(SystemIcon::Settings);
+    let inset = 2..ICON_SIZE - 2;
+    for (x, y) in (0..ICON_SIZE).flat_map(|y| (0..ICON_SIZE).map(move |x| (x, y))) {
+        if !inset.contains(&x) || !inset.contains(&y) {
+            assert_eq!(settings.pixel(x, y), 0, "settings icon at ({x}, {y})");
+        }
     }
 }
 

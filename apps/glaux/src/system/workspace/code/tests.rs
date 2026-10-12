@@ -5,27 +5,43 @@ use crate::cartridge::LoadedCartridge;
 use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::system::code_document::DocumentId;
+use crate::system::code_session::DocumentView;
+use crate::system::editor_settings::EditorSettings;
 use glaux_machine::font::FontMetrics;
 use pretty_assertions::assert_eq;
 
-fn editor() -> CodeEditor {
+pub(super) fn editor() -> CodeEditor {
     let metrics = FontMetrics::SYSTEM;
-    CodeEditor::new(Metrics {
-        cell_w: i32::from(metrics.cell_width()),
-        cell_h: i32::from(metrics.cell_height()),
-        top: 16,
-    })
+    CodeEditor::new(
+        Metrics {
+            cell_w: i32::from(metrics.cell_width()),
+            cell_h: i32::from(metrics.cell_height()),
+            top: 16,
+        },
+        EditorSettings::default(),
+    )
 }
 
 /// A cartridge holding `names` in `code/`, each holding `lines` numbered
 /// lines, and a session with all of them open in that order, the last
 /// active.
 fn session_with(fixture: &Fixture, names: &[&str], lines: usize) -> (LoadedCartridge, CodeSession) {
+    let text: String = (1..=lines).map(|n| format!("line {n}\n")).collect();
+    session_with_text(fixture, names, &text)
+}
+
+/// A cartridge holding `names` in `code/`, each holding `text`, and a
+/// session with all of them open in that order, the last active and
+/// measured for `editor`.
+pub(super) fn session_with_text(
+    fixture: &Fixture,
+    names: &[&str],
+    text: &str,
+) -> (LoadedCartridge, CodeSession) {
     let dir = fixture.root().join("games/pong");
     write_cartridge(&dir, "Pong");
-    let text: String = (1..=lines).map(|n| format!("line {n}\n")).collect();
     for name in names {
-        fs::write(dir.join("code").join(name), &text).unwrap();
+        fs::write(dir.join("code").join(name), text).unwrap();
     }
     let cartridge = LoadedCartridge::load(&fixture.storage(), "games/pong").unwrap();
     let mut session = CodeSession::default();
@@ -50,7 +66,7 @@ fn active_name(session: &CodeSession) -> Option<&str> {
         .map(|document| document.path().file_name())
 }
 
-fn id_of(session: &CodeSession, name: &str) -> DocumentId {
+pub(super) fn id_of(session: &CodeSession, name: &str) -> DocumentId {
     session
         .tabs()
         .ids()
@@ -58,18 +74,18 @@ fn id_of(session: &CodeSession, name: &str) -> DocumentId {
         .unwrap()
 }
 
-fn centre(rect: Rect) -> Point {
+pub(super) fn centre(rect: Rect) -> Point {
     Point::new(
         (rect.x + rect.width / 2) as u16,
         (rect.y + rect.height / 2) as u16,
     )
 }
 
-fn press(button: PointerButton, at: Point) -> InputEvent {
+pub(super) fn press(button: PointerButton, at: Point) -> InputEvent {
     InputEvent::PointerDown { button, at }
 }
 
-fn release(at: Point) -> InputEvent {
+pub(super) fn release(at: Point) -> InputEvent {
     InputEvent::PointerUp {
         button: PointerButton::Primary,
         at,
@@ -238,29 +254,78 @@ fn the_list_of_open_tabs_reaches_hidden_ones() {
 #[test]
 fn each_document_keeps_its_own_scroll_position() {
     let fixture = Fixture::new("code-ui-views");
-    let (_, mut session) = session_with(&fixture, &["a.luau", "b.luau"], 100);
+    // 101 lines, the last empty, each 60 columns wide: 13 more than the 47
+    // left beside a three-digit gutter.
+    let text = format!("{}\n", "x".repeat(60)).repeat(100);
+    let (_, mut session) = session_with_text(&fixture, &["a.luau", "b.luau"], &text);
     let mut editor = editor();
     let text_centre = centre(editor.layout().text);
     editor.handle_input(
         InputEvent::PointerMove(Some(text_centre)),
         Some(&mut session),
     );
+    let view = |session: &CodeSession, name| *session.tabs().view(id_of(session, name)).unwrap();
+    let at = |top_line, top_row, left_column| DocumentView {
+        top_line,
+        top_row,
+        left_column,
+    };
+
     editor.handle_input(InputEvent::Wheel { delta: -2 }, Some(&mut session));
-    let b = id_of(&session, "b.luau");
-    assert_eq!(session.tabs().view(b).unwrap().top_line, 2 * WHEEL_LINES);
-
+    editor.handle_input(
+        InputEvent::WheelHorizontal { delta: -1 },
+        Some(&mut session),
+    );
+    assert_eq!(view(&session, "b.luau"), at(6, 0, 6));
     editor.handle_input(InputEvent::PreviousDocument, Some(&mut session));
-    let a = id_of(&session, "a.luau");
-    assert_eq!(session.tabs().view(a).unwrap().top_line, 0);
+    assert_eq!(view(&session, "a.luau"), at(0, 0, 0));
     editor.handle_input(InputEvent::NextDocument, Some(&mut session));
-    assert_eq!(session.tabs().view(b).unwrap().top_line, 2 * WHEEL_LINES);
+    assert_eq!(view(&session, "b.luau"), at(6, 0, 6));
 
-    // The text never scrolls past its last screenful, nor above the top.
+    // The text never scrolls past its last screenful or its widest line,
+    // nor above the top or left of the first column.
     editor.handle_input(InputEvent::Wheel { delta: i8::MIN }, Some(&mut session));
-    let furthest = 101 - editor.layout().text_rows();
-    assert_eq!(session.tabs().view(b).unwrap().top_line, furthest);
+    editor.handle_input(
+        InputEvent::WheelHorizontal { delta: i8::MIN },
+        Some(&mut session),
+    );
+    assert_eq!(view(&session, "b.luau"), at(101 - 18, 0, 60 - 47));
     editor.handle_input(InputEvent::Wheel { delta: i8::MAX }, Some(&mut session));
-    assert_eq!(session.tabs().view(b).unwrap().top_line, 0);
+    editor.handle_input(
+        InputEvent::WheelHorizontal { delta: i8::MAX },
+        Some(&mut session),
+    );
+    assert_eq!(view(&session, "b.luau"), at(0, 0, 0));
+
+    // Folded in two, three rows down lands on the second fold of line 1.
+    editor.set_settings(EditorSettings {
+        word_wrap: true,
+        ..EditorSettings::default()
+    });
+    editor.handle_input(InputEvent::Wheel { delta: -1 }, Some(&mut session));
+    assert_eq!(view(&session, "b.luau"), at(1, 1, 0));
+    editor.handle_input(InputEvent::PreviousDocument, Some(&mut session));
+    assert_eq!(view(&session, "a.luau"), at(0, 0, 0));
+}
+
+#[test]
+fn the_wheel_over_the_strip_never_scrolls_the_text() {
+    let fixture = Fixture::new("code-ui-wheel-strip");
+    let text = format!("{}\n", "x".repeat(60)).repeat(100);
+    let (_, mut session) = session_with_text(&fixture, &["a.luau"], &text);
+    let mut editor = editor();
+    let over_strip = centre(editor.layout().strip);
+    editor.handle_input(
+        InputEvent::PointerMove(Some(over_strip)),
+        Some(&mut session),
+    );
+    editor.handle_input(InputEvent::Wheel { delta: -2 }, Some(&mut session));
+    editor.handle_input(
+        InputEvent::WheelHorizontal { delta: -2 },
+        Some(&mut session),
+    );
+    let id = id_of(&session, "a.luau");
+    assert_eq!(session.tabs().view(id), Some(&DocumentView::default()));
 }
 
 #[test]
@@ -302,4 +367,69 @@ fn forgetting_closes_overlays_and_the_entry_error() {
     editor.open_picker(cartridge.script_files());
     editor.forget();
     assert_eq!(editor, self::editor());
+}
+
+#[test]
+fn settings_apply_at_once_and_are_kept_when_their_window_closes() {
+    let fixture = Fixture::new("code-ui-settings");
+    let (_, mut session) = session_with(&fixture, &["a.luau", "b.luau"], 3);
+    let mut editor = editor();
+    let gear = centre(editor.layout().settings_button());
+    editor.handle_input(press(PointerButton::Primary, gear), Some(&mut session));
+    assert!(editor.has_overlay());
+
+    editor.handle_input(InputEvent::Enter, Some(&mut session));
+    let wrapping = EditorSettings {
+        word_wrap: true,
+        ..EditorSettings::default()
+    };
+    assert_eq!(editor.settings(), wrapping);
+    // Every open document is measured again for the new settings, not
+    // only the one shown: folded at the 48 columns beside a two-digit
+    // gutter.
+    for id in session.tabs().ids() {
+        let key = session.tabs().metrics(id).unwrap().key();
+        assert_eq!(key.wrap_columns, Some(48));
+    }
+
+    assert_eq!(
+        editor.handle_input(InputEvent::Break, Some(&mut session)),
+        Some(CodeRequest::SaveSettings(wrapping))
+    );
+    assert!(!editor.has_overlay());
+    assert_eq!(editor.settings(), wrapping);
+}
+
+#[test]
+fn closing_settings_unchanged_asks_for_no_save() {
+    let fixture = Fixture::new("code-ui-settings-same");
+    let (_, mut session) = session_with(&fixture, &["a.luau"], 3);
+    let mut editor = editor();
+    let gear = centre(editor.layout().settings_button());
+    editor.handle_input(press(PointerButton::Primary, gear), Some(&mut session));
+    editor.handle_input(InputEvent::Enter, Some(&mut session));
+    editor.handle_input(InputEvent::Enter, Some(&mut session));
+    assert_eq!(
+        editor.handle_input(InputEvent::Break, Some(&mut session)),
+        None
+    );
+    assert!(!editor.has_overlay());
+}
+
+#[test]
+fn settings_open_without_a_cartridge_and_survive_forgetting_one() {
+    let mut editor = editor();
+    let gear = centre(editor.layout().settings_button());
+    editor.handle_input(press(PointerButton::Primary, gear), None);
+    assert!(editor.has_overlay());
+    editor.forget();
+    assert!(editor.has_overlay());
+    editor.handle_input(InputEvent::Enter, None);
+    assert_eq!(
+        editor.handle_input(InputEvent::Break, None),
+        Some(CodeRequest::SaveSettings(EditorSettings {
+            word_wrap: true,
+            ..EditorSettings::default()
+        }))
+    );
 }

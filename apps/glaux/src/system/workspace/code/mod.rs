@@ -7,20 +7,29 @@
 mod layout;
 mod picker;
 mod render;
+mod settings;
+mod text_view;
 
 use glaux_input::{InputEvent, Point, PointerButton};
 
 pub use layout::Metrics;
 use layout::{CodeLayout, StripHit, tab_labels};
 use picker::{FilePicker, PickerAction, PickerLayout};
+use settings::{SettingsAction, SettingsDialog, SettingsLayout};
+use text_view::TextGeometry;
 
 use super::Rect;
 use crate::cartridge::source::{ScriptListing, SourcePath};
 use crate::cartridge_fs::FsError;
-use crate::system::code_session::CodeSession;
+use crate::system::code_document::{CodeDocument, DocumentId};
+use crate::system::code_session::{CodeSession, DocumentView};
+use crate::system::code_text::TextMetrics;
+use crate::system::editor_settings::EditorSettings;
 
-/// Lines the text moves per wheel notch.
-const WHEEL_LINES: usize = 3;
+/// Rows the text moves per wheel notch.
+const WHEEL_LINES: isize = 3;
+/// Columns the text moves per sideways wheel notch.
+const WHEEL_COLUMNS: isize = 6;
 
 /// The status bar hint while nothing covers the view.
 const VIEW_HINT: &str = "Ctrl+P: open  Ctrl+W: close  Esc: shell";
@@ -28,6 +37,8 @@ const VIEW_HINT: &str = "Ctrl+P: open  Ctrl+W: close  Esc: shell";
 const PICKER_HINT: &str = "Type: filter  Enter: open  Esc: close";
 /// The status bar hint while the list of open tabs is open.
 const MENU_HINT: &str = "Up/Down: pick  Enter: show  Esc: close";
+/// The status bar hint while EDITOR SETTINGS is open.
+const SETTINGS_HINT: &str = "Up/Down: pick  Enter: toggle  Esc: close";
 
 /// File work the Code view asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +48,8 @@ pub enum CodeRequest {
     ListScripts,
     /// Open this script in a tab, or show its tab if it has one.
     Open(SourcePath),
+    /// Keep these settings for the next launch.
+    SaveSettings(EditorSettings),
 }
 
 /// The list of every open tab, dropped from the strip's right end.
@@ -50,6 +63,9 @@ struct TabMenu {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeEditor {
     layout: CodeLayout,
+    settings: EditorSettings,
+    /// While open, takes every input.
+    settings_dialog: Option<SettingsDialog>,
     /// While open, takes every input.
     picker: Option<FilePicker>,
     /// While open, takes every input.
@@ -63,9 +79,11 @@ pub struct CodeEditor {
 }
 
 impl CodeEditor {
-    pub fn new(metrics: Metrics) -> Self {
+    pub fn new(metrics: Metrics, settings: EditorSettings) -> Self {
         Self {
             layout: CodeLayout::new(metrics),
+            settings,
+            settings_dialog: None,
             picker: None,
             menu: None,
             drag: None,
@@ -74,15 +92,17 @@ impl CodeEditor {
         }
     }
 
-    /// Whether OPEN FILE or the list of open tabs is open and taking all
-    /// input.
+    /// Whether EDITOR SETTINGS, OPEN FILE or the list of open tabs is open
+    /// and taking all input.
     pub fn has_overlay(&self) -> bool {
-        self.picker.is_some() || self.menu.is_some()
+        self.settings_dialog.is_some() || self.picker.is_some() || self.menu.is_some()
     }
 
     /// The status bar hint for what is on screen.
     pub fn hint(&self) -> &'static str {
-        if self.picker.is_some() {
+        if self.settings_dialog.is_some() {
+            SETTINGS_HINT
+        } else if self.picker.is_some() {
             PICKER_HINT
         } else if self.menu.is_some() {
             MENU_HINT
@@ -101,6 +121,22 @@ impl CodeEditor {
         self.layout
     }
 
+    #[cfg(test)]
+    pub fn settings(&self) -> EditorSettings {
+        self.settings
+    }
+
+    /// Shows code with `settings` from now on. Documents already open are
+    /// measured again on the next input.
+    pub fn set_settings(&mut self, settings: EditorSettings) {
+        self.settings = settings;
+    }
+
+    /// Where the text view sits for `document` with the current settings.
+    fn geometry(&self, document: &CodeDocument) -> TextGeometry {
+        TextGeometry::new(&self.layout, document.line_count(), &self.settings)
+    }
+
     /// Each document tab the strip shows: its position in tab order, its
     /// rectangle and its close glyph's.
     #[cfg(test)]
@@ -112,7 +148,8 @@ impl CodeEditor {
             .collect()
     }
 
-    /// Drops everything shown of the previous cartridge.
+    /// Drops everything shown of the previous cartridge. EDITOR SETTINGS
+    /// belongs to no cartridge and stays open.
     pub fn forget(&mut self) {
         self.picker = None;
         self.menu = None;
@@ -150,21 +187,78 @@ impl CodeEditor {
         session.tabs_mut().set_scroll(scroll);
     }
 
-    /// Applies `event` to `session` and returns the file work it calls
-    /// for, if any. Whenever the active tab changes, the strip scrolls to
-    /// show it.
+    /// Measures each of `session`'s documents whose measurements don't
+    /// match how the view now shows it, moving its view back in range.
+    /// Documents already measured for the current settings are left alone.
+    pub fn refresh_metrics(&self, session: &mut CodeSession) {
+        let ids: Vec<DocumentId> = session.tabs().ids().collect();
+        for id in ids {
+            let Some(document) = session.document(id) else {
+                continue;
+            };
+            let geometry = self.geometry(document);
+            let key = geometry.metrics_key();
+            if session.tabs().metrics(id).map(TextMetrics::key) == Some(key) {
+                continue;
+            }
+            let metrics = TextMetrics::measure(document, key);
+            if let Some(view) = session.tabs_mut().view_mut(id) {
+                *view = geometry.clamp(*view, &metrics);
+            }
+            session.tabs_mut().set_metrics(id, metrics);
+        }
+    }
+
+    /// Applies `event` to `session` and returns the work it calls for, if
+    /// any. Whenever the active tab changes, the strip scrolls to show it.
     pub fn handle_input(
         &mut self,
         event: InputEvent,
         session: Option<&mut CodeSession>,
     ) -> Option<CodeRequest> {
+        if self.settings_dialog.is_some() {
+            let request = self.settings_input(event);
+            if let Some(session) = session {
+                self.refresh_metrics(session);
+            }
+            return request;
+        }
+        if let InputEvent::PointerDown {
+            button: PointerButton::Primary,
+            at,
+        } = event
+            && self.picker.is_none()
+            && self.menu.is_none()
+            && self.layout.settings_button().contains(at)
+        {
+            self.settings_dialog = Some(SettingsDialog::new(self.settings));
+            self.drag = None;
+            return None;
+        }
         let session = session?;
+        self.refresh_metrics(session);
         let before = (session.tabs().active(), session.tabs().len());
         let request = self.input(event, session);
         if (session.tabs().active(), session.tabs().len()) != before {
             self.reveal_active(session);
         }
+        self.refresh_metrics(session);
         request
+    }
+
+    /// Applies `event` to EDITOR SETTINGS, asking to keep the settings
+    /// once it closes having changed them.
+    fn settings_input(&mut self, event: InputEvent) -> Option<CodeRequest> {
+        let layout = settings_layout(&self.layout);
+        let dialog = self.settings_dialog.as_mut()?;
+        match dialog.handle_input(event, &mut self.settings, &layout) {
+            SettingsAction::None => None,
+            SettingsAction::Close => {
+                let opened_with = dialog.opened_with();
+                self.settings_dialog = None;
+                (self.settings != opened_with).then_some(CodeRequest::SaveSettings(self.settings))
+            }
+        }
     }
 
     fn input(&mut self, event: InputEvent, session: &mut CodeSession) -> Option<CodeRequest> {
@@ -246,6 +340,13 @@ impl CodeEditor {
             }
             | InputEvent::PointerCancel => self.drag = None,
             InputEvent::Wheel { delta } => self.wheel(delta, &labels, session),
+            InputEvent::WheelHorizontal { delta } if !self.pointer_over_strip() => {
+                // Positive turns move toward the left.
+                let step = -isize::from(delta) * WHEEL_COLUMNS;
+                self.scroll_active(session, |geometry, view, metrics| {
+                    geometry.scroll_columns(view, step, metrics)
+                });
+            }
             _ => {}
         }
         None
@@ -254,10 +355,7 @@ impl CodeEditor {
     /// Scrolls the strip when the pointer is over it, and the active
     /// document otherwise.
     fn wheel(&mut self, delta: i8, labels: &[String], session: &mut CodeSession) {
-        let over_strip = self
-            .pointer
-            .is_some_and(|at| self.layout.strip.contains(at));
-        if over_strip {
+        if self.pointer_over_strip() {
             let Some(last) = labels.len().checked_sub(1) else {
                 return;
             };
@@ -270,18 +368,40 @@ impl CodeEditor {
             session.tabs_mut().set_scroll(scroll);
             return;
         }
+        // Positive turns move away from the user, toward the top.
+        let step = -isize::from(delta) * WHEEL_LINES;
+        self.scroll_active(session, |geometry, view, metrics| {
+            geometry.scroll_rows(view, step, metrics)
+        });
+    }
+
+    fn pointer_over_strip(&self) -> bool {
+        self.pointer
+            .is_some_and(|at| self.layout.strip.contains(at))
+    }
+
+    /// Moves the active document's view with `scroll`, once its
+    /// measurements describe the view.
+    fn scroll_active(
+        &self,
+        session: &mut CodeSession,
+        scroll: impl FnOnce(&TextGeometry, DocumentView, &TextMetrics) -> DocumentView,
+    ) {
         let Some(document) = session.active_document() else {
             return;
         };
-        let furthest = line_count(document.text()).saturating_sub(self.layout.text_rows());
         let id = document.id();
+        let geometry = self.geometry(document);
+        let tabs = session.tabs();
+        let (Some(&view), Some(metrics)) = (tabs.view(id), tabs.metrics(id)) else {
+            return;
+        };
+        if metrics.key() != geometry.metrics_key() {
+            return;
+        }
+        let moved = scroll(&geometry, view, metrics);
         if let Some(view) = session.tabs_mut().view_mut(id) {
-            let step = WHEEL_LINES * usize::from(delta.unsigned_abs());
-            view.top_line = if delta > 0 {
-                view.top_line.saturating_sub(step)
-            } else {
-                view.top_line.saturating_add(step).min(furthest)
-            };
+            *view = moved;
         }
     }
 
@@ -355,15 +475,33 @@ impl CodeEditor {
     }
 }
 
-/// The OPEN FILE window for `picker` over the Code view.
-fn picker_layout(layout: &CodeLayout, picker: &FilePicker) -> PickerLayout {
-    let area = Rect {
+/// Where windows over the Code view are centred: everything between the
+/// workspace's tab bar and the status bar.
+fn overlay_area(layout: &CodeLayout) -> Rect {
+    Rect {
         x: 0,
         y: layout.strip.y,
         width: layout.strip.width,
         height: layout.status.y - layout.strip.y,
-    };
-    PickerLayout::new(area, layout.metrics.cell_h, picker.gap_lines().len())
+    }
+}
+
+/// The OPEN FILE window for `picker` over the Code view.
+fn picker_layout(layout: &CodeLayout, picker: &FilePicker) -> PickerLayout {
+    PickerLayout::new(
+        overlay_area(layout),
+        layout.metrics.cell_h,
+        picker.gap_lines().len(),
+    )
+}
+
+/// The EDITOR SETTINGS window over the Code view.
+fn settings_layout(layout: &CodeLayout) -> SettingsLayout {
+    SettingsDialog::layout(
+        overlay_area(layout),
+        layout.metrics.cell_w,
+        layout.metrics.cell_h,
+    )
 }
 
 /// The label of each of `session`'s tabs, in tab order.
@@ -375,11 +513,6 @@ fn labels(session: &CodeSession) -> Vec<String> {
         .map(|document| document.path())
         .collect();
     tab_labels(&paths)
-}
-
-/// Lines in `text`, counting a last line without a newline.
-fn line_count(text: &str) -> usize {
-    text.split('\n').count()
 }
 
 #[cfg(test)]

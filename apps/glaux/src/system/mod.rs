@@ -8,6 +8,8 @@ mod audio;
 mod boot;
 mod code_document;
 mod code_session;
+mod code_text;
+mod editor_settings;
 mod line_editor;
 mod pause;
 mod running;
@@ -21,6 +23,7 @@ mod workspace;
 
 pub use boot::Boot;
 use code_session::CodeSession;
+pub use editor_settings::{EditorSettings, TAB_SIZES};
 pub use shell::Shell;
 use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
@@ -41,6 +44,7 @@ use semver::Version;
 use sfx::SystemSound;
 use shell::{CartridgeSlot, ShellRequest, cartridge_identity};
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use crate::cartridge::LoadedCartridge;
@@ -137,6 +141,8 @@ pub enum HostRequest {
     /// Show the host's file dialog to choose one PNG file, opening in
     /// `directory`. Answer with [`System::file_picked`].
     PickPng { directory: PathBuf },
+    /// Keep these Code view settings for the next launch.
+    SaveEditorSettings(EditorSettings),
 }
 
 /// How the host's file dialog answered a [`HostRequest::PickPng`].
@@ -192,8 +198,8 @@ pub struct System {
     /// is dropped only once another cartridge has loaded or this one is
     /// unloaded, so a failed `load` keeps it.
     code: Option<CodeSession>,
-    /// Host work asked for and not yet taken by the host.
-    host_request: Option<HostRequest>,
+    /// Host work asked for and not yet taken by the host, oldest first.
+    host_requests: VecDeque<HostRequest>,
 }
 
 impl System {
@@ -222,8 +228,15 @@ impl System {
             workspace: Workspace::new(font, palette),
             sprites: None,
             code: None,
-            host_request: None,
+            host_requests: VecDeque::new(),
         }
+    }
+
+    /// Shows code in the workspace with `settings`, the ones kept from an
+    /// earlier launch.
+    pub fn with_editor_settings(mut self, settings: EditorSettings) -> Self {
+        self.workspace.set_editor_settings(settings);
+        self
     }
 
     #[cfg(test)]
@@ -281,7 +294,7 @@ impl System {
             mut workspace,
             mut sprites,
             mut code,
-            mut host_request,
+            mut host_requests,
         } = self;
         let state = match state {
             SystemState::Boot {
@@ -318,7 +331,7 @@ impl System {
                 cartridge,
                 video,
             } => {
-                let (state, request) = workspace_tick(
+                let (state, requests) = workspace_tick(
                     shell,
                     cartridge,
                     video,
@@ -330,7 +343,7 @@ impl System {
                     &video_defaults,
                     input,
                 );
-                host_request = request.or(host_request);
+                host_requests.extend(requests);
                 state
             }
             SystemState::Running { shell, running } => running_tick(shell, running, input),
@@ -355,14 +368,15 @@ impl System {
             workspace,
             sprites,
             code,
-            host_request,
+            host_requests,
         }
     }
 
-    /// Takes the work the system last asked of the host, if any. Call it
-    /// after every [`update`](Self::update).
+    /// Takes the oldest work the system asked of the host and the host has
+    /// not taken yet, if any. Call it after every [`update`](Self::update)
+    /// until it returns `None`.
     pub fn take_host_request(&mut self) -> Option<HostRequest> {
-        self.host_request.take()
+        self.host_requests.pop_front()
     }
 
     /// Hands the system the answer to a [`HostRequest::PickPng`]. A chosen
@@ -684,7 +698,7 @@ fn discard_documents(
         tracing::info!("unsaved graphics changes discarded");
     }
     if code.take().is_some() {
-        tracing::info!("code documents closed");
+        tracing::debug!("code documents closed");
     }
     workspace.forget_code();
 }
@@ -742,11 +756,11 @@ fn workspace_tick(
     documents: Documents<'_>,
     video_defaults: &CartridgeVideoDefaults,
     input: &[InputEvent],
-) -> (SystemState, Option<HostRequest>) {
+) -> (SystemState, Vec<HostRequest>) {
     let Documents { sprites, code } = documents;
     let code = code.get_or_insert_default();
     workspace.tick();
-    let mut host_request = None;
+    let mut host_requests = Vec::new();
     for &event in input {
         if event == InputEvent::Break && !workspace.has_modal() {
             workspace.end_stroke(sprites.as_mut());
@@ -755,7 +769,7 @@ fn workspace_tick(
                 shell,
                 loaded: Some(cartridge),
             };
-            return (state, host_request);
+            return (state, host_requests);
         }
         // The editors only change what they can show.
         let document = sprites.as_mut().filter(|_| video.is_ready());
@@ -772,6 +786,10 @@ fn workspace_tick(
             WorkspaceRequest::OpenScript(path) => {
                 let result = code.open(&cartridge, &path).map(drop);
                 workspace.script_opened(code, &path, result);
+                continue;
+            }
+            WorkspaceRequest::SaveEditorSettings(settings) => {
+                host_requests.push(HostRequest::SaveEditorSettings(settings));
                 continue;
             }
             request => request,
@@ -791,11 +809,13 @@ fn workspace_tick(
                 workspace.reloaded(&assets, result);
             }
             WorkspaceRequest::PickSpritesheet => {
-                host_request = Some(HostRequest::PickPng {
+                host_requests.push(HostRequest::PickPng {
                     directory: cartridge.host_dir().to_path_buf(),
                 });
             }
-            WorkspaceRequest::ListScripts | WorkspaceRequest::OpenScript(_) => {
+            WorkspaceRequest::ListScripts
+            | WorkspaceRequest::OpenScript(_)
+            | WorkspaceRequest::SaveEditorSettings(_) => {
                 unreachable!("code requests are carried out above")
             }
         }
@@ -808,7 +828,7 @@ fn workspace_tick(
         cartridge,
         video,
     };
-    (state, host_request)
+    (state, host_requests)
 }
 
 /// Opens the cartridge's entry script in `code` the first time the Code

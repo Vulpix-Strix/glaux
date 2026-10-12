@@ -34,6 +34,7 @@ fn ui_images_are_empty_unless_injected_and_found_by_icon() {
         solid(2),
         solid(3),
         solid(0),
+        solid(2),
     ];
     let rom = rom.with_ui(SystemUi::new(pointer.clone(), icons));
     assert_eq!(rom.ui().pointer(), &pointer);
@@ -41,6 +42,7 @@ fn ui_images_are_empty_unless_injected_and_found_by_icon() {
     assert_eq!(rom.ui().icon(SystemIcon::Music), &solid(1));
     assert_eq!(rom.ui().icon(SystemIcon::Eyedropper), &solid(3));
     assert_eq!(rom.ui().icon(SystemIcon::Fill), &solid(0));
+    assert_eq!(rom.ui().icon(SystemIcon::Settings), &solid(2));
 }
 
 #[test]

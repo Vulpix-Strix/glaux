@@ -228,3 +228,39 @@ fn the_active_tab_is_underlined_in_the_accent_color() {
     assert!(underline(rects[1].1));
     assert!(!underline(rects[0].1));
 }
+
+#[test]
+fn changed_editor_settings_are_handed_to_the_host_to_keep() {
+    let fixture = Fixture::new("sys-code-settings");
+    let kept = EditorSettings {
+        tab_size: 2,
+        ..EditorSettings::default()
+    };
+    let system = press_break(loaded(&fixture).with_editor_settings(kept));
+    assert_eq!(system.workspace.code().settings(), kept);
+
+    let gear = system.workspace.code().layout().settings_button();
+    let at = Point::new(
+        (gear.x + gear.width / 2) as u16,
+        (gear.y + gear.height / 2) as u16,
+    );
+    let mut system = system.update(&[
+        InputEvent::PointerDown {
+            button: PointerButton::Primary,
+            at,
+        },
+        InputEvent::Enter,
+        InputEvent::Break,
+    ]);
+    let wrapped = EditorSettings {
+        word_wrap: true,
+        ..kept
+    };
+    assert_eq!(
+        system.take_host_request(),
+        Some(HostRequest::SaveEditorSettings(wrapped))
+    );
+    assert_eq!(system.take_host_request(), None);
+    // Escape closed the window, not the workspace.
+    assert!(is_workspace(&system));
+}

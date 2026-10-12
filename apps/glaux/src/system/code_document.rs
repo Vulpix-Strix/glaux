@@ -3,6 +3,12 @@
 //! Documents hold file data only. Cursor, selection, scroll position and
 //! tab order are state of the views showing them.
 
+mod lines;
+
+use std::ops::Range;
+
+use lines::Lines;
+
 use crate::cartridge::source::SourcePath;
 use crate::cartridge::{Language, LoadedCartridge};
 use crate::cartridge_fs::FsError;
@@ -52,10 +58,26 @@ pub struct CodeDocument {
     id: DocumentId,
     path: SourcePath,
     text: String,
+    lines: Lines,
     origin: Origin,
 }
 
 impl CodeDocument {
+    /// A document holding `text`, for tests of code that only reads
+    /// documents.
+    #[cfg(test)]
+    pub(crate) fn from_text(path: &str, text: &str) -> Self {
+        Self {
+            id: DocumentId(0),
+            path: SourcePath::parse(path).expect("test paths are valid"),
+            text: text.to_owned(),
+            lines: Lines::new(text),
+            origin: Origin {
+                text: text.to_owned(),
+            },
+        }
+    }
+
     pub fn id(&self) -> DocumentId {
         self.id
     }
@@ -71,6 +93,19 @@ impl CodeDocument {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Lines in the text, counting a last line without a newline and the
+    /// empty line after a final newline.
+    pub fn line_count(&self) -> usize {
+        self.lines.count()
+    }
+
+    /// Byte range in [`text`](Self::text) of line `n`'s content, counted
+    /// from 0: without its line ending, and for the first line without a
+    /// byte order mark. `None` past the last line.
+    pub fn line_range(&self, n: usize) -> Option<Range<usize>> {
+        self.lines.range(&self.text, n)
     }
 
     #[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
@@ -140,11 +175,12 @@ impl CodeDocuments {
 
         let id = DocumentId(self.next_id);
         self.next_id += 1;
-        tracing::info!(file = %path, "code document opened");
+        tracing::debug!(file = %path, "code document opened");
         self.documents.push(CodeDocument {
             id,
             path: path.clone(),
             origin: Origin { text: text.clone() },
+            lines: Lines::new(&text),
             text,
         });
         Ok(id)

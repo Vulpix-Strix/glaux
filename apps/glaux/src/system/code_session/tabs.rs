@@ -2,19 +2,26 @@
 //! how each document is shown.
 
 use crate::system::code_document::DocumentId;
+use crate::system::code_text::TextMetrics;
 
 /// How one open document is shown, kept per tab so switching documents
 /// returns to each where it was left.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DocumentView {
-    /// The first line shown, counted from 0.
+    /// The line of the first row shown, counted from 0.
     pub top_line: usize,
+    /// Which fold of `top_line` the first row shows while lines wrap.
+    pub top_row: usize,
+    /// The first column shown while lines don't wrap.
+    pub left_column: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OpenTab {
     id: DocumentId,
     view: DocumentView,
+    /// The document's extent as last measured for the view.
+    metrics: Option<TextMetrics>,
 }
 
 /// The Code view's tabs, at most one per document.
@@ -59,6 +66,7 @@ impl DocumentTabs {
                 OpenTab {
                     id,
                     view: DocumentView::default(),
+                    metrics: None,
                 },
             );
         }
@@ -125,6 +133,22 @@ impl DocumentTabs {
             .iter_mut()
             .find(|tab| tab.id == id)
             .map(|tab| &mut tab.view)
+    }
+
+    /// `id`'s document's extent, as last given to
+    /// [`set_metrics`](Self::set_metrics).
+    pub fn metrics(&self, id: DocumentId) -> Option<&TextMetrics> {
+        self.tabs
+            .iter()
+            .find(|tab| tab.id == id)
+            .and_then(|tab| tab.metrics.as_ref())
+    }
+
+    /// Records `id`'s document's extent. Does nothing if it has no tab.
+    pub fn set_metrics(&mut self, id: DocumentId, metrics: TextMetrics) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.metrics = Some(metrics);
+        }
     }
 
     /// Index of the first tab the strip shows.

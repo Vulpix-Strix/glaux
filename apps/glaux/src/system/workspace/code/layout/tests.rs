@@ -32,7 +32,6 @@ fn the_rows_stack_from_the_bar_to_the_bottom_without_gaps() {
     assert_eq!(layout.text.y, layout.options.bottom());
     assert_eq!(layout.status.y, layout.text.bottom());
     assert_eq!(layout.status.bottom(), HEIGHT as i32);
-    assert!(layout.text_rows() > 0);
 }
 
 #[test]

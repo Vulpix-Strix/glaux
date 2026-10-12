@@ -42,6 +42,7 @@ const ICON_PNGS: [(&str, &[u8]); SystemIcon::COUNT] = [
     embed!("ui/icons/eraser.png"),
     embed!("ui/icons/eyedropper.png"),
     embed!("ui/icons/fill.png"),
+    embed!("ui/icons/settings.png"),
 ];
 
 /// Side of a view icon, in pixels.

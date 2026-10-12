@@ -3,7 +3,9 @@ mod cartridge;
 mod cartridge_fs;
 mod cartridge_template;
 mod clock;
+mod config_file;
 mod desktop;
+mod editor_settings_file;
 mod logging;
 mod platform;
 mod rom;
@@ -85,7 +87,9 @@ fn main() -> anyhow::Result<()> {
 
     let config_dir = app_dirs::config_dir();
     if config_dir.is_none() {
-        tracing::warn!("no config directory is available, window state will not be kept");
+        tracing::warn!(
+            "no config directory is available, window state and editor settings will not be kept"
+        );
     }
 
     let result = run(
@@ -122,6 +126,11 @@ fn run(
         cartridges,
         rom.font().metrics(),
         rom.palette().clone(),
+    )
+    .with_editor_settings(
+        config_dir
+            .map(editor_settings_file::load)
+            .unwrap_or_default(),
     );
 
     let saved = config_dir.and_then(window_state::load);
@@ -189,7 +198,7 @@ fn run(
         for _ in 0..ticks {
             system = system.update(&pending);
             pending.clear();
-            serve_host_request(&mut system, &mut picker);
+            serve_host_requests(&mut system, &mut picker, config_dir);
             system.audio(machine.psg_mut());
             machine.psg_mut().render(&mut samples);
             if let Some(output) = &mut audio {
@@ -214,13 +223,30 @@ fn run(
 }
 
 /// Carries out the work the system asked of the host during its last tick.
-fn serve_host_request(system: &mut System, picker: &mut FilePicker) {
-    if let Some(HostRequest::PickPng { directory }) = system.take_host_request()
-        && !picker.open_png(&directory)
-    {
-        system.file_picked(PickedFile::Unavailable(
-            "A file dialog is already open.".to_owned(),
-        ));
+fn serve_host_requests(system: &mut System, picker: &mut FilePicker, config_dir: Option<&Path>) {
+    while let Some(request) = system.take_host_request() {
+        match request {
+            HostRequest::PickPng { directory } => {
+                if !picker.open_png(&directory) {
+                    system.file_picked(PickedFile::Unavailable(
+                        "A file dialog is already open.".to_owned(),
+                    ));
+                }
+            }
+            HostRequest::SaveEditorSettings(settings) => {
+                let Some(dir) = config_dir else {
+                    tracing::debug!("no config directory, editor settings not saved");
+                    continue;
+                };
+                match editor_settings_file::save(dir, &settings) {
+                    Ok(()) => tracing::debug!(?settings, "editor settings saved"),
+                    Err(err) => tracing::warn!(
+                        error = %format!("{err:#}"),
+                        "failed to save the editor settings"
+                    ),
+                }
+            }
+        }
     }
 }
 

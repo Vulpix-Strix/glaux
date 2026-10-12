@@ -35,8 +35,11 @@ copied unmodified and renamed. Each is 16×16 with a black outline
 | `icons/eraser.png`     | `Tools_Crafting_Graphic_Design_Eraser.png`                                   |
 | `icons/eyedropper.png` | `Tools_Crafting_Graphic_Design_Eyedropper_Color_Picker.png`                  |
 | `icons/fill.png`       | `Tools_Crafting_Graphic_Design_Paint_Bucket_Fill.png`                        |
+| `icons/settings.png`   | `Software_Options_Settings_Cogwheel_Gear_Mechanics.png`                      |
 
-The sprite editor's pencil tool reuses `icons/sprites.png`.
+The sprite editor's pencil tool reuses `icons/sprites.png`. The settings
+cogwheel's art fills only the central 12×12 pixels of its canvas, so it fits
+the Code view's options bar.
 
 The author's page states: "All of these icons are licensed under CC0, which
 means you have absolutely no restrictions on how you can use them. I would

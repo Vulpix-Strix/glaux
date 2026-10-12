@@ -25,6 +25,7 @@ use glaux_video::preview::ObjPreviewPalette;
 
 use super::code_document::CodeDocumentError;
 use super::code_session::CodeSession;
+use super::editor_settings::EditorSettings;
 use super::sprite_document::{
     Conflict, ConflictKind, DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile,
     SpriteDocument, file_list,
@@ -102,6 +103,8 @@ pub enum WorkspaceRequest {
     /// Open this script in a tab, or show its tab if it has one; answer
     /// with [`Workspace::script_opened`].
     OpenScript(SourcePath),
+    /// Keep the Code view's settings for the next launch.
+    SaveEditorSettings(EditorSettings),
 }
 
 /// What a workspace dialog's buttons do.
@@ -496,11 +499,14 @@ impl Workspace {
         Self {
             layout,
             tab: Tab::default(),
-            code: CodeEditor::new(code::Metrics {
-                cell_w: layout.cell_w,
-                cell_h: layout.cell_h,
-                top: layout.bar_height(),
-            }),
+            code: CodeEditor::new(
+                code::Metrics {
+                    cell_w: layout.cell_w,
+                    cell_h: layout.cell_h,
+                    top: layout.bar_height(),
+                },
+                EditorSettings::default(),
+            ),
             sprites: SpriteEditor::new(sprites::Metrics {
                 cell_w: layout.cell_w,
                 cell_h: layout.cell_h,
@@ -565,6 +571,11 @@ impl Workspace {
     #[cfg(test)]
     pub fn code(&self) -> &CodeEditor {
         &self.code
+    }
+
+    /// Shows code with `settings` from now on.
+    pub fn set_editor_settings(&mut self, settings: EditorSettings) {
+        self.code.set_settings(settings);
     }
 
     pub fn tab(&self) -> Tab {
@@ -636,6 +647,9 @@ impl Workspace {
         match self.code.handle_input(event, code)? {
             CodeRequest::ListScripts => Some(WorkspaceRequest::ListScripts),
             CodeRequest::Open(path) => Some(WorkspaceRequest::OpenScript(path)),
+            CodeRequest::SaveSettings(settings) => {
+                Some(WorkspaceRequest::SaveEditorSettings(settings))
+            }
         }
     }
 
@@ -667,7 +681,7 @@ impl Workspace {
         if let Ok(listing) = &listing
             && !listing.gaps.is_empty()
         {
-            tracing::info!(gaps = ?listing.gaps, "script listing is incomplete");
+            tracing::debug!(gaps = ?listing.gaps, "script listing is incomplete");
         }
         self.code.open_picker(listing);
     }
@@ -681,9 +695,12 @@ impl Workspace {
         result: Result<(), CodeDocumentError>,
     ) {
         match result {
-            Ok(()) => self.code.reveal_active(code),
+            Ok(()) => {
+                self.code.refresh_metrics(code);
+                self.code.reveal_active(code);
+            }
             Err(err) => {
-                tracing::info!(file = %path, error = %err, "code document not opened");
+                tracing::debug!(file = %path, error = %err, "code document not opened");
                 self.notify(format!("Cannot open {path}: {err}"), ERROR);
             }
         }
@@ -695,10 +712,11 @@ impl Workspace {
         match result {
             Ok(()) => {
                 self.code.set_entry_error(None);
+                self.code.refresh_metrics(code);
                 self.code.reveal_active(code);
             }
             Err(message) => {
-                tracing::info!(error = %message, "entry script not opened");
+                tracing::debug!(error = %message, "entry script not opened");
                 self.notify("Cannot open the entry script", ERROR);
                 self.code.set_entry_error(Some(message));
             }
@@ -1000,7 +1018,9 @@ impl Workspace {
             Tab::Sprites => self
                 .sprites
                 .render(framebuffer, font, ui, sprites, pointer, notice),
-            Tab::Code => self.code.render(framebuffer, font, code, pointer, notice),
+            Tab::Code => self
+                .code
+                .render(framebuffer, font, ui, code, pointer, notice),
             _ => self.render_placeholder(framebuffer, font),
         }
         if let Some(modal) = &self.modal {

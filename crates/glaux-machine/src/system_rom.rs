@@ -43,7 +43,7 @@ pub struct Cursor {
 }
 
 /// An icon the System ROM's UI shows: one per workspace view, then the
-/// sprite editor's tools.
+/// sprite editor's tools, then the Code view's settings button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemIcon {
     Code,
@@ -55,11 +55,13 @@ pub enum SystemIcon {
     Eraser,
     Eyedropper,
     Fill,
+    /// A cogwheel. Its art fills only the central 12×12 pixels.
+    Settings,
 }
 
 impl SystemIcon {
     /// Number of icons, the length of [`SystemUi::new`]'s `icons`.
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 9;
 }
 
 /// The images the system UI draws with. The default has every image

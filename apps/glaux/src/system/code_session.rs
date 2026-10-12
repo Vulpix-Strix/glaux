@@ -7,7 +7,7 @@
 
 mod tabs;
 
-pub use tabs::DocumentTabs;
+pub use tabs::{DocumentTabs, DocumentView};
 
 use super::code_document::{CodeDocument, CodeDocumentError, CodeDocuments, DocumentId};
 use crate::cartridge::LoadedCartridge;

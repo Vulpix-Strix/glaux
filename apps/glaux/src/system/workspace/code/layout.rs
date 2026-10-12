@@ -5,6 +5,7 @@ use glaux_input::Point;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 
 use crate::cartridge::source::SourcePath;
+use crate::rom::ICON_SIZE;
 use crate::system::workspace::{ELLIPSIS, Rect};
 
 /// Space before the first tab and after the overflow button.
@@ -25,6 +26,11 @@ pub const MAX_LABEL_CELLS: usize = 16;
 pub const CHEVRON_WIDTH: i32 = 5;
 /// Cells reserved left of the chevron for the count of hidden tabs.
 const HIDDEN_COUNT_CELLS: i32 = 3;
+/// Side of the art of the settings icon, which sits centred in its
+/// [`ICON_SIZE`] canvas.
+pub const SETTINGS_ART: i32 = 12;
+/// Transparent margin around the settings icon's art.
+pub const SETTINGS_MARGIN: i32 = (ICON_SIZE as i32 - SETTINGS_ART) / 2;
 
 /// Cell size of the system font and where the view starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,8 +64,10 @@ impl CodeLayout {
             width,
             height: bar,
         };
+        // Room for the settings icon's art above the bar's rule.
         let options = Rect {
             y: strip.bottom(),
+            height: bar.max(SETTINGS_ART + 1),
             ..strip
         };
         let status = Rect {
@@ -81,14 +89,20 @@ impl CodeLayout {
         }
     }
 
-    /// Text rows that fit in the text area.
-    pub fn text_rows(&self) -> usize {
-        usize::try_from((self.text.height - 2) / self.metrics.cell_h.max(1)).unwrap_or(0)
-    }
-
     /// Text columns that fit across the text area.
     pub fn text_columns(&self) -> usize {
         usize::try_from((self.text.width - 2 * STRIP_PAD) / self.metrics.cell_w.max(1)).unwrap_or(0)
+    }
+
+    /// The button opening EDITOR SETTINGS, at the options bar's right end:
+    /// the visible art of its icon.
+    pub fn settings_button(&self) -> Rect {
+        Rect {
+            x: self.options.right() - STRIP_PAD - SETTINGS_ART,
+            y: self.options.y,
+            width: SETTINGS_ART,
+            height: SETTINGS_ART,
+        }
     }
 
     /// The button opening the list of open tabs, at the strip's right end.

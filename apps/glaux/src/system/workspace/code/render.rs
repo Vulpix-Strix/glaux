@@ -3,21 +3,25 @@
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
-use glaux_video::draw::{draw_text, fill_rect, pixel};
+use glaux_machine::system_rom::{SystemIcon, SystemUi};
+use glaux_video::draw::{draw_ink_image, draw_text, fill_rect, pixel};
 
 use super::layout::{
-    CHEVRON_WIDTH, CLOSE_SIZE, CodeLayout, LABEL_PAD, StripHit, cells, shorten_start,
+    CHEVRON_WIDTH, CLOSE_SIZE, CodeLayout, LABEL_PAD, SETTINGS_MARGIN, StripHit, cells,
+    shorten_start,
 };
 use super::picker::{FilePicker, LIST_ROWS};
-use super::{CodeEditor, labels, picker_layout};
+use super::text_view::{TextGeometry, thumb};
+use super::{CodeEditor, labels, picker_layout, settings_layout};
 use crate::cartridge::Language;
-use crate::system::code_session::CodeSession;
+use crate::system::code_document::CodeDocument;
+use crate::system::code_session::{CodeSession, DocumentView};
+use crate::system::code_text::{TextMetrics, visual_rows};
+use crate::system::editor_settings::EditorSettings;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
-use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, Rect, wrap};
+use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 
-/// Columns a tab character advances to the next multiple of.
-const TAB_STOP: usize = 4;
 /// Shown right of the path of every document, none being editable yet.
 const READ_ONLY: &str = "Read-only";
 /// Marks a file OPEN FILE lists that already has a tab.
@@ -31,6 +35,7 @@ impl CodeEditor {
         &self,
         framebuffer: &mut Framebuffer,
         font: &BitmapFont,
+        ui: &SystemUi,
         session: Option<&CodeSession>,
         pointer: Option<Point>,
         notice: Option<(&str, u8)>,
@@ -42,17 +47,18 @@ impl CodeEditor {
         };
         // Nothing under an overlay reacts to the pointer.
         let hover_pointer = pointer.filter(|_| !self.has_overlay());
+        let settings_lit = self.settings_dialog.is_some()
+            || hover_pointer.is_some_and(|at| self.layout.settings_button().contains(at));
         match session {
             Some(session) => {
                 painter.strip(session, hover_pointer, self.menu.is_some());
                 match session.active_document() {
                     Some(document) => {
                         painter.options_bar(document.language(), document.path().as_str());
-                        let top = session
-                            .tabs()
-                            .view(document.id())
-                            .map_or(0, |view| view.top_line);
-                        painter.text_view(document.text(), top);
+                        let id = document.id();
+                        let view = session.tabs().view(id).copied().unwrap_or_default();
+                        let metrics = session.tabs().metrics(id);
+                        painter.text_view(document, view, metrics, &self.settings);
                     }
                     None => {
                         painter.options_bar_empty();
@@ -66,6 +72,7 @@ impl CodeEditor {
                 painter.empty_state(self.entry_error.as_deref());
             }
         }
+        painter.settings_button(ui, settings_lit);
         let (status, color) = notice.unwrap_or((self.hint(), PALE));
         painter.status_bar(status, color);
 
@@ -75,6 +82,10 @@ impl CodeEditor {
         }
         if let Some(picker) = &self.picker {
             painter.picker(picker, session);
+        }
+        if let Some(dialog) = &self.settings_dialog {
+            let layout = settings_layout(&self.layout);
+            dialog.render(painter.framebuffer, font, &layout, &self.settings);
         }
     }
 }
@@ -229,7 +240,8 @@ impl Painter<'_> {
         self.fill(tag_rect, BAR);
         self.text(tag, tag_rect.x + 2, y, PALE);
 
-        let read_only_x = bar.right() - 4 - cells(READ_ONLY) * self.cell_w();
+        let read_only_x =
+            self.layout.settings_button().x - self.cell_w() - cells(READ_ONLY) * self.cell_w();
         let path_x = tag_rect.right() + self.cell_w();
         let room = (read_only_x - self.cell_w() - path_x) / self.cell_w().max(1);
         let path = shorten_start(path, usize::try_from(room).unwrap_or(0));
@@ -241,21 +253,168 @@ impl Painter<'_> {
         self.options_rule();
     }
 
+    /// The cogwheel opening EDITOR SETTINGS, `lit` while hovered or open.
+    fn settings_button(&mut self, ui: &SystemUi, lit: bool) {
+        let button = self.layout.settings_button();
+        let inks = if lit {
+            [OUTLINE, HOVER_SHADE, PALE]
+        } else {
+            [OUTLINE, IDLE_SHADE, DIM]
+        };
+        // The icon's transparent margin runs past the bar and draws nothing.
+        draw_ink_image(
+            self.framebuffer,
+            ui.icon(SystemIcon::Settings),
+            button.x - SETTINGS_MARGIN,
+            button.y - SETTINGS_MARGIN,
+            &inks,
+        );
+    }
+
     fn options_rule(&mut self) {
         let bar = self.layout.options;
         fill_rect(self.framebuffer, bar.x, bar.bottom() - 1, bar.width, 1, BAR);
     }
 
-    /// `text` from line `top`, as many lines and columns as fit.
-    fn text_view(&mut self, text: &str, top: usize) {
-        let area = self.layout.text;
-        let columns = self.layout.text_columns();
-        let rows = self.layout.text_rows();
-        for (row, line) in text.split('\n').skip(top).take(rows).enumerate() {
-            let line = expand_tabs(line.strip_suffix('\r').unwrap_or(line), columns);
-            let y = area.y + 1 + row as i32 * self.cell_h();
-            self.text(&line, area.x + 4, y, TEXT);
+    /// The rows of `document` that fit from `view`, with line numbers and
+    /// scroll indicators as `settings` and `metrics` allow.
+    ///
+    /// Only the rows shown are laid out. `metrics` that don't describe this
+    /// view leave the indicators out rather than being measured again here.
+    fn text_view(
+        &mut self,
+        document: &CodeDocument,
+        view: DocumentView,
+        metrics: Option<&TextMetrics>,
+        settings: &EditorSettings,
+    ) {
+        let geometry = TextGeometry::new(self.layout, document.line_count(), settings);
+        let metrics = metrics.filter(|metrics| metrics.key() == geometry.metrics_key());
+        let view = metrics.map_or(view, |metrics| geometry.clamp(view, metrics));
+        let (cell_w, cell_h) = (self.cell_w(), self.cell_h());
+        if let Some(gutter) = geometry.gutter {
+            fill_rect(
+                self.framebuffer,
+                gutter.right() - 1,
+                gutter.y,
+                1,
+                gutter.height,
+                BAR,
+            );
         }
+        let top_row = if geometry.wrap { view.top_row } else { 0 };
+        let rows = visual_rows(
+            document,
+            view.top_line,
+            top_row,
+            geometry.wrap_columns(),
+            geometry.tab_size,
+        );
+        for (index, row) in rows.take(geometry.rows).enumerate() {
+            let y = geometry.viewport.y + index as i32 * cell_h;
+            // Folds of a wrapped line leave the gutter blank, so each
+            // number marks where its source line starts.
+            if row.row_in_line == 0 && geometry.gutter.is_some() {
+                self.number(row.line + 1, geometry.number_right(), y, IDLE_SHADE);
+            }
+            let first = if geometry.wrap {
+                row.start.column
+            } else {
+                view.left_column
+            };
+            let end = first + geometry.columns;
+            for cell in row.cells(geometry.tab_size) {
+                if cell.column >= end {
+                    break;
+                }
+                if cell.column < first || cell.is_space() {
+                    continue;
+                }
+                let x = geometry.viewport.x + (cell.column - first) as i32 * cell_w;
+                self.glyph(cell.ch, x, y, TEXT);
+            }
+        }
+        if let Some(metrics) = metrics {
+            let top = metrics.row_index(view.top_line, top_row);
+            let track = geometry.vertical;
+            if let Some((start, length)) = thumb(top, geometry.rows, metrics.rows(), track.height) {
+                self.fill(track, BAR);
+                self.fill(
+                    Rect {
+                        y: track.y + start,
+                        height: length,
+                        ..track
+                    },
+                    DIM,
+                );
+            }
+            let track = geometry.horizontal;
+            let sideways = thumb(
+                view.left_column,
+                geometry.columns,
+                metrics.widest(),
+                track.width,
+            );
+            if let Some((start, length)) = sideways.filter(|_| !geometry.wrap) {
+                self.fill(track, BAR);
+                self.fill(
+                    Rect {
+                        x: track.x + start,
+                        width: length,
+                        ..track
+                    },
+                    DIM,
+                );
+            }
+        }
+    }
+
+    /// `ch` in the cell at `(x, y)`, or a hollow box where the font has no
+    /// glyph for it.
+    fn glyph(&mut self, ch: char, x: i32, y: i32, color: u8) {
+        if self.font.glyph(ch).is_some() {
+            let mut bytes = [0; 4];
+            self.text(ch.encode_utf8(&mut bytes), x, y, color);
+            return;
+        }
+        let height = self.font.metrics().glyph_height() as i32 - 2;
+        let width = self.font.metrics().glyph_width() as i32 - 1;
+        self.fill(
+            Rect {
+                x,
+                y: y + 1,
+                width,
+                height,
+            },
+            DIM,
+        );
+        self.fill(
+            Rect {
+                x,
+                y: y + 1,
+                width,
+                height,
+            }
+            .inset(1),
+            BACKGROUND,
+        );
+    }
+
+    /// `n` in decimal, its last digit's cell ending at `right`.
+    fn number(&mut self, n: usize, right: i32, y: i32, color: u8) {
+        let mut digits = [0; 20];
+        let mut start = digits.len();
+        let mut rest = n;
+        loop {
+            start -= 1;
+            digits[start] = b'0' + (rest % 10) as u8;
+            rest /= 10;
+            if rest == 0 {
+                break;
+            }
+        }
+        let text = std::str::from_utf8(&digits[start..]).unwrap_or_default();
+        self.text(text, right - cells(text) * self.cell_w(), y, color);
     }
 
     /// What the view shows without an open document.
@@ -385,24 +544,5 @@ impl Painter<'_> {
     }
 }
 
-/// `line` with tabs expanded to [`TAB_STOP`] columns, cut to `columns`.
-fn expand_tabs(line: &str, columns: usize) -> String {
-    let mut out = String::new();
-    let mut column = 0;
-    for ch in line.chars() {
-        if column >= columns {
-            break;
-        }
-        if ch == '\t' {
-            let next = (column / TAB_STOP + 1) * TAB_STOP;
-            while column < next.min(columns) {
-                out.push(' ');
-                column += 1;
-            }
-        } else {
-            out.push(ch);
-            column += 1;
-        }
-    }
-    out
-}
+#[cfg(test)]
+mod tests;

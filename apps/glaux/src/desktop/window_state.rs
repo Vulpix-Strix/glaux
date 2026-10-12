@@ -10,6 +10,7 @@ use glaux_host_raylib::{MonitorArea, WindowPlacement};
 use glaux_video::{HEIGHT, WIDTH};
 use serde::{Deserialize, Serialize};
 
+use crate::config_file;
 use crate::platform::{self, SessionKind};
 
 /// File name of the saved state inside the config directory.
@@ -103,17 +104,10 @@ pub fn load(config_dir: &Path) -> Option<WindowState> {
 
 /// Writes `state` to `config_dir`, creating the directory if needed.
 ///
-/// The state is written to a temporary file and renamed into place so an
-/// interrupted save never leaves a truncated file behind.
+/// An interrupted save never leaves a truncated file behind.
 pub fn save(config_dir: &Path, state: &WindowState) -> anyhow::Result<()> {
-    fs::create_dir_all(config_dir)
-        .with_context(|| format!("failed to create {}", config_dir.display()))?;
-    let path = path(config_dir);
-    let temp = path.with_extension("json.tmp");
     let text = serde_json::to_string_pretty(state).context("failed to encode the window state")?;
-    fs::write(&temp, text).with_context(|| format!("failed to write {}", temp.display()))?;
-    fs::rename(&temp, &path).with_context(|| format!("failed to replace {}", path.display()))?;
-    Ok(())
+    config_file::write_atomically(&path(config_dir), &text)
 }
 
 /// Whether window positions in `session` can be read and set.
