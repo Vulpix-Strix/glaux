@@ -1,0 +1,19 @@
+[package]
+name = "glaux-rhai"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+glaux-audio.workspace = true
+glaux-input.workspace = true
+glaux-machine.workspace = true
+glaux-modules.workspace = true
+glaux-script.workspace = true
+rhai.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
