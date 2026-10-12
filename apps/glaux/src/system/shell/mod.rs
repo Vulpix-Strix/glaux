@@ -7,12 +7,12 @@ mod parser;
 mod scrollback;
 
 use glaux_input::InputEvent;
-use glaux_luau::{LogEntry, LogLevel};
 use glaux_machine::psg::{Adsr, CHANNELS, Waveform};
+use glaux_script::{LogEntry, LogLevel};
 
 use super::line_editor::LineEditor;
 use super::{ACCENT, BACKGROUND, DIM, ERROR, Line, SystemInfo, TEXT, TRACE, WARN};
-use crate::cartridge::{CartridgeManifest, LoadedCartridge};
+use crate::cartridge::{CartridgeManifest, Language, LoadedCartridge};
 use crate::cartridge_fs::CartridgeStorage;
 use commands::{COMMANDS, Context};
 
@@ -50,6 +50,11 @@ pub struct Voice {
 
 const BANNER: &str = "Ready. Type 'help' for a list of commands.";
 const PROMPT: &str = "> ";
+
+/// Shown whenever a cartridge in an experimental language is created or
+/// run.
+pub(super) const EXPERIMENTAL_LANGUAGE_WARNING: &str =
+    "RHAI SUPPORT IS EXPERIMENTAL. THE SCRIPTING API MAY CHANGE WITHOUT NOTICE.";
 /// Shell ticks the cursor spends in each blink phase: 600 ms at 60 Hz.
 pub(super) const BLINK_TICKS: u32 = 36;
 
@@ -256,6 +261,7 @@ impl Shell {
                 self.report(format!("Loaded {}", cartridge_identity(manifest)));
             }
             LoadOrigin::Created => {
+                self.warn_if_experimental(manifest.runtime.language);
                 for line in [
                     "Your new cartridge is ready!",
                     manifest.cartridge.name.as_str(),
@@ -268,6 +274,23 @@ impl Shell {
                     self.report(line);
                 }
             }
+        }
+    }
+
+    /// Adds a system warning line to the scrollback.
+    pub(super) fn report_warning(&mut self, line: impl Into<String>) {
+        self.scrollback.push(Entry::Warning(line.into()));
+    }
+
+    /// Warns that cartridges in `language` use an API that may change, if
+    /// they do.
+    pub(super) fn warn_if_experimental(&mut self, language: Language) {
+        if language.is_experimental() {
+            tracing::warn!(
+                language = language.name(),
+                "experimental scripting language"
+            );
+            self.report_warning(EXPERIMENTAL_LANGUAGE_WARNING);
         }
     }
 
@@ -286,6 +309,7 @@ impl Shell {
                 Entry::Banner(text) | Entry::Output(text) | Entry::Log(_, text) => text.clone(),
                 Entry::Command(text) => format!("{PROMPT}{text}"),
                 Entry::Error(text) => format!("! {text}"),
+                Entry::Warning(text) => format!("WARN: {text}"),
             })
             .collect()
     }
@@ -383,6 +407,7 @@ impl Shell {
                 Entry::Command(text) => (text, TEXT, true),
                 Entry::Output(text) => (text, TEXT, false),
                 Entry::Error(text) => (text, ERROR, false),
+                Entry::Warning(text) => (text, WARN, false),
                 Entry::Log(level, text) => (text, log_color(*level), false),
             };
             let text: Vec<char> = text.chars().collect();
@@ -484,9 +509,11 @@ fn log_lines(text: &str) -> impl Iterator<Item = String> + '_ {
 fn entry_rows(entry: &Entry, columns: usize) -> usize {
     let cells = match entry {
         Entry::Command(text) => PROMPT.chars().count() + text.chars().count(),
-        Entry::Banner(text) | Entry::Output(text) | Entry::Error(text) | Entry::Log(_, text) => {
-            text.chars().count()
-        }
+        Entry::Banner(text)
+        | Entry::Output(text)
+        | Entry::Error(text)
+        | Entry::Warning(text)
+        | Entry::Log(_, text) => text.chars().count(),
     };
     cells.div_ceil(columns).max(1)
 }

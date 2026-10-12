@@ -1,9 +1,10 @@
 //! Validation of the arguments scripts pass to Glaux functions, and the
 //! located errors raised when they are wrong.
 
-use glaux_audio::{CHANNELS, Waveform};
+use glaux_audio::Waveform;
 use glaux_input::{Button, Key};
-use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, ObjBank};
+use glaux_machine::obj_palette::ObjBank;
+use glaux_script::validate;
 use mlua::{Function, Lua, Value};
 
 use crate::api::input::{ButtonValue, KeyValue};
@@ -43,25 +44,30 @@ pub(crate) fn number_arg(
     }
 }
 
-/// A screen coordinate: floored, and saturated to the `i32` range so that
-/// huge values land off-screen instead of failing.
+/// A numeric argument checked by `check`, whose error detail becomes a
+/// bad-argument error.
+fn checked<T>(
+    lua: &Lua,
+    function: &str,
+    position: usize,
+    value: &Value,
+    check: impl FnOnce(f64) -> Result<T, String>,
+) -> mlua::Result<T> {
+    let n = number_arg(lua, function, position, value)?;
+    check(n).map_err(|detail| bad_argument(lua, function, position, &detail))
+}
+
+/// A screen coordinate, as [`validate::coordinate`] takes it.
 pub(crate) fn coordinate_arg(
     lua: &Lua,
     function: &str,
     position: usize,
     value: &Value,
 ) -> mlua::Result<i32> {
-    let n = number_arg(lua, function, position, value)?;
-    if n.is_nan() {
-        return Err(bad_argument(lua, function, position, "number is NaN"));
-    }
-    // `as` saturates float-to-int conversions, including infinities.
-    Ok(n.floor() as i32)
+    checked(lua, function, position, value, validate::coordinate)
 }
 
-/// A size in pixels: a positive integer. `what` names the size in the
-/// error. Values past `i32::MAX` saturate, as coordinates do; the result is
-/// always at least 1.
+/// A size in pixels, as [`validate::size`] takes it.
 pub(crate) fn size_arg(
     lua: &Lua,
     function: &str,
@@ -69,62 +75,31 @@ pub(crate) fn size_arg(
     value: &Value,
     what: &str,
 ) -> mlua::Result<i32> {
-    let n = number_arg(lua, function, position, value)?;
-    if n.fract() == 0.0 && n >= 1.0 {
-        Ok(n as i32)
-    } else {
-        Err(bad_argument(
-            lua,
-            function,
-            position,
-            &format!("positive {what} expected, got {n}"),
-        ))
-    }
+    checked(lua, function, position, value, |n| validate::size(n, what))
 }
 
-/// A palette index: an integer in `0..=255`, never wrapped or clamped.
+/// A palette index, as [`validate::color`] takes it.
 pub(crate) fn color_arg(
     lua: &Lua,
     function: &str,
     position: usize,
     value: &Value,
 ) -> mlua::Result<u8> {
-    let n = number_arg(lua, function, position, value)?;
-    if n.fract() == 0.0 && (0.0..=255.0).contains(&n) {
-        Ok(n as u8)
-    } else {
-        Err(bad_argument(
-            lua,
-            function,
-            position,
-            &format!("palette index 0-255 expected, got {n}"),
-        ))
-    }
+    checked(lua, function, position, value, validate::color)
 }
 
-/// An object-tile index: an integer in `0..=1023`.
+/// An object-tile index, as [`validate::tile`] takes it.
 pub(crate) fn tile_arg(
     lua: &Lua,
     function: &str,
     position: usize,
     value: &Value,
 ) -> mlua::Result<u16> {
-    let n = number_arg(lua, function, position, value)?;
-    if n.fract() == 0.0 && (0.0..=1023.0).contains(&n) {
-        Ok(n as u16)
-    } else {
-        Err(bad_argument(
-            lua,
-            function,
-            position,
-            &format!("object tile index 0-1023 expected, got {n}"),
-        ))
-    }
+    checked(lua, function, position, value, validate::tile)
 }
 
-/// A sprite block's `extent` (width or height) in tiles: `nil` means 1,
-/// otherwise a positive integer that keeps the block inside the object-tile
-/// grid when it starts at grid `axis` `start` of `limit`.
+/// A sprite block's `extent` in tiles: `nil` means 1, otherwise as
+/// [`validate::tile_span`] takes it.
 pub(crate) fn tile_span_arg(
     lua: &Lua,
     position: usize,
@@ -137,28 +112,9 @@ pub(crate) fn tile_span_arg(
     if value.is_nil() {
         return Ok(1);
     }
-    let n = number_arg(lua, "spr", position, value)?;
-    if !(n.fract() == 0.0 && n >= 1.0) {
-        return Err(bad_argument(
-            lua,
-            "spr",
-            position,
-            &format!("positive tile count expected, got {n}"),
-        ));
-    }
-    let available = limit - start;
-    if n > available as f64 {
-        return Err(bad_argument(
-            lua,
-            "spr",
-            position,
-            &format!(
-                "{extent} {n} from tile {axis} {start} exceeds the {limit}-{axis} object-tile grid"
-            ),
-        ));
-    }
-    // `available` is at most OBJ_GRID_ROWS, which fits in a byte.
-    Ok(n as u8)
+    checked(lua, "spr", position, value, |n| {
+        validate::tile_span(n, extent, start, limit, axis)
+    })
 }
 
 /// An optional boolean flag: `nil` means `false`. Other types, including
@@ -181,8 +137,7 @@ pub(crate) fn flag_arg(
     }
 }
 
-/// An integer argument in `0..=max`, never wrapped or clamped. `what` names
-/// the value in the error.
+/// An integer argument in `0..=max`, as [`validate::bounded`] takes it.
 pub(crate) fn bounded_arg(
     lua: &Lua,
     function: &str,
@@ -191,17 +146,9 @@ pub(crate) fn bounded_arg(
     what: &str,
     max: u32,
 ) -> mlua::Result<u32> {
-    let n = number_arg(lua, function, position, value)?;
-    if n.fract() == 0.0 && (0.0..=f64::from(max)).contains(&n) {
-        Ok(n as u32)
-    } else {
-        Err(bad_argument(
-            lua,
-            function,
-            position,
-            &format!("{what} 0-{max} expected, got {n}"),
-        ))
-    }
+    checked(lua, function, position, value, |n| {
+        validate::bounded(n, what, max)
+    })
 }
 
 /// An optional object palette bank: `nil` means each tile's default bank.
@@ -214,16 +161,12 @@ pub(crate) fn obj_bank_arg(
     if value.is_nil() {
         return Ok(None);
     }
-    let max = OBJ_PALETTE_BANKS as u32 - 1;
-    let bank = bounded_arg(lua, function, position, value, "object palette bank", max)?;
-    // `bounded_arg` keeps `bank` below OBJ_PALETTE_BANKS, so it is a valid bank.
-    Ok(ObjBank::new(bank as u8))
+    checked(lua, function, position, value, validate::obj_bank).map(Some)
 }
 
 /// An audio channel: the first argument of every `audio` function.
 pub(crate) fn channel_arg(lua: &Lua, function: &str, value: &Value) -> mlua::Result<usize> {
-    let max = CHANNELS as u32 - 1;
-    bounded_arg(lua, function, 1, value, "channel", max).map(|channel| channel as usize)
+    checked(lua, function, 1, value, validate::channel)
 }
 
 /// A waveform, named as scripts name it.
@@ -241,15 +184,8 @@ pub(crate) fn waveform_arg(
             &format!("string expected, got {}", script_type_name(value)),
         ));
     };
-    let name = name.to_string_lossy();
-    Waveform::from_name(&name).ok_or_else(|| {
-        bad_argument(
-            lua,
-            function,
-            position,
-            &format!("unknown waveform '{name}'; expected square, triangle, saw or noise"),
-        )
-    })
+    validate::waveform(&name.to_string_lossy())
+        .map_err(|detail| bad_argument(lua, function, position, &detail))
 }
 
 /// The type name a script sees for `value`, as `typeof` reports it. mlua

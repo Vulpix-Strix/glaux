@@ -416,8 +416,8 @@ fn interrupted_strokes_stay_separate_edits() {
     assert_eq!(
         steps,
         [
-            format!("{}{}{}", "11100000", "0".repeat(8), "11100000") + &"0".repeat(16),
-            "11100000".to_owned() + &"0".repeat(32),
+            format!("{}{}{}", "11100000", "0".repeat(8), "11100000") + "0".repeat(16).as_str(),
+            "11100000".to_owned() + "0".repeat(32).as_str(),
             "0".repeat(40),
         ]
     );

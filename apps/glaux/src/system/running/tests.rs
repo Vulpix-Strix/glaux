@@ -7,7 +7,7 @@ use glaux_machine::obj_palette::{ObjBank, ObjPalettes};
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::cartridge::fixture::write_cartridge;
+use crate::cartridge::fixture::{write_cartridge, write_rhai_cartridge};
 use crate::cartridge_fs::fixture::Fixture;
 
 fn defaults() -> CartridgeVideoDefaults {
@@ -45,6 +45,44 @@ fn a_cartridge_requires_its_own_modules() {
     running.tick(&[]).unwrap();
     running.tick(&[]).unwrap();
     assert_eq!(texts(running.take_output()), ["6", "6"]);
+}
+
+#[test]
+fn a_rhai_cartridge_imports_its_own_modules() {
+    let fixture = Fixture::new("running-rhai-modules");
+    let dir = fixture.root().join("owl");
+    write_rhai_cartridge(
+        &dir,
+        "Owl",
+        "import \"game.enemies\" as enemies;\nfn tick() { log::info(enemies::count() * 2); }",
+    );
+    fs::create_dir_all(dir.join("code/game")).unwrap();
+    fs::write(
+        dir.join("code/game/enemies.rhai"),
+        "log::info(\"enemies loaded\");\nfn count() { 3 }",
+    )
+    .unwrap();
+    // A file outside `code/` is not a module, whatever the name says.
+    fs::write(dir.join("secret.rhai"), "fn count() { 99 }").unwrap();
+    let cartridge = LoadedCartridge::load(&fixture.storage(), "owl").unwrap();
+
+    let mut running =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+    assert_eq!(texts(running.take_output()), ["enemies loaded"]);
+    running.tick(&[]).unwrap();
+    assert_eq!(texts(running.take_output()), ["6"]);
+
+    fs::write(dir.join("code/main.rhai"), "import \"secret\" as s;").unwrap();
+    let cartridge = running.stop();
+    let failed =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap_err();
+    let StartError::Script(failure) = failed.error else {
+        panic!("expected a script error");
+    };
+    assert_eq!(
+        failure.error.to_string(),
+        "Module not found: code/secret.rhai (code/main.rhai:1)"
+    );
 }
 
 #[test]

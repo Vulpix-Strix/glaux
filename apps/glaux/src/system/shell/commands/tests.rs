@@ -1,5 +1,6 @@
 use super::super::parser::parse;
 use super::*;
+use crate::cartridge::Language;
 use crate::cartridge::fixture::{manifest_ron, write_cartridge, write_manifest};
 use crate::cartridge_fs::fixture::Fixture;
 use glaux_machine::psg::MAX_ENVELOPE_SAMPLES;
@@ -636,6 +637,50 @@ fn new_creates_a_cartridge_and_leaves_the_announcement_to_the_system() {
 }
 
 #[test]
+fn new_lang_chooses_the_language_and_luau_is_the_default() {
+    let fixture = Fixture::new("cmd-new-lang");
+    for (line, id, language, entry, absent) in [
+        (
+            "new plain",
+            "plain",
+            Language::Luau,
+            "code/main.luau",
+            "code/main.rhai",
+        ),
+        (
+            "new lua-game --lang luau",
+            "lua-game",
+            Language::Luau,
+            "code/main.luau",
+            "code/main.rhai",
+        ),
+        (
+            "new rhai-game --lang rhai",
+            "rhai-game",
+            Language::Rhai,
+            "code/main.rhai",
+            "code/main.luau",
+        ),
+        (
+            "new --lang RHAI loud",
+            "loud",
+            Language::Rhai,
+            "code/main.rhai",
+            "code/main.luau",
+        ),
+    ] {
+        let (entries, created) = run_new(&fixture, line);
+        assert_eq!(entries, [], "{line}");
+        let manifest = created.unwrap().manifest().clone();
+        assert_eq!(manifest.runtime.language, language, "{line}");
+        assert_eq!(manifest.runtime.entry, entry, "{line}");
+        let dir = fixture.root().join(id);
+        assert!(dir.join(entry).is_file(), "{line}");
+        assert!(!dir.join(absent).exists(), "{line}");
+    }
+}
+
+#[test]
 fn new_takes_quoted_option_values() {
     let fixture = Fixture::new("cmd-new-options");
     let (entries, created) = run_new(
@@ -664,7 +709,7 @@ fn new_errors_create_nothing() {
             "new a --color red",
             hinted(
                 "Unknown option: --color",
-                "Options: --name, --version, --author, --discard",
+                "Options: --name, --version, --author, --lang, --discard",
             ),
         ),
         (
@@ -672,6 +717,22 @@ fn new_errors_create_nothing() {
             error("Option --name given more than once"),
         ),
         ("new games", error("/games already exists")),
+        (
+            "new a --lang python",
+            error("Unsupported language 'python': use luau or rhai"),
+        ),
+        ("new a --lang", error("Option --lang needs a value")),
+        (
+            "new a --lang rhai --lang luau",
+            error("Option --lang given more than once"),
+        ),
+        (
+            "new a --language rhai",
+            hinted(
+                "Unknown option: --language",
+                "Options: --name, --version, --author, --lang, --discard",
+            ),
+        ),
     ] {
         assert_eq!(run_new(&fixture, line), (message, None), "{line}");
     }

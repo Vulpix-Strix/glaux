@@ -71,9 +71,6 @@ impl std::fmt::Display for VideoAsset {
     }
 }
 
-/// Suffix an entry script's file name must have.
-const ENTRY_EXTENSION: &str = ".luau";
-
 /// A cartridge that failed to load. Messages name virtual or
 /// cartridge-relative paths only, so they are safe to show in the shell.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -120,6 +117,8 @@ pub enum CartridgeError {
     InvalidEntryPath,
     #[error("cartridge.ron: runtime.entry must be a .luau file")]
     EntryNotLuau,
+    #[error("cartridge.ron: runtime.entry must be a .rhai file")]
+    EntryNotRhai,
     #[error("Entry not found: {0}")]
     EntryNotFound(String),
     #[error("Entry is not a file: {0}")]
@@ -164,7 +163,8 @@ pub struct CartridgeInfo {
 pub struct RuntimeSpec {
     pub language: Language,
     /// Path of the entry script from the cartridge root: `/`-separated plain
-    /// names ending in a `.luau` file name.
+    /// names ending in a file name with the language's
+    /// [extension](Language::extension).
     pub entry: String,
 }
 
@@ -185,6 +185,41 @@ pub struct Compatibility {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
     Luau,
+    /// Experimental: its scripting API may change without notice.
+    Rhai,
+}
+
+impl Language {
+    pub const ALL: [Self; 2] = [Self::Luau, Self::Rhai];
+
+    /// Extension of the language's script files, without the dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Luau => "luau",
+            Self::Rhai => "rhai",
+        }
+    }
+
+    /// The lowercase name the shell accepts for the language.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Luau => "luau",
+            Self::Rhai => "rhai",
+        }
+    }
+
+    /// The language named `name`, ignoring case.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|language| language.name().eq_ignore_ascii_case(name))
+    }
+
+    /// Whether the language's scripting API may still change without
+    /// notice.
+    pub fn is_experimental(self) -> bool {
+        matches!(self, Self::Rhai)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,7 +304,7 @@ impl TryFrom<ManifestFile> for CartridgeManifest {
             Version::parse(&file.cartridge.version).map_err(|_| CartridgeError::InvalidVersion)?;
         let min_glaux = Version::parse(&file.compatibility.min_glaux)
             .map_err(|_| CartridgeError::InvalidMinGlaux)?;
-        validate_entry(&file.runtime.entry)?;
+        validate_entry(&file.runtime.entry, file.runtime.language)?;
         Ok(Self {
             format: file.format,
             cartridge: CartridgeInfo {
@@ -340,7 +375,8 @@ pub(crate) fn glaux_version() -> &'static Version {
     })
 }
 
-/// Checks that `entry` is a portable relative path to a `.luau` file.
+/// Checks that `entry` is a portable relative path to a script file of
+/// `language`.
 ///
 /// Components are separated by `/` only and must be plain names: absolute
 /// paths, empty components, `.` and `..` are rejected outright, even where
@@ -348,7 +384,7 @@ pub(crate) fn glaux_version() -> &'static Version {
 /// portability rule: a cartridge must name the same file on every host, and
 /// those characters are separators or drive and stream markers on some of
 /// them.
-fn validate_entry(entry: &str) -> Result<(), CartridgeError> {
+fn validate_entry(entry: &str, language: Language) -> Result<(), CartridgeError> {
     let portable = !entry.contains(['\\', ':', '\0'])
         && entry
             .split('/')
@@ -357,9 +393,15 @@ fn validate_entry(entry: &str) -> Result<(), CartridgeError> {
         return Err(CartridgeError::InvalidEntryPath);
     }
     let file_name = entry.rsplit('/').next().unwrap_or(entry);
-    match file_name.strip_suffix(ENTRY_EXTENSION) {
+    let stem = file_name
+        .strip_suffix(language.extension())
+        .and_then(|rest| rest.strip_suffix('.'));
+    match stem {
         Some(stem) if !stem.is_empty() => Ok(()),
-        _ => Err(CartridgeError::EntryNotLuau),
+        _ => Err(match language {
+            Language::Luau => CartridgeError::EntryNotLuau,
+            Language::Rhai => CartridgeError::EntryNotRhai,
+        }),
     }
 }
 

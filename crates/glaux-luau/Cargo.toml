@@ -10,6 +10,7 @@ glaux-audio.workspace = true
 glaux-input.workspace = true
 glaux-machine.workspace = true
 glaux-modules.workspace = true
+glaux-script.workspace = true
 mlua.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

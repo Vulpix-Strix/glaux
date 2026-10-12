@@ -131,6 +131,61 @@ fn created_cartridges_load_with_the_starter() {
         .collect();
     names.sort();
     assert_eq!(names, ["cartridge.ron", "code"]);
+    let code: Vec<_> = fs::read_dir(dir.join("code"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(code, ["main.luau"]);
+}
+
+#[test]
+fn rhai_cartridges_get_a_rhai_entry_and_starter() {
+    let fixture = Fixture::new("template-rhai");
+    let storage = fixture.storage();
+    let spec = spec("owl").with_language("rhai").unwrap();
+    let cartridge = create(&storage, &spec).unwrap();
+    let manifest = cartridge.manifest();
+    assert_eq!(manifest.runtime.language, Language::Rhai);
+    assert_eq!(manifest.runtime.entry, "code/main.rhai");
+    assert_eq!(
+        cartridge.entry_source(),
+        Ok(RHAI_STARTER.as_bytes().to_vec())
+    );
+    let code: Vec<_> = fs::read_dir(fixture.root().join("owl/code"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(code, ["main.rhai"]);
+}
+
+#[test]
+fn languages_are_named_case_insensitively_and_luau_is_the_default() {
+    let language = |spec: NewCartridge| {
+        CartridgeManifest::parse(spec.manifest_ron().as_bytes())
+            .unwrap()
+            .runtime
+            .language
+    };
+    assert_eq!(language(spec("a")), Language::Luau);
+    for (name, expected) in [
+        ("luau", Language::Luau),
+        ("LUAU", Language::Luau),
+        ("rhai", Language::Rhai),
+        ("Rhai", Language::Rhai),
+    ] {
+        assert_eq!(spec("a").with_language(name).map(language), Ok(expected));
+    }
+    for name in ["", "lua", "python", "rhai ", "luau.rhai"] {
+        assert_eq!(
+            spec("a").with_language(name),
+            Err(CreateError::UnsupportedLanguage(name.to_owned())),
+            "{name:?}"
+        );
+    }
+    assert_eq!(
+        CreateError::UnsupportedLanguage("python".into()).to_string(),
+        "Unsupported language 'python': use luau or rhai"
+    );
 }
 
 #[test]

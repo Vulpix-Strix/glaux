@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::fixture::{manifest_ron, write_cartridge, write_manifest};
+use super::fixture::{manifest_ron, rhai_manifest_ron, write_cartridge, write_manifest};
 use super::*;
 use crate::cartridge_fs::fixture::Fixture;
 use pretty_assertions::assert_eq;
@@ -193,8 +193,8 @@ fn missing_and_unknown_fields_name_their_section() {
 #[test]
 fn unsupported_enum_values_are_glaux_errors() {
     assert_eq!(
-        mochi_with("language: Luau", "language: Rhai"),
-        Err(CartridgeError::UnsupportedLanguage("Rhai".into()))
+        mochi_with("language: Luau", "language: Python"),
+        Err(CartridgeError::UnsupportedLanguage("Python".into()))
     );
     assert_eq!(
         mochi_with("model: G1", "model: G2"),
@@ -205,8 +205,8 @@ fn unsupported_enum_values_are_glaux_errors() {
         Err(CartridgeError::UnsupportedGraphics("G1_2bpp".into()))
     );
     assert_eq!(
-        CartridgeError::UnsupportedLanguage("Rhai".into()).to_string(),
-        "cartridge.ron: unsupported language Rhai"
+        CartridgeError::UnsupportedLanguage("Python".into()).to_string(),
+        "cartridge.ron: unsupported language Python"
     );
 }
 
@@ -317,6 +317,32 @@ fn entry_must_be_a_luau_file() {
     ] {
         assert_eq!(with_entry(entry).map(|m| m.runtime.entry), Ok(entry.into()));
     }
+}
+
+#[test]
+fn rhai_cartridges_need_a_rhai_entry() {
+    let rhai = |entry| CartridgeManifest::parse(rhai_manifest_ron("Pong", entry).as_bytes());
+    assert_eq!(
+        rhai("code/main.rhai").map(|m| (m.runtime.language, m.runtime.entry)),
+        Ok((Language::Rhai, "code/main.rhai".into()))
+    );
+    for entry in [
+        "main.luau",
+        "main.RHAI",
+        ".rhai",
+        "code/.rhai",
+        "main.rhai.txt",
+        "main",
+    ] {
+        assert_eq!(rhai(entry), Err(CartridgeError::EntryNotRhai), "{entry:?}");
+    }
+    // Each language accepts only its own extension.
+    assert_eq!(with_entry("main.rhai"), Err(CartridgeError::EntryNotLuau));
+    assert_eq!(rhai("../main.rhai"), Err(CartridgeError::InvalidEntryPath));
+    assert_eq!(
+        CartridgeError::EntryNotRhai.to_string(),
+        "cartridge.ron: runtime.entry must be a .rhai file"
+    );
 }
 
 fn load(storage: &CartridgeStorage, path: &str) -> Result<CartridgeManifest, CartridgeError> {

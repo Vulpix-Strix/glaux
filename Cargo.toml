@@ -32,6 +32,7 @@ bitflags = "2"
 raylib = "6"
 
 mlua = { version = "0.12", features = ["luau"] }
+rhai = "1.26"
 
 pretty_assertions = "1"
 proptest = { version = "1", default-features = false, features = ["std"] }
@@ -43,3 +44,5 @@ glaux-input = { path = "crates/glaux-input" }
 glaux-modules = { path = "crates/glaux-modules" }
 glaux-host-raylib = { path = "crates/glaux-host-raylib" }
 glaux-luau = { path = "crates/glaux-luau" }
+glaux-script = { path = "crates/glaux-script" }
+glaux-rhai = { path = "crates/glaux-rhai" }

@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use glaux_luau::LogLevel;
+use glaux_script::LogLevel;
 
 /// Most entries kept; pushing another drops the oldest.
 pub(super) const SCROLLBACK_LIMIT: usize = 1024;
@@ -16,6 +16,9 @@ pub(super) enum Entry {
     Command(String),
     Output(String),
     Error(String),
+    /// A system notice the user should not miss, such as an experimental
+    /// feature being in use. Not cartridge output.
+    Warning(String),
     /// One line a cartridge logged, at the level it was logged with.
     Log(LogLevel, String),
 }

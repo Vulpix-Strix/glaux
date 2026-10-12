@@ -24,13 +24,13 @@ pub use video::CartridgeVideoDefaults;
 use workspace::{Workspace, WorkspaceRequest, WorkspaceVideo};
 
 use glaux_input::{InputEvent, InputMode, Point};
-use glaux_luau::RuntimeError;
 use glaux_machine::font::FontMetrics;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
 use glaux_machine::system_rom::{SystemRom, SystemSounds};
+use glaux_script::RuntimeError;
 use glaux_video::draw::{clear, draw_text, fill_rect};
 use pause::PauseOverlay;
 use running::{FailedStart, RunningCartridge, StartError};
@@ -763,6 +763,7 @@ fn start(
             } else {
                 shell.report(format!("Running {identity}"));
             }
+            shell.warn_if_experimental(running.cartridge().manifest().runtime.language);
             shell.log(running.take_output());
             SystemState::Running { shell, running }
         }

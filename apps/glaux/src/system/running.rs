@@ -1,11 +1,14 @@
-//! A loaded cartridge together with the Luau VM running it.
+//! A loaded cartridge together with the script runtime running it.
 
-use glaux_input::{InputEvent, InputLatch};
-use glaux_luau::{Budget, DrawCommand, LogEntry, Runtime, RuntimeError, StartFailure};
+use std::cell::RefMut;
+
+use glaux_audio::AudioState;
+use glaux_input::{InputEvent, InputLatch, InputState};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
+use glaux_script::{DrawCommand, LogEntry, RuntimeError, StartFailure};
 use glaux_video::draw::{
     ObjPaletteChoice, ObjSprite, clear, draw_obj_sprite, draw_text, fill_rect, pixel,
 };
@@ -14,7 +17,7 @@ use super::audio;
 use super::video::{
     CartridgeVideo, CartridgeVideoDefaults, VideoAssetError, VideoLoadError, VideoOverrides,
 };
-use crate::cartridge::{CartridgeError, LoadedCartridge};
+use crate::cartridge::{CartridgeError, CartridgeModules, Language, LoadedCartridge};
 
 /// Why a cartridge could not start.
 #[derive(Debug)]
@@ -34,11 +37,68 @@ pub struct FailedStart {
     pub error: StartError,
 }
 
+/// The runtime of the language a cartridge's manifest names.
+#[derive(Debug)]
+enum ScriptRuntime {
+    Luau(glaux_luau::Runtime),
+    // Boxed: Rhai's engine is several times the size of a Luau handle.
+    Rhai(Box<glaux_rhai::Runtime>),
+}
+
+impl ScriptRuntime {
+    /// Starts `source` with the default budget of `language`'s runtime.
+    fn start(
+        language: Language,
+        entry: &str,
+        source: &[u8],
+        modules: CartridgeModules,
+    ) -> Result<Self, StartFailure> {
+        match language {
+            Language::Luau => {
+                glaux_luau::Runtime::start(entry, source, modules, glaux_luau::Budget::default())
+                    .map(Self::Luau)
+            }
+            Language::Rhai => {
+                glaux_rhai::Runtime::start(entry, source, modules, glaux_rhai::Budget::default())
+                    .map(|runtime| Self::Rhai(Box::new(runtime)))
+            }
+        }
+    }
+
+    fn tick(&mut self, input: InputState) -> Result<(), RuntimeError> {
+        match self {
+            Self::Luau(runtime) => runtime.tick(input),
+            Self::Rhai(runtime) => runtime.tick(input),
+        }
+    }
+
+    fn frame(&self) -> &[DrawCommand] {
+        match self {
+            Self::Luau(runtime) => runtime.frame(),
+            Self::Rhai(runtime) => runtime.frame(),
+        }
+    }
+
+    fn take_output(&mut self) -> Vec<LogEntry> {
+        match self {
+            Self::Luau(runtime) => runtime.take_output(),
+            Self::Rhai(runtime) => runtime.take_output(),
+        }
+    }
+
+    fn audio_mut(&mut self) -> RefMut<'_, AudioState> {
+        match self {
+            Self::Luau(runtime) => runtime.audio_mut(),
+            Self::Rhai(runtime) => runtime.audio_mut(),
+        }
+    }
+}
+
 /// A cartridge whose VM is alive. Dropping it disposes of the VM.
 #[derive(Debug)]
 pub struct RunningCartridge {
     cartridge: LoadedCartridge,
-    runtime: Runtime,
+    runtime: ScriptRuntime,
     video: CartridgeVideo,
     /// Starts with every button and key released, so nothing held during a
     /// previous run reaches this one, and is reset whenever the system
@@ -73,8 +133,8 @@ impl RunningCartridge {
                 return Err(failed(cartridge, StartError::Video(err)));
             }
         };
-        let entry = &cartridge.manifest().runtime.entry;
-        match Runtime::start(entry, &source, cartridge.modules(), Budget::default()) {
+        let spec = &cartridge.manifest().runtime;
+        match ScriptRuntime::start(spec.language, &spec.entry, &source, cartridge.modules()) {
             Ok(runtime) => Ok(Self {
                 cartridge,
                 runtime,

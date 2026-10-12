@@ -9,11 +9,17 @@ use crate::cartridge::{
 };
 use crate::cartridge_fs::{CartridgeStorage, CreateDirError, FsError};
 
-/// Entry script of every new cartridge, from the cartridge root.
+/// Entry script of every new Luau cartridge, from the cartridge root.
 const ENTRY: &str = "code/main.luau";
 
-/// Code a new cartridge starts with.
+/// Code a new Luau cartridge starts with.
 pub const STARTER: &str = include_str!("../templates/starter/main.luau");
+
+/// Entry script of every new Rhai cartridge, from the cartridge root.
+const RHAI_ENTRY: &str = "code/main.rhai";
+
+/// Code a new Rhai cartridge starts with: the Luau starter's scene.
+pub const RHAI_STARTER: &str = include_str!("../templates/starter/main.rhai");
 
 /// Longest accepted ID, in characters.
 const MAX_ID_LEN: usize = 32;
@@ -45,6 +51,8 @@ pub enum CreateError {
     InvalidVersion(String),
     #[error("The author must be 1-{MAX_TEXT_LEN} characters, without control characters")]
     InvalidAuthor,
+    #[error("Unsupported language '{0}': use luau or rhai")]
+    UnsupportedLanguage(String),
     /// Holds the virtual path that is already taken.
     #[error("{0} already exists")]
     Exists(String),
@@ -64,6 +72,7 @@ pub struct NewCartridge {
     name: String,
     version: Version,
     author: Option<String>,
+    language: Language,
 }
 
 impl NewCartridge {
@@ -121,11 +130,29 @@ impl NewCartridge {
             name,
             version,
             author,
+            language: Language::Luau,
         })
     }
 
-    /// The `cartridge.ron` written for this cartridge: a Luau cartridge for
-    /// the G1 with 4 bpp graphics, requiring this Glaux or newer.
+    /// The same cartridge written in the language named `name`, ignoring
+    /// case. New cartridges are Luau unless this chooses otherwise.
+    pub fn with_language(self, name: &str) -> Result<Self, CreateError> {
+        let language = Language::from_name(name)
+            .ok_or_else(|| CreateError::UnsupportedLanguage(name.to_owned()))?;
+        Ok(Self { language, ..self })
+    }
+
+    /// The entry script's path and starting code.
+    fn entry(&self) -> (&'static str, &'static str) {
+        match self.language {
+            Language::Luau => (ENTRY, STARTER),
+            Language::Rhai => (RHAI_ENTRY, RHAI_STARTER),
+        }
+    }
+
+    /// The `cartridge.ron` written for this cartridge: a cartridge in its
+    /// language for the G1 with 4 bpp graphics, requiring this Glaux or
+    /// newer.
     pub fn manifest_ron(&self) -> String {
         let file = ManifestFile {
             format: FORMAT,
@@ -135,8 +162,8 @@ impl NewCartridge {
                 author: self.author.clone(),
             },
             runtime: RuntimeSpec {
-                language: Language::Luau,
-                entry: ENTRY.to_owned(),
+                language: self.language,
+                entry: self.entry().0.to_owned(),
             },
             hardware: HardwareSpec {
                 model: HardwareModel::G1,
@@ -165,9 +192,10 @@ pub fn create(
     spec: &NewCartridge,
 ) -> Result<LoadedCartridge, CreateError> {
     let manifest = spec.manifest_ron();
+    let (entry, starter) = spec.entry();
     let files: [(&str, &[u8]); 2] = [
         ("cartridge.ron", manifest.as_bytes()),
-        (ENTRY, STARTER.as_bytes()),
+        (entry, starter.as_bytes()),
     ];
     let location = storage
         .create_dir_with(&spec.id, &files, |staged| {

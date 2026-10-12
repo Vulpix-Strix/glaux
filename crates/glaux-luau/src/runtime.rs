@@ -10,10 +10,13 @@ use glaux_modules::ModuleSource;
 use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, Value, VmState};
 
+use glaux_script::{
+    DrawCommand, LogEntry, Phase, Recording, RuntimeError, ScriptError, StartFailure,
+};
+
 use crate::api;
-use crate::api::draw::{DrawCommand, PendingFrame, Recording};
-use crate::api::log::LogEntry;
-use crate::error::{RuntimeError, ScriptError, StartFailure, script_error};
+use crate::api::draw::PendingFrame;
+use crate::error::script_error;
 use crate::modules::{self, Modules};
 
 /// Interrupt checks one call may pass with [`Budget::default`].
@@ -37,28 +40,6 @@ impl Default for Budget {
     fn default() -> Self {
         Self {
             interrupts: DEFAULT_INTERRUPT_BUDGET,
-        }
-    }
-}
-
-/// The part of a script's lifecycle that was executing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    /// The entry chunk, executed once by [`Runtime::start`].
-    Entry,
-    Boot,
-    Tick,
-    Draw,
-}
-
-impl Phase {
-    /// The script global holding this phase's callback, if it has one.
-    pub(crate) fn callback(self) -> Option<&'static str> {
-        match self {
-            Self::Entry => None,
-            Self::Boot => Some("boot"),
-            Self::Tick => Some("tick"),
-            Self::Draw => Some("draw"),
         }
     }
 }
@@ -182,7 +163,7 @@ impl Runtime {
         let drawn = self.callback(Phase::Draw);
         let recording = self.pending.borrow_mut().take();
         if drawn? && let Some(recording) = recording {
-            self.frame = recording.commands;
+            self.frame = recording.into_commands();
         }
         self.ticks.set(self.ticks.get() + 1);
         Ok(())

@@ -77,10 +77,11 @@ mod error;
 mod modules;
 mod runtime;
 
-pub use api::draw::{DrawCommand, MAX_DRAW_COMMANDS, SPRITE_TILE_COST, TEXT_CHAR_COST};
-pub use api::log::{LogEntry, LogLevel};
-pub use error::{RequireError, RequireFailure, RuntimeError, ScriptError, StartFailure};
-pub use runtime::{Budget, DEFAULT_INTERRUPT_BUDGET, Phase, Runtime};
+pub use glaux_script::{
+    DrawCommand, LogEntry, LogLevel, MAX_DRAW_COMMANDS, Phase, RequireError, RequireFailure,
+    RuntimeError, SPRITE_TILE_COST, ScriptError, StartFailure, TEXT_CHAR_COST,
+};
+pub use runtime::{Budget, DEFAULT_INTERRUPT_BUDGET, Runtime};
 
 #[cfg(test)]
 mod tests;

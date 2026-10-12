@@ -22,6 +22,7 @@ mod input;
 mod lifecycle;
 mod new_cartridge;
 mod pausing;
+mod rhai;
 mod rom_audio;
 mod shell_screen;
 mod sprite_editor;

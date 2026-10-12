@@ -49,6 +49,7 @@ fn extensions_are_rejected_with_the_extensionless_name() {
     for (name, stem, extension) in [
         ("player.luau", "player", "luau"),
         ("player.lua", "player", "lua"),
+        ("player.rhai", "player", "rhai"),
         ("game.enemies.LUAU", "game.enemies", "LUAU"),
     ] {
         let err = ModuleName::parse(name).unwrap_err();
@@ -67,4 +68,5 @@ fn extensions_are_rejected_with_the_extensionless_name() {
     // Only a final segment reads as an extension.
     assert!(ModuleName::parse("lua.player").is_ok());
     assert!(ModuleName::parse("luau").is_ok());
+    assert!(ModuleName::parse("rhai.util").is_ok());
 }

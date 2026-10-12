@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use glaux_modules::{ModuleLoadError, ModuleName, ModulePath, ModuleSource};
+use glaux_script::{RequireError, RequireFailure};
 use mlua::chunk::ChunkMode;
 use mlua::{Lua, Value};
 
 use crate::args::{bad_argument, call_site, script_type_name};
-use crate::error::{RequireError, RequireFailure};
 use crate::runtime::Meter;
 
 /// File extension of Luau modules.

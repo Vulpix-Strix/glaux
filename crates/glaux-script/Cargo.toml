@@ -1,0 +1,15 @@
+[package]
+name = "glaux-script"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+glaux-audio.workspace = true
+glaux-machine.workspace = true
+glaux-modules.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true

@@ -493,7 +493,10 @@ fn navigation_output_never_shows_host_paths() {
     ];
     for entry in &entries {
         let text = match entry {
-            Entry::Banner(text) | Entry::Output(text) | Entry::Error(text) => text,
+            Entry::Banner(text)
+            | Entry::Output(text)
+            | Entry::Error(text)
+            | Entry::Warning(text) => text,
             Entry::Command(_) | Entry::Log(..) => continue,
         };
         for host in &host_paths {

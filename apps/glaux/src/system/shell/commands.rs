@@ -258,14 +258,13 @@ pub(super) static COMMANDS: &[Command] = &[
     },
 ];
 
-const NEW_USAGE: &str =
-    "new <id> [--name <name>] [--version <semver>] [--author <author>] [--discard]";
+const NEW_USAGE: &str = "new <id> [--name <name>] [--version <semver>] [--author <author>] [--lang luau|rhai] [--discard]";
 
 /// Flags of the commands that replace the loaded cartridge.
 const DISCARD_FLAGS: &[&str] = &["discard"];
 
 /// Options `new` accepts, by name without the leading `--`.
-const NEW_OPTIONS: &[&str] = &["name", "version", "author"];
+const NEW_OPTIONS: &[&str] = &["name", "version", "author", "lang"];
 
 const TONE_USAGE: &str = "tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off";
 
@@ -536,7 +535,7 @@ fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         Err(err) => {
             ctx.error(err.to_string());
             if let OptionError::Unknown(_) = err {
-                ctx.output("Options: --name, --version, --author, --discard");
+                ctx.output("Options: --name, --version, --author, --lang, --discard");
             }
             return;
         }
@@ -560,6 +559,10 @@ fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
             .find_map(|&(option, value)| (option == name).then_some(value))
     };
     let created = NewCartridge::new(id, option("name"), option("version"), option("author"))
+        .and_then(|spec| match option("lang") {
+            Some(lang) => spec.with_language(lang),
+            None => Ok(spec),
+        })
         .and_then(|spec| cartridge_template::create(ctx.cartridges, &spec));
     match created {
         Ok(cartridge) => {
