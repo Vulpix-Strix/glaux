@@ -376,7 +376,22 @@ pub(crate) fn glaux_version() -> &'static Version {
 }
 
 /// Checks that `entry` is a portable relative path to a script file of
-/// `language`.
+/// `language`. See [`is_portable_path`].
+fn validate_entry(entry: &str, language: Language) -> Result<(), CartridgeError> {
+    if !is_portable_path(entry) {
+        return Err(CartridgeError::InvalidEntryPath);
+    }
+    if is_script_of(entry, language) {
+        Ok(())
+    } else {
+        Err(match language {
+            Language::Luau => CartridgeError::EntryNotLuau,
+            Language::Rhai => CartridgeError::EntryNotRhai,
+        })
+    }
+}
+
+/// Whether `path` is a portable path relative to the cartridge root.
 ///
 /// Components are separated by `/` only and must be plain names: absolute
 /// paths, empty components, `.` and `..` are rejected outright, even where
@@ -384,25 +399,21 @@ pub(crate) fn glaux_version() -> &'static Version {
 /// portability rule: a cartridge must name the same file on every host, and
 /// those characters are separators or drive and stream markers on some of
 /// them.
-fn validate_entry(entry: &str, language: Language) -> Result<(), CartridgeError> {
-    let portable = !entry.contains(['\\', ':', '\0'])
-        && entry
+fn is_portable_path(path: &str) -> bool {
+    !path.contains(['\\', ':', '\0'])
+        && path
             .split('/')
-            .all(|component| !matches!(component, "" | "." | ".."));
-    if !portable {
-        return Err(CartridgeError::InvalidEntryPath);
-    }
-    let file_name = entry.rsplit('/').next().unwrap_or(entry);
-    let stem = file_name
+            .all(|component| !matches!(component, "" | "." | ".."))
+}
+
+/// Whether the last component of `path` is a non-empty stem followed by
+/// `language`'s extension, compared case-sensitively.
+fn is_script_of(path: &str, language: Language) -> bool {
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    file_name
         .strip_suffix(language.extension())
-        .and_then(|rest| rest.strip_suffix('.'));
-    match stem {
-        Some(stem) if !stem.is_empty() => Ok(()),
-        _ => Err(match language {
-            Language::Luau => CartridgeError::EntryNotLuau,
-            Language::Rhai => CartridgeError::EntryNotRhai,
-        }),
-    }
+        .and_then(|rest| rest.strip_suffix('.'))
+        .is_some_and(|stem| !stem.is_empty())
 }
 
 /// A cartridge whose manifest and entry script have been validated.
@@ -602,6 +613,8 @@ fn entry_error(err: FsError, entry: &str) -> CartridgeError {
         | FsError::Unavailable => CartridgeError::EntryUnreadable(entry.to_owned()),
     }
 }
+
+pub(crate) mod source;
 
 #[cfg(test)]
 pub(crate) mod fixture;

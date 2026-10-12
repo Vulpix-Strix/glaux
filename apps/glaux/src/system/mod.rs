@@ -6,6 +6,7 @@
 
 mod audio;
 mod boot;
+mod code_document;
 mod line_editor;
 mod pause;
 mod running;
