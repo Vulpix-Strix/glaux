@@ -46,3 +46,17 @@ glaux-host-raylib = { path = "crates/glaux-host-raylib" }
 glaux-luau = { path = "crates/glaux-luau" }
 glaux-script = { path = "crates/glaux-script" }
 glaux-rhai = { path = "crates/glaux-rhai" }
+
+[profile.dev]
+opt-level = 0
+debug = true
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
