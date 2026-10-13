@@ -331,3 +331,5 @@ fn the_revision_counts_edits_while_modified_compares_with_the_file() {
     assert_eq!(doc.text(), "abc");
     assert_eq!((doc.revision(), doc.is_modified()), (2, false));
 }
+
+mod saving;

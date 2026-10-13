@@ -806,6 +806,15 @@ fn workspace_tick(
                 host_requests.push(HostRequest::SaveEditorSettings(settings));
                 continue;
             }
+            WorkspaceRequest::SaveScript(id) => {
+                workspace.script_saved(id, code.save(&cartridge, id));
+                continue;
+            }
+            WorkspaceRequest::OverwriteScript { id, seen } => {
+                let result = code.overwrite(&cartridge, id, seen.as_deref());
+                workspace.script_saved(id, result);
+                continue;
+            }
             request => request,
         };
         let Some(document) = sprites.as_mut().filter(|_| video.is_ready()) else {
@@ -829,7 +838,9 @@ fn workspace_tick(
             }
             WorkspaceRequest::ListScripts
             | WorkspaceRequest::OpenScript(_)
-            | WorkspaceRequest::SaveEditorSettings(_) => {
+            | WorkspaceRequest::SaveEditorSettings(_)
+            | WorkspaceRequest::SaveScript(_)
+            | WorkspaceRequest::OverwriteScript { .. } => {
                 unreachable!("code requests are carried out above")
             }
         }

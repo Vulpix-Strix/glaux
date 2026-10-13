@@ -64,3 +64,119 @@ fn only_the_code_view_takes_typing_for_its_scripts() {
     assert_eq!(workspace_tab(&system), Tab::Code);
     assert_eq!(active_text(&system).as_deref(), Some("ac-- main\n"));
 }
+
+fn modal(system: &System) -> Option<(&str, Vec<&str>)> {
+    workspace::tests_support::modal(&system.workspace)
+}
+
+fn notice(system: &System) -> Option<&str> {
+    workspace::tests_support::notice(&system.workspace)
+}
+
+/// The starter `new my-game` makes, its entry script edited by typing
+/// `typed` at its start, and the entry's host path.
+fn edited_starter(fixture: &Fixture, typed_text: &str) -> (System, std::path::PathBuf) {
+    let system = typed(starter_in_code(fixture, "my-game"), typed_text);
+    (system, fixture.root().join("my-game/code/main.luau"))
+}
+
+#[test]
+fn ctrl_s_writes_the_script_and_clears_its_unsaved_state() {
+    let fixture = Fixture::new("sys-code-save");
+    let (system, file) = edited_starter(&fixture, "-- hi\n");
+    let before = std::fs::read_to_string(&file).unwrap();
+    let text = active_text(&system).unwrap();
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+    assert_ne!(text, before);
+    assert!(!system.code.as_ref().unwrap().is_modified());
+    assert_eq!(
+        notice(&system),
+        Some(format!("Saved code/main.luau ({} bytes)", text.len()).as_str())
+    );
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(notice(&system), Some("Nothing to save"));
+}
+
+#[test]
+fn an_outside_change_asks_before_overwriting_and_cancel_keeps_both() {
+    let fixture = Fixture::new("sys-code-conflict-cancel");
+    let (system, file) = edited_starter(&fixture, "x");
+    let mine = active_text(&system).unwrap();
+    std::fs::write(&file, "theirs").unwrap();
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(
+        modal(&system),
+        Some(("FILE CONFLICT", vec!["OVERWRITE DISK", "CANCEL"]))
+    );
+    // Cancel is focused, so a stray Enter writes nothing.
+    let system = system.update(&[InputEvent::Enter]);
+    assert_eq!(modal(&system), None);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "theirs");
+    assert_eq!(active_text(&system), Some(mine));
+    assert!(system.code.as_ref().unwrap().is_modified());
+}
+
+#[test]
+fn overwrite_disk_writes_the_edits_unless_the_file_changed_again() {
+    let fixture = Fixture::new("sys-code-conflict-overwrite");
+    let (system, file) = edited_starter(&fixture, "x");
+    let mine = active_text(&system).unwrap();
+    std::fs::write(&file, "theirs").unwrap();
+    let system = system.update(&[InputEvent::Save]);
+
+    // Changed again while the dialog was up: another conflict, nothing
+    // written over what the user has not seen.
+    std::fs::write(&file, "theirs, again").unwrap();
+    let overwrite = [InputEvent::Up { select: false }, InputEvent::Enter];
+    let system = system.update(&overwrite);
+    assert_eq!(
+        modal(&system).map(|(title, _)| title),
+        Some("FILE CONFLICT")
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "theirs, again");
+
+    let system = system.update(&overwrite);
+    assert_eq!(modal(&system), None);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), mine);
+    assert!(!system.code.as_ref().unwrap().is_modified());
+}
+
+#[test]
+fn a_deleted_script_is_written_again_only_once_confirmed() {
+    let fixture = Fixture::new("sys-code-conflict-deleted");
+    let (system, file) = edited_starter(&fixture, "x");
+    let mine = active_text(&system).unwrap();
+    std::fs::remove_file(&file).unwrap();
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(
+        modal(&system).map(|(title, _)| title),
+        Some("FILE CONFLICT")
+    );
+    assert!(!file.exists());
+
+    let system = system.update(&[InputEvent::Up { select: false }, InputEvent::Enter]);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), mine);
+    assert!(!system.code.as_ref().unwrap().is_modified());
+}
+
+#[test]
+fn a_failed_save_is_reported_and_keeps_the_edits() {
+    let fixture = Fixture::new("sys-code-save-failed");
+    let (system, file) = edited_starter(&fixture, "x");
+    let before = std::fs::read(&file).unwrap();
+    let writable = std::fs::metadata(&file).unwrap().permissions();
+    let mut read_only = writable.clone();
+    read_only.set_readonly(true);
+    std::fs::set_permissions(&file, read_only).unwrap();
+
+    let system = system.update(&[InputEvent::Save]);
+    std::fs::set_permissions(&file, writable).unwrap();
+    assert_eq!(modal(&system), Some(("SAVE FAILED", vec!["OK"])));
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    assert!(system.code.as_ref().unwrap().is_modified());
+}

@@ -3,7 +3,7 @@
 use std::fmt;
 
 use super::{Language, LoadedCartridge, is_portable_path, is_script_of};
-use crate::cartridge_fs::{FsError, WalkGap, WalkLimits};
+use crate::cartridge_fs::{FsError, ReplaceError, WalkGap, WalkLimits};
 
 /// How far [`LoadedCartridge::script_files`] searches.
 const SCRIPT_WALK: WalkLimits = WalkLimits {
@@ -82,6 +82,16 @@ pub struct ScriptListing {
     pub gaps: Vec<WalkGap>,
 }
 
+/// A failed [`LoadedCartridge::replace_source`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceWriteError {
+    /// The file could not be checked or written.
+    Failed(FsError),
+    /// The file no longer holds what the caller expected. Holds what it
+    /// holds now, `None` when it is absent.
+    Changed(Option<Vec<u8>>),
+}
+
 impl fmt::Display for SourcePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.path)
@@ -96,6 +106,28 @@ impl LoadedCartridge {
     /// [`FsError::NotFound`].
     pub fn read_source(&self, path: &SourcePath) -> Result<Vec<u8>, FsError> {
         self.files.read_file(&format!("/{path}"))
+    }
+
+    /// Replaces the script file at `path` with `bytes`, provided it still
+    /// holds `expected` (`None`: provided it is absent).
+    ///
+    /// See [`CartridgeFs::replace_file`]: the file is replaced whole or not
+    /// at all, a read-only file is never replaced, and names reached
+    /// through symlinks leading out of the cartridge are never written.
+    ///
+    /// [`CartridgeFs::replace_file`]: crate::cartridge_fs::CartridgeFs::replace_file
+    pub fn replace_source(
+        &self,
+        path: &SourcePath,
+        bytes: &[u8],
+        expected: Option<&[u8]>,
+    ) -> Result<(), SourceWriteError> {
+        self.files
+            .replace_file(&format!("/{path}"), bytes, expected)
+            .map_err(|err| match err {
+                ReplaceError::Changed(current) => SourceWriteError::Changed(current),
+                ReplaceError::Fs(err) => SourceWriteError::Failed(err),
+            })
     }
 
     /// Every `.luau` and `.rhai` file in the cartridge, in any directory.

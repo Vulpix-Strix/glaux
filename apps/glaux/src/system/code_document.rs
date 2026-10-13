@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use lines::{BOM, Lines};
 
-use crate::cartridge::source::SourcePath;
+use crate::cartridge::source::{SourcePath, SourceWriteError};
 use crate::cartridge::{Language, LoadedCartridge};
 use crate::cartridge_fs::FsError;
 
@@ -42,7 +42,6 @@ pub struct Origin {
 
 impl Origin {
     /// The file's exact bytes.
-    #[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
     pub fn bytes(&self) -> &[u8] {
         self.text.as_bytes()
     }
@@ -315,6 +314,48 @@ pub enum CodeDocumentError {
     InvalidUtf8 { path: SourcePath, line: usize },
 }
 
+/// How a script file found on disk differs from what saving expected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceConflictKind {
+    /// The file holds other bytes.
+    Modified,
+    /// The file is gone, or no longer reachable inside the cartridge.
+    Deleted,
+}
+
+/// A script file that changed outside Glaux since the document last read,
+/// saved or was shown it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceConflict {
+    pub path: SourcePath,
+    pub kind: SourceConflictKind,
+    /// What the file holds now, `None` when it is absent. An overwrite
+    /// expects exactly this.
+    pub disk: Option<Vec<u8>>,
+}
+
+/// A successful [`CodeDocuments::save`] or [`CodeDocuments::overwrite`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeSaved {
+    /// The text was written to `path` as `bytes` bytes.
+    Written { path: SourcePath, bytes: usize },
+    /// The text already matched the file as last read or saved; nothing
+    /// was read or written.
+    NothingToSave(SourcePath),
+}
+
+/// A failed [`CodeDocuments::save`] or [`CodeDocuments::overwrite`]. The
+/// file and the document's baseline are left as they were.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeSaveError {
+    /// No document has that id.
+    NotOpen,
+    /// The file changed outside Glaux, so nothing was written.
+    Conflict(SourceConflict),
+    /// The file could not be checked or written.
+    Failed { path: SourcePath, error: FsError },
+}
+
 /// The documents open on one cartridge, at most one per file.
 ///
 /// Documents and their ids belong to the cartridge they were read from:
@@ -380,7 +421,98 @@ impl CodeDocuments {
         self.documents.iter().any(CodeDocument::is_modified)
     }
 
+    /// Writes document `id`'s text to its file, provided the file still
+    /// holds exactly what the document was read from or last saved to.
+    ///
+    /// The text is written byte for byte, so its byte order mark, line
+    /// endings and final newline, or lack of one, are kept. The file is
+    /// replaced whole or not at all; see
+    /// [`LoadedCartridge::replace_source`]. Only a successful write makes
+    /// the text the document's new baseline.
+    ///
+    /// The file is compared before anything is written and once more just
+    /// before it is replaced; a change seen either time is a
+    /// [`CodeSaveError::Conflict`]. No lock is taken: a change in the
+    /// instant between that last comparison and the replacement is
+    /// overwritten.
+    pub fn save(
+        &mut self,
+        cartridge: &LoadedCartridge,
+        id: DocumentId,
+    ) -> Result<CodeSaved, CodeSaveError> {
+        self.write(cartridge, id, None)
+    }
+
+    /// Like [`save`](Self::save), but writes over a file that changed
+    /// outside Glaux, provided it still holds exactly `seen` (`None`:
+    /// provided it is still absent). A further change is another conflict.
+    pub fn overwrite(
+        &mut self,
+        cartridge: &LoadedCartridge,
+        id: DocumentId,
+        seen: Option<&[u8]>,
+    ) -> Result<CodeSaved, CodeSaveError> {
+        self.write(cartridge, id, Some(seen))
+    }
+
+    /// Saves `id`, expecting its file to hold `seen` when given, or else
+    /// its baseline.
+    fn write(
+        &mut self,
+        cartridge: &LoadedCartridge,
+        id: DocumentId,
+        seen: Option<Option<&[u8]>>,
+    ) -> Result<CodeSaved, CodeSaveError> {
+        let document = self.get_mut(id).ok_or(CodeSaveError::NotOpen)?;
+        let path = document.path.clone();
+        if !document.is_modified() {
+            return Ok(CodeSaved::NothingToSave(path));
+        }
+        let expected = seen.unwrap_or(Some(document.origin.bytes()));
+        let failed = |error: FsError| CodeSaveError::Failed {
+            path: path.clone(),
+            error,
+        };
+        let conflict = |disk: Option<Vec<u8>>| {
+            CodeSaveError::Conflict(SourceConflict {
+                path: path.clone(),
+                kind: if disk.is_some() {
+                    SourceConflictKind::Modified
+                } else {
+                    SourceConflictKind::Deleted
+                },
+                disk,
+            })
+        };
+
+        let disk = match cartridge.read_source(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => None,
+            Err(err) => return Err(failed(err)),
+        };
+        if disk.as_deref() != expected {
+            tracing::info!(file = %path, "script changed on disk, not saved");
+            return Err(conflict(disk));
+        }
+
+        let bytes = document.text.as_bytes();
+        match cartridge.replace_source(&path, bytes, expected) {
+            Ok(()) => {
+                let len = bytes.len();
+                document.origin.text.clone_from(&document.text);
+                tracing::info!(file = %path, bytes = len, "script saved");
+                Ok(CodeSaved::Written { path, bytes: len })
+            }
+            Err(SourceWriteError::Changed(current)) => {
+                tracing::info!(file = %path, "script changed on disk while saving, not saved");
+                Err(conflict(current))
+            }
+            Err(SourceWriteError::Failed(err)) => Err(failed(err)),
+        }
+    }
+
     /// Closes the document `id`, returning it, or `None` if it is not open.
+    /// Unsaved edits are discarded with it.
     pub fn close(&mut self, id: DocumentId) -> Option<CodeDocument> {
         let index = self.documents.iter().position(|doc| doc.id == id)?;
         Some(self.documents.remove(index))

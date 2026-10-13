@@ -23,7 +23,9 @@ use glaux_machine::system_rom::{Cursor, SystemCursor, SystemIcon, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 use glaux_video::preview::ObjPreviewPalette;
 
-use super::code_document::CodeDocumentError;
+use super::code_document::{
+    CodeDocumentError, CodeSaveError, CodeSaved, DocumentId, SourceConflict, SourceConflictKind,
+};
 use super::code_session::CodeSession;
 use super::editor_settings::EditorSettings;
 use super::sprite_document::{
@@ -108,6 +110,16 @@ pub enum WorkspaceRequest {
     OpenScript(SourcePath),
     /// Keep the Code view's settings for the next launch.
     SaveEditorSettings(EditorSettings),
+    /// Write this script document to its file; answer with
+    /// [`Workspace::script_saved`].
+    SaveScript(DocumentId),
+    /// Write this script document over its file, which changed outside
+    /// Glaux, provided it still holds `seen` (`None`: is still absent);
+    /// answer with [`Workspace::script_saved`].
+    OverwriteScript {
+        id: DocumentId,
+        seen: Option<Vec<u8>>,
+    },
 }
 
 /// What a workspace dialog's buttons do.
@@ -124,9 +136,22 @@ enum Choice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Modal {
     dialog: Dialog<Choice>,
-    /// The files a conflict dialog showed, as it showed them: what
-    /// Overwrite may replace and Reload reads again.
-    conflict: Vec<DiskAsset>,
+    conflict: ConflictTarget,
+}
+
+/// What a conflict dialog showed, as it showed it: what Overwrite may
+/// replace and Reload reads again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConflictTarget {
+    /// The dialog settles no conflict.
+    None,
+    /// Asset files of the sprite document.
+    Assets(Vec<DiskAsset>),
+    /// The file of one script document, holding `seen` (`None`: absent).
+    Script {
+        id: DocumentId,
+        seen: Option<Vec<u8>>,
+    },
 }
 
 /// A short message in the status bar answering what the user just did.
@@ -430,6 +455,26 @@ fn write_advice(err: &CartridgeError) -> String {
     }
 }
 
+/// What to tell the user when saving the script at `path` failed.
+fn source_write_advice(path: &SourcePath, err: &FsError) -> String {
+    match err {
+        FsError::ReadOnly(_) => format!("{path} is read-only. Make it writable, then save again."),
+        FsError::NotAFile(_) => {
+            format!("{path} is not a regular file. Move it aside, then save again.")
+        }
+        FsError::Unreadable(_) => format!(
+            "Glaux could not read {path} to check it for outside changes. Check its permissions, then save again."
+        ),
+        FsError::NotFound(_) | FsError::NotADirectory(_) => {
+            format!("The folder holding {path} is gone. Recreate it, then save again.")
+        }
+        FsError::Unwritable(_) | FsError::AlreadyExists(_) => format!(
+            "Glaux could not write {path}. Check the cartridge folder's permissions and free space, then save again."
+        ),
+        FsError::Unavailable => "Cartridge storage is unavailable.".to_owned(),
+    }
+}
+
 /// The line telling which files a save that stopped partway did write.
 fn saved_line(written: &[SavedFile]) -> Option<String> {
     (!written.is_empty()).then(|| {
@@ -654,12 +699,18 @@ impl Workspace {
             );
             let choice = modal.dialog.handle_input(event, &layout)?;
             let modal = self.modal.take()?;
-            return match choice {
-                Choice::Overwrite => Some(WorkspaceRequest::Overwrite(modal.conflict)),
-                Choice::Reload => Some(WorkspaceRequest::Reload(
-                    modal.conflict.iter().map(|disk| disk.asset).collect(),
+            return match (choice, modal.conflict) {
+                (Choice::Overwrite, ConflictTarget::Assets(seen)) => {
+                    Some(WorkspaceRequest::Overwrite(seen))
+                }
+                (Choice::Overwrite, ConflictTarget::Script { id, seen }) => {
+                    Some(WorkspaceRequest::OverwriteScript { id, seen })
+                }
+                (Choice::Reload, ConflictTarget::Assets(seen)) => Some(WorkspaceRequest::Reload(
+                    seen.iter().map(|disk| disk.asset).collect(),
                 )),
-                Choice::Cancel | Choice::Dismiss => None,
+                // Script conflicts offer no reload, and messages neither.
+                _ => None,
             };
         }
         if self.sprites.has_dialog() {
@@ -700,6 +751,7 @@ impl Workspace {
             CodeRequest::SaveSettings(settings) => {
                 Some(WorkspaceRequest::SaveEditorSettings(settings))
             }
+            CodeRequest::Save(id) => Some(WorkspaceRequest::SaveScript(id)),
         }
     }
 
@@ -856,6 +908,59 @@ impl Workspace {
         }
     }
 
+    /// Reports how saving script document `id`, or overwriting its file
+    /// after a conflict, went. A conflict asks whether to overwrite the
+    /// file; the edits stay in memory whatever happened.
+    pub fn script_saved(&mut self, id: DocumentId, result: Result<CodeSaved, CodeSaveError>) {
+        match result {
+            Ok(CodeSaved::Written { path, bytes }) => {
+                self.notify(format!("Saved {path} ({bytes} bytes)"), OK);
+            }
+            Ok(CodeSaved::NothingToSave(_)) => self.notify("Nothing to save", PALE),
+            Err(CodeSaveError::NotOpen) => self.notify("That file is no longer open", PALE),
+            Err(CodeSaveError::Conflict(conflict)) => self.open_script_conflict(id, conflict),
+            Err(CodeSaveError::Failed { path, error }) => {
+                tracing::debug!(file = %path, %error, "script not saved");
+                self.open_error("SAVE FAILED", vec![source_write_advice(&path, &error)]);
+            }
+        }
+    }
+
+    /// Asks whether to overwrite the script file in `conflict` with the
+    /// document's text or leave both as they are. Cancel is focused so a
+    /// stray Enter loses nothing.
+    fn open_script_conflict(&mut self, id: DocumentId, conflict: SourceConflict) {
+        let SourceConflict { path, kind, disk } = conflict;
+        let (what, replaces) = match kind {
+            SourceConflictKind::Modified => (
+                format!("{path} changed outside Glaux."),
+                "OVERWRITE DISK replaces the file with your edits.",
+            ),
+            SourceConflictKind::Deleted => (
+                format!("{path} was deleted outside Glaux."),
+                "OVERWRITE DISK writes your edits to it again.",
+            ),
+        };
+        let dialog = Dialog::new(
+            "FILE CONFLICT",
+            vec![
+                what,
+                "Your unsaved edits are still in memory.".to_owned(),
+                replaces.to_owned(),
+            ],
+            vec![
+                ("OVERWRITE DISK", Choice::Overwrite),
+                ("CANCEL", Choice::Cancel),
+            ],
+            1,
+            Some(Choice::Cancel),
+        );
+        self.modal = Some(Modal {
+            dialog,
+            conflict: ConflictTarget::Script { id, seen: disk },
+        });
+    }
+
     /// Reports how discarding the changes to `assets` and reading their
     /// files again went.
     pub fn reloaded(&mut self, assets: &[VideoAsset], result: Result<(), String>) {
@@ -972,10 +1077,12 @@ impl Workspace {
         );
         self.modal = Some(Modal {
             dialog,
-            conflict: conflicts
-                .into_iter()
-                .map(|conflict| conflict.disk)
-                .collect(),
+            conflict: ConflictTarget::Assets(
+                conflicts
+                    .into_iter()
+                    .map(|conflict| conflict.disk)
+                    .collect(),
+            ),
         });
     }
 
@@ -995,7 +1102,7 @@ impl Workspace {
         );
         self.modal = Some(Modal {
             dialog,
-            conflict: Vec::new(),
+            conflict: ConflictTarget::None,
         });
     }
 

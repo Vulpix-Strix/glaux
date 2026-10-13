@@ -12,7 +12,8 @@ pub use tabs::{DocumentTabs, DocumentView};
 use std::ops::Range;
 
 use super::code_document::{
-    CodeDocument, CodeDocumentError, CodeDocuments, DocumentId, EditError, Replaced,
+    CodeDocument, CodeDocumentError, CodeDocuments, CodeSaveError, CodeSaved, DocumentId,
+    EditError, Replaced,
 };
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::SourcePath;
@@ -41,7 +42,8 @@ impl CodeSession {
         Ok(id)
     }
 
-    /// Closes `id`'s tab and its document. Returns whether it was open.
+    /// Closes `id`'s tab and its document, discarding any unsaved edits.
+    /// Returns whether it was open.
     pub fn close(&mut self, id: DocumentId) -> bool {
         let closed = self.tabs.close(id);
         self.documents.close(id);
@@ -61,6 +63,26 @@ impl CodeSession {
         text: &str,
     ) -> Option<Result<Replaced, EditError>> {
         Some(self.documents.get_mut(id)?.replace(range, text))
+    }
+
+    /// Writes `id`'s text to its file; see [`CodeDocuments::save`].
+    pub fn save(
+        &mut self,
+        cartridge: &LoadedCartridge,
+        id: DocumentId,
+    ) -> Result<CodeSaved, CodeSaveError> {
+        self.documents.save(cartridge, id)
+    }
+
+    /// Writes `id`'s text over a file that changed outside Glaux, provided
+    /// it still holds `seen`; see [`CodeDocuments::overwrite`].
+    pub fn overwrite(
+        &mut self,
+        cartridge: &LoadedCartridge,
+        id: DocumentId,
+        seen: Option<&[u8]>,
+    ) -> Result<CodeSaved, CodeSaveError> {
+        self.documents.overwrite(cartridge, id, seen)
     }
 
     /// Whether any open document differs from its file.

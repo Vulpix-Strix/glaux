@@ -304,3 +304,115 @@ fn the_caret_hides_while_an_overlay_takes_the_keys() {
     // The picker window is centred and does not reach the first cell.
     assert_eq!(ink(&render(&editor, &session), at, TEXT), blank());
 }
+
+fn render_at(editor: &CodeEditor, session: &CodeSession, pointer: Option<Point>) -> Framebuffer {
+    let rom = rom();
+    let mut framebuffer = Framebuffer::new();
+    clear(&mut framebuffer, BACKGROUND);
+    editor.render(
+        &mut framebuffer,
+        rom.font(),
+        rom.ui(),
+        Some(session),
+        pointer,
+        None,
+    );
+    framebuffer
+}
+
+/// The colors of the close glyph's cell, row by row.
+fn close_cell(framebuffer: &Framebuffer, close: Rect) -> Vec<u8> {
+    (0..close.height)
+        .flat_map(|dy| (0..close.width).map(move |dx| (close.x + dx, close.y + dy)))
+        .map(|(x, y)| framebuffer.pixel(x, y).unwrap())
+        .collect()
+}
+
+/// A close cross in `ink` on the tab's ground.
+fn cross(ink: u8) -> Vec<u8> {
+    (0..CLOSE_SIZE)
+        .flat_map(|y| (0..CLOSE_SIZE).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            if x == y || x == CLOSE_SIZE - 1 - y {
+                ink
+            } else {
+                BAR
+            }
+        })
+        .collect()
+}
+
+/// The unsaved-edits dot: three by three in the cell's middle.
+fn dot() -> Vec<u8> {
+    (0..CLOSE_SIZE)
+        .flat_map(|y| (0..CLOSE_SIZE).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let inside = (1..4).contains(&x) && (1..4).contains(&y);
+            if inside { ACCENT } else { BAR }
+        })
+        .collect()
+}
+
+#[test]
+fn modified_tabs_show_a_dot_where_close_is_until_hovered() {
+    let fixture = Fixture::new("code-render-dirty");
+    let editor = editor();
+    let (cartridge, mut session) = session_with_text(&fixture, &["a.luau", "b.luau"], "x");
+    let (a, b) = (id_of(&session, "a.luau"), id_of(&session, "b.luau"));
+    session.edit(a, 0..0, "y").unwrap().unwrap();
+    let labels = labels(&editor.layout().font, &session);
+    let tabs = editor.layout().strip_tabs(&labels, 0);
+    let (tab_a, tab_b) = (tabs[0], tabs[1]);
+
+    // Idle: the modified tab shows the dot, the clean active one its cross.
+    let framebuffer = render_at(&editor, &session, None);
+    assert_eq!(close_cell(&framebuffer, tab_a.close), dot());
+    assert_eq!(close_cell(&framebuffer, tab_b.close), cross(DIM));
+
+    // Over the tab the cross comes back, lit as on any hovered tab, and
+    // over the cross itself it warns as always.
+    let label = Point::new((tab_a.rect.x + 2) as u16, (tab_a.rect.y + 2) as u16);
+    let framebuffer = render_at(&editor, &session, Some(label));
+    assert_eq!(close_cell(&framebuffer, tab_a.close), cross(DIM));
+    let close = Point::new((tab_a.close.x + 2) as u16, (tab_a.close.y + 2) as u16);
+    let framebuffer = render_at(&editor, &session, Some(close));
+    assert_eq!(close_cell(&framebuffer, tab_a.close), cross(ERROR));
+
+    // The active tab takes the dot too, and each tab follows its own
+    // document: saving one leaves the other marked.
+    session.edit(b, 0..0, "y").unwrap().unwrap();
+    session.save(&cartridge, a).unwrap();
+    let framebuffer = render_at(&editor, &session, None);
+    assert_eq!(close_cell(&framebuffer, tab_a.close), cross(IDLE_SHADE));
+    assert_eq!(close_cell(&framebuffer, tab_b.close), dot());
+
+    // Text edited back to what was saved is clean again.
+    session.edit(b, 0..1, "").unwrap().unwrap();
+    let framebuffer = render_at(&editor, &session, None);
+    assert_eq!(close_cell(&framebuffer, tab_b.close), cross(DIM));
+}
+
+#[test]
+fn the_options_bar_ends_with_the_caret_position_beside_the_settings_button() {
+    let fixture = Fixture::new("code-render-options");
+    let editor = editor();
+    let session = showing(&fixture, &editor, "x");
+    let framebuffer = render(&editor, &session);
+
+    let layout = editor.layout();
+    let bar = layout.options;
+    let gear = layout.settings_button();
+    let y = bar.y + (bar.height - 1 - CELL_H) / 2 + 1;
+    // "Ln 1  Col 1" ends one cell left of the settings button.
+    assert_eq!(
+        ink(&framebuffer, (gear.x - 2 * CELL_W, y), PALE),
+        glyph('1')
+    );
+    assert_eq!(ink(&framebuffer, (gear.x - CELL_W, y), PALE), blank());
+    // Nothing dim is written left of the button: no Read-only label.
+    for y in bar.y..bar.bottom() - 1 {
+        for x in 0..gear.x - SETTINGS_MARGIN {
+            assert_ne!(framebuffer.pixel(x, y), Some(DIM), "({x}, {y})");
+        }
+    }
+}

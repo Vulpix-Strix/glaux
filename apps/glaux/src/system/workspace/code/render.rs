@@ -23,8 +23,8 @@ use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 
-/// Shown right of the path of every document, none being editable yet.
-const READ_ONLY: &str = "Read-only";
+/// Side of the dot marking a tab whose document has unsaved edits.
+const DIRTY_DOT: i32 = 3;
 /// Marks a file OPEN FILE lists that already has a tab.
 const OPEN_TAG: &str = "open";
 
@@ -174,6 +174,7 @@ impl Painter<'_> {
             .active()
             .and_then(|id| session.tabs().index_of(id));
         let tabs = self.layout.strip_tabs(&labels, scroll);
+        let ids: Vec<_> = session.tabs().ids().collect();
         for tab in &tabs {
             let is_active = active == Some(tab.index);
             let hovered = matches!(hit, StripHit::Tab(i) | StripHit::Close(i) if i == tab.index);
@@ -190,7 +191,26 @@ impl Painter<'_> {
                 (_, true) => DIM,
                 (_, false) => IDLE_SHADE,
             };
-            self.close_glyph(tab.close, close_ink);
+            let modified = ids
+                .get(tab.index)
+                .and_then(|&id| session.document(id))
+                .is_some_and(CodeDocument::is_modified);
+            // A modified tab shows a dot in the close glyph's place until
+            // the pointer comes over the tab, so it can still be closed.
+            if modified && !hovered {
+                let inset = (CLOSE_SIZE - DIRTY_DOT) / 2;
+                self.fill(
+                    Rect {
+                        x: tab.close.x + inset,
+                        y: tab.close.y + inset,
+                        width: DIRTY_DOT,
+                        height: DIRTY_DOT,
+                    },
+                    ACCENT,
+                );
+            } else {
+                self.close_glyph(tab.close, close_ink);
+            }
             if is_active {
                 fill_rect(
                     self.framebuffer,
@@ -259,17 +279,15 @@ impl Painter<'_> {
         self.fill(tag_rect, BAR);
         self.text(tag, tag_rect.x + 2, y, PALE);
 
-        let read_only_x = self.layout.settings_button().x
-            - self.cell_w()
-            - self.layout.cells(READ_ONLY) * self.cell_w();
         let position = format!("Ln {}  Col {}", caret.line + 1, caret.column + 1);
-        let position_x = read_only_x - self.cell_w() - self.layout.cells(&position) * self.cell_w();
+        let position_x = self.layout.settings_button().x
+            - self.cell_w()
+            - self.layout.cells(&position) * self.cell_w();
         let path_x = tag_rect.right() + self.cell_w();
         let room = (position_x - self.cell_w() - path_x) / self.cell_w().max(1);
         let path = shorten_start(self.font, path, usize::try_from(room).unwrap_or(0));
         self.text(&path, path_x, y, PALE);
         self.text(&position, position_x, y, PALE);
-        self.text(READ_ONLY, read_only_x, y, DIM);
     }
 
     fn options_bar_empty(&mut self) {

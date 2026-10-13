@@ -366,3 +366,31 @@ fn typing_during_a_drag_ends_it() {
     );
     assert_eq!(selected(&session), 2..2);
 }
+
+#[test]
+fn ctrl_s_asks_to_save_the_active_document_only_when_nothing_covers_it() {
+    let fixture = Fixture::new("code-edit-save");
+    let (cartridge, mut session) = session_with_text(&fixture, &["a.luau", "b.luau"], "x");
+    let mut editor = editor();
+    let active = id_of(&session, "b.luau");
+    assert_eq!(
+        editor.handle_input(InputEvent::Save, Some(&mut session)),
+        Some(CodeRequest::Save(active))
+    );
+
+    editor.open_picker(cartridge.script_files());
+    assert_eq!(
+        editor.handle_input(InputEvent::Save, Some(&mut session)),
+        None
+    );
+    editor.handle_input(InputEvent::Break, Some(&mut session));
+    assert!(editor.picker().is_none());
+
+    for id in [id_of(&session, "a.luau"), active] {
+        session.close(id);
+    }
+    assert_eq!(
+        editor.handle_input(InputEvent::Save, Some(&mut session)),
+        None
+    );
+}

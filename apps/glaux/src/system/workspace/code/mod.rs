@@ -49,7 +49,7 @@ const MULTI_CLICK_SLOP: u16 = 2;
 const AUTOSCROLL_TICKS: u32 = 4;
 
 /// The status bar hint while nothing covers the view.
-const VIEW_HINT: &str = "Ctrl+P: open  Ctrl+W: close  Esc: shell";
+const VIEW_HINT: &str = "Ctrl+S: save  Ctrl+P: open  Ctrl+W: close  Esc: shell";
 /// The status bar hint while OPEN FILE is open.
 const PICKER_HINT: &str = "Type: filter  Enter: open  Esc: close";
 /// The status bar hint while the list of open tabs is open.
@@ -67,6 +67,8 @@ pub enum CodeRequest {
     Open(SourcePath),
     /// Keep these settings for the next launch.
     SaveSettings(EditorSettings),
+    /// Write this document to its file.
+    Save(DocumentId),
 }
 
 /// The list of every open tab, dropped from the strip's right end.
@@ -453,6 +455,7 @@ impl CodeEditor {
         let ids: Vec<_> = session.tabs().ids().collect();
         match event {
             InputEvent::OpenFile => return Some(CodeRequest::ListScripts),
+            InputEvent::Save => return session.tabs().active().map(CodeRequest::Save),
             InputEvent::CloseDocument => {
                 if let Some(active) = session.tabs().active() {
                     session.close(active);
