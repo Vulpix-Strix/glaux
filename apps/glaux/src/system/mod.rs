@@ -18,6 +18,8 @@ mod sfx;
 mod shell;
 mod sprite_document;
 #[cfg(test)]
+mod test_font;
+#[cfg(test)]
 mod test_frames;
 mod video;
 mod workspace;
@@ -31,7 +33,7 @@ pub use video::CartridgeVideoDefaults;
 use workspace::{Tab, Workspace, WorkspaceRequest, WorkspaceVideo};
 
 use glaux_input::{InputEvent, InputMode, Point};
-use glaux_machine::font::FontMetrics;
+use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::palette::Palette;
@@ -207,14 +209,14 @@ impl System {
     /// Starts at frame 0 of the boot sequence, which plays the System ROM's
     /// `sounds`. The shell that follows navigates `cartridges`, and
     /// cartridges it starts fall back to `video_defaults`. The workspace is
-    /// laid out for the System ROM font's `font` metrics and drawn in the
-    /// System ROM's `palette`.
+    /// laid out for the System ROM's `font` and drawn in the System ROM's
+    /// `palette`.
     pub fn new(
         info: SystemInfo,
         sounds: SystemSounds,
         video_defaults: CartridgeVideoDefaults,
         cartridges: CartridgeStorage,
-        font: FontMetrics,
+        font: &BitmapFont,
         palette: Palette,
     ) -> Self {
         Self {
@@ -520,7 +522,7 @@ impl System {
                 shell,
                 view: PausedView::Shell,
                 ..
-            } => shell.lines(text_columns(cell_w), text_rows(cell_h)),
+            } => shell.lines(font, text_columns(cell_w), text_rows(cell_h)),
             SystemState::Workspace {
                 cartridge, video, ..
             } => {
@@ -554,7 +556,7 @@ impl System {
         for line in &lines {
             let (x, y) = line.origin(cell_w, cell_h);
             if let Some(background) = line.background {
-                let cells = i32::try_from(line.text.chars().count()).unwrap_or(i32::MAX);
+                let cells = i32::try_from(font.text_cells(&line.text)).unwrap_or(i32::MAX);
                 fill_rect(
                     framebuffer,
                     x,

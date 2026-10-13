@@ -8,7 +8,7 @@ fn layout() -> SettingsLayout {
         width: 320,
         height: 212,
     };
-    SettingsDialog::layout(area, 6, 10)
+    SettingsDialog::layout(area, 6, 12)
 }
 
 fn centre(rect: Rect) -> Point {
@@ -47,12 +47,15 @@ fn keys_change_the_focused_setting_at_once() {
     send(&mut dialog, InputEvent::Right { select: false });
     send(&mut dialog, InputEvent::Down);
     send(&mut dialog, InputEvent::Text(' '));
+    send(&mut dialog, InputEvent::Down);
+    send(&mut dialog, InputEvent::Enter);
     assert_eq!(
         settings,
         EditorSettings {
             word_wrap: true,
             tab_size: 5,
             line_numbers: false,
+            ligatures: false,
         }
     );
     assert_eq!(dialog.opened_with(), EditorSettings::default());
@@ -83,7 +86,7 @@ fn escape_and_done_both_close() {
         dialog.handle_input(InputEvent::Break, &mut settings, &layout),
         SettingsAction::Close
     );
-    for _ in 0..5 {
+    for _ in 0..Row::ALL.len() {
         dialog.handle_input(InputEvent::Down, &mut settings, &layout);
     }
     assert_eq!(dialog.focus(), Row::Done);
@@ -107,6 +110,7 @@ fn clicks_toggle_rows_and_step_the_arrows() {
     let stays = (SettingsAction::None, SettingsAction::None);
     assert_eq!(click(centre(layout.rows[0])), stays);
     assert_eq!(click(centre(layout.rows[2])), stays);
+    assert_eq!(click(centre(layout.rows[3])), stays);
     assert_eq!(click(centre(layout.minus)), stays);
     assert_eq!(click(centre(layout.minus)), stays);
     assert_eq!(click(centre(layout.plus)), stays);
@@ -116,6 +120,7 @@ fn clicks_toggle_rows_and_step_the_arrows() {
             word_wrap: true,
             tab_size: 3,
             line_numbers: false,
+            ligatures: false,
         }
     );
 }
@@ -144,7 +149,13 @@ fn the_window_fits_inside_its_area_with_its_parts_apart() {
     let layout = layout();
     assert!(layout.window.x >= 0 && layout.window.right() <= 320);
     assert!(layout.window.y >= 16 && layout.window.bottom() <= 228);
-    let parts = [layout.rows[0], layout.rows[1], layout.rows[2], layout.done];
+    let parts = [
+        layout.rows[0],
+        layout.rows[1],
+        layout.rows[2],
+        layout.rows[3],
+        layout.done,
+    ];
     for pair in parts.windows(2) {
         assert!(pair[0].bottom() <= pair[1].y, "{pair:?}");
     }

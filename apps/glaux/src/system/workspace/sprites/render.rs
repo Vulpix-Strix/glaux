@@ -232,8 +232,9 @@ impl Painter<'_> {
         y + (height - self.layout.metrics.cell_h) / 2 + 1
     }
 
+    /// Width of `text` in pixels.
     fn cells(&self, text: &str) -> i32 {
-        i32::try_from(text.chars().count()).unwrap_or(i32::MAX) * self.layout.metrics.cell_w
+        i32::try_from(self.font.text_cells(text)).unwrap_or(i32::MAX) * self.layout.metrics.cell_w
     }
 
     fn options_bar(&mut self, editor: &SpriteEditor, hover: Hit, modified: bool) {
@@ -561,7 +562,7 @@ impl Painter<'_> {
         let mut y = layout.canvas_frame.y + cell_h;
         self.text("Can't show this cartridge's sprites:", 4, y, TEXT);
         y += cell_h + 2;
-        for line in wrap(message, usize::try_from(columns).unwrap_or(1)) {
+        for line in wrap(self.font, message, usize::try_from(columns).unwrap_or(1)) {
             self.text(&line, 4, y, ERROR);
             y += cell_h;
         }
@@ -575,7 +576,8 @@ impl Painter<'_> {
         self.fill(bar, BAR);
         let y = self.bar_text_y(bar.y, bar.height);
         let columns = (bar.width - 8) / self.layout.metrics.cell_w;
-        let (left_len, right_len) = (left.chars().count() as i32, right.chars().count() as i32);
+        let length = |text: &str| i32::try_from(self.font.text_cells(text)).unwrap_or(i32::MAX);
+        let (left_len, right_len) = (length(left), length(right));
         if left_len + 2 + right_len <= columns {
             self.text(left, 4, y, left_color);
             let x = bar.right() - 4 - self.cells(right);

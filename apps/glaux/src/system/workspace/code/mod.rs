@@ -11,6 +11,7 @@ mod settings;
 mod text_view;
 
 use glaux_input::{InputEvent, Point, PointerButton};
+use glaux_machine::font::BitmapFont;
 
 pub use layout::Metrics;
 use layout::{CodeLayout, StripHit, tab_labels};
@@ -64,6 +65,8 @@ struct TabMenu {
 /// The Code view's own UI state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeEditor {
+    /// Also holds the font the text is drawn with, which decides the
+    /// columns each character takes.
     layout: CodeLayout,
     settings: EditorSettings,
     /// While open, takes every input.
@@ -83,9 +86,9 @@ pub struct CodeEditor {
 }
 
 impl CodeEditor {
-    pub fn new(metrics: Metrics, settings: EditorSettings) -> Self {
+    pub fn new(metrics: Metrics, font: BitmapFont, settings: EditorSettings) -> Self {
         Self {
-            layout: CodeLayout::new(metrics),
+            layout: CodeLayout::new(metrics, font),
             settings,
             settings_dialog: None,
             picker: None,
@@ -132,8 +135,8 @@ impl CodeEditor {
     }
 
     #[cfg(test)]
-    pub fn layout(&self) -> CodeLayout {
-        self.layout
+    pub fn layout(&self) -> &CodeLayout {
+        &self.layout
     }
 
     #[cfg(test)]
@@ -157,7 +160,7 @@ impl CodeEditor {
     #[cfg(test)]
     pub fn tab_rects(&self, session: &CodeSession) -> Vec<(usize, Rect, Rect)> {
         self.layout
-            .strip_tabs(&labels(session), session.tabs().scroll())
+            .strip_tabs(&labels(&self.layout.font, session), session.tabs().scroll())
             .into_iter()
             .map(|tab| (tab.index, tab.rect, tab.close))
             .collect()
@@ -197,7 +200,7 @@ impl CodeEditor {
         else {
             return;
         };
-        let labels = labels(session);
+        let labels = labels(&self.layout.font, session);
         let scroll = self.layout.reveal(&labels, session.tabs().scroll(), active);
         session.tabs_mut().set_scroll(scroll);
     }
@@ -218,7 +221,7 @@ impl CodeEditor {
             if session.tabs().metrics(id).map(TextMetrics::key) == Some(key) {
                 continue;
             }
-            let metrics = TextMetrics::measure(document, key);
+            let metrics = TextMetrics::measure(document, key, &self.layout.font);
             let caret = session.tabs().caret(id).unwrap_or_default().reset(document);
             if let Some(view) = session.tabs_mut().view_mut(id) {
                 *view = geometry.clamp(*view, &metrics);
@@ -298,7 +301,7 @@ impl CodeEditor {
             self.menu_input(event, menu, session);
             return None;
         }
-        let labels = labels(session);
+        let labels = labels(&self.layout.font, session);
         let scroll = session.tabs().scroll();
         let ids: Vec<_> = session.tabs().ids().collect();
         match event {
@@ -382,13 +385,15 @@ impl CodeEditor {
                 self.move_caret(session, 0, |doc, _, _| Caret::document_end(doc));
             }
             InputEvent::Up => {
+                let font = self.layout.font.clone();
                 self.move_caret(session, 0, |doc, caret, metrics| {
-                    caret.vertical(doc, -1, metrics)
+                    caret.vertical(doc, -1, metrics, &font)
                 });
             }
             InputEvent::Down => {
+                let font = self.layout.font.clone();
                 self.move_caret(session, 0, |doc, caret, metrics| {
-                    caret.vertical(doc, 1, metrics)
+                    caret.vertical(doc, 1, metrics, &font)
                 });
             }
             InputEvent::PageUp { .. } => self.page(session, -1),
@@ -436,8 +441,9 @@ impl CodeEditor {
             return;
         };
         let rows = self.geometry(document).rows as isize * direction;
+        let font = self.layout.font.clone();
         self.move_caret(session, rows, |doc, caret, metrics| {
-            caret.vertical(doc, rows, metrics)
+            caret.vertical(doc, rows, metrics, &font)
         });
     }
 
@@ -466,7 +472,8 @@ impl CodeEditor {
         }
         let caret = motion(document, caret, metrics);
         let view = geometry.scroll_rows(view, scroll, metrics);
-        let view = geometry.reveal(view, &spot(document, caret.byte(), metrics.key()), metrics);
+        let here = spot(document, caret.byte(), metrics.key(), &self.layout.font);
+        let view = geometry.reveal(view, &here, metrics);
         self.show_caret(session, id, caret, view);
     }
 
@@ -481,11 +488,12 @@ impl CodeEditor {
         let (Some(&view), Some(metrics)) = (tabs.view(id), tabs.metrics(id)) else {
             return;
         };
-        let Some(byte) = geometry.hit(view, at, document, metrics) else {
+        let Some(byte) = geometry.hit(view, at, document, metrics, &self.layout.font) else {
             return;
         };
         let caret = Caret::at(document, byte);
-        let view = geometry.reveal(view, &spot(document, caret.byte(), metrics.key()), metrics);
+        let here = spot(document, caret.byte(), metrics.key(), &self.layout.font);
+        let view = geometry.reveal(view, &here, metrics);
         self.show_caret(session, id, caret, view);
     }
 
@@ -635,14 +643,14 @@ fn settings_layout(layout: &CodeLayout) -> SettingsLayout {
 }
 
 /// The label of each of `session`'s tabs, in tab order.
-fn labels(session: &CodeSession) -> Vec<String> {
+fn labels(font: &BitmapFont, session: &CodeSession) -> Vec<String> {
     let paths: Vec<&SourcePath> = session
         .tabs()
         .ids()
         .filter_map(|id| session.document(id))
         .map(|document| document.path())
         .collect();
-    tab_labels(&paths)
+    tab_labels(font, &paths)
 }
 
 #[cfg(test)]

@@ -7,7 +7,30 @@
 
 use std::ops::Range;
 
+use glaux_machine::font::BitmapFont;
+
 use super::code_document::CodeDocument;
+
+/// How many columns characters take: a tab reaches the next tab stop, and
+/// anything else takes the cells of the glyph `font` draws it with, so a
+/// double-width glyph takes two.
+#[derive(Debug, Clone, Copy)]
+pub struct Columns<'a> {
+    pub font: &'a BitmapFont,
+    pub tab_size: usize,
+}
+
+impl Columns<'_> {
+    /// Columns `ch` takes when it starts at column `column` of its line.
+    fn width(&self, ch: char, column: usize) -> usize {
+        if ch == '\t' {
+            let tab_size = self.tab_size.max(1);
+            tab_size - column % tab_size
+        } else {
+            self.font.cells(ch)
+        }
+    }
+}
 
 /// One character of a line as a view lays it out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,8 +41,7 @@ pub struct Cell {
     pub byte: usize,
     /// Column of the cell's left edge, counted from the start of its line.
     pub column: usize,
-    /// Columns the character takes: up to the next tab stop for a tab, one
-    /// for anything else.
+    /// Columns the character takes, as [`Columns`] measures it.
     pub width: usize,
 }
 
@@ -32,12 +54,12 @@ impl Cell {
 
 /// The cells of `text`, which starts at byte `byte` of the document and at
 /// column `column` of its line.
-pub fn cells(text: &str, byte: usize, column: usize, tab_size: usize) -> Cells<'_> {
+pub fn cells<'a>(text: &'a str, byte: usize, column: usize, columns: Columns<'a>) -> Cells<'a> {
     Cells {
         chars: text.char_indices(),
         byte,
         column,
-        tab_size: tab_size.max(1),
+        columns,
     }
 }
 
@@ -47,7 +69,7 @@ pub struct Cells<'a> {
     chars: std::str::CharIndices<'a>,
     byte: usize,
     column: usize,
-    tab_size: usize,
+    columns: Columns<'a>,
 }
 
 impl Iterator for Cells<'_> {
@@ -55,11 +77,7 @@ impl Iterator for Cells<'_> {
 
     fn next(&mut self) -> Option<Cell> {
         let (offset, ch) = self.chars.next()?;
-        let width = if ch == '\t' {
-            self.tab_size - self.column % self.tab_size
-        } else {
-            1
-        };
+        let width = self.columns.width(ch, self.column);
         let cell = Cell {
             ch,
             byte: self.byte + offset,
@@ -72,8 +90,8 @@ impl Iterator for Cells<'_> {
 }
 
 /// Columns `text` takes from the start of a line.
-pub fn line_width(text: &str, tab_size: usize) -> usize {
-    cells(text, 0, 0, tab_size)
+pub fn line_width(text: &str, columns: Columns<'_>) -> usize {
+    cells(text, 0, 0, columns)
         .last()
         .map_or(0, |cell| cell.column + cell.width)
 }
@@ -89,7 +107,7 @@ pub struct RowStart {
 
 /// Where the row after the one starting at `from` begins, when `line`
 /// (the content of the line starting at byte `line_start`) is folded to
-/// `columns`. `None` when the rest of the line fits on that row.
+/// `width` columns. `None` when the rest of the line fits on that row.
 ///
 /// A row folds after the last blank that fits, so words stay whole; a word
 /// wider than the row is cut at its edge. Blanks at a fold stay at the end
@@ -98,10 +116,10 @@ pub fn next_row(
     line: &str,
     line_start: usize,
     from: RowStart,
-    columns: usize,
-    tab_size: usize,
+    width: usize,
+    columns: Columns<'_>,
 ) -> Option<RowStart> {
-    let end = from.column + columns.max(1);
+    let end = from.column + width.max(1);
     // The start of the last word on this row that follows a blank after
     // another word, so indentation alone never makes a row.
     let mut fold = None;
@@ -111,7 +129,7 @@ pub fn next_row(
         &line[from.byte - line_start..],
         from.byte,
         from.column,
-        tab_size,
+        columns,
     ) {
         if cell.is_space() {
             after_space = seen_word;
@@ -137,11 +155,24 @@ pub fn next_row(
 
 /// What a document's extent was measured with. Measurements taken with
 /// another key no longer describe the view.
+///
+/// The font is not part of the key: a view measures every document with the
+/// one system font it draws with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MetricsKey {
     pub tab_size: usize,
     /// Columns lines fold at, or `None` when they don't fold.
     pub wrap_columns: Option<usize>,
+}
+
+impl MetricsKey {
+    /// How characters take columns with this key and `font`.
+    pub fn columns(self, font: &BitmapFont) -> Columns<'_> {
+        Columns {
+            font,
+            tab_size: self.tab_size,
+        }
+    }
 }
 
 /// The extent of a whole document in a text view.
@@ -157,8 +188,9 @@ pub struct TextMetrics {
 }
 
 impl TextMetrics {
-    /// Measures `document` with `key`.
-    pub fn measure(document: &CodeDocument, key: MetricsKey) -> Self {
+    /// Measures `document` with `key`, as `font` draws it.
+    pub fn measure(document: &CodeDocument, key: MetricsKey, font: &BitmapFont) -> Self {
+        let columns = key.columns(font);
         let lines = document.line_count();
         let mut widest = 0;
         let mut row_starts = Vec::new();
@@ -168,10 +200,10 @@ impl TextMetrics {
         let mut rows = 0;
         for n in 0..lines {
             let (line, range) = line_and_range(document, n);
-            widest = widest.max(line_width(line, key.tab_size));
-            if let Some(columns) = key.wrap_columns {
+            widest = widest.max(line_width(line, columns));
+            if let Some(width) = key.wrap_columns {
                 row_starts.push(rows);
-                rows += wrapped_rows(line, range.start, columns, key.tab_size);
+                rows += wrapped_rows(line, range.start, width, columns);
             }
         }
         if key.wrap_columns.is_some() {
@@ -225,14 +257,14 @@ impl TextMetrics {
     }
 }
 
-/// Rows `line` takes when folded to `columns`.
-fn wrapped_rows(line: &str, line_start: usize, columns: usize, tab_size: usize) -> usize {
+/// Rows `line` takes when folded to `width` columns.
+fn wrapped_rows(line: &str, line_start: usize, width: usize, columns: Columns<'_>) -> usize {
     let mut row = RowStart {
         byte: line_start,
         column: 0,
     };
     let mut rows = 1;
-    while let Some(next) = next_row(line, line_start, row, columns, tab_size) {
+    while let Some(next) = next_row(line, line_start, row, width, columns) {
         row = next;
         rows += 1;
     }
@@ -263,24 +295,33 @@ pub struct VisualRow<'a> {
 
 impl VisualRow<'_> {
     /// The row's cells.
-    pub fn cells(&self, tab_size: usize) -> Cells<'_> {
-        cells(self.text, self.start.byte, self.start.column, tab_size)
+    pub fn cells<'b>(&'b self, columns: Columns<'b>) -> Cells<'b> {
+        cells(self.text, self.start.byte, self.start.column, columns)
     }
 
-    /// The document position on this row nearest column `column` of its
-    /// line, where a character spanning the column, such as a tab, gives
-    /// way to whichever of its edges is closer.
+    /// The document position on this row nearest the left edge of column
+    /// `column` of its line; see [`byte_near`](Self::byte_near).
+    pub fn byte_near_column(&self, column: usize, columns: Columns<'_>) -> usize {
+        self.byte_near(column.saturating_mul(2), columns)
+    }
+
+    /// The document position on this row nearest the point `half_columns`
+    /// half-columns into its line, where a character spanning the point,
+    /// such as a tab or a double-width glyph, gives way to whichever of its
+    /// edges is closer. Half-columns let a point inside a two-column
+    /// character fall on either side of its middle.
     ///
-    /// Columns past the row's end give its end. A row its line folds
-    /// after ends before its last character, since the position after it
-    /// starts the next row.
-    pub fn byte_near_column(&self, column: usize, tab_size: usize) -> usize {
+    /// Points past the row's end give its end. A row its line folds after
+    /// ends before its last character, since the position after it starts
+    /// the next row.
+    pub fn byte_near(&self, half_columns: usize, columns: Columns<'_>) -> usize {
         let mut last = None;
-        for cell in self.cells(tab_size) {
-            if column < cell.column + cell.width {
+        for cell in self.cells(columns) {
+            if half_columns < 2 * (cell.column + cell.width) {
                 let after = cell.byte + cell.ch.len_utf8();
                 let ends_fold = self.folds && after == self.end();
-                return if (column - cell.column.min(column)) * 2 < cell.width || ends_fold {
+                let into = half_columns.saturating_sub(2 * cell.column);
+                return if into < cell.width || ends_fold {
                     cell.byte
                 } else {
                     after
@@ -314,10 +355,11 @@ pub struct Spot {
 }
 
 /// Where position `byte` of `document` shows when the view is laid out
-/// with `key`. `byte` must be a character boundary within a line's
-/// content; a position where a line folds shows at the start of the next
-/// row.
-pub fn spot(document: &CodeDocument, byte: usize, key: MetricsKey) -> Spot {
+/// with `key` and `font`. `byte` must be a character boundary within a
+/// line's content; a position where a line folds shows at the start of the
+/// next row.
+pub fn spot(document: &CodeDocument, byte: usize, key: MetricsKey, font: &BitmapFont) -> Spot {
+    let columns = key.columns(font);
     let line = document.line_of(byte);
     let (text, range) = line_and_range(document, line);
     let byte = byte.clamp(range.start, range.end);
@@ -326,9 +368,9 @@ pub fn spot(document: &CodeDocument, byte: usize, key: MetricsKey) -> Spot {
         column: 0,
     };
     let mut row_in_line = 0;
-    if let Some(columns) = key.wrap_columns {
-        while let Some(next) = next_row(text, range.start, row_start, columns, key.tab_size)
-            .filter(|next| next.byte <= byte)
+    if let Some(width) = key.wrap_columns {
+        while let Some(next) =
+            next_row(text, range.start, row_start, width, columns).filter(|next| next.byte <= byte)
         {
             row_start = next;
             row_in_line += 1;
@@ -338,7 +380,7 @@ pub fn spot(document: &CodeDocument, byte: usize, key: MetricsKey) -> Spot {
         &text[row_start.byte - range.start..byte - range.start],
         row_start.byte,
         row_start.column,
-        key.tab_size,
+        columns,
     )
     .last()
     .map_or(row_start.column, |cell| cell.column + cell.width);
@@ -352,13 +394,13 @@ pub fn spot(document: &CodeDocument, byte: usize, key: MetricsKey) -> Spot {
 
 /// The rows of `document` from row `row` of line `line` on, unfolded, or
 /// folded at `wrap_columns`.
-pub fn visual_rows(
-    document: &CodeDocument,
+pub fn visual_rows<'a>(
+    document: &'a CodeDocument,
     line: usize,
     row: usize,
     wrap_columns: Option<usize>,
-    tab_size: usize,
-) -> VisualRows<'_> {
+    columns: Columns<'a>,
+) -> VisualRows<'a> {
     VisualRows {
         document,
         line,
@@ -367,7 +409,7 @@ pub fn visual_rows(
         next: None,
         row_in_line: 0,
         wrap_columns,
-        tab_size,
+        columns,
     }
 }
 
@@ -383,7 +425,7 @@ pub struct VisualRows<'a> {
     next: Option<RowStart>,
     row_in_line: usize,
     wrap_columns: Option<usize>,
-    tab_size: usize,
+    columns: Columns<'a>,
 }
 
 impl<'a> Iterator for VisualRows<'a> {
@@ -399,7 +441,7 @@ impl<'a> Iterator for VisualRows<'a> {
             });
             let following = self
                 .wrap_columns
-                .and_then(|columns| next_row(line, range.start, start, columns, self.tab_size));
+                .and_then(|width| next_row(line, range.start, start, width, self.columns));
             let end = following.map_or(range.end, |next| next.byte);
             let row = VisualRow {
                 line: self.line,

@@ -1,14 +1,18 @@
 use super::*;
+use crate::system::test_font::LAYOUT_FONT;
 use glaux_machine::font::FontMetrics;
 use pretty_assertions::assert_eq;
 
 fn layout() -> CodeLayout {
     let metrics = FontMetrics::SYSTEM;
-    CodeLayout::new(Metrics {
-        cell_w: i32::from(metrics.cell_width()),
-        cell_h: i32::from(metrics.cell_height()),
-        top: 16,
-    })
+    CodeLayout::new(
+        Metrics {
+            cell_w: i32::from(metrics.cell_width()),
+            cell_h: i32::from(metrics.cell_height()),
+            top: 16,
+        },
+        LAYOUT_FONT.clone(),
+    )
 }
 
 fn labels(count: usize) -> Vec<String> {
@@ -135,7 +139,7 @@ fn labels_are_file_names_unless_two_tabs_share_one() {
     ]);
     let refs: Vec<&SourcePath> = paths.iter().collect();
     assert_eq!(
-        tab_labels(&refs),
+        tab_labels(&LAYOUT_FONT, &refs),
         [
             "main.luau",
             "..mies/util.luau",
@@ -148,8 +152,8 @@ fn labels_are_file_names_unless_two_tabs_share_one() {
 #[test]
 fn long_labels_keep_their_end() {
     let paths = paths(&["code/a_really_long_module_name.luau"]);
-    let label = &tab_labels(&[&paths[0]])[0];
+    let label = &tab_labels(&LAYOUT_FONT, &[&paths[0]])[0];
     assert_eq!(label.chars().count(), MAX_LABEL_CELLS);
     assert_eq!(label, "..dule_name.luau");
-    assert_eq!(shorten_start("abcdef", 2), "ef");
+    assert_eq!(shorten_start(&LAYOUT_FONT, "abcdef", 2), "ef");
 }

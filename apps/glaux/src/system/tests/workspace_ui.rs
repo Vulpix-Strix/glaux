@@ -100,7 +100,7 @@ fn the_cursor_is_drawn_only_in_the_workspace() {
         sounds(),
         video_defaults(),
         fixture.storage(),
-        fake_rom().font().metrics(),
+        fake_rom().font(),
         fake_rom().palette().clone(),
     );
     assert!(!drawn(&system), "boot");

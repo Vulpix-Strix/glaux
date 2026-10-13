@@ -9,6 +9,7 @@ fn saved_settings_load_back() {
         word_wrap: true,
         tab_size: 2,
         line_numbers: false,
+        ligatures: false,
     };
     save(&dir.join("nested"), &settings).unwrap();
     assert_eq!(load(&dir.join("nested")), settings);

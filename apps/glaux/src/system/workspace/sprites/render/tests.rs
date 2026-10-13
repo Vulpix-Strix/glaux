@@ -239,18 +239,20 @@ fn only_the_active_tool_is_drawn_active() {
     }
 }
 
-/// A system-sized font whose glyphs spell out their character: a solid
-/// marker row, a blank row, then the character code in two rows.
+/// A system-sized font whose glyphs spell out their character in their
+/// five leftmost columns: a solid marker row, a blank row, then the
+/// character code in two rows.
 fn coded_font() -> BitmapFont {
     let metrics = FontMetrics::SYSTEM;
     let mut font = BitmapFont::new(metrics);
-    for ch in glaux_machine::font::FIRST_CHAR..=glaux_machine::font::LAST_CHAR {
-        let code = ch as u8;
-        let mut rows = vec![0; usize::from(metrics.glyph_height())];
-        rows[0] = 0b11111;
-        rows[2] = code & 0b11111;
-        rows[3] = code >> 5;
-        font.insert(ch, &rows).unwrap();
+    let spacing = metrics.cell_width() - 5;
+    for ch in ' '..='~' {
+        let code = ch as u16;
+        let mut rows = vec![0; usize::from(metrics.cell_height())];
+        rows[0] = 0b11111 << spacing;
+        rows[2] = (code & 0b11111) << spacing;
+        rows[3] = (code >> 5) << spacing;
+        font.insert(ch, 1, &rows).unwrap();
     }
     font
 }
@@ -314,8 +316,15 @@ fn the_options_bar_names_the_tool_and_flags_unsaved_edits() {
 #[test]
 fn long_messages_wrap_at_spaces() {
     assert_eq!(
-        wrap("Invalid obp.bin: must be exactly 128 bytes", 16),
+        wrap(
+            &crate::system::test_font::LAYOUT_FONT,
+            "Invalid obp.bin: must be exactly 128 bytes",
+            16
+        ),
         ["Invalid obp.bin:", "must be exactly", "128 bytes"]
     );
-    assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+    assert_eq!(
+        wrap(&crate::system::test_font::LAYOUT_FONT, "abcdefghij", 4),
+        ["abcd", "efgh", "ij"]
+    );
 }

@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 glaux-audio.workspace = true
+bitflags.workspace = true
 semver.workspace = true
 thiserror.workspace = true
 

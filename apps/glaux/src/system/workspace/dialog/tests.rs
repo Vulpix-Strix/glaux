@@ -1,4 +1,5 @@
 use super::*;
+use crate::system::test_font::LAYOUT_FONT;
 use glaux_machine::font::FontMetrics;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use pretty_assertions::assert_eq;
@@ -62,7 +63,7 @@ fn release(at: Point) -> InputEvent {
 #[test]
 fn focus_moves_both_ways_and_wraps() {
     let mut dialog = dialog();
-    let layout = dialog.layout(AREA, CELL_W, CELL_H);
+    let layout = dialog.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     assert_eq!(dialog.focus(), 2);
     for (event, focus) in [
         (InputEvent::Down, 0),
@@ -80,7 +81,7 @@ fn focus_moves_both_ways_and_wraps() {
 #[test]
 fn enter_chooses_the_focused_action_and_escape_cancels() {
     let mut dialog = dialog();
-    let layout = dialog.layout(AREA, CELL_W, CELL_H);
+    let layout = dialog.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     assert_eq!(
         dialog.handle_input(InputEvent::Enter, &layout),
         Some(Choice::Cancel)
@@ -96,14 +97,14 @@ fn enter_chooses_the_focused_action_and_escape_cancels() {
     );
 
     let mut plain = Dialog::new("X", vec![], vec![("OK", Choice::Yes)], 0, None);
-    let layout = plain.layout(AREA, CELL_W, CELL_H);
+    let layout = plain.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     assert_eq!(plain.handle_input(InputEvent::Break, &layout), None);
 }
 
 #[test]
 fn a_click_chooses_the_button_released_on() {
     let mut dialog = dialog();
-    let layout = dialog.layout(AREA, CELL_W, CELL_H);
+    let layout = dialog.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     let no = centre(layout.buttons[1]);
     assert_eq!(dialog.handle_input(press(no), &layout), None);
     assert_eq!(dialog.focus(), 1, "a press focuses its button");
@@ -113,7 +114,7 @@ fn a_click_chooses_the_button_released_on() {
 #[test]
 fn releasing_elsewhere_or_a_cancelled_press_chooses_nothing() {
     let mut dialog = dialog();
-    let layout = dialog.layout(AREA, CELL_W, CELL_H);
+    let layout = dialog.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     let yes = centre(layout.buttons[0]);
     let no = centre(layout.buttons[1]);
     dialog.handle_input(press(yes), &layout);
@@ -132,7 +133,7 @@ fn releasing_elsewhere_or_a_cancelled_press_chooses_nothing() {
 #[test]
 fn other_input_is_swallowed() {
     let mut dialog = dialog();
-    let layout = dialog.layout(AREA, CELL_W, CELL_H);
+    let layout = dialog.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     for event in [
         InputEvent::Text('y'),
         InputEvent::NextView,
@@ -148,7 +149,7 @@ fn other_input_is_swallowed() {
 #[test]
 fn the_window_fits_the_workspace_and_its_text_fits_the_window() {
     let dialog = dialog();
-    let layout = dialog.layout(AREA, CELL_W, CELL_H);
+    let layout = dialog.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     let window = layout.window;
     assert!(window.x >= AREA.x && window.y >= AREA.y, "{window:?}");
     assert!(window.right() + SHADOW_OFFSET <= AREA.right(), "{window:?}");
@@ -181,7 +182,7 @@ fn the_window_fits_the_workspace_and_its_text_fits_the_window() {
 fn the_focused_button_is_drawn_inverted() {
     let rom = crate::rom::load().unwrap();
     let dialog = dialog();
-    let layout = dialog.layout(AREA, CELL_W, CELL_H);
+    let layout = dialog.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     let mut fb = Framebuffer::new();
     dialog.render(&mut fb, rom.font(), &layout);
     let face = |rect: Rect| fb.pixel(rect.x + 1, rect.y + 1);

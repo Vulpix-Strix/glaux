@@ -1,13 +1,15 @@
 use super::*;
 use crate::system::test_frames::assert_frame_eq;
-use glaux_machine::font::{FIRST_CHAR, FontMetrics, LAST_CHAR};
+use glaux_machine::font::FontMetrics;
 use pretty_assertions::assert_eq;
 
-/// 3×3 solid glyphs in 4×5 cells for every printable character.
+/// 3×3 solid glyphs one row down in 4×5 cells for every printable ASCII
+/// character but the blank space.
 fn block_font() -> BitmapFont {
-    let mut font = BitmapFont::new(FontMetrics::new(3, 3, 4, 5).unwrap());
-    for ch in FIRST_CHAR..=LAST_CHAR {
-        font.insert(ch, &[0b111; 3]).unwrap();
+    let mut font = BitmapFont::new(FontMetrics::new(4, 5).unwrap());
+    font.insert(' ', 1, &[0; 5]).unwrap();
+    for ch in '!'..='~' {
+        font.insert(ch, 1, &[0, 0b1110, 0b1110, 0b1110, 0]).unwrap();
     }
     font
 }
@@ -131,11 +133,19 @@ fn intro_ends_dark_before_the_header() {
 }
 
 #[test]
-fn text_width_excludes_trailing_spacing() {
+fn ink_bounds_leave_out_the_blank_parts_of_cells() {
     let font = block_font();
-    assert_eq!(text_width(&font, "", 3), 0);
-    assert_eq!(text_width(&font, "A", 1), 3);
-    assert_eq!(text_width(&font, "AB", 2), (4 + 3) * 2);
+    let ink = |left, right| InkBounds {
+        left,
+        top: 1,
+        right,
+        bottom: 4,
+    };
+    assert_eq!(ink_bounds(&font, ""), None);
+    assert_eq!(ink_bounds(&font, "   "), None);
+    assert_eq!(ink_bounds(&font, "A"), Some(ink(0, 3)));
+    assert_eq!(ink_bounds(&font, "AB"), Some(ink(0, 7)));
+    assert_eq!(ink_bounds(&font, " A "), Some(ink(4, 7)));
 }
 
 fn v0_1_0() -> Version {

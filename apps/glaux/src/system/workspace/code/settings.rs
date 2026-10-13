@@ -20,6 +20,8 @@ const DONE: &str = "Done";
 const CHECKBOX: i32 = 7;
 /// Cells taken left of a row's label by its checkbox.
 const LABEL_INDENT: i32 = 2;
+/// Rows above Done.
+const SETTING_ROWS: usize = Row::ALL.len() - 1;
 
 /// One line of the window, top to bottom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,17 +29,25 @@ pub enum Row {
     WordWrap,
     TabSize,
     LineNumbers,
+    Ligatures,
     Done,
 }
 
 impl Row {
-    const ALL: [Self; 4] = [Self::WordWrap, Self::TabSize, Self::LineNumbers, Self::Done];
+    const ALL: [Self; 5] = [
+        Self::WordWrap,
+        Self::TabSize,
+        Self::LineNumbers,
+        Self::Ligatures,
+        Self::Done,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Self::WordWrap => "Word wrap",
             Self::TabSize => "Tab size",
             Self::LineNumbers => "Show line numbers",
+            Self::Ligatures => "Ligatures",
             Self::Done => DONE,
         }
     }
@@ -165,7 +175,14 @@ impl SettingsDialog {
         let button_height = cell_h + 4;
         let title_height = cell_h + 2;
         let width = inner_width + 2 * PAD + 2;
-        let height = 1 + title_height + PAD + 3 * row_height + cell_h + button_height + PAD + 1;
+        let height = 1
+            + title_height
+            + PAD
+            + SETTING_ROWS as i32 * row_height
+            + cell_h
+            + button_height
+            + PAD
+            + 1;
         let window = Rect {
             x: area.x + (area.width - width - SHADOW_OFFSET) / 2,
             y: area.y + (area.height - height - SHADOW_OFFSET) / 2,
@@ -180,7 +197,7 @@ impl SettingsDialog {
         };
         let x = window.x + 1 + PAD;
         let top = title_bar.bottom() + PAD;
-        let rows = [0, 1, 2].map(|n| Rect {
+        let rows = [0, 1, 2, 3].map(|n| Rect {
             x,
             y: top + n * row_height,
             width: inner_width,
@@ -202,7 +219,7 @@ impl SettingsDialog {
             plus: arrow(1),
             done: Rect {
                 x: window.x + (width - done_width) / 2,
-                y: rows[2].bottom() + cell_h,
+                y: rows[SETTING_ROWS - 1].bottom() + cell_h,
                 width: done_width,
                 height: button_height,
             },
@@ -236,10 +253,11 @@ impl SettingsDialog {
             let label_x = rect.x + 2 + LABEL_INDENT * cell_w;
             draw_text(framebuffer, font, row.label(), label_x, text_y, ink);
             match row {
-                Row::WordWrap | Row::LineNumbers => {
+                Row::WordWrap | Row::LineNumbers | Row::Ligatures => {
                     let checked = match row {
                         Row::WordWrap => settings.word_wrap,
-                        _ => settings.line_numbers,
+                        Row::LineNumbers => settings.line_numbers,
+                        _ => settings.ligatures,
                     };
                     let rect = Rect {
                         x: rect.x + 2,
@@ -282,6 +300,7 @@ fn toggle(row: Row, settings: &mut EditorSettings) {
     match row {
         Row::WordWrap => settings.word_wrap = !settings.word_wrap,
         Row::LineNumbers => settings.line_numbers = !settings.line_numbers,
+        Row::Ligatures => settings.ligatures = !settings.ligatures,
         Row::TabSize | Row::Done => {}
     }
 }
@@ -291,8 +310,8 @@ fn toggle(row: Row, settings: &mut EditorSettings) {
 pub struct SettingsLayout {
     pub window: Rect,
     pub title_bar: Rect,
-    /// Word wrap, tab size and line numbers, top to bottom.
-    pub rows: [Rect; 3],
+    /// Word wrap, tab size, line numbers and ligatures, top to bottom.
+    pub rows: [Rect; SETTING_ROWS],
     /// The arrows stepping the tab size down and up.
     pub minus: Rect,
     pub plus: Rect,

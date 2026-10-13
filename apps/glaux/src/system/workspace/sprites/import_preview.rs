@@ -370,7 +370,7 @@ impl ImportPreview {
         let notes = self.notes();
         let lines = notes
             .iter()
-            .flat_map(|note| wrap(note, layout.note_columns()))
+            .flat_map(|note| wrap(font, note, layout.note_columns()))
             .take(NOTE_LINES);
         for line in lines {
             text(framebuffer, &line, layout.text_x, y, INK);

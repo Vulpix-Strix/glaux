@@ -122,7 +122,14 @@ fn the_largest_impact_fits_its_lines() {
     });
     let lines: usize = notes
         .iter()
-        .map(|note| wrap(note, layout.note_columns()).len())
+        .map(|note| {
+            wrap(
+                &crate::system::test_font::LAYOUT_FONT,
+                note,
+                layout.note_columns(),
+            )
+            .len()
+        })
         .sum();
     assert!(lines <= NOTE_LINES, "{lines} lines: {notes:?}");
 }

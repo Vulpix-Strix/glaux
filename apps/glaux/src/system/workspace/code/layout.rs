@@ -2,6 +2,7 @@
 //! strip above the text.
 
 use glaux_input::Point;
+use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 
 use crate::cartridge::source::SourcePath;
@@ -41,10 +42,12 @@ pub struct Metrics {
     pub top: i32,
 }
 
-/// The Code view's rows, top to bottom.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The Code view's rows, top to bottom, and the font that measures the
+/// text laid out in them.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeLayout {
     pub metrics: Metrics,
+    pub font: BitmapFont,
     /// The document tabs.
     pub strip: Rect,
     /// The active document's language and path.
@@ -55,7 +58,7 @@ pub struct CodeLayout {
 }
 
 impl CodeLayout {
-    pub fn new(metrics: Metrics) -> Self {
+    pub fn new(metrics: Metrics, font: BitmapFont) -> Self {
         let bar = metrics.cell_h + 2;
         let width = WIDTH as i32;
         let strip = Rect {
@@ -82,6 +85,7 @@ impl CodeLayout {
         };
         Self {
             metrics,
+            font,
             strip,
             options,
             text,
@@ -117,9 +121,14 @@ impl CodeLayout {
         }
     }
 
+    /// Cells `text` takes on one line.
+    pub fn cells(&self, text: &str) -> i32 {
+        i32::try_from(self.font.text_cells(text)).unwrap_or(i32::MAX)
+    }
+
     /// Width of the tab showing `label`.
     pub fn tab_width(&self, label: &str) -> i32 {
-        LABEL_PAD + cells(label) * self.metrics.cell_w + CLOSE_GAP + CLOSE_SIZE + CLOSE_PAD
+        LABEL_PAD + self.cells(label) * self.metrics.cell_w + CLOSE_GAP + CLOSE_SIZE + CLOSE_PAD
     }
 
     /// The tabs showing `labels`, starting from the one at `scroll`, as
@@ -217,8 +226,8 @@ pub enum StripHit {
 
 /// The label of each tab showing `paths`, in order: the file name, or the
 /// whole path where another tab shows a file of the same name, kept to
-/// [`MAX_LABEL_CELLS`] by cutting its start.
-pub fn tab_labels(paths: &[&SourcePath]) -> Vec<String> {
+/// [`MAX_LABEL_CELLS`] of `font`'s cells by cutting its start.
+pub fn tab_labels(font: &BitmapFont, paths: &[&SourcePath]) -> Vec<String> {
     paths
         .iter()
         .map(|path| {
@@ -228,30 +237,33 @@ pub fn tab_labels(paths: &[&SourcePath]) -> Vec<String> {
                 .filter(|other| other.file_name() == name)
                 .count()
                 > 1;
-            shorten_start(if shared { path.as_str() } else { name }, MAX_LABEL_CELLS)
+            let label = if shared { path.as_str() } else { name };
+            shorten_start(font, label, MAX_LABEL_CELLS)
         })
         .collect()
 }
 
-/// `text` kept to `max` characters by cutting its start, where paths
-/// differ least, and marking the cut with [`ELLIPSIS`].
-pub fn shorten_start(text: &str, max: usize) -> String {
-    let len = text.chars().count();
-    if len <= max {
+/// `text` kept to `max` of `font`'s cells by cutting its start, where
+/// paths differ least, and marking the cut with [`ELLIPSIS`].
+pub fn shorten_start(font: &BitmapFont, text: &str, max: usize) -> String {
+    if font.text_cells(text) <= max {
         return text.to_owned();
     }
     // Too little room for the mark and any text: show the text alone.
-    let Some(kept) = max.checked_sub(ELLIPSIS.len()).filter(|&kept| kept > 0) else {
-        return text.chars().skip(len - max).collect();
+    let (mark, room) = match max.checked_sub(font.text_cells(ELLIPSIS)) {
+        Some(room) if room > 0 => (ELLIPSIS, room),
+        _ => ("", max),
     };
-    ELLIPSIS
-        .chars()
-        .chain(text.chars().skip(len - kept))
-        .collect()
-}
-
-pub fn cells(text: &str) -> i32 {
-    i32::try_from(text.chars().count()).unwrap_or(i32::MAX)
+    let mut used = 0;
+    let mut start = text.len();
+    for (at, ch) in text.char_indices().rev() {
+        used += font.cells(ch);
+        if used > room {
+            break;
+        }
+        start = at;
+    }
+    format!("{mark}{}", &text[start..])
 }
 
 #[cfg(test)]

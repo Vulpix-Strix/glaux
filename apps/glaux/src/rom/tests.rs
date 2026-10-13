@@ -3,19 +3,6 @@ use glaux_machine::obj_palette::ObjBank;
 use glaux_machine::palette::ZUGHY_32;
 use pretty_assertions::assert_eq;
 
-fn tiny_bdf(glyphs: &str) -> String {
-    format!("STARTFONT 2.1\nFONTBOUNDINGBOX 5 9 0 -2\nCHARS 1\n{glyphs}ENDFONT\n")
-}
-
-fn bdf_glyph(code: u32, rows: [&str; 9]) -> String {
-    format!(
-        "STARTCHAR c{code}\nENCODING {code}\nBBX 5 9 0 -2\nBITMAP\n{}\nENDCHAR\n",
-        rows.join("\n")
-    )
-}
-
-const BLANK: [&str; 9] = ["00"; 9];
-
 #[test]
 fn copyright_is_trimmed() {
     assert_eq!(
@@ -31,7 +18,7 @@ fn invalid_copyright_names_the_asset() {
         ("(C) 2026 BÚHO", "'Ú'"),
         ("A\nB", "'\\n'"),
     ] {
-        let err = build("0.1.0", text, PALETTE_HEX, OBP_TXT, FONT_BDF).unwrap_err();
+        let err = build("0.1.0", text, PALETTE_HEX, OBP_TXT).unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains("rom/copyright"), "{message}");
         assert!(message.contains(detail), "{message}");
@@ -40,7 +27,7 @@ fn invalid_copyright_names_the_asset() {
 
 #[test]
 fn invalid_version_names_the_asset() {
-    let err = build("zero.one", COPYRIGHT, PALETTE_HEX, OBP_TXT, FONT_BDF).unwrap_err();
+    let err = build("zero.one", COPYRIGHT, PALETTE_HEX, OBP_TXT).unwrap_err();
     let message = format!("{err:#}");
     assert!(message.contains("rom/version"), "{message}");
     assert!(message.contains("zero.one"), "{message}");
@@ -65,64 +52,6 @@ fn palette_keeps_order_and_reports_bad_lines() {
     assert!(err.to_string().contains("line 2"), "{err:#}");
 }
 
-#[test]
-fn bdf_row_is_shifted_to_glyph_width() {
-    assert_eq!(parse_bdf_row("F8", 5).unwrap(), 0b11111);
-    assert_eq!(parse_bdf_row("90", 5).unwrap(), 0b10010);
-    assert_eq!(parse_bdf_row("08", 5).unwrap(), 0b00001);
-    assert!(parse_bdf_row("04", 5).is_err());
-    assert!(parse_bdf_row("zz", 5).is_err());
-}
-
-/// A blank glyph for every printable ASCII character.
-fn every_ascii_glyph() -> String {
-    (FIRST_CHAR..=LAST_CHAR)
-        .map(|ch| bdf_glyph(ch as u32, BLANK))
-        .collect()
-}
-
-#[test]
-fn bdf_rejects_unsupported_bounding_boxes() {
-    // Complete fonts, so the bounding box is the only thing wrong.
-    let font_box = tiny_bdf(&every_ascii_glyph())
-        .replace("FONTBOUNDINGBOX 5 9 0 -2", "FONTBOUNDINGBOX 6 12 0 -3");
-    let err = parse_bdf(&font_box, FontMetrics::SYSTEM).unwrap_err();
-    assert_eq!(
-        err.to_string(),
-        r#"line 2: font bounding box is "6 12 0 -3", expected "5 9 0 -2""#
-    );
-
-    let glyph_box = tiny_bdf(&every_ascii_glyph().replacen("BBX 5 9 0 -2", "BBX 4 9 1 -2", 1));
-    let err = parse_bdf(&glyph_box, FontMetrics::SYSTEM).unwrap_err();
-    assert!(
-        err.to_string()
-            .ends_with(r#"glyph bounding box is "4 9 1 -2", expected "5 9 0 -2""#),
-        "{err:#}"
-    );
-}
-
-#[test]
-fn bdf_reports_missing_ascii_glyphs() {
-    let a = ["00", "00", "60", "90", "F0", "90", "90", "00", "00"];
-    let err = parse_bdf(&tiny_bdf(&bdf_glyph(65, a)), FontMetrics::SYSTEM).unwrap_err();
-    assert!(err.to_string().contains("missing glyphs"), "{err:#}");
-}
-
-#[test]
-fn bdf_loads_ascii_and_skips_other_encodings() {
-    let mut glyphs = every_ascii_glyph();
-    glyphs.push_str(&bdf_glyph(0x2592, ["F8"; 9]));
-    let font = parse_bdf(&tiny_bdf(&glyphs), FontMetrics::SYSTEM).unwrap();
-    assert!((FIRST_CHAR..=LAST_CHAR).all(|ch| font.glyph(ch).is_some()));
-}
-
-#[test]
-fn bdf_rejects_duplicate_glyphs() {
-    let glyphs = format!("{0}{0}", bdf_glyph(65, BLANK));
-    let err = parse_bdf(&tiny_bdf(&glyphs), FontMetrics::SYSTEM).unwrap_err();
-    assert!(err.to_string().contains("duplicate"), "{err:#}");
-}
-
 // Guards the embedded repository assets.
 #[test]
 fn embedded_rom_loads() {
@@ -136,12 +65,10 @@ fn embedded_rom_loads() {
 
     let font = rom.font();
     assert_eq!(font.metrics(), FontMetrics::SYSTEM);
-    assert!((FIRST_CHAR..=LAST_CHAR).all(|ch| font.glyph(ch).is_some()));
-    assert_eq!(
-        font.glyph('A').unwrap().rows(),
-        &[
-            0b00000, 0b00000, 0b01100, 0b10010, 0b11110, 0b10010, 0b10010, 0b00000, 0b00000
-        ]
+    assert!(
+        rom.copyright()
+            .chars()
+            .all(|ch| font.glyph_id(ch).is_some())
     );
     assert_eq!(rom.sounds(), &sounds().unwrap());
     assert_eq!(rom.ui(), &ui().unwrap());
@@ -219,7 +146,7 @@ fn invalid_obj_palettes_name_the_asset_and_the_problem() {
             "\"256\" is not a master index".to_owned(),
         ),
     ] {
-        let err = build("0.1.0", COPYRIGHT, PALETTE_HEX, &text, FONT_BDF).unwrap_err();
+        let err = build("0.1.0", COPYRIGHT, PALETTE_HEX, &text).unwrap_err();
         let message = format!("{err:#}");
         assert!(message.contains("rom/palette/obp.txt"), "{message}");
         assert!(message.contains(&detail), "{message}");

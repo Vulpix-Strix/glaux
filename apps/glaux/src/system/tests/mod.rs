@@ -4,7 +4,7 @@ use super::*;
 use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use glaux_input::{Button, Key, Point, PointerButton};
-use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
+use glaux_machine::font::{BitmapFont, FontMetrics};
 use glaux_machine::ink_image::InkImage;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::{
@@ -36,9 +36,9 @@ const CELL_H: i32 = 5;
 /// A ROM whose font draws every printable character as a 3×3 block in a
 /// 4×5 cell.
 fn fake_rom() -> SystemRom {
-    let mut font = BitmapFont::new(FontMetrics::new(3, 3, 4, 5).unwrap());
-    for ch in FIRST_CHAR..=LAST_CHAR {
-        font.insert(ch, &[0b111; 3]).unwrap();
+    let mut font = BitmapFont::new(FontMetrics::new(4, 5).unwrap());
+    for ch in ' '..='~' {
+        font.insert(ch, 1, &[0b1110, 0b1110, 0b1110, 0, 0]).unwrap();
     }
     SystemRom::new(
         Version::new(0, 1, 0),
@@ -96,7 +96,7 @@ fn new_system() -> System {
         sounds(),
         video_defaults(),
         cartridges(),
-        fake_rom().font().metrics(),
+        fake_rom().font(),
         fake_rom().palette().clone(),
     )
 }
@@ -149,7 +149,7 @@ fn shell_with_cartridge(fixture: &Fixture, script: &str) -> System {
         sounds(),
         video_defaults(),
         fixture.storage(),
-        fake_rom().font().metrics(),
+        fake_rom().font(),
         fake_rom().palette().clone(),
     );
     while matches!(system.state(), SystemState::Boot { .. }) {

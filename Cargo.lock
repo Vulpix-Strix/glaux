@@ -751,6 +751,7 @@ dependencies = [
 name = "glaux-machine"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "glaux-audio",
  "pretty_assertions",
  "proptest",

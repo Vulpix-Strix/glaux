@@ -1,14 +1,18 @@
 use super::*;
 use crate::system::code_document::CodeDocument;
+use crate::system::test_font::LAYOUT_FONT;
 use crate::system::workspace::code::layout::Metrics;
 use pretty_assertions::assert_eq;
 
 fn layout() -> CodeLayout {
-    CodeLayout::new(Metrics {
-        cell_w: 6,
-        cell_h: 10,
-        top: 16,
-    })
+    CodeLayout::new(
+        Metrics {
+            cell_w: 6,
+            cell_h: 10,
+            top: 16,
+        },
+        LAYOUT_FONT.clone(),
+    )
 }
 
 fn settings(word_wrap: bool, line_numbers: bool) -> EditorSettings {
@@ -37,7 +41,7 @@ fn view(top_line: usize, top_row: usize, left_column: usize) -> DocumentView {
 /// The geometry and metrics for `document` shown with `settings`.
 fn measured(document: &CodeDocument, settings: &EditorSettings) -> (TextGeometry, TextMetrics) {
     let geometry = TextGeometry::new(&layout(), document.line_count(), settings);
-    let metrics = TextMetrics::measure(document, geometry.metrics_key());
+    let metrics = TextMetrics::measure(document, geometry.metrics_key(), &LAYOUT_FONT);
     (geometry, metrics)
 }
 
@@ -164,7 +168,7 @@ fn the_thumb_never_shrinks_out_of_sight() {
 
 /// Where byte `byte` of `document` shows in `geometry`.
 fn spot_of(document: &CodeDocument, geometry: &TextGeometry, byte: usize) -> Spot {
-    crate::system::code_text::spot(document, byte, geometry.metrics_key())
+    crate::system::code_text::spot(document, byte, geometry.metrics_key(), &LAYOUT_FONT)
 }
 
 /// Whether the 1×`cell_h` caret drawn from `point` stays in the viewport.
@@ -238,6 +242,7 @@ fn a_click_picks_the_nearest_character_edge_on_its_row() {
             Point::new(x as u16, y as u16),
             &document,
             &metrics,
+            &LAYOUT_FONT,
         )
     };
     // Left of a cell's middle is before it; right of it, after.
@@ -254,6 +259,32 @@ fn a_click_picks_the_nearest_character_edge_on_its_row() {
 }
 
 #[test]
+fn double_width_characters_place_the_caret_and_clicks_on_their_edges() {
+    // In the test font "✅" takes two cells and three bytes.
+    let document = CodeDocument::from_text("code/main.luau", "✅x");
+    let (geometry, metrics) = measured(&document, &settings(false, false));
+    let (x0, y0) = (geometry.viewport.x, geometry.viewport.y);
+    let caret = |byte| {
+        geometry.caret_point(
+            view(0, 0, 0),
+            &spot_of(&document, &geometry, byte),
+            &metrics,
+        )
+    };
+    assert_eq!(caret(3), Some((x0 + 2 * 6, y0)));
+    assert_eq!(caret(4), Some((x0 + 3 * 6, y0)));
+
+    let click = |x: i32| {
+        let at = Point::new(x as u16, (y0 + 5) as u16);
+        geometry.hit(view(0, 0, 0), at, &document, &metrics, &LAYOUT_FONT)
+    };
+    // Either half of the glyph gives the edge nearer the click.
+    assert_eq!(click(x0 + 4), Some(0));
+    assert_eq!(click(x0 + 7), Some(3));
+    assert_eq!(click(x0 + 2 * 6 + 1), Some(3));
+}
+
+#[test]
 fn a_click_follows_the_scrolled_view() {
     let document = document(100, 100);
     let (geometry, metrics) = measured(&document, &settings(true, false));
@@ -261,6 +292,7 @@ fn a_click_follows_the_scrolled_view() {
     // Each line folds into two rows: row 3 of the view is line 41's
     // second fold.
     let top = view(40, 0, 0);
-    let hit = geometry.hit(top, Point::new(point.x, point.y + 30), &document, &metrics);
+    let at = Point::new(point.x, point.y + 30);
+    let hit = geometry.hit(top, at, &document, &metrics, &LAYOUT_FONT);
     assert_eq!(hit, Some(41 * 101 + geometry.columns));
 }

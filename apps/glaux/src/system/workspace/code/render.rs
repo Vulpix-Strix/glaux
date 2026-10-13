@@ -4,11 +4,10 @@ use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::system_rom::{SystemIcon, SystemUi};
-use glaux_video::draw::{draw_ink_image, draw_text, fill_rect, pixel};
+use glaux_video::draw::{draw_glyph, draw_ink_image, draw_text, fill_rect, pixel};
 
 use super::layout::{
-    CHEVRON_WIDTH, CLOSE_SIZE, CodeLayout, LABEL_PAD, SETTINGS_MARGIN, StripHit, cells,
-    shorten_start,
+    CHEVRON_WIDTH, CLOSE_SIZE, CodeLayout, LABEL_PAD, SETTINGS_MARGIN, StripHit, shorten_start,
 };
 use super::picker::{FilePicker, LIST_ROWS};
 use super::text_view::{TextGeometry, thumb};
@@ -19,7 +18,7 @@ use crate::system::code_session::{CodeSession, DocumentView};
 use crate::system::code_text::{Spot, TextMetrics, spot, visual_rows};
 use crate::system::editor_settings::EditorSettings;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
-use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
+use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 
 /// Shown right of the path of every document, none being editable yet.
@@ -59,7 +58,7 @@ impl CodeEditor {
                         let metrics = session.tabs().metrics(id);
                         let caret = session.tabs().caret(id).unwrap_or_default();
                         let key = self.geometry(document).metrics_key();
-                        let caret = spot(document, caret.reset(document).byte(), key);
+                        let caret = spot(document, caret.reset(document).byte(), key, font);
                         painter.options_bar(document.language(), document.path().as_str(), &caret);
                         // The caret is hidden while an overlay has the keys.
                         let lit = self.caret_lit() && !self.has_overlay();
@@ -154,7 +153,7 @@ impl Painter<'_> {
     /// The document tabs and the button listing them all.
     fn strip(&mut self, session: &CodeSession, pointer: Option<Point>, menu_open: bool) {
         self.strip_background();
-        let labels = labels(session);
+        let labels = labels(self.font, session);
         if labels.is_empty() {
             return;
         }
@@ -206,7 +205,7 @@ impl Painter<'_> {
         let hidden = labels.len() - tabs.len();
         if hidden > 0 {
             let count = format!("+{hidden}");
-            let x = chevron_x - 2 - cells(&count) * self.cell_w();
+            let x = chevron_x - 2 - self.layout.cells(&count) * self.cell_w();
             self.text(&count, x, more.y + 1, ink);
         }
         self.chevron(chevron_x, more.y + (more.height - 3) / 2, ink);
@@ -246,19 +245,20 @@ impl Painter<'_> {
         let tag_rect = Rect {
             x: 4,
             y: bar.y + 1,
-            width: cells(tag) * self.cell_w() + 4,
+            width: self.layout.cells(tag) * self.cell_w() + 4,
             height: bar.height - 3,
         };
         self.fill(tag_rect, BAR);
         self.text(tag, tag_rect.x + 2, y, PALE);
 
-        let read_only_x =
-            self.layout.settings_button().x - self.cell_w() - cells(READ_ONLY) * self.cell_w();
+        let read_only_x = self.layout.settings_button().x
+            - self.cell_w()
+            - self.layout.cells(READ_ONLY) * self.cell_w();
         let position = format!("Ln {}  Col {}", caret.line + 1, caret.column + 1);
-        let position_x = read_only_x - self.cell_w() - cells(&position) * self.cell_w();
+        let position_x = read_only_x - self.cell_w() - self.layout.cells(&position) * self.cell_w();
         let path_x = tag_rect.right() + self.cell_w();
         let room = (position_x - self.cell_w() - path_x) / self.cell_w().max(1);
-        let path = shorten_start(path, usize::try_from(room).unwrap_or(0));
+        let path = shorten_start(self.font, path, usize::try_from(room).unwrap_or(0));
         self.text(&path, path_x, y, PALE);
         self.text(&position, position_x, y, PALE);
         self.text(READ_ONLY, read_only_x, y, DIM);
@@ -321,12 +321,13 @@ impl Painter<'_> {
             );
         }
         let top_row = if geometry.wrap { view.top_row } else { 0 };
+        let columns = geometry.metrics_key().columns(self.font);
         let rows = visual_rows(
             document,
             view.top_line,
             top_row,
             geometry.wrap_columns(),
-            geometry.tab_size,
+            columns,
         );
         for (index, row) in rows.take(geometry.rows).enumerate() {
             let y = geometry.viewport.y + index as i32 * cell_h;
@@ -341,15 +342,30 @@ impl Painter<'_> {
                 view.left_column
             };
             let end = first + geometry.columns;
-            for cell in row.cells(geometry.tab_size) {
+            // Shaping never changes which cells characters take, so each
+            // glyph lands in its character's cell.
+            let glyphs = self.font.shape(row.text, settings.features());
+            for (cell, glyph) in row.cells(columns).zip(glyphs) {
                 if cell.column >= end {
                     break;
                 }
-                if cell.column < first || cell.is_space() {
+                // Glyphs cut by either edge of the viewport are left out.
+                if cell.column < first || cell.column + cell.width > end {
                     continue;
                 }
-                let x = geometry.viewport.x + (cell.column - first) as i32 * cell_w;
-                self.glyph(cell.ch, x, y, TEXT);
+                // Characters the font lacks show its fallback, dimmed, and so
+                // do control characters other than tabs, so none of them
+                // goes unseen.
+                let own = self.font.glyph_id(cell.ch).is_some();
+                let glyph = match glyph {
+                    Some(glyph) if own => Some((glyph, TEXT)),
+                    _ if cell.ch == '\t' => None,
+                    _ => self.font.fallback().map(|glyph| (glyph, DIM)),
+                };
+                if let Some((glyph, color)) = glyph {
+                    let x = geometry.viewport.x + (cell.column - first) as i32 * cell_w;
+                    draw_glyph(self.framebuffer, self.font, glyph, x, y, color);
+                }
             }
         }
         if let (Some(metrics), Some(caret)) = (metrics, caret)
@@ -402,37 +418,6 @@ impl Painter<'_> {
         }
     }
 
-    /// `ch` in the cell at `(x, y)`, or a hollow box where the font has no
-    /// glyph for it.
-    fn glyph(&mut self, ch: char, x: i32, y: i32, color: u8) {
-        if self.font.glyph(ch).is_some() {
-            let mut bytes = [0; 4];
-            self.text(ch.encode_utf8(&mut bytes), x, y, color);
-            return;
-        }
-        let height = self.font.metrics().glyph_height() as i32 - 2;
-        let width = self.font.metrics().glyph_width() as i32 - 1;
-        self.fill(
-            Rect {
-                x,
-                y: y + 1,
-                width,
-                height,
-            },
-            DIM,
-        );
-        self.fill(
-            Rect {
-                x,
-                y: y + 1,
-                width,
-                height,
-            }
-            .inset(1),
-            BACKGROUND,
-        );
-    }
-
     /// `n` in decimal, its last digit's cell ending at `right`.
     fn number(&mut self, n: usize, right: i32, y: i32, color: u8) {
         let mut digits = [0; 20];
@@ -447,7 +432,12 @@ impl Painter<'_> {
             }
         }
         let text = std::str::from_utf8(&digits[start..]).unwrap_or_default();
-        self.text(text, right - cells(text) * self.cell_w(), y, color);
+        self.text(
+            text,
+            right - self.layout.cells(text) * self.cell_w(),
+            y,
+            color,
+        );
     }
 
     /// What the view shows without an open document.
@@ -461,7 +451,11 @@ impl Painter<'_> {
         if let Some(error) = entry_error {
             y += 2 * self.cell_h();
             self.text("The entry script could not be opened:", x, y, TEXT);
-            for line in wrap(error, self.layout.text_columns().saturating_sub(2)) {
+            for line in wrap(
+                self.font,
+                error,
+                self.layout.text_columns().saturating_sub(2),
+            ) {
                 y += self.cell_h();
                 self.text(&line, x, y, ERROR);
             }
@@ -473,13 +467,13 @@ impl Painter<'_> {
         self.fill(bar, BAR);
         let y = self.bar_text_y(bar.y, bar.height);
         let columns = usize::try_from((bar.width - 8) / self.cell_w().max(1)).unwrap_or(0);
-        let text: String = text.chars().take(columns).collect();
-        self.text(&text, 4, y, color);
+        let text = take_cells(self.font, text, columns);
+        self.text(text, 4, y, color);
     }
 
     /// The list of every open tab, `focus` highlighted.
     fn menu(&mut self, session: &CodeSession, window: Rect, rows: &[(usize, Rect)], focus: usize) {
-        let labels = labels(session);
+        let labels = labels(self.font, session);
         let active = session
             .tabs()
             .active()
@@ -528,7 +522,7 @@ impl Painter<'_> {
             INK,
         );
 
-        let tag_width = cells(OPEN_TAG) * cell_w;
+        let tag_width = self.layout.cells(OPEN_TAG) * cell_w;
         let marker = 2 * cell_w;
         for (row, path) in picker
             .matches()
@@ -544,7 +538,8 @@ impl Painter<'_> {
             if open {
                 // Inverted against the row, so it reads on the light body
                 // and on the highlight alike.
-                fill_rect(self.framebuffer, rect.x + 2, rect.y + 3, 3, 3, ink);
+                let marker_y = rect.y + (rect.height - 3) / 2;
+                fill_rect(self.framebuffer, rect.x + 2, marker_y, 3, 3, ink);
                 let tag = Rect {
                     x: rect.right() - 4 - tag_width,
                     y: rect.y,
@@ -555,7 +550,7 @@ impl Painter<'_> {
                 self.text(OPEN_TAG, tag.x + 2, rect.y + 1, ground);
             }
             let room = (rect.width - marker - tag_width - 4 - cell_w) / cell_w.max(1);
-            let label = shorten_start(path.as_str(), usize::try_from(room).unwrap_or(0));
+            let label = shorten_start(self.font, path.as_str(), usize::try_from(room).unwrap_or(0));
             self.text(&label, rect.x + marker, rect.y + 1, ink);
         }
 
@@ -568,7 +563,8 @@ impl Painter<'_> {
         };
         let columns = usize::try_from(layout.list.width / cell_w.max(1)).unwrap_or(0);
         let mut y = layout.summary_y;
-        let clip = |text: &str| text.chars().take(columns).collect::<String>();
+        let font = self.font;
+        let clip = |text: &str| take_cells(font, text, columns).to_owned();
         self.text(&clip(&summary), layout.text_x, y, INK);
         for line in picker.gap_lines() {
             y += self.cell_h();

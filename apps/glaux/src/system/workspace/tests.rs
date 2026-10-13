@@ -1,4 +1,5 @@
 use super::*;
+use crate::system::test_font::LAYOUT_FONT;
 use pretty_assertions::assert_eq;
 
 fn layout() -> Layout {
@@ -62,19 +63,49 @@ fn every_hint_fits_between_the_tabs_and_the_name() {
     assert!(layout.hint_x() > last.right());
     let name_start = WIDTH as i32 - NAME_PAD - layout.name_cells() as i32 * layout.cell_w;
     for tab in Tab::ALL {
-        let end = layout.hint_x() + text_width(tab.label(), layout.cell_w);
+        let end = layout.hint_x() + text_width(&LAYOUT_FONT, tab.label());
         assert!(end + NAME_GAP <= name_start, "{tab:?}");
     }
 }
 
 #[test]
 fn long_names_are_cut_to_fit_and_tiny_space_hides_them() {
-    assert_eq!(fit_name("Pong", 10).as_deref(), Some("Pong"));
-    assert_eq!(fit_name("Glaux Owl", 9).as_deref(), Some("Glaux Owl"));
+    assert_eq!(fit_name(&LAYOUT_FONT, "Pong", 10).as_deref(), Some("Pong"));
     assert_eq!(
-        fit_name("Glaux Owl Adventure", 9).as_deref(),
+        fit_name(&LAYOUT_FONT, "Glaux Owl", 9).as_deref(),
+        Some("Glaux Owl")
+    );
+    assert_eq!(
+        fit_name(&LAYOUT_FONT, "Glaux Owl Adventure", 9).as_deref(),
         Some("Glaux O..")
     );
-    assert_eq!(fit_name("Glaux Owl Adventure", 5), None);
-    assert_eq!(fit_name("ÁÉÍÓÚáéíóú", 8).as_deref(), Some("ÁÉÍÓÚá.."));
+    assert_eq!(fit_name(&LAYOUT_FONT, "Glaux Owl Adventure", 5), None);
+    assert_eq!(
+        fit_name(&LAYOUT_FONT, "ÁÉÍÓÚáéíóú", 8).as_deref(),
+        Some("ÁÉÍÓÚá..")
+    );
+    // Double-width characters take two of the cells.
+    assert_eq!(
+        fit_name(&LAYOUT_FONT, "✅✅✅✅✅", 8).as_deref(),
+        Some("✅✅✅..")
+    );
+    assert_eq!(
+        fit_name(&LAYOUT_FONT, "a✅✅✅✅", 7).as_deref(),
+        Some("a✅✅..")
+    );
+}
+
+#[test]
+fn text_is_clipped_and_wrapped_by_cells() {
+    assert_eq!(take_cells(&LAYOUT_FONT, "a✅b", 2), "a");
+    assert_eq!(take_cells(&LAYOUT_FONT, "a✅b", 3), "a✅");
+    assert_eq!(take_cells(&LAYOUT_FONT, "a✅b", 9), "a✅b");
+    assert_eq!(
+        wrap(&LAYOUT_FONT, "ok ✅✅ done", 5),
+        ["ok", "✅✅", "done"]
+    );
+    // A word wider than the row is cut on character boundaries, keeping at
+    // least one character per row.
+    assert_eq!(wrap(&LAYOUT_FONT, "✅✅✅", 3), ["✅", "✅", "✅"]);
+    assert_eq!(wrap(&LAYOUT_FONT, "✅", 1), ["✅"]);
 }

@@ -2,6 +2,7 @@
 //! indicators sit, and how far its view can scroll.
 
 use glaux_input::Point;
+use glaux_machine::font::BitmapFont;
 
 use super::layout::CodeLayout;
 use crate::system::code_document::CodeDocument;
@@ -218,13 +219,14 @@ impl TextGeometry {
     /// it, at the character edge closest to it. Points left of the text,
     /// over the gutter, pick the row's first column shown; points below the last row,
     /// the document's end. `None` while `metrics` doesn't describe this
-    /// view.
+    /// view as `font` draws it.
     pub fn hit(
         &self,
         view: DocumentView,
         point: Point,
         document: &CodeDocument,
         metrics: &TextMetrics,
+        font: &BitmapFont,
     ) -> Option<usize> {
         if metrics.key() != self.metrics_key() {
             return None;
@@ -238,23 +240,19 @@ impl TextGeometry {
             return Some(document.text().len());
         }
         let (line, row_in_line) = metrics.position(index);
-        let target = visual_rows(
-            document,
-            line,
-            row_in_line,
-            self.wrap_columns(),
-            self.tab_size,
-        )
-        .next()?;
+        let columns = self.metrics_key().columns(font);
+        let target =
+            visual_rows(document, line, row_in_line, self.wrap_columns(), columns).next()?;
         let first = if self.wrap {
             target.start.column
         } else {
             view.left_column
         };
-        // Rounded to the nearest edge between cells.
+        // Measured in half-cells, so a point either side of a character's
+        // middle picks the nearer edge however many cells it spans.
         let x = i32::from(point.x) - self.viewport.x;
-        let offset = usize::try_from((x + self.cell_w / 2) / self.cell_w).unwrap_or(0);
-        Some(target.byte_near_column(first + offset, self.tab_size))
+        let half = usize::try_from(2 * x / self.cell_w).unwrap_or(0);
+        Some(target.byte_near(2 * first + half, columns))
     }
 
     /// The view whose first row is document row `top`, kept in range.

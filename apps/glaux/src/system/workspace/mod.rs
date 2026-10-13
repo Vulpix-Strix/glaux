@@ -313,7 +313,7 @@ impl Layout {
     fn name_cells(self) -> usize {
         let longest = Tab::ALL
             .iter()
-            .map(|tab| text_width(tab.label(), self.cell_w))
+            .map(|tab| i32::try_from(tab.label().chars().count()).unwrap_or(0) * self.cell_w)
             .max()
             .unwrap_or(0);
         let start = self.hint_x() + longest + NAME_GAP;
@@ -322,44 +322,65 @@ impl Layout {
     }
 }
 
-fn text_width(text: &str, cell_w: i32) -> i32 {
-    i32::try_from(text.chars().count()).unwrap_or(i32::MAX) * cell_w
+/// Width in pixels of `text` drawn on one line with `font`.
+fn text_width(font: &BitmapFont, text: &str) -> i32 {
+    let cells = i32::try_from(font.text_cells(text)).unwrap_or(i32::MAX);
+    cells.saturating_mul(i32::from(font.metrics().cell_width()))
 }
 
-/// `name` as it fits in `cells` character cells: whole, cut short with
+/// The longest start of `text` that takes at most `cells` of `font`'s
+/// cells.
+pub(crate) fn take_cells<'a>(font: &BitmapFont, text: &'a str, cells: usize) -> &'a str {
+    let mut used = 0;
+    for (at, ch) in text.char_indices() {
+        used += font.cells(ch);
+        if used > cells {
+            return &text[..at];
+        }
+    }
+    text
+}
+
+/// `name` as it fits in `cells` of `font`'s cells: whole, cut short with
 /// [`ELLIPSIS`], or `None` when too little of it would show.
-fn fit_name(name: &str, cells: usize) -> Option<String> {
-    let len = name.chars().count();
-    if len <= cells {
+fn fit_name(font: &BitmapFont, name: &str, cells: usize) -> Option<String> {
+    if font.text_cells(name) <= cells {
         return Some(name.to_owned());
     }
-    let kept = cells.checked_sub(ELLIPSIS.len())?;
-    (kept >= MIN_NAME_CELLS).then(|| name.chars().take(kept).chain(ELLIPSIS.chars()).collect())
+    let room = cells.checked_sub(font.text_cells(ELLIPSIS))?;
+    let kept = take_cells(font, name, room);
+    (font.text_cells(kept) >= MIN_NAME_CELLS).then(|| format!("{kept}{ELLIPSIS}"))
 }
 
-/// `text` broken into lines of at most `columns` characters, at spaces
-/// where possible.
-fn wrap(text: &str, columns: usize) -> Vec<String> {
+/// `text` broken into lines of at most `columns` of `font`'s cells, at
+/// spaces where possible.
+fn wrap(font: &BitmapFont, text: &str, columns: usize) -> Vec<String> {
     let columns = columns.max(1);
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        let mut word: Vec<char> = word.chars().collect();
-        while word.len() > columns {
+        let mut word = word;
+        while font.text_cells(word) > columns {
             if !line.is_empty() {
                 lines.push(std::mem::take(&mut line));
             }
-            lines.push(word.drain(..columns).collect());
+            // A row always takes at least one character, even one wider
+            // than the row.
+            let head = match take_cells(font, word, columns) {
+                "" => word.chars().next().map_or("", |ch| &word[..ch.len_utf8()]),
+                head => head,
+            };
+            lines.push(head.to_owned());
+            word = &word[head.len()..];
         }
-        let word: String = word.into_iter().collect();
-        let len = line.chars().count();
-        if len > 0 && len + 1 + word.chars().count() > columns {
+        let len = font.text_cells(&line);
+        if len > 0 && len + 1 + font.text_cells(word) > columns {
             lines.push(std::mem::take(&mut line));
         }
         if !line.is_empty() {
             line.push(' ');
         }
-        line.push_str(&word);
+        line.push_str(word);
     }
     if !line.is_empty() {
         lines.push(line);
@@ -480,6 +501,8 @@ impl WorkspaceVideo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Workspace {
     layout: Layout,
+    /// The system font, which measures the text the views lay out.
+    font: BitmapFont,
     tab: Tab,
     code: CodeEditor,
     sprites: SpriteEditor,
@@ -492,12 +515,13 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// A workspace on the Code tab, laid out for a font with `metrics`
-    /// and drawn in `system_palette`.
-    pub fn new(metrics: FontMetrics, system_palette: Palette) -> Self {
-        let layout = Layout::new(metrics);
+    /// A workspace on the Code tab, laid out for `font` and drawn in
+    /// `system_palette`.
+    pub fn new(font: &BitmapFont, system_palette: Palette) -> Self {
+        let layout = Layout::new(font.metrics());
         Self {
             layout,
+            font: font.clone(),
             tab: Tab::default(),
             code: CodeEditor::new(
                 code::Metrics {
@@ -505,6 +529,7 @@ impl Workspace {
                     cell_h: layout.cell_h,
                     top: layout.bar_height(),
                 },
+                font.clone(),
                 EditorSettings::default(),
             ),
             sprites: SpriteEditor::new(sprites::Metrics {
@@ -599,6 +624,7 @@ impl Workspace {
     ) -> Option<WorkspaceRequest> {
         if let Some(modal) = &mut self.modal {
             let layout = modal.dialog.layout(
+                &self.font,
                 self.layout.view_area(),
                 self.layout.cell_w,
                 self.layout.cell_h,
@@ -1006,8 +1032,8 @@ impl Workspace {
         );
 
         let name = &cartridge.manifest().cartridge.name;
-        if let Some(name) = fit_name(name, layout.name_cells()) {
-            let x = WIDTH as i32 - NAME_PAD - text_width(&name, layout.cell_w);
+        if let Some(name) = fit_name(font, name, layout.name_cells()) {
+            let x = WIDTH as i32 - NAME_PAD - text_width(font, &name);
             draw_text(framebuffer, font, &name, x, layout.text_y(), PALE);
         }
 
@@ -1028,7 +1054,7 @@ impl Workspace {
             let dialog_layout =
                 modal
                     .dialog
-                    .layout(layout.view_area(), layout.cell_w, layout.cell_h);
+                    .layout(font, layout.view_area(), layout.cell_w, layout.cell_h);
             modal.dialog.render(framebuffer, font, &dialog_layout);
         }
     }

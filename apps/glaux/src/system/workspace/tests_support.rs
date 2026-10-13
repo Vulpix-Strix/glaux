@@ -26,7 +26,12 @@ pub fn modal(workspace: &Workspace) -> Option<(&str, Vec<&str>)> {
 pub fn modal_layout(workspace: &Workspace) -> Option<dialog::DialogLayout> {
     let layout = workspace.layout;
     let dialog = &workspace.modal.as_ref()?.dialog;
-    Some(dialog.layout(layout.view_area(), layout.cell_w, layout.cell_h))
+    Some(dialog.layout(
+        &workspace.font,
+        layout.view_area(),
+        layout.cell_w,
+        layout.cell_h,
+    ))
 }
 
 /// The status bar notice, if one is showing.

@@ -6,7 +6,10 @@ mod history;
 mod parser;
 mod scrollback;
 
+use std::ops::Range;
+
 use glaux_input::InputEvent;
+use glaux_machine::font::BitmapFont;
 use glaux_machine::psg::{Adsr, CHANNELS, Waveform};
 use glaux_script::{LogEntry, LogLevel};
 
@@ -391,16 +394,22 @@ impl Shell {
         self.editor.replace(token, &replacement);
     }
 
-    /// Shell screen text for a `columns` × `rows` cell area.
+    /// Shell screen text for a `columns` × `rows` cell area, measured in
+    /// `font`'s cells.
     ///
     /// Scrollback entries and the command line are soft-wrapped to
     /// `columns`. When they need more than `rows` rows, the oldest rows are
     /// dropped so the command line stays on the last rows.
-    pub(super) fn lines(&self, columns: usize, rows: usize) -> Vec<Line> {
+    pub(super) fn lines(&self, font: &BitmapFont, columns: usize, rows: usize) -> Vec<Line> {
         let columns = columns.max(1);
         let rows = rows.max(1);
         let prompt: Vec<char> = PROMPT.chars().collect();
-        let editor_rows = (prompt.len() + self.editor.chars().len()) / columns + 1;
+        let mut command = prompt.clone();
+        command.extend_from_slice(self.editor.chars());
+        let flow = Flow::new(&command, columns, font);
+        // The cursor may sit past the last character, so the command line
+        // always keeps a row for it.
+        let editor_rows = flow.end / columns + 1;
 
         // Only the newest entries that can still reach the screen are laid
         // out; the scrollback may hold far more than fits.
@@ -410,60 +419,40 @@ impl Shell {
             if used >= rows {
                 break;
             }
-            used += entry_rows(entry, columns);
-            visible.push(entry);
+            let shown = EntryText::new(entry, &prompt);
+            let flow = Flow::new(&shown.chars, columns, font);
+            used += flow.rows();
+            visible.push((shown, flow));
         }
 
         // Negative when the content overflows: those rows are cut below.
         let mut row = -(used.saturating_sub(rows) as i32);
         let mut lines = Vec::new();
-        for entry in visible.into_iter().rev() {
-            let (text, color, prompted) = match entry {
-                Entry::Banner(text) => (text, ACCENT, false),
-                Entry::Command(text) => (text, TEXT, true),
-                Entry::Output(text) => (text, TEXT, false),
-                Entry::Error(text) => (text, ERROR, false),
-                Entry::Warning(text) => (text, WARN, false),
-                Entry::Log(level, text) => (text, log_color(*level), false),
-            };
-            let text: Vec<char> = text.chars().collect();
-            let start = if prompted {
-                lines.extend(wrapped(0, &prompt, columns, row, TEXT, None));
-                prompt.len()
-            } else {
-                0
-            };
-            lines.extend(wrapped(start, &text, columns, row, color, None));
-            row += entry_rows(entry, columns) as i32;
+        for (shown, entry_flow) in visible.into_iter().rev() {
+            let (chars, prompted) = (&shown.chars, shown.prompted);
+            lines.extend(entry_flow.lines(chars, 0..prompted, row, TEXT, None));
+            lines.extend(entry_flow.lines(chars, prompted..chars.len(), row, shown.color, None));
+            row += entry_flow.rows() as i32;
         }
-        lines.extend(self.editor_lines(&prompt, columns, row));
+        lines.extend(self.editor_lines(&command, &flow, prompt.len(), row));
         lines.retain(|line| line.row >= 0);
         lines
     }
 
-    /// The prompt and command line, starting at `row`.
-    fn editor_lines(&self, prompt: &[char], columns: usize, row: i32) -> Vec<Line> {
-        let mut lines = wrapped(0, prompt, columns, row, TEXT, None);
+    /// The prompt and command line, `command` laid out as `flow` with the
+    /// editor's text after `prompt` characters, starting at `row`.
+    fn editor_lines(&self, command: &[char], flow: &Flow, prompt: usize, row: i32) -> Vec<Line> {
+        let mut lines = flow.lines(command, 0..prompt, row, TEXT, None);
 
-        // `draw_text` advances one cell per char, so a char index is also a
-        // cell offset from the end of the prompt.
-        let text_start = prompt.len();
-        let chars = self.editor.chars();
         let selection = self.editor.selection().unwrap_or(0..0);
         let segments = [
             (0..selection.start, TEXT, None),
             (selection.clone(), BACKGROUND, Some(TEXT)),
-            (selection.end..chars.len(), TEXT, None),
+            (selection.end..self.editor.chars().len(), TEXT, None),
         ];
         for (range, color, background) in segments {
-            lines.extend(wrapped(
-                text_start + range.start,
-                &chars[range],
-                columns,
-                row,
-                color,
-                background,
-            ));
+            let range = prompt + range.start..prompt + range.end;
+            lines.extend(flow.lines(command, range, row, color, background));
         }
 
         // The cursor is a filled cell drawn last, so it covers whatever is
@@ -472,18 +461,138 @@ impl Shell {
         // of a full row it wraps to the start of the next one, where the next
         // character will go.
         if (self.blink / BLINK_TICKS).is_multiple_of(2) {
-            let cursor = self.editor.cursor();
-            let under = [chars.get(cursor).copied().unwrap_or(' ')];
-            lines.extend(wrapped(
-                text_start + cursor,
-                &under,
-                columns,
-                row,
-                BACKGROUND,
-                Some(TEXT),
-            ));
+            let cursor = prompt + self.editor.cursor();
+            let (under, at) = match command.get(cursor) {
+                Some(&ch) => (ch, flow.starts[cursor]),
+                None => (' ', flow.end),
+            };
+            let (col, below) = (at % flow.columns, at / flow.columns);
+            lines.push(
+                Line::new(
+                    col as i32,
+                    row + below as i32,
+                    under.to_string(),
+                    BACKGROUND,
+                )
+                .with_background(TEXT),
+            );
         }
         lines
+    }
+}
+
+/// What an entry shows: its text, after the prompt for a command.
+struct EntryText {
+    chars: Vec<char>,
+    /// Leading characters that are the prompt.
+    prompted: usize,
+    color: u8,
+}
+
+impl EntryText {
+    fn new(entry: &Entry, prompt: &[char]) -> Self {
+        let (text, color, prompted) = match entry {
+            Entry::Banner(text) => (text, ACCENT, false),
+            Entry::Command(text) => (text, TEXT, true),
+            Entry::Output(text) => (text, TEXT, false),
+            Entry::Error(text) => (text, ERROR, false),
+            Entry::Warning(text) => (text, WARN, false),
+            Entry::Log(level, text) => (text, log_color(*level), false),
+        };
+        let prompted = if prompted { prompt.len() } else { 0 };
+        let chars = prompt[..prompted]
+            .iter()
+            .copied()
+            .chain(text.chars())
+            .collect();
+        Self {
+            chars,
+            prompted,
+            color,
+        }
+    }
+}
+
+/// Where each character of a block of text sits once wrapped to `columns`
+/// cells, counted in cells from the block's start. Characters take the
+/// cells `font` gives them, and a double-width one that would straddle the
+/// end of a row moves to the start of the next.
+struct Flow {
+    columns: usize,
+    starts: Vec<usize>,
+    /// The cell after the last character.
+    end: usize,
+}
+
+impl Flow {
+    fn new(text: &[char], columns: usize, font: &BitmapFont) -> Self {
+        let mut starts = Vec::with_capacity(text.len());
+        let mut pos = 0;
+        for &ch in text {
+            let width = font.cells(ch).min(columns);
+            if pos % columns + width > columns {
+                pos = pos.next_multiple_of(columns);
+            }
+            starts.push(pos);
+            pos += width;
+        }
+        Self {
+            columns,
+            starts,
+            end: pos,
+        }
+    }
+
+    /// Rows the block takes, at least one.
+    fn rows(&self) -> usize {
+        self.end.div_ceil(self.columns).max(1)
+    }
+
+    /// The characters of `text` in `range`, one [`Line`] per row they
+    /// reach, for a block whose first row is `top`.
+    fn lines(
+        &self,
+        text: &[char],
+        range: Range<usize>,
+        top: i32,
+        color: u8,
+        background: Option<u8>,
+    ) -> Vec<Line> {
+        let mut lines: Vec<Line> = Vec::new();
+        let mut current: Option<(usize, usize, String)> = None;
+        for index in range {
+            let (row, col) = (
+                self.starts[index] / self.columns,
+                self.starts[index] % self.columns,
+            );
+            match &mut current {
+                Some((r, _, line)) if *r == row => line.push(text[index]),
+                _ => {
+                    lines.extend(
+                        current
+                            .take()
+                            .map(|line| make_line(line, top, color, background)),
+                    );
+                    current = Some((row, col, text[index].to_string()));
+                }
+            }
+        }
+        lines.extend(current.map(|line| make_line(line, top, color, background)));
+        lines
+    }
+}
+
+/// The text of one row of a block whose first row is `top`.
+fn make_line(
+    (row, col, text): (usize, usize, String),
+    top: i32,
+    color: u8,
+    background: Option<u8>,
+) -> Line {
+    let line = Line::new(col as i32, top + row as i32, text, color);
+    match background {
+        Some(background) => line.with_background(background),
+        None => line,
     }
 }
 
@@ -518,48 +627,6 @@ fn log_lines(text: &str) -> impl Iterator<Item = String> + '_ {
         }
         expanded
     })
-}
-
-/// Rows `entry` takes when wrapped to `columns`; an empty entry still takes
-/// one.
-fn entry_rows(entry: &Entry, columns: usize) -> usize {
-    let cells = match entry {
-        Entry::Command(text) => PROMPT.chars().count() + text.chars().count(),
-        Entry::Banner(text)
-        | Entry::Output(text)
-        | Entry::Error(text)
-        | Entry::Warning(text)
-        | Entry::Log(_, text) => text.chars().count(),
-    };
-    cells.div_ceil(columns).max(1)
-}
-
-/// Lays out `text` starting `start` cells into a block whose first row is
-/// `top`, splitting it into one [`Line`] per row of `columns` cells.
-fn wrapped(
-    start: usize,
-    text: &[char],
-    columns: usize,
-    top: i32,
-    color: u8,
-    background: Option<u8>,
-) -> Vec<Line> {
-    let mut lines = Vec::new();
-    let mut pos = start;
-    let mut rest = text;
-    while !rest.is_empty() {
-        let col = pos % columns;
-        let (row_text, tail) = rest.split_at(rest.len().min(columns - col));
-        let row = top + (pos / columns) as i32;
-        let mut line = Line::new(col as i32, row, row_text.iter().collect::<String>(), color);
-        if let Some(background) = background {
-            line = line.with_background(background);
-        }
-        lines.push(line);
-        pos += row_text.len();
-        rest = tail;
-    }
-    lines
 }
 
 #[cfg(test)]

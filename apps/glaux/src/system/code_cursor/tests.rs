@@ -2,6 +2,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::system::code_text::MetricsKey;
+use crate::system::test_font::LAYOUT_FONT;
 use pretty_assertions::assert_eq;
 
 fn doc(text: &str) -> CodeDocument {
@@ -31,6 +32,7 @@ fn measure(document: &CodeDocument, wrap_columns: Option<usize>) -> TextMetrics 
             tab_size: 4,
             wrap_columns,
         },
+        &LAYOUT_FONT,
     )
 }
 
@@ -123,8 +125,8 @@ fn document_ends_hold_for_empty_and_mark_only_files() {
         caret.word_left(&empty),
         caret.word_right(&empty),
         caret.home(&empty),
-        caret.vertical(&empty, 1, &metrics),
-        caret.vertical(&empty, -1, &metrics),
+        caret.vertical(&empty, 1, &metrics, &LAYOUT_FONT),
+        caret.vertical(&empty, -1, &metrics, &LAYOUT_FONT),
     ] {
         assert_eq!(moved.byte(), 0);
     }
@@ -134,8 +136,8 @@ fn document_ends_hold_for_empty_and_mark_only_files() {
 fn vertical_moves_keep_the_column_through_shorter_lines() {
     let document = doc("long line here\nab\nanother long");
     let metrics = measure(&document, None);
-    let down = |caret: Caret| caret.vertical(&document, 1, &metrics);
-    let up = |caret: Caret| caret.vertical(&document, -1, &metrics);
+    let down = |caret: Caret| caret.vertical(&document, 1, &metrics, &LAYOUT_FONT);
+    let up = |caret: Caret| caret.vertical(&document, -1, &metrics, &LAYOUT_FONT);
     let start = Caret::at(&document, 10);
     let moved = [down(start), down(down(start)), up(down(down(start)))];
     assert_eq!(moved.map(|caret| caret.byte()), [17, 28, 17]);
@@ -149,8 +151,23 @@ fn vertical_moves_keep_the_column_through_shorter_lines() {
 fn vertical_moves_count_columns_not_bytes() {
     let document = doc("日本語\nabc");
     let metrics = measure(&document, None);
-    let caret = Caret::at(&document, 12).vertical(&document, -1, &metrics);
+    let caret = Caret::at(&document, 12).vertical(&document, -1, &metrics, &LAYOUT_FONT);
     assert_eq!(caret.byte(), 6);
+}
+
+#[test]
+fn vertical_moves_cross_double_width_characters_by_their_columns() {
+    // In the test font "✅" takes two columns and three bytes.
+    let document = doc("abcd\n✅✅\nabcd");
+    let metrics = measure(&document, None);
+    let down = |caret: Caret| caret.vertical(&document, 1, &metrics, &LAYOUT_FONT);
+    // Column 1 is the right half of the first "✅": its nearer edge is the
+    // start of the second. Column 3 is the right half of the second, so the
+    // line's end; the next line still gets column 3.
+    assert_eq!(down(Caret::at(&document, 1)).byte(), 8);
+    let middle = down(Caret::at(&document, 3));
+    assert_eq!(middle.byte(), 11);
+    assert_eq!(down(middle).byte(), 15);
 }
 
 #[test]
@@ -159,7 +176,7 @@ fn a_tab_gives_way_to_its_nearer_edge() {
     let metrics = measure(&document, None);
     let up_from = |byte| {
         Caret::at(&document, byte)
-            .vertical(&document, -1, &metrics)
+            .vertical(&document, -1, &metrics, &LAYOUT_FONT)
             .byte()
     };
     // The tab spans columns 0 to 4: column 1 is nearer its start, 3 its end.
@@ -172,18 +189,24 @@ fn moving_past_the_first_or_last_row_reaches_the_document_ends() {
     let document = doc("abc\ndef\nghi");
     let metrics = measure(&document, None);
     let caret = Caret::at(&document, 5);
-    assert_eq!(caret.vertical(&document, -1, &metrics).byte(), 1);
+    assert_eq!(
+        caret.vertical(&document, -1, &metrics, &LAYOUT_FONT).byte(),
+        1
+    );
     assert_eq!(
         caret
-            .vertical(&document, -1, &metrics)
-            .vertical(&document, -1, &metrics)
+            .vertical(&document, -1, &metrics, &LAYOUT_FONT)
+            .vertical(&document, -1, &metrics, &LAYOUT_FONT)
             .byte(),
         0
     );
     // A page down stops on the last row first, then reaches the end.
-    let paged = caret.vertical(&document, 10, &metrics);
+    let paged = caret.vertical(&document, 10, &metrics, &LAYOUT_FONT);
     assert_eq!(paged.byte(), 9);
-    assert_eq!(paged.vertical(&document, 10, &metrics).byte(), 11);
+    assert_eq!(
+        paged.vertical(&document, 10, &metrics, &LAYOUT_FONT).byte(),
+        11
+    );
 }
 
 #[test]
@@ -192,8 +215,12 @@ fn vertical_moves_step_through_the_folds_of_a_wrapped_line() {
     let document = doc("aaaa bbbb cccc");
     let metrics = measure(&document, Some(5));
     assert_eq!(
-        walk(&document, 2, 3, |caret| caret
-            .vertical(&document, 1, &metrics)),
+        walk(&document, 2, 3, |caret| caret.vertical(
+            &document,
+            1,
+            &metrics,
+            &LAYOUT_FONT
+        )),
         [7, 12, 14]
     );
     // Folded at 5 columns: "ab ", "cdefg", "h", then "xyzw". Past the end
@@ -201,7 +228,12 @@ fn vertical_moves_step_through_the_folds_of_a_wrapped_line() {
     let long = doc("ab cdefgh\nxyzw");
     let metrics = measure(&long, Some(5));
     assert_eq!(
-        walk(&long, 14, 3, |caret| caret.vertical(&long, -1, &metrics)),
+        walk(&long, 14, 3, |caret| caret.vertical(
+            &long,
+            -1,
+            &metrics,
+            &LAYOUT_FONT
+        )),
         [9, 7, 2]
     );
 }
@@ -234,10 +266,10 @@ proptest! {
                 3 => caret.word_right(&document),
                 4 => caret.home(&document),
                 5 => caret.end(&document),
-                6 => caret.vertical(&document, 1, &metrics),
-                7 => caret.vertical(&document, -1, &metrics),
-                8 => caret.vertical(&document, 3, &metrics),
-                _ => caret.vertical(&document, -3, &metrics),
+                6 => caret.vertical(&document, 1, &metrics, &LAYOUT_FONT),
+                7 => caret.vertical(&document, -1, &metrics, &LAYOUT_FONT),
+                8 => caret.vertical(&document, 3, &metrics, &LAYOUT_FONT),
+                _ => caret.vertical(&document, -3, &metrics, &LAYOUT_FONT),
             };
             let byte = caret.byte();
             let range = document.line_range(document.line_of(byte)).unwrap();

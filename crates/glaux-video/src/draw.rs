@@ -3,7 +3,7 @@
 //! All primitives clip to the framebuffer: anything that falls outside it is
 //! silently dropped.
 
-use glaux_machine::font::BitmapFont;
+use glaux_machine::font::{BitmapFont, GlyphId};
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::ink_image::{INK_SLOTS, InkImage};
 use glaux_machine::obj_palette::ObjBank;
@@ -233,10 +233,13 @@ pub fn fill_rect(
 ///
 /// - Only set glyph bits are written; the rest of each cell keeps whatever
 ///   was already in the framebuffer.
-/// - Each character advances the pen by the font's `cell_width`.
+/// - Each character advances the pen by the cells it takes in `font`
+///   ([`BitmapFont::cells`]), so a double-width glyph takes two.
 /// - `'\n'` returns the pen to `x` and moves it down by `cell_height`.
-/// - Any other character without a glyph in `font` (including `'\r'`,
-///   `'\t'` and non-ASCII) leaves its cell empty but still advances the pen.
+/// - Characters without a glyph of their own draw the font's fallback
+///   glyph; other control characters, such as `'\r'` and `'\t'`, leave
+///   their cell empty but still advance the pen.
+/// - No substitutions apply: every character draws its own glyph.
 pub fn draw_text(
     framebuffer: &mut Framebuffer,
     font: &BitmapFont,
@@ -265,7 +268,6 @@ pub fn draw_text_scaled(
         return;
     }
     let metrics = font.metrics();
-    let (glyph_width, glyph_height) = (metrics.glyph_width(), metrics.glyph_height());
     let scale64 = i64::from(scale);
 
     // The pen is tracked in i64 so that advancing it near i32::MAX cannot
@@ -278,29 +280,67 @@ pub fn draw_text_scaled(
             pen_y += i64::from(metrics.cell_height()) * scale64;
             continue;
         }
+        if let Some(glyph) = font.resolve(ch) {
+            blit_glyph(framebuffer, font, glyph, pen_x, pen_y, scale, color);
+        }
+        pen_x += font.cells(ch) as i64 * i64::from(metrics.cell_width()) * scale64;
+    }
+}
 
-        if let Some(glyph) = font.glyph(ch)
-            && glyph_visible(pen_x, pen_y, glyph_width, glyph_height, scale64)
-        {
-            for gy in 0..glyph_height {
-                for gx in 0..glyph_width {
-                    if !glyph.is_set(usize::from(gx), usize::from(gy)) {
-                        continue;
-                    }
-                    let px = i32::try_from(pen_x + i64::from(gx) * scale64);
-                    let py = i32::try_from(pen_y + i64::from(gy) * scale64);
-                    if let (Ok(px), Ok(py)) = (px, py) {
-                        if scale == 1 {
-                            framebuffer.set_pixel(px, py, color);
-                        } else {
-                            fill_rect(framebuffer, px, py, scale, scale, color);
-                        }
-                    }
+/// Draws `glyph` of `font` with the top-left corner of its first cell at
+/// `(x, y)`, writing only its set bits. Parts outside the framebuffer are
+/// clipped, and glyphs `font` doesn't have draw nothing.
+pub fn draw_glyph(
+    framebuffer: &mut Framebuffer,
+    font: &BitmapFont,
+    glyph: GlyphId,
+    x: i32,
+    y: i32,
+    color: u8,
+) {
+    blit_glyph(
+        framebuffer,
+        font,
+        glyph,
+        i64::from(x),
+        i64::from(y),
+        1,
+        color,
+    );
+}
+
+fn blit_glyph(
+    framebuffer: &mut Framebuffer,
+    font: &BitmapFont,
+    glyph: GlyphId,
+    pen_x: i64,
+    pen_y: i64,
+    scale: i32,
+    color: u8,
+) {
+    let Some(glyph) = font.glyph(glyph) else {
+        return;
+    };
+    let (width, height) = (glyph.width(), font.metrics().cell_height());
+    let scale64 = i64::from(scale);
+    if !glyph_visible(pen_x, pen_y, width, height, scale64) {
+        return;
+    }
+    for gy in 0..height {
+        for gx in 0..width {
+            if !glyph.is_set(usize::from(gx), usize::from(gy)) {
+                continue;
+            }
+            let px = i32::try_from(pen_x + i64::from(gx) * scale64);
+            let py = i32::try_from(pen_y + i64::from(gy) * scale64);
+            if let (Ok(px), Ok(py)) = (px, py) {
+                if scale == 1 {
+                    framebuffer.set_pixel(px, py, color);
+                } else {
+                    fill_rect(framebuffer, px, py, scale, scale, color);
                 }
             }
         }
-
-        pen_x += i64::from(metrics.cell_width()) * scale64;
     }
 }
 

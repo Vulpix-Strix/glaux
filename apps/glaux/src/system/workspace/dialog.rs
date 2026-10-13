@@ -153,9 +153,9 @@ impl<A: Copy> Dialog<A> {
         None
     }
 
-    /// Lays the dialog out centred in `area` for a font whose character
+    /// Lays the dialog out centred in `area` for `font`, whose character
     /// cells are `cell_w` by `cell_h` pixels.
-    pub fn layout(&self, area: Rect, cell_w: i32, cell_h: i32) -> DialogLayout {
+    pub fn layout(&self, font: &BitmapFont, area: Rect, cell_w: i32, cell_h: i32) -> DialogLayout {
         let cell_w = cell_w.max(1);
         let room = (area.width - 2 * AREA_MARGIN - 2 * PAD - 2 - SHADOW_OFFSET) / cell_w;
         let columns = room.clamp(1, MAX_COLUMNS);
@@ -165,7 +165,7 @@ impl<A: Copy> Dialog<A> {
             if index > 0 {
                 wrapped.push(String::new());
             }
-            wrapped.extend(wrap(paragraph, columns as usize));
+            wrapped.extend(wrap(font, paragraph, columns as usize));
         }
         let title_cells = text_cells(&self.title);
         let label_cells = self
@@ -178,7 +178,7 @@ impl<A: Copy> Dialog<A> {
         let button_height = cell_h + 4;
         let widest = wrapped
             .iter()
-            .map(|line| text_cells(line) * cell_w)
+            .map(|line| i32::try_from(font.text_cells(line)).unwrap_or(i32::MAX) * cell_w)
             .chain([title_cells * cell_w, BUTTON_INDENT * cell_w + button_width])
             .max()
             .unwrap_or(0);

@@ -59,7 +59,7 @@ fn a_rom_without_sounds_boots_silent() {
         SystemSounds::default(),
         video_defaults(),
         cartridges(),
-        fake_rom().font().metrics(),
+        fake_rom().font(),
         fake_rom().palette().clone(),
     );
     let (_, ticks) = boot_audio(system, &mut Psg::new());
@@ -93,7 +93,7 @@ fn a_chime_cut_off_by_the_shell_leaves_nothing_behind() {
         audio_source: AudioSource::Silent,
         sound,
         video_defaults: video_defaults(),
-        workspace: Workspace::new(fake_rom().font().metrics(), fake_rom().palette().clone()),
+        workspace: Workspace::new(fake_rom().font(), fake_rom().palette().clone()),
         sprites: None,
         code: None,
         host_requests: Default::default(),

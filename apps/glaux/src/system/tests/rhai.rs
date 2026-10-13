@@ -26,7 +26,7 @@ fn shell_with_cartridge_root(fixture: &Fixture) -> System {
         sounds(),
         video_defaults(),
         fixture.storage(),
-        fake_rom().font().metrics(),
+        fake_rom().font(),
         fake_rom().palette().clone(),
     );
     while matches!(system.state(), SystemState::Boot { .. }) {

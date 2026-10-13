@@ -60,11 +60,25 @@ fn frame_from(pixel: impl Fn(i32, i32) -> u8) -> Framebuffer {
 
 const INK: u8 = 7;
 
-/// 3×3 glyphs in 4×5 cells. `'?'` is deliberately missing.
+/// 3×3 glyphs in the top-left of 4×5 cells, and a `'='` two cells wide
+/// whose 7×1 bar leaves the last column blank. `'?'` is deliberately
+/// missing and the font has no fallback.
 fn tiny_font() -> BitmapFont {
-    let mut font = BitmapFont::new(FontMetrics::new(3, 3, 4, 5).unwrap());
-    font.insert('x', &[0b101, 0b010, 0b101]).unwrap();
-    font.insert('#', &[0b111, 0b111, 0b111]).unwrap();
+    let mut font = BitmapFont::new(FontMetrics::new(4, 5).unwrap());
+    font.insert('x', 1, &[0b1010, 0b0100, 0b1010, 0, 0])
+        .unwrap();
+    font.insert('#', 1, &[0b1110, 0b1110, 0b1110, 0, 0])
+        .unwrap();
+    font.insert('=', 2, &[0b1111_1110, 0, 0, 0, 0]).unwrap();
+    font
+}
+
+/// [`tiny_font`] drawing a single pixel at the top-left of the cell for
+/// characters it lacks.
+fn tiny_font_with_fallback() -> BitmapFont {
+    let mut font = tiny_font();
+    let dot = font.add_glyph(1, &[0b1000, 0, 0, 0, 0]).unwrap();
+    font.set_fallback(dot).unwrap();
     font
 }
 
@@ -832,6 +846,32 @@ fn missing_glyph_leaves_cell_empty_but_advances() {
 }
 
 #[test]
+fn missing_glyphs_draw_the_fallback_but_control_characters_stay_empty() {
+    let mut fb = Framebuffer::new();
+    draw_text(&mut fb, &tiny_font_with_fallback(), "?\té𝔸#", 10, 20, INK);
+    let fallbacks = [(10, 20), (18, 20), (22, 20)];
+    assert_frame_eq!(fb, with_ink(fallbacks.into_iter().chain(block(26, 20))));
+}
+
+#[test]
+fn double_width_glyphs_span_and_advance_two_cells() {
+    let bar = (10..17).map(|x| (x, 20));
+    assert_frame_eq!(render("=#", 10, 20), with_ink(bar.chain(block(18, 20))));
+}
+
+#[test]
+fn single_glyphs_draw_by_id_at_any_position() {
+    let font = tiny_font();
+    let mut fb = Framebuffer::new();
+    draw_glyph(&mut fb, &font, font.glyph_id('#').unwrap(), -1, 238, INK);
+    draw_glyph(&mut fb, &font, font.glyph_id('=').unwrap(), 315, 0, INK);
+    let expected = [(0, 238), (1, 238), (0, 239), (1, 239)]
+        .into_iter()
+        .chain((315..320).map(|x| (x, 0)));
+    assert_frame_eq!(fb, with_ink(expected));
+}
+
+#[test]
 fn clips_left_and_top() {
     assert_frame_eq!(render("#", -2, -2), with_ink([(0, 0)]));
 }
@@ -876,8 +916,8 @@ fn keeps_background_outside_set_bits() {
 #[test]
 fn uses_font_metrics() {
     // 2×2 glyphs in 3×2 cells: no vertical spacing row.
-    let mut font = BitmapFont::new(FontMetrics::new(2, 2, 3, 2).unwrap());
-    font.insert('o', &[0b11, 0b11]).unwrap();
+    let mut font = BitmapFont::new(FontMetrics::new(3, 2).unwrap());
+    font.insert('o', 1, &[0b110, 0b110]).unwrap();
 
     let mut fb = Framebuffer::new();
     draw_text(&mut fb, &font, "oo\no", 0, 0, INK);

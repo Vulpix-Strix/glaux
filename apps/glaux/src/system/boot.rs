@@ -56,6 +56,8 @@ const BAND_COLOR: u8 = 15;
 const LOGO_SCALE: i32 = 5;
 const GENERATION_SCALE: i32 = 2;
 const LOGO_TOP: i32 = 70;
+/// Unscaled space between the inked rows of the identity screen.
+const IDENTITY_ROW_GAP: i32 = 6;
 
 const OBJ_DETAIL: &str = "128 ENTRIES";
 const AUDIO_DETAIL: &str = "4CH PSG";
@@ -223,8 +225,6 @@ pub(super) fn render_intro(
         }
         IntroView::Glow(color) => clear(framebuffer, color),
         IntroView::Identity { step } => {
-            let metrics = font.metrics();
-            let line_height = i32::from(metrics.glyph_height());
             let mut y = LOGO_TOP;
             let rows = [
                 (NAME.to_owned(), LOGO_SCALE, LOGO_RAMP[step]),
@@ -235,27 +235,72 @@ pub(super) fn render_intro(
                 ),
                 (format!("SYSTEM ROM {version}"), 1, SUBTITLE_RAMP[step]),
             ];
+            // Rows are placed by their ink rather than their cells, so the
+            // identity looks the same whatever spacing the font's cells
+            // leave around its glyphs.
             for (text, scale, color) in rows {
-                let x = (width - text_width(font, &text, scale)) / 2;
-                draw_text_scaled(framebuffer, font, &text, x, y, scale, color);
-                y += (line_height + 4) * scale;
+                let Some(ink) = ink_bounds(font, &text) else {
+                    continue;
+                };
+                let x = (width - (ink.right - ink.left) * scale) / 2 - ink.left * scale;
+                draw_text_scaled(
+                    framebuffer,
+                    font,
+                    &text,
+                    x,
+                    y - ink.top * scale,
+                    scale,
+                    color,
+                );
+                y += (ink.bottom - ink.top + IDENTITY_ROW_GAP) * scale;
             }
         }
     }
 }
 
-/// Inked width of single-line `text` drawn at `scale`: whole cells, minus
-/// the spacing after the last glyph.
-fn text_width(font: &BitmapFont, text: &str, scale: i32) -> i32 {
-    let metrics = font.metrics();
-    let chars = i32::try_from(text.chars().count()).unwrap_or(i32::MAX);
-    let cells = chars.saturating_mul(i32::from(metrics.cell_width()));
-    let spacing = if chars > 0 {
-        i32::from(metrics.cell_width() - metrics.glyph_width())
-    } else {
-        0
-    };
-    (cells - spacing).saturating_mul(scale)
+/// Edges of the set pixels of some text, relative to where it is drawn;
+/// `right` and `bottom` are exclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InkBounds {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+/// Where single-line `text` sets pixels when drawn at scale 1 from the
+/// origin, or `None` when it sets none.
+fn ink_bounds(font: &BitmapFont, text: &str) -> Option<InkBounds> {
+    let cell_w = i32::from(font.metrics().cell_width());
+    let mut pen = 0;
+    let mut bounds: Option<InkBounds> = None;
+    for ch in text.chars() {
+        if let Some(glyph) = font.resolve(ch).and_then(|id| font.glyph(id)) {
+            let height = glyph.rows().len();
+            let set = (0..height)
+                .flat_map(|y| (0..usize::from(glyph.width())).map(move |x| (x, y)))
+                .filter(|&(x, y)| glyph.is_set(x, y));
+            for (x, y) in set {
+                let (x, y) = (pen + x as i32, y as i32);
+                bounds = Some(match bounds {
+                    None => InkBounds {
+                        left: x,
+                        top: y,
+                        right: x + 1,
+                        bottom: y + 1,
+                    },
+                    Some(b) => InkBounds {
+                        left: b.left.min(x),
+                        top: b.top.min(y),
+                        right: b.right.max(x + 1),
+                        bottom: b.bottom.max(y + 1),
+                    },
+                });
+            }
+        }
+        pen += font.cells(ch) as i32 * cell_w;
+    }
+    bounds
 }
 
 /// `LABEL   detail ...... OK`, with `OK` always at [`STATUS_OK_COLUMN`].

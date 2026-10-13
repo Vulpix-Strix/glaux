@@ -124,7 +124,7 @@ fn run(
         rom.sounds().clone(),
         CartridgeVideoDefaults::from_rom(&rom),
         cartridges,
-        rom.font().metrics(),
+        rom.font(),
         rom.palette().clone(),
     )
     .with_editor_settings(

@@ -11,6 +11,16 @@ const COLUMNS: usize = 60;
 /// Tall enough that nothing scrolls off.
 const ROWS: usize = 40;
 
+/// Blank glyphs for printable ASCII, with `✅` two cells wide.
+fn font() -> BitmapFont {
+    let mut font = BitmapFont::new(glaux_machine::font::FontMetrics::new(4, 5).unwrap());
+    for ch in ' '..='~' {
+        font.insert(ch, 1, &[0; 5]).unwrap();
+    }
+    font.insert('✅', 2, &[0; 5]).unwrap();
+    font
+}
+
 fn shell_with_rom(rom_version: Version) -> Shell {
     Shell::new(SystemInfo { rom_version }, CartridgeStorage::Unavailable)
 }
@@ -82,7 +92,7 @@ fn ticked(mut shell: Shell, ticks: u32) -> Shell {
 
 /// Editor lines, which follow everything laid out for the scrollback.
 fn editor_lines(shell: &Shell, columns: usize) -> Vec<Line> {
-    let lines = shell.lines(columns, ROWS);
+    let lines = shell.lines(&font(), columns, ROWS);
     let first = lines
         .iter()
         .rposition(|l| l.text == PROMPT && l.col == 0)
@@ -95,7 +105,7 @@ fn editor_lines(shell: &Shell, columns: usize) -> Vec<Line> {
 #[test]
 fn new_shell_shows_banner_prompt_and_cursor() {
     assert_eq!(
-        new_shell().lines(COLUMNS, ROWS),
+        new_shell().lines(&font(), COLUMNS, ROWS),
         [
             Line::new(0, 0, BANNER, ACCENT),
             Line::new(0, 1, "> ", TEXT),
@@ -106,7 +116,7 @@ fn new_shell_shows_banner_prompt_and_cursor() {
 
 #[test]
 fn typed_text_follows_prompt_with_cursor_after_it() {
-    let lines = shell_with(&typed("help")).lines(COLUMNS, ROWS);
+    let lines = shell_with(&typed("help")).lines(&font(), COLUMNS, ROWS);
     assert_eq!(
         lines[2..],
         [Line::new(2, 1, "help", TEXT), cursor(6, 1, " ")]
@@ -117,7 +127,7 @@ fn typed_text_follows_prompt_with_cursor_after_it() {
 fn cursor_is_drawn_at_insertion_point() {
     let mut events = typed("abc");
     events.push(InputEvent::Left { select: false });
-    let lines = shell_with(&events).lines(COLUMNS, ROWS);
+    let lines = shell_with(&events).lines(&font(), COLUMNS, ROWS);
     assert_eq!(lines.last(), Some(&cursor(4, 1, "c")));
 }
 
@@ -129,7 +139,7 @@ fn selection_is_drawn_inverse_between_plain_segments() {
         InputEvent::Left { select: true },
         InputEvent::Left { select: true },
     ]);
-    let lines = shell_with(&events).lines(COLUMNS, ROWS);
+    let lines = shell_with(&events).lines(&font(), COLUMNS, ROWS);
     assert_eq!(
         lines[2..],
         [
@@ -143,7 +153,7 @@ fn selection_is_drawn_inverse_between_plain_segments() {
 
 #[test]
 fn non_ascii_text_takes_one_cell_per_char() {
-    let lines = shell_with(&typed("日é")).lines(COLUMNS, ROWS);
+    let lines = shell_with(&typed("日é")).lines(&font(), COLUMNS, ROWS);
     assert_eq!(
         lines[2..],
         [Line::new(2, 1, "日é", TEXT), cursor(4, 1, " ")]
@@ -152,7 +162,7 @@ fn non_ascii_text_takes_one_cell_per_char() {
 
 #[test]
 fn long_line_wraps_onto_following_rows() {
-    let lines = editor_only(&typed("abcdefghijklmn")).lines(8, ROWS);
+    let lines = editor_only(&typed("abcdefghijklmn")).lines(&font(), 8, ROWS);
     assert_eq!(
         lines,
         [
@@ -166,10 +176,10 @@ fn long_line_wraps_onto_following_rows() {
 
 #[test]
 fn cursor_wraps_to_next_row_when_row_is_full() {
-    let lines = editor_only(&typed("abcde")).lines(8, ROWS);
+    let lines = editor_only(&typed("abcde")).lines(&font(), 8, ROWS);
     assert_eq!(lines.last(), Some(&cursor(7, 0, " ")));
 
-    let lines = editor_only(&typed("abcdef")).lines(8, ROWS);
+    let lines = editor_only(&typed("abcdef")).lines(&font(), 8, ROWS);
     assert_eq!(lines.last(), Some(&cursor(0, 1, " ")));
 }
 
@@ -177,7 +187,7 @@ fn cursor_wraps_to_next_row_when_row_is_full() {
 fn cursor_over_a_selection_is_drawn_after_it() {
     let mut events = typed("abc");
     events.push(InputEvent::Left { select: true });
-    let lines = shell_with(&events).lines(COLUMNS, ROWS);
+    let lines = shell_with(&events).lines(&font(), COLUMNS, ROWS);
     assert_eq!(
         lines[2..],
         [
@@ -193,30 +203,42 @@ fn cursor_blinks_without_moving_the_text() {
     let mut events = typed("abcd");
     events.extend([InputEvent::Left { select: true }; 2]);
     let shell = shell_with(&events);
-    let on = shell.lines(COLUMNS, ROWS);
+    let on = shell.lines(&font(), COLUMNS, ROWS);
     assert_eq!(on.last(), Some(&cursor(4, 1, "c")));
 
-    let off = ticked(shell.clone(), BLINK_TICKS).lines(COLUMNS, ROWS);
+    let off = ticked(shell.clone(), BLINK_TICKS).lines(&font(), COLUMNS, ROWS);
     assert_eq!(off, on[..on.len() - 1]);
     assert_eq!(
-        ticked(shell.clone(), BLINK_TICKS - 1).lines(COLUMNS, ROWS),
+        ticked(shell.clone(), BLINK_TICKS - 1).lines(&font(), COLUMNS, ROWS),
         on
     );
-    assert_eq!(ticked(shell, 2 * BLINK_TICKS).lines(COLUMNS, ROWS), on);
+    assert_eq!(
+        ticked(shell, 2 * BLINK_TICKS).lines(&font(), COLUMNS, ROWS),
+        on
+    );
 }
 
 #[test]
 fn input_restarts_the_blink_visible() {
     let mut shell = ticked(shell_with(&typed("ab")), BLINK_TICKS);
-    assert_eq!(shell.lines(COLUMNS, ROWS).last().unwrap().text, "ab");
+    assert_eq!(
+        shell.lines(&font(), COLUMNS, ROWS).last().unwrap().text,
+        "ab"
+    );
 
     send(&mut shell, &[InputEvent::Left { select: false }]);
-    assert_eq!(shell.lines(COLUMNS, ROWS).last(), Some(&cursor(3, 1, "b")));
+    assert_eq!(
+        shell.lines(&font(), COLUMNS, ROWS).last(),
+        Some(&cursor(3, 1, "b"))
+    );
 
     // Input the shell ignores leaves the blink running.
     let mut shell = ticked(shell, BLINK_TICKS);
     send(&mut shell, &[InputEvent::Break]);
-    assert_eq!(shell.lines(COLUMNS, ROWS).last().unwrap().text, "ab");
+    assert_eq!(
+        shell.lines(&font(), COLUMNS, ROWS).last().unwrap().text,
+        "ab"
+    );
 }
 
 #[test]
@@ -225,7 +247,7 @@ fn selection_across_rows_is_split_per_row() {
     events.extend([InputEvent::Home { select: false }]);
     events.extend([InputEvent::Right { select: false }; 4]);
     events.extend([InputEvent::Right { select: true }; 3]);
-    let lines = editor_only(&events).lines(8, ROWS);
+    let lines = editor_only(&events).lines(&font(), 8, ROWS);
     assert_eq!(
         lines[1..],
         [
@@ -241,7 +263,7 @@ fn selection_across_rows_is_split_per_row() {
 #[test]
 fn narrow_width_still_lays_out_every_cell() {
     let cells: Vec<(i32, i32, String)> = editor_only(&typed("ab"))
-        .lines(0, ROWS)
+        .lines(&font(), 0, ROWS)
         .into_iter()
         .map(|line| (line.col, line.row, line.text))
         .collect();
@@ -288,7 +310,7 @@ fn enter_runs_the_command_and_opens_a_new_prompt() {
     );
     assert_eq!(shell.editor, LineEditor::default());
     assert_eq!(
-        shell.lines(COLUMNS, ROWS)[1..3],
+        shell.lines(&font(), COLUMNS, ROWS)[1..3],
         [Line::new(0, 1, "> ", TEXT), Line::new(2, 1, "help", TEXT)]
     );
     assert_eq!(
@@ -310,7 +332,7 @@ fn unknown_command_is_an_error_entry() {
         ]
     );
     assert_eq!(
-        shell.lines(COLUMNS, ROWS)[3],
+        shell.lines(&font(), COLUMNS, ROWS)[3],
         Line::new(0, 2, "Unknown command: Unknown", ERROR)
     );
 }
@@ -354,7 +376,7 @@ fn clear_empties_the_screen_but_keeps_history() {
     run(&mut shell, "clear");
     assert_eq!(entries(&shell), []);
     assert_eq!(
-        shell.lines(COLUMNS, ROWS),
+        shell.lines(&font(), COLUMNS, ROWS),
         [Line::new(0, 0, "> ", TEXT), cursor(2, 0, " ")]
     );
 
@@ -369,7 +391,7 @@ fn long_submitted_command_wraps() {
     let mut shell = new_shell();
     shell.scrollback.clear();
     run(&mut shell, "abcdefghij");
-    let lines = shell.lines(8, ROWS);
+    let lines = shell.lines(&font(), 8, ROWS);
     assert_eq!(
         lines[..3],
         [
@@ -389,7 +411,7 @@ fn overflowing_output_keeps_the_newest_rows_and_the_prompt_at_the_bottom() {
         run(&mut shell, &format!("c{n}"));
     }
     send(&mut shell, &typed("x"));
-    let lines = shell.lines(COLUMNS, 5);
+    let lines = shell.lines(&font(), COLUMNS, 5);
 
     let rows: Vec<(i32, &str)> = lines.iter().map(|l| (l.row, l.text.as_str())).collect();
     assert_eq!(
@@ -414,7 +436,7 @@ fn partially_visible_entry_is_cut_at_the_top() {
     shell.scrollback.clear();
     shell.scrollback.push(output("abcdefghijkl"));
     // 8 columns: the output takes 2 rows, the prompt 1, but only 2 fit.
-    let lines = shell.lines(8, 2);
+    let lines = shell.lines(&font(), 8, 2);
     assert_eq!(
         lines,
         [
@@ -555,7 +577,7 @@ fn log_levels_render_in_distinct_colors() {
         text: "x".into(),
     }));
     let colors: Vec<u8> = shell
-        .lines(40, 20)
+        .lines(&font(), 40, 20)
         .into_iter()
         .filter(|line| line.text == "x")
         .map(|line| line.color)

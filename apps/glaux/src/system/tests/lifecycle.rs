@@ -206,7 +206,7 @@ fn unload_preserves_cartridge_files_and_the_shell_directory() {
         sounds(),
         video_defaults(),
         fixture.storage(),
-        fake_rom().font().metrics(),
+        fake_rom().font(),
         fake_rom().palette().clone(),
     );
     while matches!(system.state(), SystemState::Boot { .. }) {

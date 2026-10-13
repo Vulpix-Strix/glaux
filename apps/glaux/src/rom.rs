@@ -7,7 +7,7 @@
 use anyhow::{Context, bail, ensure};
 use glaux_audio::sfx::{Sfx, SfxAction, SfxStep};
 use glaux_audio::{Envelope, Tone, Waveform};
-use glaux_machine::font::{BitmapFont, FIRST_CHAR, FontMetrics, LAST_CHAR};
+use glaux_machine::font::FontMetrics;
 use glaux_machine::ink_image::InkImage;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjPalettes};
 use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
@@ -29,7 +29,6 @@ const VERSION: &str = include_str!("../../../rom/version");
 const COPYRIGHT: &str = include_str!("../../../rom/copyright");
 const PALETTE_HEX: &str = include_str!("../../../rom/palette/system.hex");
 const OBP_TXT: &str = include_str!("../../../rom/palette/obp.txt");
-const FONT_BDF: &str = include_str!("../../../rom/font/Tamzen5x9r.bdf");
 
 /// The pointer, then the icons in `SystemIcon` order.
 const POINTER_PNG: (&str, &[u8]) = embed!("ui/cursors/pointer.png");
@@ -56,17 +55,18 @@ const ICON_INKS: [(u32, u8); 2] = [(0x000000, 1), (0xffffff, 3)];
 /// Ink slots of the light Simple Pixel Cursors' colors: outline, body.
 const CURSOR_INKS: [(u32, u8); 2] = [(0x2e222f, 1), (0xffffff, 2)];
 
+mod pixel_code;
+
 /// Decodes the embedded System ROM assets.
 pub fn load() -> anyhow::Result<SystemRom> {
-    let rom = build(VERSION, COPYRIGHT, PALETTE_HEX, OBP_TXT, FONT_BDF)?;
-    let metrics = rom.font().metrics();
+    let rom = build(VERSION, COPYRIGHT, PALETTE_HEX, OBP_TXT)?;
+    let font = rom.font();
     tracing::info!(rom_version = %rom.version(), "System ROM loaded");
     tracing::debug!(
-        glyph_width = metrics.glyph_width(),
-        glyph_height = metrics.glyph_height(),
-        cell_width = metrics.cell_width(),
-        cell_height = metrics.cell_height(),
-        "system font metrics"
+        cell_width = font.metrics().cell_width(),
+        cell_height = font.metrics().cell_height(),
+        glyphs = font.glyph_count(),
+        "system font"
     );
     Ok(rom)
 }
@@ -78,14 +78,19 @@ fn build(
     copyright: &str,
     palette: &str,
     obj_palettes: &str,
-    font: &str,
 ) -> anyhow::Result<SystemRom> {
     let version = Version::parse(version.trim())
         .with_context(|| format!("invalid rom/version: {:?}", version.trim()))?;
     let copyright = parse_copyright(copyright).context("invalid rom/copyright")?;
     let palette = parse_palette(palette).context("invalid rom/palette/system.hex")?;
     let obj_palettes = parse_obj_palettes(obj_palettes).context("invalid rom/palette/obp.txt")?;
-    let font = parse_bdf(font, FontMetrics::SYSTEM).context("invalid rom/font/Tamzen5x9r.bdf")?;
+    let font = pixel_code::load().context("invalid system font")?;
+    ensure!(
+        font.metrics() == FontMetrics::SYSTEM,
+        "the system font's cells are not the system's {}x{}",
+        FontMetrics::SYSTEM.cell_width(),
+        FontMetrics::SYSTEM.cell_height()
+    );
     Ok(SystemRom::new(version, copyright, palette, font)
         .with_sounds(sounds()?)
         .with_ui(ui()?)
@@ -304,10 +309,7 @@ fn boot_chime() -> Vec<SfxStep> {
 fn parse_copyright(text: &str) -> anyhow::Result<String> {
     let notice = text.trim();
     ensure!(!notice.is_empty(), "the copyright notice is empty");
-    if let Some(ch) = notice
-        .chars()
-        .find(|ch| !(FIRST_CHAR..=LAST_CHAR).contains(ch))
-    {
+    if let Some(ch) = notice.chars().find(|ch| !(' '..='~').contains(ch)) {
         bail!("{ch:?} in {notice:?} is not printable ASCII");
     }
     Ok(notice.to_owned())
@@ -381,99 +383,6 @@ fn parse_obj_palettes(text: &str) -> anyhow::Result<ObjPalettes> {
         "expected {OBJ_PALETTE_BANKS} banks, found {bank}"
     );
     Ok(ObjPalettes::from_bytes(&bytes)?)
-}
-
-/// Parses the subset of BDF used by fixed-cell fonts such as Tamzen.
-///
-/// Every glyph's bounding box must match the font's `glyph_width` ×
-/// `glyph_height` with offsets `0 -2`; glyph offsets are not supported, so
-/// any other box is rejected rather than placed incorrectly. Only glyphs in
-/// printable ASCII are loaded, and all of them must be present.
-fn parse_bdf(text: &str, metrics: FontMetrics) -> anyhow::Result<BitmapFont> {
-    let (width, height) = (metrics.glyph_width(), metrics.glyph_height());
-    let expected_box = format!("{width} {height} 0 -2");
-    let mut font = BitmapFont::new(metrics);
-    let mut loaded = 0;
-
-    let mut lines = text.lines().enumerate().map(|(i, l)| (i + 1, l.trim()));
-    let mut encoding: Option<i64> = None;
-    let mut saw_font_box = false;
-
-    while let Some((number, line)) = lines.next() {
-        let (keyword, args) = line.split_once(' ').unwrap_or((line, ""));
-        match keyword {
-            "FONTBOUNDINGBOX" => {
-                ensure!(
-                    args == expected_box,
-                    "line {number}: font bounding box is {args:?}, expected {expected_box:?}"
-                );
-                saw_font_box = true;
-            }
-            "ENCODING" => {
-                let code = args
-                    .split_whitespace()
-                    .next()
-                    .and_then(|code| code.parse().ok())
-                    .with_context(|| format!("line {number}: invalid ENCODING {args:?}"))?;
-                encoding = Some(code);
-            }
-            "BBX" => ensure!(
-                args == expected_box,
-                "line {number}: glyph bounding box is {args:?}, expected {expected_box:?}"
-            ),
-            "BITMAP" => {
-                let code = encoding
-                    .take()
-                    .with_context(|| format!("line {number}: BITMAP without ENCODING"))?;
-
-                let mut rows = Vec::with_capacity(usize::from(height));
-                for _ in 0..height {
-                    let (number, row) = lines
-                        .next()
-                        .with_context(|| format!("line {number}: truncated BITMAP"))?;
-                    rows.push(
-                        parse_bdf_row(row, width).with_context(|| {
-                            format!("line {number}: invalid bitmap row {row:?}")
-                        })?,
-                    );
-                }
-
-                let ch = u32::try_from(code).ok().and_then(char::from_u32);
-                if let Some(ch) = ch.filter(|ch| (FIRST_CHAR..=LAST_CHAR).contains(ch)) {
-                    ensure!(
-                        font.glyph(ch).is_none(),
-                        "line {number}: duplicate glyph for {ch:?}"
-                    );
-                    font.insert(ch, &rows)
-                        .with_context(|| format!("line {number}: glyph {ch:?}"))?;
-                    loaded += 1;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    ensure!(saw_font_box, "missing FONTBOUNDINGBOX");
-    if loaded != (FIRST_CHAR..=LAST_CHAR).count() {
-        let missing: String = (FIRST_CHAR..=LAST_CHAR)
-            .filter(|&ch| font.glyph(ch).is_none())
-            .collect();
-        bail!("missing glyphs for {missing:?}");
-    }
-    Ok(font)
-}
-
-/// Converts one BDF bitmap row (a hex byte whose most significant bit is the
-/// leftmost pixel) into a `width`-bit row.
-fn parse_bdf_row(row: &str, width: u8) -> anyhow::Result<u8> {
-    ensure!(row.len() == 2, "expected one hex byte");
-    let byte = u8::from_str_radix(row, 16)?;
-    let unused = 8 - u32::from(width);
-    ensure!(
-        u32::from(byte) & ((1 << unused) - 1) == 0,
-        "pixels set beyond the {width}-pixel glyph width"
-    );
-    Ok((u32::from(byte) >> unused) as u8)
 }
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ fn settings_survive_a_round_trip() {
         word_wrap: true,
         tab_size: 2,
         line_numbers: false,
+        ligatures: false,
     };
     let text = serde_json::to_string(&settings).unwrap();
     assert_eq!(

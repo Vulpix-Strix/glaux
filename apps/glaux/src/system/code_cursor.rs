@@ -9,6 +9,8 @@
 
 use std::ops::Range;
 
+use glaux_machine::font::BitmapFont;
+
 use super::code_document::CodeDocument;
 use super::code_text::{TextMetrics, spot, visual_rows};
 
@@ -130,13 +132,21 @@ impl Caret {
     /// The caret moved `rows` rows of the view down, or up when negative,
     /// keeping the column it had when vertical moves began.
     ///
-    /// `metrics` must describe `document` as the view lays it out. Moving
+    /// `metrics` must describe `document` as the view lays it out with
+    /// `font`. Moving
     /// up from the first row goes to the document's start, and down from
     /// the last row to its end; a move that would pass either stops on
     /// that row.
-    pub fn vertical(self, document: &CodeDocument, rows: isize, metrics: &TextMetrics) -> Self {
+    pub fn vertical(
+        self,
+        document: &CodeDocument,
+        rows: isize,
+        metrics: &TextMetrics,
+        font: &BitmapFont,
+    ) -> Self {
         let key = metrics.key();
-        let here = spot(document, valid(document, self.byte), key);
+        let columns = key.columns(font);
+        let here = spot(document, valid(document, self.byte), key, font);
         let column = self
             .preferred_column
             .unwrap_or(here.column - here.row_start.column);
@@ -149,12 +159,12 @@ impl Caret {
             return Self::document_end(document);
         }
         let (line, row) = metrics.position(index.saturating_add_signed(rows).min(last));
-        let Some(target) = visual_rows(document, line, row, key.wrap_columns, key.tab_size).next()
+        let Some(target) = visual_rows(document, line, row, key.wrap_columns, columns).next()
         else {
             return self;
         };
         Self {
-            byte: target.byte_near_column(target.start.column + column, key.tab_size),
+            byte: target.byte_near_column(target.start.column + column, columns),
             preferred_column: Some(column),
         }
     }

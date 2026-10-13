@@ -207,7 +207,7 @@ fn scrollback_and_history_survive_a_pause() {
     assert!(lines.contains(&"> load pong".to_owned()));
     assert!(lines.contains(&"tick    1".to_owned()));
     // Up recalled the last command, typed before the cartridge ran.
-    let editor = shell.lines(text_columns(CELL_W), text_rows(CELL_H));
+    let editor = shell.lines(fake_rom().font(), text_columns(CELL_W), text_rows(CELL_H));
     assert!(
         editor
             .iter()

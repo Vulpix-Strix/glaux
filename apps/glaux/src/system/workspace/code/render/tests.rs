@@ -10,7 +10,7 @@ use crate::cartridge_fs::fixture::Fixture;
 use crate::system::shell::BLINK_TICKS;
 
 const CELL_W: i32 = 6;
-const CELL_H: i32 = 10;
+const CELL_H: i32 = 12;
 
 fn rom() -> SystemRom {
     crate::rom::load().unwrap()
@@ -40,7 +40,7 @@ fn showing(fixture: &Fixture, editor: &CodeEditor, text: &str) -> CodeSession {
 
 fn geometry_of(editor: &CodeEditor, session: &CodeSession) -> TextGeometry {
     let document = session.active_document().unwrap();
-    TextGeometry::new(&editor.layout(), document.line_count(), &editor.settings())
+    TextGeometry::new(editor.layout(), document.line_count(), &editor.settings())
 }
 
 /// Top-left of the text cell at `column` and `row` of the view.
@@ -172,25 +172,58 @@ fn only_the_first_row_of_a_wrapped_line_is_numbered() {
 }
 
 #[test]
-fn characters_the_font_lacks_show_as_boxes_in_their_own_cells() {
+fn characters_the_font_lacks_show_as_dim_fallbacks_in_their_own_cells() {
     let fixture = Fixture::new("code-render-unknown");
     let mut editor = editor();
     hide_caret(&mut editor);
-    // The byte order mark is not shown. The tab after "é" reaches column
-    // 4, and the bell character after "x" gets a box of its own.
-    let session = showing(&fixture, &editor, "\u{feff}é\tx\u{7}");
+    // The byte order mark is not shown. "中" is outside the font, the tab
+    // after it reaches column 4, the bell after "x" is a control character,
+    // and "✅" takes two cells, so "y" lands on column 8.
+    let session = showing(&fixture, &editor, "\u{feff}中\tx\u{7}✅y");
     let framebuffer = render(&editor, &session);
     let geometry = geometry_of(&editor, &session);
     let at = |column| cell(&geometry, column, 0);
+    let fallback = glyph('\u{FFFD}');
 
+    assert_eq!(ink(&framebuffer, at(0), DIM), fallback);
     assert_eq!(ink(&framebuffer, at(0), TEXT), blank());
-    assert!(ink(&framebuffer, at(0), DIM).contains(&true), "a box");
     for column in 1..4 {
         assert_eq!(ink(&framebuffer, at(column), TEXT), blank());
         assert_eq!(ink(&framebuffer, at(column), DIM), blank());
     }
     assert_eq!(ink(&framebuffer, at(4), TEXT), glyph('x'));
-    assert!(ink(&framebuffer, at(5), DIM).contains(&true), "a box");
+    assert_eq!(ink(&framebuffer, at(5), DIM), fallback);
+    for column in [6, 7] {
+        assert!(ink(&framebuffer, at(column), TEXT).contains(&true), "✅");
+    }
+    assert_eq!(ink(&framebuffer, at(8), TEXT), glyph('y'));
+}
+
+#[test]
+fn ligatures_redraw_only_the_cells_of_their_characters() {
+    let fixture = Fixture::new("code-render-ligatures");
+    let mut editor = editor();
+    hide_caret(&mut editor);
+    let session = showing(&fixture, &editor, "a -> b");
+    let geometry = geometry_of(&editor, &session);
+    let cells = |framebuffer: &Framebuffer| -> Vec<Vec<bool>> {
+        (0..6)
+            .map(|column| ink(framebuffer, cell(&geometry, column, 0), TEXT))
+            .collect()
+    };
+    let plain: Vec<_> = "a -> b".chars().map(glyph).collect();
+
+    assert!(editor.settings().ligatures, "ligatures are on by default");
+    let joined = cells(&render(&editor, &session));
+    assert_ne!(joined[2..4], plain[2..4], "\"->\" draws as one arrow");
+    assert_eq!(joined[..2], plain[..2]);
+    assert_eq!(joined[4..], plain[4..]);
+
+    editor.set_settings(EditorSettings {
+        ligatures: false,
+        ..editor.settings()
+    });
+    assert_eq!(cells(&render(&editor, &session)), plain);
 }
 
 #[test]
