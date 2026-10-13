@@ -278,3 +278,41 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn a_word_is_the_run_of_one_kind_of_character_at_a_position() {
+    let document = doc("  foo_bar.baz(qux) + 1\n");
+    let word = |byte| word_at(&document, byte);
+    assert_eq!(word(2), 2..9);
+    assert_eq!(word(5), 2..9);
+    // At a run's end, the character after the position decides.
+    assert_eq!(word(9), 9..10);
+    assert_eq!(word(0), 0..2);
+    assert_eq!(word(18), 18..19);
+    // At the line's end, the character before it.
+    assert_eq!(word(22), 21..22);
+    // An empty line has no word.
+    assert_eq!(word(23), 23..23);
+}
+
+#[test]
+fn words_hold_whole_multibyte_and_wide_characters() {
+    // é is 2 bytes, 日本 are 3 each and two cells wide; ✅ is punctuation.
+    let document = doc("é日本 ✅✅x");
+    assert_eq!(word_at(&document, 2), 0..8);
+    // Inside 日: the start of the character.
+    assert_eq!(word_at(&document, 3), 0..8);
+    assert_eq!(word_at(&document, 9), 9..15);
+}
+
+#[test]
+fn a_line_runs_through_its_line_ending() {
+    let document = doc("\u{feff}ab\r\ncd\nef");
+    assert_eq!(line_at(&document, 4), 3..7);
+    assert_eq!(line_at(&document, 8), 7..10);
+    // The last line has no ending.
+    assert_eq!(line_at(&document, 11), 10..12);
+    let trailing = doc("ab\n");
+    assert_eq!(line_at(&trailing, 1), 0..3);
+    assert_eq!(line_at(&trailing, 3), 3..3);
+}

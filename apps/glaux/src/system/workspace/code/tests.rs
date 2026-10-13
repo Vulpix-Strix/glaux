@@ -8,17 +8,13 @@ use crate::system::code_document::DocumentId;
 use crate::system::code_session::DocumentView;
 use crate::system::editor_settings::EditorSettings;
 use crate::system::test_font::LAYOUT_FONT;
-use glaux_machine::font::FontMetrics;
 use pretty_assertions::assert_eq;
 
+mod selection;
+
 pub(super) fn editor() -> CodeEditor {
-    let metrics = FontMetrics::SYSTEM;
     CodeEditor::new(
-        Metrics {
-            cell_w: i32::from(metrics.cell_width()),
-            cell_h: i32::from(metrics.cell_height()),
-            top: 16,
-        },
+        crate::system::workspace::tests_support::CODE_METRICS,
         LAYOUT_FONT.clone(),
         EditorSettings::default(),
     )
@@ -84,7 +80,11 @@ pub(super) fn centre(rect: Rect) -> Point {
 }
 
 pub(super) fn press(button: PointerButton, at: Point) -> InputEvent {
-    InputEvent::PointerDown { button, at }
+    InputEvent::PointerDown {
+        button,
+        at,
+        select: false,
+    }
 }
 
 pub(super) fn release(at: Point) -> InputEvent {
@@ -232,9 +232,9 @@ fn the_list_of_open_tabs_reaches_hidden_ones() {
     assert!(editor.has_overlay());
 
     // The list opens on the active tab; Up wraps nowhere and Enter shows.
-    editor.handle_input(InputEvent::Up, Some(&mut session));
+    editor.handle_input(InputEvent::Up { select: false }, Some(&mut session));
     for _ in 0..11 {
-        editor.handle_input(InputEvent::Down, Some(&mut session));
+        editor.handle_input(InputEvent::Down { select: false }, Some(&mut session));
     }
     editor.handle_input(InputEvent::Enter, Some(&mut session));
     assert!(!editor.has_overlay());
@@ -247,7 +247,7 @@ fn the_list_of_open_tabs_reaches_hidden_ones() {
 
     // Escape closes it without changing tabs.
     editor.handle_input(press(PointerButton::Primary, more), Some(&mut session));
-    editor.handle_input(InputEvent::Up, Some(&mut session));
+    editor.handle_input(InputEvent::Up { select: false }, Some(&mut session));
     editor.handle_input(InputEvent::Break, Some(&mut session));
     assert!(!editor.has_overlay());
     assert_eq!(active_name(&session), Some("module_11.luau"));
@@ -438,7 +438,11 @@ fn settings_open_without_a_cartridge_and_survive_forgetting_one() {
 }
 
 fn caret_of(session: &CodeSession, name: &str) -> Caret {
-    session.tabs().caret(id_of(session, name)).unwrap()
+    session
+        .tabs()
+        .selection(id_of(session, name))
+        .unwrap()
+        .caret()
 }
 
 fn feed(editor: &mut CodeEditor, session: &mut CodeSession, events: &[InputEvent]) {
@@ -457,7 +461,11 @@ fn each_document_keeps_its_own_caret() {
     feed(
         &mut editor,
         &mut session,
-        &[InputEvent::Down, InputEvent::Down, right],
+        &[
+            InputEvent::Down { select: false },
+            InputEvent::Down { select: false },
+            right,
+        ],
     );
     // "line N\n" is 7 bytes: line 2, column 1.
     assert_eq!(caret_of(&session, "b.luau").byte(), 15);
@@ -480,6 +488,7 @@ fn a_click_in_the_text_moves_the_caret_and_one_elsewhere_does_not() {
     let click = |x: i32, y: i32| InputEvent::PointerDown {
         button: PointerButton::Primary,
         at: Point::new(x as u16, y as u16),
+        select: false,
     };
     let (x0, y0) = (geometry.viewport.x, geometry.viewport.y);
     feed(&mut editor, &mut session, &[click(x0 + 3 * 6, y0 + 25)]);
@@ -498,10 +507,14 @@ fn moving_the_caret_past_the_view_scrolls_it_one_row_at_a_time() {
     editor.refresh_metrics(&mut session);
     let rows = editor.geometry(session.active_document().unwrap()).rows;
     let id = id_of(&session, "a.luau");
-    let downs = vec![InputEvent::Down; rows - 1];
+    let downs = vec![InputEvent::Down { select: false }; rows - 1];
     feed(&mut editor, &mut session, &downs);
     assert_eq!(session.tabs().view(id).unwrap().top_line, 0);
-    feed(&mut editor, &mut session, &[InputEvent::Down]);
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::Down { select: false }],
+    );
     assert_eq!(session.tabs().view(id).unwrap().top_line, 1);
     feed(
         &mut editor,
@@ -522,7 +535,10 @@ fn a_page_moves_the_caret_and_the_view_together() {
     feed(
         &mut editor,
         &mut session,
-        &[InputEvent::Down, InputEvent::Down],
+        &[
+            InputEvent::Down { select: false },
+            InputEvent::Down { select: false },
+        ],
     );
     feed(
         &mut editor,
@@ -579,7 +595,11 @@ fn changing_how_text_folds_keeps_the_caret_but_not_its_column() {
         &mut session,
         &[InputEvent::End { select: false }],
     );
-    feed(&mut editor, &mut session, &[InputEvent::Down]);
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::Down { select: false }],
+    );
     let before = caret_of(&session, "a.luau");
     assert_eq!((before.byte(), before.preferred_column()), (9, Some(6)));
 
@@ -602,7 +622,10 @@ fn caret_keys_do_nothing_while_an_overlay_is_open() {
     feed(
         &mut editor,
         &mut session,
-        &[InputEvent::Down, InputEvent::End { select: false }],
+        &[
+            InputEvent::Down { select: false },
+            InputEvent::End { select: false },
+        ],
     );
     assert_eq!(caret_of(&session, "a.luau").byte(), 0);
 }

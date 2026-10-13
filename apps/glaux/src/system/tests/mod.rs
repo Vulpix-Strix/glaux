@@ -66,10 +66,13 @@ fn fake_ui() -> SystemUi {
         InkImage::new(16, 16, pixels).unwrap()
     };
     let pointer = Cursor {
-        image: InkImage::new(2, 2, vec![1, 0, 0, 2]).unwrap(),
+        frames: vec![InkImage::new(2, 2, vec![1, 0, 0, 2]).unwrap()],
         hotspot: (1, 1),
     };
-    SystemUi::new(pointer, std::array::from_fn(|_| icon()))
+    SystemUi::new(
+        std::array::from_fn(|_| pointer.clone()),
+        std::array::from_fn(|_| icon()),
+    )
 }
 
 fn video_defaults() -> CartridgeVideoDefaults {
@@ -366,7 +369,11 @@ fn tab_centre(tab: Tab) -> Point {
 fn click(at: Point) -> [InputEvent; 2] {
     let button = PointerButton::Primary;
     [
-        InputEvent::PointerDown { button, at },
+        InputEvent::PointerDown {
+            button,
+            at,
+            select: false,
+        },
         InputEvent::PointerUp { button, at },
     ]
 }

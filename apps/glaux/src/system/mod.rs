@@ -8,6 +8,7 @@ mod audio;
 mod boot;
 mod code_cursor;
 mod code_document;
+mod code_selection;
 mod code_session;
 mod code_text;
 mod editor_settings;
@@ -38,7 +39,7 @@ use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
-use glaux_machine::system_rom::{SystemRom, SystemSounds};
+use glaux_machine::system_rom::{SystemCursor, SystemRom, SystemSounds};
 use glaux_script::RuntimeError;
 use glaux_video::draw::{clear, draw_text, fill_rect};
 use pause::PauseOverlay;
@@ -261,7 +262,8 @@ impl System {
     }
 
     /// Draws the system's mouse pointer with its hotspot on `pointer`, the
-    /// logical pixel under the host's pointer. Only the workspace, the one
+    /// logical pixel under the host's pointer, in the shape the workspace
+    /// picks for what is under it. Only the workspace, the one
     /// pointer-driven state, shows it.
     ///
     /// Call on a copy of the frame drawn by [`render`](Self::render), once
@@ -274,9 +276,14 @@ impl System {
         rom: &SystemRom,
         pointer: Option<Point>,
     ) {
-        if matches!(self.state, SystemState::Workspace { .. }) {
-            workspace::draw_cursor(framebuffer, rom.ui().pointer(), pointer);
+        if !matches!(self.state, SystemState::Workspace { .. }) {
+            return;
         }
+        let (cursor, frame) = match pointer {
+            Some(at) => self.workspace.cursor(at, self.code.as_ref()),
+            None => (SystemCursor::Arrow, 0),
+        };
+        workspace::draw_cursor(framebuffer, rom.ui().cursor(cursor), frame, pointer);
     }
 
     /// Advances the system by one logical tick, applying the tick's `input`.
@@ -762,7 +769,7 @@ fn workspace_tick(
 ) -> (SystemState, Vec<HostRequest>) {
     let Documents { sprites, code } = documents;
     let code = code.get_or_insert_default();
-    workspace.tick();
+    workspace.tick(Some(code));
     let mut host_requests = Vec::new();
     for &event in input {
         if event == InputEvent::Break && !workspace.has_modal() {

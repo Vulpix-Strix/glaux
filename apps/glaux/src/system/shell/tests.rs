@@ -4,7 +4,10 @@ use crate::cartridge_fs::fixture::Fixture;
 use pretty_assertions::assert_eq;
 use semver::Version;
 
-use InputEvent::{Backspace, Down, Enter, Tab, Up};
+use InputEvent::{Backspace, Enter, Tab};
+
+const UP: InputEvent = InputEvent::Up { select: false };
+const DOWN: InputEvent = InputEvent::Down { select: false };
 
 /// Wide enough that none of the short test lines wrap.
 const COLUMNS: usize = 60;
@@ -380,9 +383,9 @@ fn clear_empties_the_screen_but_keeps_history() {
         [Line::new(0, 0, "> ", TEXT), cursor(2, 0, " ")]
     );
 
-    send(&mut shell, &[Up]);
+    send(&mut shell, &[UP]);
     assert_eq!(shell.editor.text(), "clear");
-    send(&mut shell, &[Up]);
+    send(&mut shell, &[UP]);
     assert_eq!(shell.editor.text(), "info");
 }
 
@@ -657,16 +660,16 @@ fn up_and_down_walk_history_and_restore_the_draft() {
     run(&mut shell, "help");
     send(&mut shell, &typed("dra"));
 
-    send(&mut shell, &[Up]);
+    send(&mut shell, &[UP]);
     assert_eq!(shell.editor.text(), "help");
-    send(&mut shell, &[Up, Up]);
+    send(&mut shell, &[UP, UP]);
     assert_eq!(shell.editor.text(), "info");
-    send(&mut shell, &[Down]);
+    send(&mut shell, &[DOWN]);
     assert_eq!(shell.editor.text(), "help");
-    send(&mut shell, &[Down]);
+    send(&mut shell, &[DOWN]);
     assert_eq!(shell.editor.text(), "dra");
     assert_eq!(shell.editor.cursor(), 3);
-    send(&mut shell, &[Down]);
+    send(&mut shell, &[DOWN]);
     assert_eq!(shell.editor.text(), "dra");
 }
 
@@ -674,14 +677,14 @@ fn up_and_down_walk_history_and_restore_the_draft() {
 fn editing_a_recalled_line_does_not_change_history() {
     let mut shell = new_shell();
     run(&mut shell, "info");
-    send(&mut shell, &[Up, Backspace, Backspace]);
+    send(&mut shell, &[UP, Backspace, Backspace]);
     send(&mut shell, &typed("XX"));
     assert_eq!(shell.editor.text(), "inXX");
 
     // The edit left navigation: the edited line is the new draft.
-    send(&mut shell, &[Up]);
+    send(&mut shell, &[UP]);
     assert_eq!(shell.editor.text(), "info");
-    send(&mut shell, &[Down]);
+    send(&mut shell, &[DOWN]);
     assert_eq!(shell.editor.text(), "inXX");
     assert_eq!(shell.history.entries().collect::<Vec<_>>(), ["info"]);
 }
@@ -691,8 +694,8 @@ fn submitting_resets_history_navigation() {
     let mut shell = new_shell();
     run(&mut shell, "info");
     run(&mut shell, "help");
-    send(&mut shell, &[Up, Up, Enter]);
-    send(&mut shell, &[Up]);
+    send(&mut shell, &[UP, UP, Enter]);
+    send(&mut shell, &[UP]);
     assert_eq!(shell.editor.text(), "info");
     assert_eq!(
         shell.history.entries().collect::<Vec<_>>(),

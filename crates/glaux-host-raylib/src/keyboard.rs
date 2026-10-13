@@ -134,13 +134,13 @@ const EDIT_KEYS: [EditKey; 14] = [
     },
     EditKey {
         key: KeyboardKey::KEY_UP,
-        event: |_| InputEvent::Up,
+        event: |m| InputEvent::Up { select: m.shift },
         repeats: true,
         plain_only: false,
     },
     EditKey {
         key: KeyboardKey::KEY_DOWN,
-        event: |_| InputEvent::Down,
+        event: |m| InputEvent::Down { select: m.shift },
         repeats: true,
         plain_only: false,
     },
@@ -168,7 +168,7 @@ const EDIT_KEYS: [EditKey; 14] = [
 /// press and never repeated. Raylib key codes name physical positions, so on
 /// layouts other than QWERTY the shortcut follows the key where the letter
 /// sits on QWERTY.
-const SHORTCUTS: [(KeyboardKey, KeyEvent); 7] = [
+const SHORTCUTS: [(KeyboardKey, KeyEvent); 8] = [
     (KeyboardKey::KEY_Z, |m| {
         if m.shift {
             InputEvent::Redo
@@ -178,6 +178,7 @@ const SHORTCUTS: [(KeyboardKey, KeyEvent); 7] = [
     }),
     (KeyboardKey::KEY_Y, |_| InputEvent::Redo),
     (KeyboardKey::KEY_S, |_| InputEvent::Save),
+    (KeyboardKey::KEY_A, |_| InputEvent::SelectAll),
     (KeyboardKey::KEY_P, |_| InputEvent::OpenFile),
     (KeyboardKey::KEY_W, |_| InputEvent::CloseDocument),
     (KeyboardKey::KEY_PAGE_DOWN, |_| InputEvent::NextDocument),
@@ -543,6 +544,7 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::Undo
                     | InputEvent::Redo
                     | InputEvent::Save
+                    | InputEvent::SelectAll
                     | InputEvent::OpenFile
                     | InputEvent::CloseDocument
                     | InputEvent::NextDocument

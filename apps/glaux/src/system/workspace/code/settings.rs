@@ -114,8 +114,8 @@ impl SettingsDialog {
         let last = Row::ALL.len() - 1;
         match event {
             InputEvent::Break => return SettingsAction::Close,
-            InputEvent::Up => self.focus = Row::ALL[self.focus.index().saturating_sub(1)],
-            InputEvent::Down | InputEvent::Tab => {
+            InputEvent::Up { .. } => self.focus = Row::ALL[self.focus.index().saturating_sub(1)],
+            InputEvent::Down { .. } | InputEvent::Tab => {
                 self.focus = Row::ALL[(self.focus.index() + 1).min(last)];
             }
             InputEvent::Left { .. } if self.focus == Row::TabSize => settings.step_tab_size(-1),
@@ -129,6 +129,7 @@ impl SettingsDialog {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                ..
             } => {
                 self.armed = false;
                 if layout.minus.contains(at) {

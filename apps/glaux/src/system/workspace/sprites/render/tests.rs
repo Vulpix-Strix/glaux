@@ -11,11 +11,7 @@ use pretty_assertions::assert_eq;
 use super::super::Metrics;
 use crate::system::workspace::SYSTEM_COLORS;
 
-const METRICS: Metrics = Metrics {
-    cell_w: 6,
-    cell_h: 10,
-    top: 16,
-};
+const METRICS: Metrics = crate::system::workspace::tests_support::SPRITE_METRICS;
 
 /// Tile 0 is solid local 2 and tile 1 is empty. OBP0 maps local `n` to
 /// master `200 + n`, so frame slots and master indices differ.

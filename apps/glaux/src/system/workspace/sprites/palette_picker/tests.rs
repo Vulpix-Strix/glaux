@@ -10,11 +10,7 @@ use pretty_assertions::assert_eq;
 use super::super::render::{CHECK_DARK, CHECK_LIGHT};
 use crate::system::workspace::SYSTEM_COLORS;
 
-const METRICS: Metrics = Metrics {
-    cell_w: 6,
-    cell_h: 10,
-    top: 16,
-};
+const METRICS: Metrics = crate::system::workspace::tests_support::SPRITE_METRICS;
 
 /// The tile the fixture's picker is on.
 const TILE: usize = 3;
@@ -47,6 +43,7 @@ fn press(at: Point) -> InputEvent {
     InputEvent::PointerDown {
         button: PointerButton::Primary,
         at,
+        select: false,
     }
 }
 
@@ -63,10 +60,13 @@ fn release(at: Point) -> InputEvent {
 fn arrows_wrap_and_digits_choose_directly() {
     let layout = layout(false);
     let mut picker = PalettePicker::new(TILE, bank(0));
-    assert_eq!(picker.handle_input(InputEvent::Up, &layout), None);
+    assert_eq!(
+        picker.handle_input(InputEvent::Up { select: false }, &layout),
+        None
+    );
     assert_eq!(picker.pending(), bank(7));
-    picker.handle_input(InputEvent::Down, &layout);
-    picker.handle_input(InputEvent::Down, &layout);
+    picker.handle_input(InputEvent::Down { select: false }, &layout);
+    picker.handle_input(InputEvent::Down { select: false }, &layout);
     assert_eq!(picker.pending(), bank(1));
     picker.handle_input(InputEvent::Text('5'), &layout);
     assert_eq!(picker.pending(), bank(5));
@@ -88,7 +88,7 @@ fn arrows_wrap_and_digits_choose_directly() {
 fn enter_applies_the_pending_bank_and_escape_cancels() {
     let layout = layout(false);
     let mut picker = PalettePicker::new(TILE, bank(4));
-    picker.handle_input(InputEvent::Down, &layout);
+    picker.handle_input(InputEvent::Down { select: false }, &layout);
     assert_eq!(
         picker.handle_input(InputEvent::Enter, &layout),
         Some(PickerOutcome::Apply(bank(5)))
@@ -147,7 +147,7 @@ fn the_dialog_fits_the_screen_in_both_modes() {
         let window = layout.window;
         let screen = area();
         assert!(
-            window.x >= screen.x
+            window.x >= screen.x + crate::system::workspace::dialog::AREA_MARGIN
                 && window.y >= screen.y
                 && window.right() + SHADOW_OFFSET <= screen.right()
                 && window.bottom() + SHADOW_OFFSET <= screen.bottom(),
@@ -170,6 +170,7 @@ fn the_dialog_fits_the_screen_in_both_modes() {
             assert!(preview.right() < layout.tag_x);
             assert!(layout.tag_x + 7 * METRICS.cell_w <= row.right());
             assert!(preview.y >= row.y && preview.bottom() <= row.bottom());
+            assert!(METRICS.cell_h <= row.height, "a text line fits its row");
         }
         for pair in layout.rows.windows(2) {
             assert_eq!(pair[0].bottom(), pair[1].y);

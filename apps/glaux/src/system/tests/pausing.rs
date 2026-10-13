@@ -199,7 +199,7 @@ fn scrollback_and_history_survive_a_pause() {
     let system = enter(shell_with_cartridge(&fixture, COUNTER), "load pong");
     let system = ticks(enter(system, "run"), 1);
     let system = open_shell(press_break(system));
-    let system = system.update(&[InputEvent::Up]);
+    let system = system.update(&[InputEvent::Up { select: false }]);
     let SystemState::Paused { shell, .. } = system.state() else {
         panic!("expected a paused cartridge");
     };

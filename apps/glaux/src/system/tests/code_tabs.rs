@@ -248,6 +248,7 @@ fn changed_editor_settings_are_handed_to_the_host_to_keep() {
         InputEvent::PointerDown {
             button: PointerButton::Primary,
             at,
+            select: false,
         },
         InputEvent::Enter,
         InputEvent::Break,

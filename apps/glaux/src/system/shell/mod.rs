@@ -190,13 +190,13 @@ impl Shell {
             self.blink = 0;
         }
         match event {
-            InputEvent::Up => {
+            InputEvent::Up { .. } => {
                 let current = self.editor.text();
                 if let Some(line) = self.history.older(&current) {
                     self.editor.set_text(line);
                 }
             }
-            InputEvent::Down => {
+            InputEvent::Down { .. } => {
                 if let Some(line) = self.history.newer() {
                     self.editor.set_text(line);
                 }
@@ -242,6 +242,7 @@ impl Shell {
             | InputEvent::Undo
             | InputEvent::Redo
             | InputEvent::Save
+            | InputEvent::SelectAll
             | InputEvent::OpenFile
             | InputEvent::CloseDocument
             | InputEvent::NextDocument

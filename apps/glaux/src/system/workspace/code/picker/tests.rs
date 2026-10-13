@@ -24,16 +24,11 @@ fn picker() -> FilePicker {
 }
 
 fn layout() -> PickerLayout {
-    PickerLayout::new(
-        Rect {
-            x: 0,
-            y: 16,
-            width: 320,
-            height: 212,
-        },
-        10,
-        0,
-    )
+    let code = super::super::layout::CodeLayout::new(
+        crate::system::workspace::tests_support::CODE_METRICS,
+        crate::system::test_font::LAYOUT_FONT.clone(),
+    );
+    super::super::picker_layout(&code, &picker())
 }
 
 fn type_text(picker: &mut FilePicker, text: &str) {
@@ -95,8 +90,8 @@ fn backspace_widens_the_filter_again() {
 #[test]
 fn enter_opens_the_highlighted_file() {
     let mut picker = picker();
-    picker.handle_input(InputEvent::Down, &layout());
-    picker.handle_input(InputEvent::Down, &layout());
+    picker.handle_input(InputEvent::Down { select: false }, &layout());
+    picker.handle_input(InputEvent::Down { select: false }, &layout());
     assert_eq!(
         picker.handle_input(InputEvent::Enter, &layout()),
         Some(PickerAction::Open(
@@ -119,7 +114,10 @@ fn nothing_opens_without_a_match() {
     let mut picker = picker();
     type_text(&mut picker, "zzz");
     assert_eq!(picker.handle_input(InputEvent::Enter, &layout()), None);
-    assert_eq!(picker.handle_input(InputEvent::Down, &layout()), None);
+    assert_eq!(
+        picker.handle_input(InputEvent::Down { select: false }, &layout()),
+        None
+    );
     assert_eq!(
         picker.handle_input(InputEvent::Break, &layout()),
         Some(PickerAction::Close)
@@ -131,10 +129,10 @@ fn the_highlight_stays_on_the_list_and_scrolls_it() {
     let paths: Vec<String> = (0..25).map(|index| format!("f{index:02}.luau")).collect();
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
     let mut picker = FilePicker::new(Ok(listing(&refs, Vec::new())));
-    picker.handle_input(InputEvent::Up, &layout());
+    picker.handle_input(InputEvent::Up { select: false }, &layout());
     assert_eq!((picker.focus(), picker.first()), (0, 0));
     for _ in 0..LIST_ROWS {
-        picker.handle_input(InputEvent::Down, &layout());
+        picker.handle_input(InputEvent::Down { select: false }, &layout());
     }
     assert_eq!((picker.focus(), picker.first()), (LIST_ROWS, 1));
     picker.handle_input(InputEvent::Wheel { delta: -100 }, &layout());
@@ -149,6 +147,7 @@ fn clicking_a_row_opens_it_and_clicking_outside_closes() {
     let press = |at| InputEvent::PointerDown {
         button: PointerButton::Primary,
         at,
+        select: false,
     };
     assert_eq!(
         picker.handle_input(press(at), &layout()),
@@ -192,4 +191,36 @@ fn a_listing_that_failed_shows_why() {
     let picker = FilePicker::new(Err(FsError::Unreadable("/".into())));
     assert_eq!(picker.error(), Some("Cannot read /"));
     assert_eq!(picker.match_count(), 0);
+}
+
+#[test]
+fn the_window_holds_its_list_and_every_note_inside_its_area() {
+    let code = super::super::layout::CodeLayout::new(
+        crate::system::workspace::tests_support::CODE_METRICS,
+        crate::system::test_font::LAYOUT_FONT.clone(),
+    );
+    let area = super::super::overlay_area(&code);
+    let cell_h = code.metrics.cell_h;
+    for gaps in 0..=MAX_GAP_LINES {
+        let layout = PickerLayout::new(area, cell_h, gaps);
+        let window = layout.window;
+        assert!(window.y >= area.y + AREA_MARGIN, "{gaps} gaps: {window:?}");
+        assert!(
+            window.bottom() <= area.bottom() - AREA_MARGIN,
+            "{gaps} gaps"
+        );
+        let last_line = layout.summary_y + (1 + gaps as i32) * cell_h;
+        assert!(
+            last_line <= window.bottom() - PAD,
+            "{gaps} gaps: {last_line} past {window:?}"
+        );
+        assert_eq!(layout.row(layout.rows - 1).bottom(), layout.summary_y);
+        // Only the most notes cost the list a row.
+        let expected = if gaps < MAX_GAP_LINES {
+            LIST_ROWS
+        } else {
+            LIST_ROWS - 1
+        };
+        assert_eq!(layout.rows, expected, "{gaps} gaps");
+    }
 }

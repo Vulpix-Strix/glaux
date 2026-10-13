@@ -39,7 +39,7 @@ const PREVIEW_WIDTH: i32 = (OBJ_GRID_COLUMNS * OBJ_TILE_WIDTH) as i32;
 /// Lines of the summary column above the transparency control.
 const SUMMARY_LINES: i32 = 5;
 /// Lines the warnings, or the reason the sheet cannot be imported, take.
-pub const NOTE_LINES: usize = 7;
+pub const NOTE_LINES: usize = 6;
 /// Space between the preview and the summary column.
 const COLUMN_GAP: i32 = 8;
 /// Space between the dialog's sections.
@@ -219,8 +219,8 @@ impl ImportPreview {
         document: &SpriteDocument,
     ) -> Option<ImportOutcome> {
         match event {
-            InputEvent::Up => self.scroll_by(-1, layout),
-            InputEvent::Down => self.scroll_by(1, layout),
+            InputEvent::Up { .. } => self.scroll_by(-1, layout),
+            InputEvent::Down { .. } => self.scroll_by(1, layout),
             InputEvent::Wheel { delta } => self.scroll_by(-i32::from(delta), layout),
             InputEvent::Text('t' | 'T') => self.toggle(document),
             InputEvent::Enter => return self.import(),
@@ -228,6 +228,7 @@ impl ImportPreview {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                ..
             } => self.armed = layout.button_at(at),
             InputEvent::PointerUp {
                 button: PointerButton::Primary,
@@ -572,7 +573,9 @@ impl ImportLayout {
         let main_bottom = notes_y - SECTION_GAP;
         // The preview shows whole tile rows inside its frame.
         let tile = OBJ_TILE_HEIGHT as i32;
-        let preview_height = (main_bottom - main_top - 2) / tile * tile;
+        // At least one row, however little room a font leaves; the layout
+        // tests check the system font leaves room for more.
+        let preview_height = ((main_bottom - main_top - 2) / tile * tile).max(tile);
         let preview = Rect {
             x: text_x + 1,
             y: main_top + 1,
@@ -594,15 +597,6 @@ impl ImportLayout {
             width: (cells(TOP_LEFT) + 2) * cell_w,
             height: button_height,
         };
-        debug_assert!(
-            window.x >= area.x
-                && window.right() + SHADOW_OFFSET <= area.right()
-                && window.bottom() + SHADOW_OFFSET <= area.bottom()
-                && preview_height >= tile
-                && transparency.bottom() <= main_bottom
-                && transparency.right() <= text_right,
-            "the import dialog must fit its area"
-        );
         Self {
             window,
             title_bar,

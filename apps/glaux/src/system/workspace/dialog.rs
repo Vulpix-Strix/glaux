@@ -10,7 +10,7 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
-use super::{BAR, Rect, wrap};
+use super::{BAR, Rect, take_cells, wrap};
 use crate::system::{BACKGROUND, TEXT};
 
 /// Window body.
@@ -121,10 +121,10 @@ impl<A: Copy> Dialog<A> {
     pub fn handle_input(&mut self, event: InputEvent, layout: &DialogLayout) -> Option<A> {
         let count = self.actions.len();
         match event {
-            InputEvent::Up | InputEvent::Left { .. } => {
+            InputEvent::Up { .. } | InputEvent::Left { .. } => {
                 self.focus = (self.focus + count - 1) % count;
             }
-            InputEvent::Down | InputEvent::Right { .. } | InputEvent::Tab => {
+            InputEvent::Down { .. } | InputEvent::Right { .. } | InputEvent::Tab => {
                 self.focus = (self.focus + 1) % count;
             }
             InputEvent::Enter => return Some(self.actions[self.focus].1),
@@ -132,6 +132,7 @@ impl<A: Copy> Dialog<A> {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                ..
             } => {
                 self.armed = layout.button_at(at);
                 if let Some(button) = self.armed {
@@ -286,6 +287,29 @@ pub fn draw_window(
     fill(framebuffer, title_bar, INK);
     let title_x = title_bar.x + (title_bar.width - text_cells(title) * cell_w) / 2;
     draw_text(framebuffer, font, title, title_x, title_bar.y + 2, BODY);
+}
+
+/// Draws a window as [`draw_window`] does, but with `title` at the left
+/// end of its title bar and `detail` at the right end. The detail is cut
+/// short rather than run into the title where both don't fit.
+pub fn draw_window_with_detail(
+    framebuffer: &mut Framebuffer,
+    font: &BitmapFont,
+    window: Rect,
+    title_bar: Rect,
+    title: &str,
+    detail: &str,
+    cell_w: i32,
+) {
+    draw_window(framebuffer, font, window, title_bar, "", cell_w);
+    let title_x = title_bar.x + PAD;
+    let y = title_bar.y + 2;
+    draw_text(framebuffer, font, title, title_x, y, BODY);
+    let room =
+        (title_bar.right() - PAD - (title_x + (text_cells(title) + 2) * cell_w)) / cell_w.max(1);
+    let detail = take_cells(font, detail, usize::try_from(room).unwrap_or(0));
+    let detail_x = title_bar.right() - PAD - text_cells(detail) * cell_w;
+    draw_text(framebuffer, font, detail, detail_x, y, BODY);
 }
 
 /// Draws a push button labelled `label`, inverted with an inner rule when

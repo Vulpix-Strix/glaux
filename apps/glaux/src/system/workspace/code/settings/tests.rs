@@ -2,13 +2,11 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 fn layout() -> SettingsLayout {
-    let area = Rect {
-        x: 0,
-        y: 16,
-        width: 320,
-        height: 212,
-    };
-    SettingsDialog::layout(area, 6, 12)
+    let code = super::super::layout::CodeLayout::new(
+        crate::system::workspace::tests_support::CODE_METRICS,
+        crate::system::test_font::LAYOUT_FONT.clone(),
+    );
+    super::super::settings_layout(&code)
 }
 
 fn centre(rect: Rect) -> Point {
@@ -22,6 +20,7 @@ fn press(at: Point) -> InputEvent {
     InputEvent::PointerDown {
         button: PointerButton::Primary,
         at,
+        select: false,
     }
 }
 
@@ -43,11 +42,11 @@ fn keys_change_the_focused_setting_at_once() {
     // Left and Right only step the tab size on its own row.
     send(&mut dialog, InputEvent::Right { select: false });
     send(&mut dialog, InputEvent::Enter);
-    send(&mut dialog, InputEvent::Down);
+    send(&mut dialog, InputEvent::Down { select: false });
     send(&mut dialog, InputEvent::Right { select: false });
-    send(&mut dialog, InputEvent::Down);
+    send(&mut dialog, InputEvent::Down { select: false });
     send(&mut dialog, InputEvent::Text(' '));
-    send(&mut dialog, InputEvent::Down);
+    send(&mut dialog, InputEvent::Down { select: false });
     send(&mut dialog, InputEvent::Enter);
     assert_eq!(
         settings,
@@ -66,7 +65,7 @@ fn the_tab_size_never_leaves_its_range() {
     let layout = layout();
     let mut settings = EditorSettings::default();
     let mut dialog = SettingsDialog::new(settings);
-    dialog.handle_input(InputEvent::Down, &mut settings, &layout);
+    dialog.handle_input(InputEvent::Down { select: false }, &mut settings, &layout);
     for _ in 0..10 {
         dialog.handle_input(InputEvent::Left { select: false }, &mut settings, &layout);
     }
@@ -87,7 +86,7 @@ fn escape_and_done_both_close() {
         SettingsAction::Close
     );
     for _ in 0..Row::ALL.len() {
-        dialog.handle_input(InputEvent::Down, &mut settings, &layout);
+        dialog.handle_input(InputEvent::Down { select: false }, &mut settings, &layout);
     }
     assert_eq!(dialog.focus(), Row::Done);
     assert_eq!(

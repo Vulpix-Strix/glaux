@@ -1,8 +1,8 @@
 //! The order of the Code view's document tabs, which one is active, and
 //! how each document is shown.
 
-use crate::system::code_cursor::Caret;
 use crate::system::code_document::DocumentId;
+use crate::system::code_selection::Selection;
 use crate::system::code_text::TextMetrics;
 
 /// How one open document is shown, kept per tab so switching documents
@@ -21,7 +21,7 @@ pub struct DocumentView {
 struct OpenTab {
     id: DocumentId,
     view: DocumentView,
-    caret: Caret,
+    selection: Selection,
     /// The document's extent as last measured for the view.
     metrics: Option<TextMetrics>,
 }
@@ -68,7 +68,7 @@ impl DocumentTabs {
                 OpenTab {
                     id,
                     view: DocumentView::default(),
-                    caret: Caret::default(),
+                    selection: Selection::default(),
                     metrics: None,
                 },
             );
@@ -138,19 +138,20 @@ impl DocumentTabs {
             .map(|tab| &mut tab.view)
     }
 
-    /// Where the caret is in `id`'s document. Each tab keeps its own, so
+    /// What is selected in `id`'s document. Each tab keeps its own, so
     /// switching documents returns to it.
-    pub fn caret(&self, id: DocumentId) -> Option<Caret> {
+    pub fn selection(&self, id: DocumentId) -> Option<Selection> {
         self.tabs
             .iter()
             .find(|tab| tab.id == id)
-            .map(|tab| tab.caret)
+            .map(|tab| tab.selection)
     }
 
-    /// Moves the caret of `id`'s document. Does nothing if it has no tab.
-    pub fn set_caret(&mut self, id: DocumentId, caret: Caret) {
+    /// Changes the selection of `id`'s document. Does nothing if it has no
+    /// tab.
+    pub fn set_selection(&mut self, id: DocumentId, selection: Selection) {
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
-            tab.caret = caret;
+            tab.selection = selection;
         }
     }
 

@@ -240,7 +240,11 @@ fn navigation_events_do_not_edit_the_line() {
     let mut editor = typed("abc");
     apply_all(
         &mut editor,
-        &[InputEvent::Up, InputEvent::Down, InputEvent::Tab],
+        &[
+            InputEvent::Up { select: false },
+            InputEvent::Down { select: false },
+            InputEvent::Tab,
+        ],
     );
     assert_eq!(state(&editor), ("abc".into(), 3, None));
 }

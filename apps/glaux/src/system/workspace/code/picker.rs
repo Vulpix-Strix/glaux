@@ -7,7 +7,7 @@ use crate::cartridge_fs::{FsError, WalkGap};
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{AREA_MARGIN, PAD};
 
-/// Rows of files the window shows at once.
+/// Rows of files the window shows at once, where the area has room.
 pub const LIST_ROWS: usize = 10;
 /// Most filter characters kept.
 const MAX_FILTER: usize = 32;
@@ -126,12 +126,13 @@ impl FilePicker {
                     self.refilter();
                 }
             }
-            InputEvent::Up => self.move_focus(-1),
-            InputEvent::Down => self.move_focus(1),
-            InputEvent::Wheel { delta } => self.move_focus(-isize::from(delta)),
+            InputEvent::Up { .. } => self.move_focus(-1, layout.rows),
+            InputEvent::Down { .. } => self.move_focus(1, layout.rows),
+            InputEvent::Wheel { delta } => self.move_focus(-isize::from(delta), layout.rows),
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                ..
             } => {
                 if !layout.window.contains(at) {
                     return Some(PickerAction::Close);
@@ -149,15 +150,26 @@ impl FilePicker {
         None
     }
 
-    fn move_focus(&mut self, step: isize) {
+    /// Whether a press at `point` opens a file: it lands on a row that
+    /// lists one.
+    pub fn opens_at(&self, point: Point, layout: &PickerLayout) -> bool {
+        layout
+            .row_at(point)
+            .is_some_and(|row| self.first + row < self.matches.len())
+    }
+
+    /// Moves the highlight `step` matches on, scrolling a list of `rows`
+    /// rows as little as it takes to keep it shown.
+    fn move_focus(&mut self, step: isize, rows: usize) {
+        let rows = rows.max(1);
         let Some(last) = self.matches.len().checked_sub(1) else {
             return;
         };
         self.focus = self.focus.saturating_add_signed(step).min(last);
         if self.focus < self.first {
             self.first = self.focus;
-        } else if self.focus >= self.first + LIST_ROWS {
-            self.first = self.focus + 1 - LIST_ROWS;
+        } else if self.focus >= self.first + rows {
+            self.first = self.focus + 1 - rows;
         }
     }
 
@@ -215,6 +227,9 @@ pub struct PickerLayout {
     pub filter: Rect,
     /// The first file row; the others follow one cell row apart.
     pub list: Rect,
+    /// File rows shown: [`LIST_ROWS`], or fewer where the area is too short
+    /// to hold them with every note.
+    pub rows: usize,
     /// Top of the summary line, then of each gap line.
     pub summary_y: i32,
     pub text_x: i32,
@@ -225,8 +240,11 @@ impl PickerLayout {
     /// The window centred in `area`, tall enough for `gap_lines` notes.
     pub fn new(area: Rect, cell_h: i32, gap_lines: usize) -> Self {
         let title_h = cell_h + 2;
-        let rows = LIST_ROWS as i32 + FIXED_LINES + gap_lines as i32;
-        let height = (title_h + PAD + rows * cell_h + PAD).min(area.height - 2 * AREA_MARGIN);
+        let tallest = area.height - 2 * AREA_MARGIN;
+        let room = (tallest - title_h - 2 * PAD) / cell_h.max(1) - FIXED_LINES - gap_lines as i32;
+        let list_rows = usize::try_from(room).unwrap_or(0).clamp(1, LIST_ROWS);
+        let lines = list_rows as i32 + FIXED_LINES + gap_lines as i32;
+        let height = (title_h + PAD + lines * cell_h + PAD).min(tallest);
         let width = WINDOW_WIDTH.min(area.width - 2 * AREA_MARGIN);
         let window = Rect {
             x: area.x + (area.width - width) / 2,
@@ -259,7 +277,8 @@ impl PickerLayout {
             title_bar,
             filter,
             list,
-            summary_y: list.y + LIST_ROWS as i32 * cell_h,
+            rows: list_rows,
+            summary_y: list.y + list_rows as i32 * cell_h,
             text_x,
             cell_h,
         }
@@ -275,7 +294,7 @@ impl PickerLayout {
 
     /// The file row under `point`, if any.
     fn row_at(&self, point: Point) -> Option<usize> {
-        (0..LIST_ROWS).find(|&row| self.row(row).contains(point))
+        (0..self.rows).find(|&row| self.row(row).contains(point))
     }
 }
 

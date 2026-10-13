@@ -170,6 +170,47 @@ impl Caret {
     }
 }
 
+/// The word around position `byte` of `document`: the run of word
+/// characters, blanks or punctuation holding the character after it, or the
+/// one before it at the end of a line. Empty on an empty line.
+pub fn word_at(document: &CodeDocument, byte: usize) -> Range<usize> {
+    let byte = valid(document, byte);
+    let range = line_range(document, byte);
+    let text = document.text();
+    let Some(run) = text[byte..range.end]
+        .chars()
+        .next()
+        .or_else(|| text[range.start..byte].chars().next_back())
+        .map(class)
+    else {
+        return byte..byte;
+    };
+    let start = text[range.start..byte]
+        .char_indices()
+        .rev()
+        .take_while(|&(_, ch)| class(ch) == run)
+        .last()
+        .map_or(byte, |(at, _)| range.start + at);
+    let end = text[byte..range.end]
+        .char_indices()
+        .find(|&(_, ch)| class(ch) != run)
+        .map_or(range.end, |(at, _)| byte + at);
+    start..end
+}
+
+/// The whole line holding position `byte` of `document`, its line ending
+/// included: from its start to the next line's start, or to the end of the
+/// document on the last line.
+pub fn line_at(document: &CodeDocument, byte: usize) -> Range<usize> {
+    let byte = valid(document, byte);
+    let line = document.line_of(byte);
+    let range = line_range(document, byte);
+    let end = document
+        .line_range(line + 1)
+        .map_or(document.text().len(), |next| next.start);
+    range.start..end
+}
+
 /// The nearest valid caret position to `byte`: inside the content of the
 /// line holding it, and on a character boundary at or before it.
 fn valid(document: &CodeDocument, byte: usize) -> usize {

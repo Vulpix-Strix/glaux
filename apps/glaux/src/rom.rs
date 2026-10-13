@@ -11,7 +11,9 @@ use glaux_machine::font::FontMetrics;
 use glaux_machine::ink_image::InkImage;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjPalettes};
 use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
-use glaux_machine::system_rom::{Cursor, SystemIcon, SystemRom, SystemSounds, SystemUi};
+use glaux_machine::system_rom::{
+    Cursor, SystemCursor, SystemIcon, SystemRom, SystemSounds, SystemUi,
+};
 use png::{BitDepth, ColorType, Transformations};
 use semver::Version;
 
@@ -30,8 +32,56 @@ const COPYRIGHT: &str = include_str!("../../../rom/copyright");
 const PALETTE_HEX: &str = include_str!("../../../rom/palette/system.hex");
 const OBP_TXT: &str = include_str!("../../../rom/palette/obp.txt");
 
-/// The pointer, then the icons in `SystemIcon` order.
-const POINTER_PNG: (&str, &[u8]) = embed!("ui/cursors/pointer.png");
+/// How one cursor is stored: its image, how many times its native size it
+/// is drawn, how many frames it holds side by side, and its hotspot in
+/// pixels of one frame of the image as stored.
+struct CursorSource {
+    png: (&'static str, &'static [u8]),
+    scale: usize,
+    frames: usize,
+    hotspot: (usize, usize),
+}
+
+/// The cursors in `SystemCursor` order.
+const CURSORS: [CursorSource; SystemCursor::COUNT] = [
+    // The arrow's tip.
+    CursorSource {
+        png: embed!("ui/cursors/pointer.png"),
+        scale: 2,
+        frames: 1,
+        hotspot: (0, 0),
+    },
+    // The middle of the I-beam's stem.
+    CursorSource {
+        png: embed!("ui/cursors/beam.png"),
+        scale: 2,
+        frames: 1,
+        hotspot: (8, 15),
+    },
+    // The tip of the pointing finger.
+    CursorSource {
+        png: embed!("ui/cursors/link3.png"),
+        scale: 2,
+        frames: 1,
+        hotspot: (8, 0),
+    },
+    // The middle of the closed hand.
+    CursorSource {
+        png: embed!("ui/cursors/grab.png"),
+        scale: 2,
+        frames: 1,
+        hotspot: (14, 16),
+    },
+    // The neck of the hourglass, five frames drawn at their native size.
+    CursorSource {
+        png: embed!("ui/cursors/hourglass.png"),
+        scale: 1,
+        frames: 5,
+        hotspot: (7, 7),
+    },
+];
+
+/// The icons in `SystemIcon` order.
 const ICON_PNGS: [(&str, &[u8]); SystemIcon::COUNT] = [
     embed!("ui/icons/code.png"),
     embed!("ui/icons/sprites.png"),
@@ -46,8 +96,6 @@ const ICON_PNGS: [(&str, &[u8]); SystemIcon::COUNT] = [
 
 /// Side of a view icon, in pixels.
 pub const ICON_SIZE: usize = 16;
-/// The pointer is drawn at twice its native size in its source image.
-const POINTER_SOURCE_SCALE: usize = 2;
 
 /// Ink slots of the 1-bit Pixel Icons' colors: black outline and white
 /// light. The pack has no shade, so slot 2 goes unused.
@@ -99,9 +147,17 @@ fn build(
 
 /// The System ROM UI images.
 pub fn ui() -> anyhow::Result<SystemUi> {
-    let (name, bytes) = POINTER_PNG;
-    let pointer = parse_cursor(bytes, POINTER_SOURCE_SCALE, (0, 0))
-        .with_context(|| format!("invalid {name}"))?;
+    let mut cursors = Vec::with_capacity(CURSORS.len());
+    for source in &CURSORS {
+        let (name, bytes) = source.png;
+        cursors.push(
+            parse_cursor(bytes, source.scale, source.frames, source.hotspot)
+                .with_context(|| format!("invalid {name}"))?,
+        );
+    }
+    let cursors = cursors
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("one image per cursor"));
     let mut icons = Vec::with_capacity(ICON_PNGS.len());
     for (name, bytes) in ICON_PNGS {
         icons.push(parse_icon(bytes).with_context(|| format!("invalid {name}"))?);
@@ -109,7 +165,7 @@ pub fn ui() -> anyhow::Result<SystemUi> {
     let icons = icons
         .try_into()
         .unwrap_or_else(|_| unreachable!("one image per icon"));
-    Ok(SystemUi::new(pointer, icons))
+    Ok(SystemUi::new(cursors, icons))
 }
 
 /// Decodes a view icon: a [`ICON_SIZE`]-square image in the icon colors.
@@ -126,20 +182,33 @@ fn parse_icon(png: &[u8]) -> anyhow::Result<InkImage> {
     )?)
 }
 
-/// Decodes a cursor drawn at `scale` times its native size, with
-/// `hotspot` in native pixels. Transparent edges are trimmed and the
-/// hotspot moved with them.
-fn parse_cursor(png: &[u8], scale: usize, hotspot: (usize, usize)) -> anyhow::Result<Cursor> {
+/// Decodes a cursor of `frames` frames side by side, each drawn at
+/// `scale` times its native size, with `hotspot` in pixels of one frame
+/// as stored. Transparent edges every frame shares are trimmed before the
+/// frames are shrunk, so art drawn off the scale's grid still decodes, and
+/// the hotspot moves with them.
+fn parse_cursor(
+    png: &[u8],
+    scale: usize,
+    frames: usize,
+    hotspot: (usize, usize),
+) -> anyhow::Result<Cursor> {
     let (width, height, rgba) = decode_png(png)?;
-    let (width, height, rgba) = downscale(width, height, &rgba, scale)?;
-    let slots = inks(width, &rgba, &CURSOR_INKS)?;
+    ensure!(
+        frames > 0 && width.is_multiple_of(frames),
+        "{width} pixels across do not split into {frames} frames"
+    );
+    let frame_width = width / frames;
+    let slots = &inks(width, &rgba, &CURSOR_INKS)?;
 
-    let opaque = |x: usize, y: usize| slots[y * width + x] != 0;
-    let columns: Vec<usize> = (0..width)
+    let opaque = |x: usize, y: usize| {
+        (0..frames).any(|frame| slots[y * width + frame * frame_width + x] != 0)
+    };
+    let columns: Vec<usize> = (0..frame_width)
         .filter(|&x| (0..height).any(|y| opaque(x, y)))
         .collect();
     let rows: Vec<usize> = (0..height)
-        .filter(|&y| (0..width).any(|x| opaque(x, y)))
+        .filter(|&y| (0..frame_width).any(|x| opaque(x, y)))
         .collect();
     let (Some(&left), Some(&right), Some(&top), Some(&bottom)) =
         (columns.first(), columns.last(), rows.first(), rows.last())
@@ -151,26 +220,37 @@ fn parse_cursor(png: &[u8], scale: usize, hotspot: (usize, usize)) -> anyhow::Re
         "hotspot {hotspot:?} lies outside the visible cursor"
     );
 
-    let trimmed = (top..=bottom)
-        .flat_map(|y| (left..=right).map(move |x| (x, y)))
-        .map(|(x, y)| slots[y * width + x])
-        .collect();
-    let image = InkImage::new(right - left + 1, bottom - top + 1, trimmed)?;
+    let (trimmed_width, trimmed_height) = (right - left + 1, bottom - top + 1);
+    let images = (0..frames)
+        .map(|frame| {
+            let x0 = frame * frame_width + left;
+            let trimmed: Vec<u8> = (top..=bottom)
+                .flat_map(|y| (x0..x0 + trimmed_width).map(move |x| slots[y * width + x]))
+                .collect();
+            let (native_width, native_height, native) =
+                downscale(trimmed_width, trimmed_height, &trimmed, scale)
+                    .with_context(|| format!("frame {frame}"))?;
+            Ok(InkImage::new(native_width, native_height, native)?)
+        })
+        .collect::<anyhow::Result<_>>()?;
     let hotspot = (
-        u8::try_from(hotspot.0 - left)?,
-        u8::try_from(hotspot.1 - top)?,
+        u8::try_from((hotspot.0 - left) / scale)?,
+        u8::try_from((hotspot.1 - top) / scale)?,
     );
-    Ok(Cursor { image, hotspot })
+    Ok(Cursor {
+        frames: images,
+        hotspot,
+    })
 }
 
 /// Shrinks an image drawn at `scale` times its size, requiring every
-/// `scale`-square block to be one color so no detail is lost.
-fn downscale(
+/// `scale`-square block to be one value so no detail is lost.
+fn downscale<T: Copy + PartialEq>(
     width: usize,
     height: usize,
-    rgba: &[[u8; 4]],
+    pixels: &[T],
     scale: usize,
-) -> anyhow::Result<(usize, usize, Vec<[u8; 4]>)> {
+) -> anyhow::Result<(usize, usize, Vec<T>)> {
     ensure!(
         scale > 0 && width.is_multiple_of(scale) && height.is_multiple_of(scale),
         "{width}x{height} pixels is not a multiple of the {scale}x scale"
@@ -179,15 +259,15 @@ fn downscale(
     let mut native = Vec::with_capacity(native_w * native_h);
     for y in 0..native_h {
         for x in 0..native_w {
-            let color = rgba[y * scale * width + x * scale];
+            let value = pixels[y * scale * width + x * scale];
             for (dx, dy) in (0..scale).flat_map(|dy| (0..scale).map(move |dx| (dx, dy))) {
                 let (sx, sy) = (x * scale + dx, y * scale + dy);
                 ensure!(
-                    rgba[sy * width + sx] == color,
+                    pixels[sy * width + sx] == value,
                     "pixel ({sx}, {sy}) breaks the {scale}x{scale} block at ({x}, {y})"
                 );
             }
-            native.push(color);
+            native.push(value);
         }
     }
     Ok((native_w, native_h, native))

@@ -249,7 +249,8 @@ fn click_inside_presses_and_releases_at_the_pixel() {
         step(&mut tracker, frame(INSIDE, PRESS)),
         [InputEvent::PointerDown {
             button: PRIMARY,
-            at: INSIDE_PIXEL
+            at: INSIDE_PIXEL,
+            select: false,
         }]
     );
     assert_eq!(
@@ -274,7 +275,8 @@ fn a_click_within_one_frame_is_not_lost() {
         [
             InputEvent::PointerDown {
                 button: PRIMARY,
-                at: INSIDE_PIXEL
+                at: INSIDE_PIXEL,
+                select: false,
             },
             InputEvent::PointerUp {
                 button: PRIMARY,
@@ -305,7 +307,8 @@ fn presses_on_the_bars_are_swallowed_with_their_release() {
         step(&mut tracker, inside),
         [InputEvent::PointerDown {
             button: PRIMARY,
-            at: Point::new(160, 120)
+            at: Point::new(160, 120),
+            select: false,
         }]
     );
 }
@@ -354,7 +357,8 @@ fn disabling_drops_captures_and_reenabling_ignores_held_buttons() {
         step(&mut tracker, frame(INSIDE, PRESS)),
         [InputEvent::PointerDown {
             button: PRIMARY,
-            at: INSIDE_PIXEL
+            at: INSIDE_PIXEL,
+            select: false,
         }]
     );
 }
@@ -396,7 +400,8 @@ fn a_button_held_through_focus_loss_is_ignored_until_released() {
         step(&mut tracker, frame((34.0, 62.0), PRESS)),
         [InputEvent::PointerDown {
             button: PRIMARY,
-            at: Point::new(11, 20)
+            at: Point::new(11, 20),
+            select: false,
         }]
     );
 }
@@ -423,6 +428,21 @@ fn wheel_reports_whole_notches_over_the_viewport() {
     bar.window = (1280, 720);
     bar.wheel = 5.0;
     assert_eq!(step(&mut tracker, bar), [InputEvent::PointerMove(None)]);
+}
+
+#[test]
+fn a_press_with_shift_held_extends_the_selection() {
+    let mut tracker = enabled();
+    let mut press = frame(INSIDE, PRESS);
+    press.shift = true;
+    assert_eq!(
+        step(&mut tracker, press),
+        [InputEvent::PointerDown {
+            button: PRIMARY,
+            at: INSIDE_PIXEL,
+            select: true,
+        }]
+    );
 }
 
 #[test]

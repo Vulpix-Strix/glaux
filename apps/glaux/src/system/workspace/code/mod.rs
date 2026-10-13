@@ -10,8 +10,12 @@ mod render;
 mod settings;
 mod text_view;
 
+use std::ops::Range;
+
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
+use glaux_machine::machine::TICK_RATE;
+use glaux_machine::system_rom::SystemCursor;
 
 pub use layout::Metrics;
 use layout::{CodeLayout, StripHit, tab_labels};
@@ -22,8 +26,9 @@ use text_view::TextGeometry;
 use super::Rect;
 use crate::cartridge::source::{ScriptListing, SourcePath};
 use crate::cartridge_fs::FsError;
-use crate::system::code_cursor::Caret;
+use crate::system::code_cursor::{Caret, line_at, word_at};
 use crate::system::code_document::{CodeDocument, DocumentId};
+use crate::system::code_selection::{Edge, Selection};
 use crate::system::code_session::{CodeSession, DocumentView};
 use crate::system::code_text::{TextMetrics, spot};
 use crate::system::editor_settings::EditorSettings;
@@ -33,6 +38,14 @@ use crate::system::shell::BLINK_TICKS;
 const WHEEL_LINES: isize = 3;
 /// Columns the text moves per sideways wheel notch.
 const WHEEL_COLUMNS: isize = 6;
+/// Ticks within which another press near the last one in the text counts
+/// toward a double or triple click, as in the sprite editor.
+const MULTI_CLICK_TICKS: u32 = TICK_RATE * 2 / 5;
+/// Pixels a press may land from the previous one and still continue its
+/// multi-click.
+const MULTI_CLICK_SLOP: u16 = 2;
+/// Ticks between the scroll steps of a selection dragged past the text.
+const AUTOSCROLL_TICKS: u32 = 4;
 
 /// The status bar hint while nothing covers the view.
 const VIEW_HINT: &str = "Ctrl+P: open  Ctrl+W: close  Esc: shell";
@@ -62,6 +75,48 @@ struct TabMenu {
     focus: usize,
 }
 
+/// What a run of presses in the text selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unit {
+    Character,
+    Word,
+    Line,
+}
+
+impl Unit {
+    /// The unit holding position `byte` of `document`.
+    fn at(self, document: &CodeDocument, byte: usize) -> Range<usize> {
+        match self {
+            Self::Character => byte..byte,
+            Self::Word => word_at(document, byte),
+            Self::Line => line_at(document, byte),
+        }
+    }
+}
+
+/// A press in the text being dragged, selecting from where it began.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Gesture {
+    /// The document the press landed in.
+    id: DocumentId,
+    unit: Unit,
+    /// What stays selected wherever the drag goes: the unit pressed on, or
+    /// the anchor a Shift press extended from.
+    origin: Range<usize>,
+    /// The unit under the press itself, to tell when the drag leaves it.
+    pressed: Range<usize>,
+}
+
+/// The last press in the text, to tell double and triple clicks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Click {
+    at: Point,
+    /// 1 for a single click, 2 for a double and 3 for a triple.
+    count: u8,
+    /// Ticks left for the next press to continue the run.
+    ticks_left: u32,
+}
+
 /// The Code view's own UI state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeEditor {
@@ -83,6 +138,12 @@ pub struct CodeEditor {
     entry_error: Option<String>,
     /// Ticks since the caret blink last restarted in its visible phase.
     blink: u32,
+    /// The selection being dragged out in the text, while its press is held.
+    selecting: Option<Gesture>,
+    /// The last press in the text, while it can still start a multi-click.
+    last_click: Option<Click>,
+    /// Ticks the pointer has spent past the text while selecting.
+    autoscroll: u32,
 }
 
 impl CodeEditor {
@@ -97,12 +158,27 @@ impl CodeEditor {
             pointer: None,
             entry_error: None,
             blink: 0,
+            selecting: None,
+            last_click: None,
+            autoscroll: 0,
         }
     }
 
-    /// Advances the caret blink by one tick.
-    pub fn tick(&mut self) {
+    /// Advances the caret blink and the multi-click window by one tick, and
+    /// scrolls `session`'s active document while a selection is dragged
+    /// past its text.
+    pub fn tick(&mut self, session: Option<&mut CodeSession>) {
         self.blink = self.blink.wrapping_add(1);
+        self.last_click = self.last_click.and_then(|click| {
+            let ticks_left = click.ticks_left.checked_sub(1).filter(|&left| left > 0)?;
+            Some(Click {
+                ticks_left,
+                ..click
+            })
+        });
+        if let Some(session) = session {
+            self.autoscroll(session);
+        }
     }
 
     /// Whether the caret is in the visible phase of its blink.
@@ -155,6 +231,61 @@ impl CodeEditor {
         TextGeometry::new(&self.layout, document.line_count(), &self.settings)
     }
 
+    /// Whether a tab or a selection is being dragged, which keeps its
+    /// pointer wherever the pointer goes.
+    pub fn is_dragging(&self) -> bool {
+        self.drag.is_some() || self.selecting.is_some()
+    }
+
+    /// The pointer for `at`, with `session` shown: a closed hand while a
+    /// tab is dragged, an I-beam while text is selected by dragging and
+    /// over the text, and a pointing hand over what a click acts on.
+    pub fn cursor(&self, at: Point, session: Option<&CodeSession>) -> SystemCursor {
+        let hand = |clickable: bool| {
+            if clickable {
+                SystemCursor::Hand
+            } else {
+                SystemCursor::Arrow
+            }
+        };
+        if self.drag.is_some() {
+            return SystemCursor::Grab;
+        }
+        if self.selecting.is_some() {
+            return SystemCursor::Text;
+        }
+        if self.settings_dialog.is_some() {
+            let layout = settings_layout(&self.layout);
+            let arrows = layout.minus.contains(at) || layout.plus.contains(at);
+            return hand(arrows || layout.row_at(at).is_some());
+        }
+        if let Some(picker) = &self.picker {
+            return hand(picker.opens_at(at, &picker_layout(&self.layout, picker)));
+        }
+        let Some(session) = session else {
+            return hand(self.layout.settings_button().contains(at));
+        };
+        if let Some(menu) = self.menu {
+            let (_, rows) = self.menu_rows(session.tabs().len(), menu.focus);
+            return hand(rows.iter().any(|(_, rect)| rect.contains(at)));
+        }
+        let labels = labels(&self.layout.font, session);
+        let on_strip = self.layout.strip_hit(&labels, session.tabs().scroll(), at);
+        if on_strip != StripHit::None || self.layout.settings_button().contains(at) {
+            return SystemCursor::Hand;
+        }
+        if session.active_document().is_some() && self.layout.text.contains(at) {
+            return SystemCursor::Text;
+        }
+        SystemCursor::Arrow
+    }
+
+    /// The rows of the EDITOR SETTINGS window, top to bottom.
+    #[cfg(test)]
+    pub fn settings_rows(&self) -> Vec<Rect> {
+        settings_layout(&self.layout).rows.to_vec()
+    }
+
     /// Each document tab the strip shows: its position in tab order, its
     /// rectangle and its close glyph's.
     #[cfg(test)]
@@ -171,13 +302,15 @@ impl CodeEditor {
     pub fn forget(&mut self) {
         self.picker = None;
         self.menu = None;
-        self.drag = None;
+        self.end_drag();
+        self.last_click = None;
         self.entry_error = None;
     }
 
-    /// Ends a tab drag in progress.
+    /// Ends a tab drag or a selection drag in progress.
     pub fn end_drag(&mut self) {
         self.drag = None;
+        self.selecting = None;
     }
 
     /// Opens OPEN FILE on `listing`.
@@ -207,7 +340,7 @@ impl CodeEditor {
 
     /// Measures each of `session`'s documents whose measurements don't
     /// match how the view now shows it, moving its view back in range and
-    /// its caret to a valid position without a preferred column, since
+    /// its selection to valid positions without a preferred column, since
     /// columns may now mean something else. Documents already measured
     /// for the current settings are left alone.
     pub fn refresh_metrics(&self, session: &mut CodeSession) {
@@ -222,11 +355,15 @@ impl CodeEditor {
                 continue;
             }
             let metrics = TextMetrics::measure(document, key, &self.layout.font);
-            let caret = session.tabs().caret(id).unwrap_or_default().reset(document);
+            let selection = session
+                .tabs()
+                .selection(id)
+                .unwrap_or_default()
+                .reset(document);
             if let Some(view) = session.tabs_mut().view_mut(id) {
                 *view = geometry.clamp(*view, &metrics);
             }
-            session.tabs_mut().set_caret(id, caret);
+            session.tabs_mut().set_selection(id, selection);
             session.tabs_mut().set_metrics(id, metrics);
         }
     }
@@ -248,6 +385,7 @@ impl CodeEditor {
         if let InputEvent::PointerDown {
             button: PointerButton::Primary,
             at,
+            ..
         } = event
             && self.picker.is_none()
             && self.menu.is_none()
@@ -315,6 +453,11 @@ impl CodeEditor {
             InputEvent::PreviousDocument => session.tabs_mut().cycle(-1),
             InputEvent::PointerMove(at) => {
                 self.pointer = at;
+                if let Some(at) = at
+                    && self.selecting.is_some()
+                {
+                    self.drag_selection(session, at);
+                }
                 if let (Some(dragged), Some(at)) = (self.drag, at)
                     && let Some(to) = self.layout.tab_column(&labels, scroll, i32::from(at.x))
                     && to != dragged
@@ -326,9 +469,10 @@ impl CodeEditor {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                select,
             } => {
                 self.pointer = Some(at);
-                self.drag = None;
+                self.end_drag();
                 match self.layout.strip_hit(&labels, scroll, at) {
                     StripHit::Tab(index) => {
                         session.tabs_mut().activate(ids[index]);
@@ -344,7 +488,7 @@ impl CodeEditor {
                         }
                     }
                     StripHit::None if self.layout.text.contains(at) => {
-                        self.place_caret(session, at);
+                        self.press_text(session, at, select);
                     }
                     StripHit::None => {}
                 }
@@ -352,6 +496,7 @@ impl CodeEditor {
             InputEvent::PointerDown {
                 button: PointerButton::Middle,
                 at,
+                ..
             } => {
                 if let StripHit::Tab(index) | StripHit::Close(index) =
                     self.layout.strip_hit(&labels, scroll, at)
@@ -362,42 +507,63 @@ impl CodeEditor {
             InputEvent::PointerUp {
                 button: PointerButton::Primary,
                 ..
+            } => self.end_drag(),
+            InputEvent::PointerCancel => {
+                self.end_drag();
+                self.last_click = None;
             }
-            | InputEvent::PointerCancel => self.drag = None,
             InputEvent::Wheel { delta } => self.wheel(delta, &labels, session),
-            // Selection is not supported yet: extending moves like plain ones.
-            InputEvent::Left { .. } => self.move_caret(session, 0, |doc, caret, _| caret.left(doc)),
-            InputEvent::Right { .. } => {
-                self.move_caret(session, 0, |doc, caret, _| caret.right(doc));
+            InputEvent::Left { select } => {
+                self.move_caret(session, 0, select, Some(Edge::Start), |doc, caret, _| {
+                    caret.left(doc)
+                });
             }
-            InputEvent::WordLeft { .. } => {
-                self.move_caret(session, 0, |doc, caret, _| caret.word_left(doc));
+            InputEvent::Right { select } => {
+                self.move_caret(session, 0, select, Some(Edge::End), |doc, caret, _| {
+                    caret.right(doc)
+                });
             }
-            InputEvent::WordRight { .. } => {
-                self.move_caret(session, 0, |doc, caret, _| caret.word_right(doc));
+            InputEvent::WordLeft { select } => {
+                self.move_caret(session, 0, select, None, |doc, caret, _| {
+                    caret.word_left(doc)
+                });
             }
-            InputEvent::Home { .. } => self.move_caret(session, 0, |doc, caret, _| caret.home(doc)),
-            InputEvent::End { .. } => self.move_caret(session, 0, |doc, caret, _| caret.end(doc)),
-            InputEvent::DocumentStart { .. } => {
-                self.move_caret(session, 0, |doc, _, _| Caret::document_start(doc));
+            InputEvent::WordRight { select } => {
+                self.move_caret(session, 0, select, None, |doc, caret, _| {
+                    caret.word_right(doc)
+                });
             }
-            InputEvent::DocumentEnd { .. } => {
-                self.move_caret(session, 0, |doc, _, _| Caret::document_end(doc));
+            InputEvent::Home { select } => {
+                self.move_caret(session, 0, select, None, |doc, caret, _| caret.home(doc));
             }
-            InputEvent::Up => {
+            InputEvent::End { select } => {
+                self.move_caret(session, 0, select, None, |doc, caret, _| caret.end(doc));
+            }
+            InputEvent::DocumentStart { select } => {
+                self.move_caret(session, 0, select, None, |doc, _, _| {
+                    Caret::document_start(doc)
+                });
+            }
+            InputEvent::DocumentEnd { select } => {
+                self.move_caret(session, 0, select, None, |doc, _, _| {
+                    Caret::document_end(doc)
+                });
+            }
+            InputEvent::Up { select } => {
                 let font = self.layout.font.clone();
-                self.move_caret(session, 0, |doc, caret, metrics| {
+                self.move_caret(session, 0, select, None, |doc, caret, metrics| {
                     caret.vertical(doc, -1, metrics, &font)
                 });
             }
-            InputEvent::Down => {
+            InputEvent::Down { select } => {
                 let font = self.layout.font.clone();
-                self.move_caret(session, 0, |doc, caret, metrics| {
+                self.move_caret(session, 0, select, None, |doc, caret, metrics| {
                     caret.vertical(doc, 1, metrics, &font)
                 });
             }
-            InputEvent::PageUp { .. } => self.page(session, -1),
-            InputEvent::PageDown { .. } => self.page(session, 1),
+            InputEvent::SelectAll => self.select_all(session),
+            InputEvent::PageUp { select } => self.page(session, -1, select),
+            InputEvent::PageDown { select } => self.page(session, 1, select),
             InputEvent::WheelHorizontal { delta } if !self.pointer_over_strip() => {
                 // Positive turns move toward the left.
                 let step = -isize::from(delta) * WHEEL_COLUMNS;
@@ -435,25 +601,30 @@ impl CodeEditor {
 
     /// Moves the active document's caret and its view one screenful up,
     /// or down when `direction` is positive, so the caret keeps its place
-    /// on screen where the document allows.
-    fn page(&mut self, session: &mut CodeSession, direction: isize) {
+    /// on screen where the document allows. `select` extends the selection.
+    fn page(&mut self, session: &mut CodeSession, direction: isize, select: bool) {
         let Some(document) = session.active_document() else {
             return;
         };
         let rows = self.geometry(document).rows as isize * direction;
         let font = self.layout.font.clone();
-        self.move_caret(session, rows, |doc, caret, metrics| {
+        self.move_caret(session, rows, select, None, |doc, caret, metrics| {
             caret.vertical(doc, rows, metrics, &font)
         });
     }
 
     /// Moves the active document's caret with `motion`, after scrolling
     /// its view `scroll` rows, then scrolls as little as it takes to show
-    /// the caret. Does nothing until its measurements describe the view.
+    /// the caret. With `select` the selection follows the caret from its
+    /// anchor; without it the selection is dropped, or, for moves that
+    /// have an `edge`, collapsed to that end. Does nothing until its
+    /// measurements describe the view.
     fn move_caret(
         &mut self,
         session: &mut CodeSession,
         scroll: isize,
+        select: bool,
+        edge: Option<Edge>,
         motion: impl FnOnce(&CodeDocument, Caret, &TextMetrics) -> Caret,
     ) {
         let Some(document) = session.active_document() else {
@@ -462,52 +633,210 @@ impl CodeEditor {
         let id = document.id();
         let geometry = self.geometry(document);
         let tabs = session.tabs();
-        let (Some(&view), Some(caret), Some(metrics)) =
-            (tabs.view(id), tabs.caret(id), tabs.metrics(id))
+        let (Some(&view), Some(selection), Some(metrics)) =
+            (tabs.view(id), tabs.selection(id), tabs.metrics(id))
         else {
             return;
         };
         if metrics.key() != geometry.metrics_key() {
             return;
         }
-        let caret = motion(document, caret, metrics);
+        let selection = match edge {
+            Some(edge) => selection.stepped(document, select, edge, |caret| {
+                motion(document, caret, metrics)
+            }),
+            None => selection.moved(motion(document, selection.caret(), metrics), select),
+        };
         let view = geometry.scroll_rows(view, scroll, metrics);
-        let here = spot(document, caret.byte(), metrics.key(), &self.layout.font);
+        let here = spot(
+            document,
+            selection.caret().byte(),
+            metrics.key(),
+            &self.layout.font,
+        );
         let view = geometry.reveal(view, &here, metrics);
-        self.show_caret(session, id, caret, view);
+        self.show_selection(session, id, selection, Some(view));
     }
 
-    /// Puts the active document's caret at the position nearest `at`.
-    fn place_caret(&mut self, session: &mut CodeSession, at: Point) {
+    /// Selects the whole active document, leaving its view where it is.
+    fn select_all(&mut self, session: &mut CodeSession) {
         let Some(document) = session.active_document() else {
             return;
         };
+        let (id, selection) = (document.id(), Selection::all(document));
+        self.show_selection(session, id, selection, None);
+    }
+
+    /// The active document's id and its position nearest `at`, once its
+    /// measurements describe the view.
+    fn hit_text(&self, session: &CodeSession, at: Point) -> Option<(DocumentId, usize)> {
+        let document = session.active_document()?;
         let id = document.id();
         let geometry = self.geometry(document);
         let tabs = session.tabs();
-        let (Some(&view), Some(metrics)) = (tabs.view(id), tabs.metrics(id)) else {
-            return;
-        };
-        let Some(byte) = geometry.hit(view, at, document, metrics, &self.layout.font) else {
-            return;
-        };
-        let caret = Caret::at(document, byte);
-        let here = spot(document, caret.byte(), metrics.key(), &self.layout.font);
-        let view = geometry.reveal(view, &here, metrics);
-        self.show_caret(session, id, caret, view);
+        let (view, metrics) = (tabs.view(id)?, tabs.metrics(id)?);
+        let byte = geometry.hit(*view, at, document, metrics, &self.layout.font)?;
+        Some((id, Caret::at(document, byte).byte()))
     }
 
-    /// Records `id`'s caret and view, restarting the blink so the caret
-    /// shows while it moves.
-    fn show_caret(
+    /// Handles a primary press at `at` in the text: a single click puts the
+    /// caret there, a double click selects the word there and a triple
+    /// click its line, and `select` extends the selection to it instead.
+    /// The press then drags the selection until it is released.
+    fn press_text(&mut self, session: &mut CodeSession, at: Point, select: bool) {
+        let Some((id, byte)) = self.hit_text(session, at) else {
+            return;
+        };
+        let Some(document) = session.document(id) else {
+            return;
+        };
+        let count = match self.last_click {
+            Some(click) if !select && near(click.at, at) => click.count % 3 + 1,
+            _ => 1,
+        };
+        self.last_click = Some(Click {
+            at,
+            count,
+            ticks_left: MULTI_CLICK_TICKS,
+        });
+        let unit = match count {
+            1 => Unit::Character,
+            2 => Unit::Word,
+            _ => Unit::Line,
+        };
+        let pressed = unit.at(document, byte);
+        let (origin, selection) = if select {
+            let current = session.tabs().selection(id).unwrap_or_default();
+            let anchor = current.anchor();
+            let selection = current.moved(Caret::at(document, byte), true);
+            (anchor..anchor, selection)
+        } else {
+            let selection =
+                Selection::between(document, pressed.start, Caret::at(document, pressed.end));
+            (pressed.clone(), selection)
+        };
+        // A click shows where it landed; a word or line that more clicks
+        // select may end past the view, which then stays put.
+        let view = if unit == Unit::Character {
+            self.revealing(session, id, selection.caret())
+        } else {
+            None
+        };
+        self.show_selection(session, id, selection, view);
+        self.selecting = Some(Gesture {
+            id,
+            unit,
+            origin,
+            pressed,
+        });
+    }
+
+    /// Extends the selection being dragged to the unit under `at`. A drag
+    /// that leaves the unit it pressed on ends any multi-click run, so the
+    /// next press is a single click.
+    fn drag_selection(&mut self, session: &mut CodeSession, at: Point) {
+        let Some(gesture) = &self.selecting else {
+            return;
+        };
+        let Some((id, byte)) = self
+            .hit_text(session, at)
+            .filter(|&(id, _)| id == gesture.id)
+        else {
+            return;
+        };
+        let Some(document) = session.document(id) else {
+            return;
+        };
+        let target = gesture.unit.at(document, byte);
+        let origin = &gesture.origin;
+        let selection = if target.start < origin.start {
+            Selection::between(document, origin.end, Caret::at(document, target.start))
+        } else {
+            Selection::between(document, origin.start, Caret::at(document, target.end))
+        };
+        if target != gesture.pressed {
+            self.last_click = None;
+        }
+        self.show_selection(session, id, selection, None);
+    }
+
+    /// Scrolls toward the pointer while a selection is dragged past the
+    /// text's edges, by more the further past it is, and extends the
+    /// selection to what scrolls under the pointer. Hosts only report the
+    /// pointer when it moves, so a pointer held still scrolls from here.
+    fn autoscroll(&mut self, session: &mut CodeSession) {
+        let (Some(gesture), Some(at)) = (&self.selecting, self.pointer) else {
+            self.autoscroll = 0;
+            return;
+        };
+        let Some(document) = session
+            .active_document()
+            .filter(|document| document.id() == gesture.id)
+        else {
+            self.autoscroll = 0;
+            return;
+        };
+        let geometry = self.geometry(document);
+        let viewport = geometry.viewport;
+        let rows = past(
+            i32::from(at.y),
+            viewport.y,
+            viewport.bottom(),
+            geometry.cell_h,
+        );
+        let columns = if geometry.wrap {
+            0
+        } else {
+            past(
+                i32::from(at.x),
+                viewport.x,
+                viewport.right(),
+                geometry.cell_w,
+            )
+        };
+        if rows == 0 && columns == 0 {
+            self.autoscroll = 0;
+            return;
+        }
+        let due = self.autoscroll.is_multiple_of(AUTOSCROLL_TICKS);
+        self.autoscroll = self.autoscroll.wrapping_add(1);
+        if !due {
+            return;
+        }
+        self.scroll_active(session, |geometry, view, metrics| {
+            let view = geometry.scroll_rows(view, rows, metrics);
+            geometry.scroll_columns(view, columns, metrics)
+        });
+        self.drag_selection(session, at);
+    }
+
+    /// `id`'s view scrolled as little as it takes to show `caret`, once
+    /// its measurements are taken.
+    fn revealing(
+        &self,
+        session: &CodeSession,
+        id: DocumentId,
+        caret: Caret,
+    ) -> Option<DocumentView> {
+        let document = session.document(id)?;
+        let geometry = self.geometry(document);
+        let tabs = session.tabs();
+        let (view, metrics) = (tabs.view(id)?, tabs.metrics(id)?);
+        let here = spot(document, caret.byte(), metrics.key(), &self.layout.font);
+        Some(geometry.reveal(*view, &here, metrics))
+    }
+
+    /// Records `id`'s selection, and its view if given, restarting the
+    /// blink so the caret shows while it moves.
+    fn show_selection(
         &mut self,
         session: &mut CodeSession,
         id: DocumentId,
-        caret: Caret,
-        view: DocumentView,
+        selection: Selection,
+        view: Option<DocumentView>,
     ) {
-        session.tabs_mut().set_caret(id, caret);
-        if let Some(stored) = session.tabs_mut().view_mut(id) {
+        session.tabs_mut().set_selection(id, selection);
+        if let (Some(view), Some(stored)) = (view, session.tabs_mut().view_mut(id)) {
             *stored = view;
         }
         self.blink = 0;
@@ -555,8 +884,8 @@ impl CodeEditor {
                 self.menu = None;
                 return;
             }
-            InputEvent::Up => focus = focus.saturating_sub(1),
-            InputEvent::Down => focus = (focus + 1).min(last),
+            InputEvent::Up { .. } => focus = focus.saturating_sub(1),
+            InputEvent::Down { .. } => focus = (focus + 1).min(last),
             InputEvent::Wheel { delta } => {
                 focus = focus.saturating_add_signed(-isize::from(delta)).min(last);
             }
@@ -568,6 +897,7 @@ impl CodeEditor {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                ..
             } => {
                 let (_, rows) = self.menu_rows(ids.len(), focus);
                 if let Some(&(index, _)) = rows.iter().find(|(_, rect)| rect.contains(at)) {
@@ -611,6 +941,25 @@ impl CodeEditor {
             .collect();
         (window, rows)
     }
+}
+
+/// Whether a press at `b` lands close enough to one at `a` to continue its
+/// multi-click.
+fn near(a: Point, b: Point) -> bool {
+    a.x.abs_diff(b.x) <= MULTI_CLICK_SLOP && a.y.abs_diff(b.y) <= MULTI_CLICK_SLOP
+}
+
+/// Steps a pointer at `at` lies past the span from `start` to `end` in
+/// `cell`-sized steps: negative before it, positive after it and 0 inside.
+fn past(at: i32, start: i32, end: i32, cell: i32) -> isize {
+    let steps = if at < start {
+        -(1 + (start - at) / cell)
+    } else if at >= end {
+        1 + (at - end) / cell
+    } else {
+        0
+    };
+    steps as isize
 }
 
 /// Where windows over the Code view are centred: everything between the

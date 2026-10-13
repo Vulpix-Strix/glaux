@@ -4,11 +4,7 @@ use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::obj_palette::ObjBank;
 use pretty_assertions::assert_eq;
 
-const METRICS: Metrics = Metrics {
-    cell_w: 6,
-    cell_h: 10,
-    top: 16,
-};
+const METRICS: Metrics = crate::system::workspace::tests_support::SPRITE_METRICS;
 
 const OLD: Rgb = Rgb::from_hex(0x4a9bcd);
 
@@ -67,6 +63,7 @@ fn press(at: Point) -> InputEvent {
     InputEvent::PointerDown {
         button: PointerButton::Primary,
         at,
+        select: false,
     }
 }
 
@@ -152,7 +149,7 @@ fn arrows_step_the_focused_picker() {
     editor.handle_input(release(centre(layout.sat_val)), &layout);
     let start = editor.hsv();
     editor.handle_input(InputEvent::Right { select: false }, &layout);
-    editor.handle_input(InputEvent::Up, &layout);
+    editor.handle_input(InputEvent::Up { select: false }, &layout);
     assert_eq!(
         (editor.hsv().s, editor.hsv().v),
         (start.s + SV_STEP, start.v + SV_STEP)
@@ -231,9 +228,9 @@ fn up_and_down_step_a_channel_field() {
     let layout = layout(false);
     let mut editor = editor();
     focus_field(&mut editor, Field::Green, &layout);
-    editor.handle_input(InputEvent::Up, &layout);
-    editor.handle_input(InputEvent::Up, &layout);
-    editor.handle_input(InputEvent::Down, &layout);
+    editor.handle_input(InputEvent::Up { select: false }, &layout);
+    editor.handle_input(InputEvent::Up { select: false }, &layout);
+    editor.handle_input(InputEvent::Down { select: false }, &layout);
     assert_eq!(editor.color(), Rgb { g: 156, ..OLD });
 }
 
@@ -437,10 +434,12 @@ fn the_layout_fits_the_area_without_overlapping_parts() {
         let layout = layout(advanced);
         let window = layout.window;
         let area = area();
-        assert!(window.x >= area.x && window.right() + SHADOW_OFFSET <= area.right());
+        assert!(window.x >= area.x + crate::system::workspace::dialog::AREA_MARGIN);
+        assert!(window.right() + SHADOW_OFFSET <= area.right());
         assert!(window.y >= area.y && window.bottom() + SHADOW_OFFSET <= area.bottom());
         let mut parts = vec![
             layout.sat_val.inset(-2),
+            layout.tile_label,
             layout.preview.inset(-1),
             layout.swatches,
             layout.hue_target(),
@@ -467,7 +466,26 @@ fn the_layout_fits_the_area_without_overlapping_parts() {
         assert!(layout.fields[0].bottom() <= layout.impact_y);
         assert!(last_impact <= layout.apply.y);
         assert!(layout.columns() >= 38, "the impact note needs its columns");
+        // The tile's name stays within the text, over its preview.
+        assert!(layout.tile_label.right() <= layout.text_right);
+        assert!(layout.tile_label.bottom() < layout.preview.y);
+        // Both columns end on one line.
+        assert_eq!(layout.sat_val.bottom() + 1, layout.swatches.bottom());
     }
+}
+
+#[test]
+fn the_widest_heading_fits_beside_the_title() {
+    // The longest heading Advanced mode writes, and the title before it.
+    let heading = heading(target(7, 15), &uses(255, &[], 0), true);
+    assert_eq!(heading, "OBP7 LF  Master $FF (255)");
+    let layout = layout(true);
+    let used = (cells(TITLE) + 2 + cells(&heading)) * METRICS.cell_w + 2 * PAD;
+    assert!(
+        used <= layout.title_bar.width,
+        "{used} of {}",
+        layout.title_bar.width
+    );
 }
 
 // Choosing how far the change reaches.
@@ -533,8 +551,8 @@ fn arrows_switch_the_focused_scope() {
         editor.handle_input(InputEvent::Tab, &layout);
     }
     for (event, scope) in [
-        (InputEvent::Up, ColorScope::All),
-        (InputEvent::Down, ColorScope::Palette),
+        (InputEvent::Up { select: false }, ColorScope::All),
+        (InputEvent::Down { select: false }, ColorScope::Palette),
         (InputEvent::Left { select: false }, ColorScope::All),
         (InputEvent::Right { select: false }, ColorScope::Palette),
     ] {

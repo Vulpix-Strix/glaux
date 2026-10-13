@@ -5,13 +5,24 @@ slots (transparent, outline, shade or body, light), and the system picks the
 palette index of each slot when it draws, so the files keep their original
 colors.
 
-## Pointer
+## Cursors
 
-`cursors/pointer.png` is `cursors/light/pointer.png` from
+The mouse pointers come from
 [Simple Pixel Cursors](https://gabl18.itch.io/simple-pixel-cursors) by
-**Gabl** (<https://gabl18.itch.io/>), copied unmodified. It is drawn at twice
-its native size; Glaux halves it to a 12×16 arrow whose hotspot is its
-top-left pixel.
+**Gabl** (<https://gabl18.itch.io/>), the light set, copied unmodified.
+Glaux trims their transparent edges and shrinks the ones drawn at twice
+their native size. Hotspots are given in pixels of one frame as stored.
+
+| File                    | Source file           | Cursor | Stored as                          | Hotspot  |
+|-------------------------|-----------------------|--------|------------------------------------|----------|
+| `cursors/pointer.png`   | `light/pointer.png`   | Arrow  | 2×                                 | (0, 0)   |
+| `cursors/beam.png`      | `light/beam.png`      | Text   | 2×                                 | (8, 15)  |
+| `cursors/link3.png`     | `light/link3.png`     | Hand   | 2×                                 | (8, 0)   |
+| `cursors/grab.png`      | `light/grab.png`      | Grab   | 2×                                 | (14, 16) |
+| `cursors/hourglass.png` | `light/hourglass.png` | Busy   | 1×, five 16 px frames side by side | (7, 7)   |
+
+The arrow halves to 12×16 with its tip as hotspot. The hourglass shows each
+frame for 150 ms, as the pack's `hourglass.gif` does.
 
 Licensed under CC0 1.0 Universal. Credit is not required but is given here
 gladly. The pack's license and credits are in `LICENSE-Gabl.txt`, copied

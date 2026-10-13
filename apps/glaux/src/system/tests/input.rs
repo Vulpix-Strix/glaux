@@ -79,7 +79,7 @@ fn editing_events_do_not_press_buttons() {
     let fixture = Fixture::new("sys-btn-edit");
     let (_, lines) = logged_per_tick(
         started(&fixture, UP_STATE),
-        &[&[InputEvent::Up, InputEvent::Text('z')]],
+        &[&[InputEvent::Up { select: false }, InputEvent::Text('z')]],
     );
     assert_eq!(lines, ["false   false"]);
 }

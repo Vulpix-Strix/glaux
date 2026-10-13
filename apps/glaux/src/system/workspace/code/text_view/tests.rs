@@ -1,16 +1,11 @@
 use super::*;
 use crate::system::code_document::CodeDocument;
 use crate::system::test_font::LAYOUT_FONT;
-use crate::system::workspace::code::layout::Metrics;
 use pretty_assertions::assert_eq;
 
 fn layout() -> CodeLayout {
     CodeLayout::new(
-        Metrics {
-            cell_w: 6,
-            cell_h: 10,
-            top: 16,
-        },
+        crate::system::workspace::tests_support::CODE_METRICS,
         LAYOUT_FONT.clone(),
     )
 }
@@ -70,7 +65,9 @@ fn hidden_line_numbers_give_their_room_to_the_text() {
 fn text_and_indicators_never_overlap() {
     let geometry = TextGeometry::new(&layout(), 10, &settings(false, true));
     let area = layout().text;
-    assert_eq!(geometry.rows, 18);
+    // 182 pixels between the options and status bars, less the top pixel
+    // and the horizontal indicator, hold 14 rows of 12.
+    assert_eq!(geometry.rows, 14);
     assert!(geometry.viewport.right() < geometry.vertical.x);
     assert!(geometry.viewport.bottom() < geometry.horizontal.y);
     assert!(geometry.vertical.bottom() < geometry.horizontal.y);
@@ -83,8 +80,8 @@ fn vertical_scrolling_stops_when_the_last_line_reaches_the_bottom() {
     let document = document(30, 10);
     let (geometry, metrics) = measured(&document, &settings(false, true));
     let down = geometry.scroll_rows(view(0, 0, 0), 100, &metrics);
-    assert_eq!(down, view(30 - 18, 0, 0));
-    assert_eq!(geometry.scroll_rows(down, -3, &metrics), view(9, 0, 0));
+    assert_eq!(down, view(30 - 14, 0, 0));
+    assert_eq!(geometry.scroll_rows(down, -3, &metrics), view(13, 0, 0));
     assert_eq!(geometry.scroll_rows(down, -100, &metrics), view(0, 0, 0));
 }
 
@@ -125,8 +122,8 @@ fn folded_lines_scroll_by_rows_across_lines_and_never_sideways() {
     let moved = geometry.scroll_rows(view(0, 0, 0), 4, &metrics);
     assert_eq!(moved, view(1, 1, 0));
     assert_eq!(geometry.scroll_rows(moved, -2, &metrics), view(0, 2, 0));
-    // The bottom stops at row 30 - 18 = 12, the first row of line 4.
-    assert_eq!(geometry.scroll_rows(moved, 100, &metrics), view(4, 0, 0));
+    // The bottom stops at row 30 - 14 = 16, the second row of line 5.
+    assert_eq!(geometry.scroll_rows(moved, 100, &metrics), view(5, 1, 0));
     assert_eq!(geometry.scroll_columns(moved, 6, &metrics), moved);
 }
 
@@ -210,7 +207,10 @@ fn a_caret_scrolled_out_of_sight_is_not_drawn() {
     assert_eq!(at(view(0, 0, 0), geometry.columns), None);
     assert_eq!(
         at(view(0, 0, 0), 101 + 2),
-        Some((geometry.viewport.x + 12, geometry.viewport.y + 10))
+        Some((
+            geometry.viewport.x + 2 * geometry.cell_w,
+            geometry.viewport.y + geometry.cell_h
+        ))
     );
 }
 
@@ -292,7 +292,7 @@ fn a_click_follows_the_scrolled_view() {
     // Each line folds into two rows: row 3 of the view is line 41's
     // second fold.
     let top = view(40, 0, 0);
-    let at = Point::new(point.x, point.y + 30);
+    let at = Point::new(point.x, point.y + 3 * geometry.cell_h as u16);
     let hit = geometry.hit(top, at, &document, &metrics, &LAYOUT_FONT);
     assert_eq!(hit, Some(41 * 101 + geometry.columns));
 }

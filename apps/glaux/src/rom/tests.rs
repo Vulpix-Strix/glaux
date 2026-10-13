@@ -191,33 +191,72 @@ fn cursor_png(rows: &[&str], scale: usize) -> Vec<u8> {
     png(width as u32, &pixels)
 }
 
+const SAMPLE: [&str; 4] = ["....", ".o..", ".o#o", "...."];
+
+fn sample_image() -> InkImage {
+    InkImage::new(3, 2, vec![1, 0, 0, 1, 2, 1]).unwrap()
+}
+
 #[test]
 fn cursors_are_downscaled_and_trimmed_with_their_hotspot() {
-    let source = cursor_png(&["....", ".o..", ".o#o", "...."], 2);
-    let cursor = parse_cursor(&source, 2, (1, 1)).unwrap();
-    assert_eq!(
-        cursor.image,
-        InkImage::new(3, 2, vec![1, 0, 0, 1, 2, 1]).unwrap()
-    );
+    let source = cursor_png(&SAMPLE, 2);
+    let cursor = parse_cursor(&source, 2, 1, (2, 2)).unwrap();
+    assert_eq!(cursor.frames, [sample_image()]);
     assert_eq!(cursor.hotspot, (0, 0));
 
-    let cursor = parse_cursor(&source, 2, (2, 2)).unwrap();
+    // Hotspots are in pixels as stored, so they shrink with the image.
+    let cursor = parse_cursor(&source, 2, 1, (5, 5)).unwrap();
     assert_eq!(cursor.hotspot, (1, 1));
-    let err = parse_cursor(&source, 2, (0, 0)).unwrap_err();
+    let err = parse_cursor(&source, 2, 1, (1, 1)).unwrap_err();
     assert!(err.to_string().contains("hotspot"), "{err:#}");
+}
+
+#[test]
+fn cursors_drawn_off_their_scales_grid_still_decode() {
+    // The sample shifted down one stored pixel, so its blocks start on odd
+    // rows.
+    let source = cursor_png(&SAMPLE, 2);
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(&source));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+    reader.next_frame(&mut pixels).unwrap();
+    let mut shifted = vec![CLEAR; 8];
+    shifted.extend(pixels.as_chunks::<4>().0);
+    let cursor = parse_cursor(&png(8, &shifted), 2, 1, (2, 3)).unwrap();
+    assert_eq!(cursor.frames, [sample_image()]);
+    assert_eq!(cursor.hotspot, (0, 0));
+}
+
+#[test]
+fn cursor_frames_share_one_trim_and_hotspot() {
+    // Two frames side by side: an outline pixel, then a body pixel, at
+    // different spots of their frames.
+    let source = cursor_png(&["....", "o..#"], 1);
+    let cursor = parse_cursor(&source, 1, 2, (0, 1)).unwrap();
+    assert_eq!(
+        cursor.frames,
+        [
+            InkImage::new(2, 1, vec![1, 0]).unwrap(),
+            InkImage::new(2, 1, vec![0, 2]).unwrap(),
+        ]
+    );
+    assert_eq!(cursor.hotspot, (0, 0));
+    let err = parse_cursor(&source, 1, 3, (0, 1)).unwrap_err();
+    assert!(err.to_string().contains("3 frames"), "{err:#}");
 }
 
 #[test]
 fn cursors_must_be_whole_blocks_of_known_colors() {
     let mut pixels = vec![BODY; 4];
     pixels[3] = EDGE;
-    let err = parse_cursor(&png(2, &pixels), 2, (0, 0)).unwrap_err();
-    assert!(err.to_string().contains("block"), "{err:#}");
+    let err = parse_cursor(&png(2, &pixels), 2, 1, (0, 0)).unwrap_err();
+    assert!(format!("{err:#}").contains("block"), "{err:#}");
 
-    let err = parse_cursor(&png(2, &[[1, 2, 3, 255]; 4]), 2, (0, 0)).unwrap_err();
+    let err = parse_cursor(&png(2, &[[1, 2, 3, 255]; 4]), 2, 1, (0, 0)).unwrap_err();
     assert!(err.to_string().contains("#010203"), "{err:#}");
 
-    let err = parse_cursor(&png(2, &[[255, 255, 255, 128]; 4]), 2, (0, 0)).unwrap_err();
+    let err = parse_cursor(&png(2, &[[255, 255, 255, 128]; 4]), 2, 1, (0, 0)).unwrap_err();
     assert!(err.to_string().contains("partly transparent"), "{err:#}");
 }
 
@@ -234,11 +273,30 @@ fn icons_must_be_icon_sized() {
 #[test]
 fn embedded_ui_images_load() {
     let ui = ui().unwrap();
-    let pointer = ui.pointer();
-    assert_eq!((pointer.image.width(), pointer.image.height()), (12, 16));
-    assert_eq!(pointer.hotspot, (0, 0));
-    assert_eq!(pointer.image.pixel(0, 0), 1, "the tip is outlined");
-    assert_eq!(pointer.image.pixel(1, 2), 2, "the body is inside it");
+    let arrow = &ui.cursor(SystemCursor::Arrow).frames[0];
+    assert_eq!((arrow.width(), arrow.height()), (12, 16));
+    assert_eq!(arrow.pixel(0, 0), 1, "the tip is outlined");
+    assert_eq!(arrow.pixel(1, 2), 2, "the body is inside it");
+    for (cursor, size, frames, hotspot) in [
+        (SystemCursor::Arrow, (12, 16), 1, (0, 0)),
+        (SystemCursor::Text, (7, 15), 1, (3, 7)),
+        (SystemCursor::Hand, (14, 16), 1, (4, 0)),
+        (SystemCursor::Grab, (13, 13), 1, (6, 6)),
+        (SystemCursor::Busy, (15, 16), 5, (7, 7)),
+    ] {
+        let decoded = ui.cursor(cursor);
+        assert_eq!(decoded.frames.len(), frames, "{cursor:?}");
+        assert_eq!(decoded.hotspot, hotspot, "{cursor:?}");
+        for image in &decoded.frames {
+            assert_eq!((image.width(), image.height()), size, "{cursor:?}");
+        }
+        let (x, y) = hotspot;
+        let at_hotspot = decoded.frames[0].pixel(usize::from(x), usize::from(y));
+        assert_ne!(at_hotspot, 0, "{cursor:?} points with a pixel it draws");
+    }
+    // The hourglass's sand moves from frame to frame.
+    let busy = &ui.cursor(SystemCursor::Busy).frames;
+    assert!(busy.windows(2).all(|pair| pair[0] != pair[1]));
 
     for icon in [
         SystemIcon::Code,

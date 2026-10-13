@@ -50,6 +50,7 @@ fn press(at: Point) -> InputEvent {
     InputEvent::PointerDown {
         button: PointerButton::Primary,
         at,
+        select: false,
     }
 }
 
@@ -66,12 +67,12 @@ fn focus_moves_both_ways_and_wraps() {
     let layout = dialog.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     assert_eq!(dialog.focus(), 2);
     for (event, focus) in [
-        (InputEvent::Down, 0),
+        (InputEvent::Down { select: false }, 0),
         (InputEvent::Tab, 1),
         (InputEvent::Right { select: false }, 2),
-        (InputEvent::Up, 1),
+        (InputEvent::Up { select: false }, 1),
         (InputEvent::Left { select: false }, 0),
-        (InputEvent::Up, 2),
+        (InputEvent::Up { select: false }, 2),
     ] {
         assert_eq!(dialog.handle_input(event, &layout), None);
         assert_eq!(dialog.focus(), focus, "{event:?}");
@@ -86,7 +87,7 @@ fn enter_chooses_the_focused_action_and_escape_cancels() {
         dialog.handle_input(InputEvent::Enter, &layout),
         Some(Choice::Cancel)
     );
-    dialog.handle_input(InputEvent::Down, &layout);
+    dialog.handle_input(InputEvent::Down { select: false }, &layout);
     assert_eq!(
         dialog.handle_input(InputEvent::Enter, &layout),
         Some(Choice::Yes)

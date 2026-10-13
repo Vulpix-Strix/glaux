@@ -87,12 +87,13 @@ fn up_without_down_and_non_game_events_never_reach_the_latch() {
     let tick = latch.advance(&[
         ButtonUp(A),
         KeyUp(Key::Z),
-        InputEvent::Up,
+        InputEvent::Up { select: false },
         InputEvent::Break,
         InputEvent::PointerMove(Some(at)),
         InputEvent::PointerDown {
             button: PointerButton::Primary,
             at,
+            select: false,
         },
         InputEvent::Wheel { delta: 1 },
         InputEvent::NextView,

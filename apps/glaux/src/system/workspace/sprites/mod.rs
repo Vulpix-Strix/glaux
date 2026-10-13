@@ -16,6 +16,7 @@ use glaux_machine::machine::TICK_RATE;
 use glaux_machine::obj_palette::{OBJ_PALETTE_COLORS, ObjBank};
 use glaux_machine::palette::{Palette, Rgb};
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, ObjVram};
+use glaux_machine::system_rom::SystemCursor;
 use glaux_video::preview::ObjPreviewPalette;
 
 use color_editor::{ColorEditor, ColorEditorLayout, ColorOutcome};
@@ -153,6 +154,23 @@ impl SpriteEditor {
     /// not be listened to.
     pub fn stop_awaiting_file(&mut self) {
         self.awaiting_file = false;
+    }
+
+    /// The pointer for `at`: an hourglass while the host's file dialog is
+    /// awaited, a pointing hand over the controls and the tiles and colors
+    /// a click picks, and the arrow over the canvas and while a dialog is
+    /// open.
+    pub fn cursor(&self, at: Point) -> SystemCursor {
+        if self.awaiting_file {
+            return SystemCursor::Busy;
+        }
+        if self.dialog.is_some() {
+            return SystemCursor::Arrow;
+        }
+        match self.layout().hit(at, &self.sheet) {
+            Hit::Canvas { .. } | Hit::None => SystemCursor::Arrow,
+            _ => SystemCursor::Hand,
+        }
     }
 
     /// Opens IMPORT SPRITES on `preview`, ending the wait for the file it
@@ -341,6 +359,7 @@ impl SpriteEditor {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                ..
             } => {
                 // A press while a drag is open means its release was lost.
                 self.end_stroke(document.as_deref_mut());
@@ -390,8 +409,8 @@ impl SpriteEditor {
             }
             InputEvent::Left { .. } => self.step(-1, 0, document),
             InputEvent::Right { .. } => self.step(1, 0, document),
-            InputEvent::Up => self.step(0, -1, document),
-            InputEvent::Down => self.step(0, 1, document),
+            InputEvent::Up { .. } => self.step(0, -1, document),
+            InputEvent::Down { .. } => self.step(0, 1, document),
             InputEvent::Text('g' | 'G') => self.grid = !self.grid,
             InputEvent::Text('a' | 'A') => self.toggle_advanced(),
             InputEvent::Text('+' | '=') => self.zoom(1),

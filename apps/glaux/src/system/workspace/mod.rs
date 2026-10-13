@@ -19,7 +19,7 @@ use glaux_machine::ink_image::INK_SLOTS;
 use glaux_machine::machine::TICK_RATE;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjPalettes};
 use glaux_machine::palette::Palette;
-use glaux_machine::system_rom::{Cursor, SystemIcon, SystemUi};
+use glaux_machine::system_rom::{Cursor, SystemCursor, SystemIcon, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 use glaux_video::preview::ObjPreviewPalette;
 
@@ -80,6 +80,9 @@ const MIN_NAME_CELLS: usize = 4;
 const ELLIPSIS: &str = "..";
 /// How long a notice stays in the status bar, in ticks.
 const NOTICE_TICKS: u32 = 3 * TICK_RATE;
+/// Ticks each frame of an animated cursor shows, as long as each of the
+/// busy hourglass's source frames.
+const CURSOR_FRAME_TICKS: u32 = TICK_RATE * 15 / 100;
 
 /// File work the workspace asks the system to do on the loaded cartridge.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,17 +253,37 @@ struct Layout {
 }
 
 impl Layout {
-    fn new(metrics: FontMetrics) -> Self {
+    const fn new(metrics: FontMetrics) -> Self {
         Self {
-            cell_w: i32::from(metrics.cell_width()),
-            cell_h: i32::from(metrics.cell_height()),
+            cell_w: metrics.cell_width() as i32,
+            cell_h: metrics.cell_height() as i32,
         }
     }
 
     /// Height of the tab bar: an icon, or one text row with a pixel above
     /// and below, whichever is taller.
-    fn bar_height(self) -> i32 {
-        (self.cell_h + 2).max(ICON_SIZE as i32)
+    const fn bar_height(self) -> i32 {
+        let text = self.cell_h + 2;
+        let icon = ICON_SIZE as i32;
+        if text > icon { text } else { icon }
+    }
+
+    /// The cell size and top of the Code view, below the tab bar.
+    const fn code_metrics(self) -> code::Metrics {
+        code::Metrics {
+            cell_w: self.cell_w,
+            cell_h: self.cell_h,
+            top: self.bar_height(),
+        }
+    }
+
+    /// The cell size and top of the sprite editor, below the tab bar.
+    const fn sprite_metrics(self) -> sprites::Metrics {
+        sprites::Metrics {
+            cell_w: self.cell_w,
+            cell_h: self.cell_h,
+            top: self.bar_height(),
+        }
     }
 
     /// Each tab's clickable plate, left to right. Rendering and hit-testing
@@ -417,16 +440,21 @@ fn saved_line(written: &[SavedFile]) -> Option<String> {
     })
 }
 
-/// Draws `cursor` with its hotspot on `pointer`, if any. Drawn over the
-/// finished frame, it covers everything below it.
-pub fn draw_cursor(framebuffer: &mut Framebuffer, cursor: &Cursor, pointer: Option<Point>) {
-    let Some(at) = pointer else {
+/// Draws frame `frame` of `cursor` with its hotspot on `pointer`, if any.
+/// Drawn over the finished frame, it covers everything below it.
+pub fn draw_cursor(
+    framebuffer: &mut Framebuffer,
+    cursor: &Cursor,
+    frame: usize,
+    pointer: Option<Point>,
+) {
+    let (Some(at), Some(image)) = (pointer, cursor.frame(frame)) else {
         return;
     };
     let (hot_x, hot_y) = cursor.hotspot;
     draw_ink_image(
         framebuffer,
-        &cursor.image,
+        image,
         i32::from(at.x) - i32::from(hot_x),
         i32::from(at.y) - i32::from(hot_y),
         &[OUTLINE, TEXT, TEXT],
@@ -509,6 +537,8 @@ pub struct Workspace {
     /// While open, the dialog takes every input and the views take none.
     modal: Option<Modal>,
     notice: Option<Notice>,
+    /// Ticks since the workspace was created, which time animated cursors.
+    ticks: u32,
     /// The system palette, whose first [`SYSTEM_COLORS`] entries the UI is
     /// drawn with.
     system_palette: Palette,
@@ -524,21 +554,14 @@ impl Workspace {
             font: font.clone(),
             tab: Tab::default(),
             code: CodeEditor::new(
-                code::Metrics {
-                    cell_w: layout.cell_w,
-                    cell_h: layout.cell_h,
-                    top: layout.bar_height(),
-                },
+                layout.code_metrics(),
                 font.clone(),
                 EditorSettings::default(),
             ),
-            sprites: SpriteEditor::new(sprites::Metrics {
-                cell_w: layout.cell_w,
-                cell_h: layout.cell_h,
-                top: layout.bar_height(),
-            }),
+            sprites: SpriteEditor::new(layout.sprite_metrics()),
             modal: None,
             notice: None,
+            ticks: 0,
             system_palette,
         }
     }
@@ -651,6 +674,7 @@ impl Workspace {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                ..
             } if self.layout.tab_at(at).is_some() => {
                 if let Some(tab) = self.layout.tab_at(at) {
                     self.switch_to(tab, sprites);
@@ -699,6 +723,45 @@ impl Workspace {
     /// view's overlays is open and taking all input.
     pub fn has_modal(&self) -> bool {
         self.modal.is_some() || self.sprites.has_dialog() || self.code.has_overlay()
+    }
+
+    /// The pointer to show at `at`, with the Code view showing `code`, and
+    /// the frame of it to draw.
+    ///
+    /// This is the one place that decides it: an open dialog's buttons
+    /// and the tab plates take a pointing hand, and everything else is up
+    /// to the view, whose drags keep their pointer even over the tab bar.
+    pub fn cursor(&self, at: Point, code: Option<&CodeSession>) -> (SystemCursor, usize) {
+        let frame = (self.ticks / CURSOR_FRAME_TICKS) as usize;
+        let hand = |clickable: bool| {
+            if clickable {
+                SystemCursor::Hand
+            } else {
+                SystemCursor::Arrow
+            }
+        };
+        let cursor = if self.sprites.awaits_file() {
+            SystemCursor::Busy
+        } else if let Some(modal) = &self.modal {
+            let layout = modal.dialog.layout(
+                &self.font,
+                self.layout.view_area(),
+                self.layout.cell_w,
+                self.layout.cell_h,
+            );
+            hand(layout.button_at(at).is_some())
+        } else if self.tab == Tab::Code && self.code.is_dragging() {
+            self.code.cursor(at, code)
+        } else if !self.has_modal() && self.layout.tab_at(at).is_some() {
+            SystemCursor::Hand
+        } else {
+            match self.tab {
+                Tab::Sprites => self.sprites.cursor(at),
+                Tab::Code => self.code.cursor(at, code),
+                _ => SystemCursor::Arrow,
+            }
+        };
+        (cursor, frame)
     }
 
     /// Opens OPEN FILE on the cartridge's scripts, or on why they could
@@ -755,10 +818,12 @@ impl Workspace {
         self.code.forget();
     }
 
-    /// Advances time-limited UI state by one tick.
-    pub fn tick(&mut self) {
+    /// Advances time-limited UI state by one tick, letting the Code view
+    /// scroll `code` while a selection is dragged past its text.
+    pub fn tick(&mut self, code: Option<&mut CodeSession>) {
+        self.ticks = self.ticks.wrapping_add(1);
         self.sprites.tick();
-        self.code.tick();
+        self.code.tick(code);
         if let Some(notice) = &mut self.notice {
             notice.ticks_left = notice.ticks_left.saturating_sub(1);
             if notice.ticks_left == 0 {

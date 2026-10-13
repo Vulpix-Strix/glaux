@@ -44,7 +44,11 @@ fn a_round_trip_preserves_the_cartridge_and_the_shell() {
     assert_eq!(loaded_name(&system), Some("Pong"));
 
     // History, the draft line and the directory carry on as before.
-    let system = system.update(&[InputEvent::Backspace, InputEvent::Up, InputEvent::Enter]);
+    let system = system.update(&[
+        InputEvent::Backspace,
+        InputEvent::Up { select: false },
+        InputEvent::Enter,
+    ]);
     let runs = transcript(&system)
         .iter()
         .filter(|l| *l == "> info")
@@ -205,6 +209,7 @@ fn clicking_a_tab_selects_it() {
     system = system.update(&[InputEvent::PointerDown {
         button: PointerButton::Secondary,
         at,
+        select: false,
     }]);
     system = system.update(&click(Point::new(at.x, 120)));
     assert_eq!(workspace_tab(&system), Tab::Code);
@@ -259,6 +264,7 @@ fn pointer_events_never_reach_a_cartridge() {
         InputEvent::PointerDown {
             button: PointerButton::Primary,
             at,
+            select: false,
         },
         InputEvent::Wheel { delta: 1 },
         InputEvent::NextView,

@@ -1,11 +1,7 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
-const METRICS: Metrics = Metrics {
-    cell_w: 6,
-    cell_h: 10,
-    top: 16,
-};
+const METRICS: Metrics = crate::system::workspace::tests_support::SPRITE_METRICS;
 
 fn layouts() -> Vec<SpriteLayout> {
     [false, true]
@@ -36,6 +32,39 @@ fn regions(layout: &SpriteLayout) -> Vec<(String, Rect)> {
         ("palette button".into(), layout.palette_button),
     ];
     out.extend(layout.tools.iter().map(|(t, r)| (format!("{t:?}"), *r)));
+    if !layout.advanced {
+        out.push(("caption".into(), layout.caption));
+    }
+    out
+}
+
+/// What the palette panel holds, by name: the row labels, the swatches
+/// and, in Advanced mode, the banks and the tile caption beside them.
+fn palette_parts(layout: &SpriteLayout) -> Vec<(String, Rect)> {
+    let rows = if layout.advanced {
+        vec![layout.bank_y, layout.swatch_y, layout.master_y]
+    } else {
+        vec![layout.swatch_y]
+    };
+    let mut out: Vec<(String, Rect)> = rows
+        .into_iter()
+        .map(|y| {
+            let label = Rect {
+                x: MARGIN,
+                y,
+                width: LABEL_CELLS * METRICS.cell_w - GAP,
+                height: METRICS.cell_h,
+            };
+            (format!("label at {y}"), label)
+        })
+        .collect();
+    out.extend(
+        (layout.swatches.iter().enumerate()).map(|(i, rect)| (format!("swatch {i}"), *rect)),
+    );
+    if layout.advanced {
+        out.extend((layout.banks.iter().enumerate()).map(|(i, r)| (format!("bank {i}"), *r)));
+        out.push(("caption".into(), layout.caption));
+    }
     out
 }
 
@@ -58,25 +87,69 @@ fn panels_fit_the_screen_without_overlapping() {
                 assert!(!a.overlaps(*b), "{a_name} {a:?} overlaps {b_name} {b:?}");
             }
         }
+        // The sheet's scroll indicators stay above the palette panel.
+        assert!(layout.sheet.bottom() + 1 + SCROLLBAR < layout.palette.y);
     }
+}
+
+#[test]
+fn the_palette_panel_holds_its_rows_without_overlapping() {
+    for layout in layouts() {
+        let parts = palette_parts(&layout);
+        let panel = layout.palette;
+        for (name, rect) in &parts {
+            assert!(
+                rect.x >= panel.x
+                    && rect.y > panel.y
+                    && rect.right() <= panel.right() - MARGIN
+                    && rect.bottom() <= panel.bottom(),
+                "{name} {rect:?} inside {panel:?}, advanced={}",
+                layout.advanced
+            );
+        }
+        for (i, (a_name, a)) in parts.iter().enumerate() {
+            for (b_name, b) in &parts[i + 1..] {
+                assert!(!a.overlaps(*b), "{a_name} {a:?} overlaps {b_name} {b:?}");
+            }
+        }
+        // The selection line in Advanced mode takes the row under them.
+        assert!(!layout.advanced || layout.selection_y >= layout.master_y + METRICS.cell_h);
+    }
+}
+
+#[test]
+fn the_caption_fits_the_widest_tile_name() {
+    for layout in layouts() {
+        let widest = caption(OBJ_TILE_CAPACITY - 1, layout.advanced);
+        assert_eq!(layout.caption.width, text_cells(&widest) * METRICS.cell_w);
+        assert_eq!(layout.caption.height, METRICS.cell_h);
+    }
+    let normal = SpriteLayout::new(METRICS, false, Zoom::X1);
+    assert_eq!(normal.caption.y, normal.canvas_frame.bottom() + 2);
+    assert!(normal.caption.bottom() < normal.save_button.y);
+    let advanced = SpriteLayout::new(METRICS, true, Zoom::X1);
+    assert_eq!(advanced.caption.y, advanced.bank_y);
+    assert_eq!(caption(1023, true), "Tile 1023 (15,63)");
 }
 
 #[test]
 fn the_canvas_shows_the_tile_at_twelve_x() {
     for layout in layouts() {
         assert_eq!((layout.canvas.width, layout.canvas.height), (96, 96));
-        assert!(layout.caption_y + METRICS.cell_h <= layout.palette.y);
     }
 }
 
 #[test]
 fn one_x_shows_all_sixteen_columns_and_two_x_pans() {
+    // The sheet's tiles fill the room between the options bar and the
+    // palette panel, less its frame and scroll indicator: 171 pixels
+    // normally and 135 above Advanced mode's taller panel.
     let normal = SpriteLayout::new(METRICS, false, Zoom::X1);
-    assert_eq!(normal.visible, Visible::new(16, 22));
+    assert_eq!(normal.visible, Visible::new(16, 21));
     let zoomed = SpriteLayout::new(METRICS, false, Zoom::X2);
-    assert_eq!(zoomed.visible, Visible::new(11, 11));
+    assert_eq!(zoomed.visible, Visible::new(11, 10));
     let advanced = SpriteLayout::new(METRICS, true, Zoom::X1);
-    assert_eq!(advanced.visible, Visible::new(16, 18));
+    assert_eq!(advanced.visible, Visible::new(16, 16));
 }
 
 #[test]
@@ -208,12 +281,17 @@ fn advanced_mode_keeps_the_main_layout() {
     assert_eq!(advanced.sheet.x, normal.sheet.x);
     assert_eq!(advanced.tools, normal.tools);
     assert_eq!(advanced.options, normal.options);
-    assert_eq!(advanced.palette_button, normal.palette_button);
+    assert_eq!(advanced.save_button.x, normal.save_button.x);
+    assert_eq!(advanced.palette_button.x, normal.palette_button.x);
     assert!(advanced.palette.height > normal.palette.height);
+    // Without the caption under the canvas, the buttons move up instead
+    // of into the taller palette panel.
+    assert_eq!(advanced.save_button.y, advanced.canvas_frame.bottom() + 2);
+    assert!(advanced.palette_button.bottom() < advanced.palette.y);
 }
 
 #[test]
-fn save_and_import_split_the_row_under_the_caption() {
+fn save_and_import_split_the_row_above_the_palette_button() {
     for layout in layouts() {
         let (save, import) = (layout.save_button, layout.import_button);
         assert_eq!(save.y, import.y);

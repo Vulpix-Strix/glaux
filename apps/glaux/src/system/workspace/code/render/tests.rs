@@ -9,6 +9,8 @@ use super::*;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::system::shell::BLINK_TICKS;
 
+mod selection;
+
 const CELL_W: i32 = 6;
 const CELL_H: i32 = 12;
 
@@ -76,7 +78,7 @@ fn blank() -> Vec<bool> {
 /// doesn't cover the cells a test looks at.
 fn hide_caret(editor: &mut CodeEditor) {
     for _ in 0..BLINK_TICKS {
-        editor.tick();
+        editor.tick(None);
     }
 }
 
@@ -266,7 +268,7 @@ fn the_caret_is_a_blinking_line_on_the_left_edge_of_its_cell() {
     let fixture = Fixture::new("code-render-caret");
     let mut editor = editor();
     let mut session = showing(&fixture, &editor, "ab\ncd");
-    editor.handle_input(InputEvent::Down, Some(&mut session));
+    editor.handle_input(InputEvent::Down { select: false }, Some(&mut session));
     editor.handle_input(InputEvent::End { select: false }, Some(&mut session));
     let geometry = geometry_of(&editor, &session);
     // After "cd": the empty third cell of the second row.
@@ -280,7 +282,7 @@ fn the_caret_is_a_blinking_line_on_the_left_edge_of_its_cell() {
     hide_caret(&mut editor);
     assert_eq!(ink(&render(&editor, &session), at, TEXT), blank());
     for _ in 0..BLINK_TICKS {
-        editor.tick();
+        editor.tick(None);
     }
     assert_eq!(ink(&render(&editor, &session), at, TEXT), caret);
     // Moving shows it again at once.

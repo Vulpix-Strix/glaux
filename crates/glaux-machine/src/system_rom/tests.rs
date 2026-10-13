@@ -21,10 +21,11 @@ fn ui_images_are_empty_unless_injected_and_found_by_icon() {
     assert_eq!(rom.ui(), &SystemUi::default());
 
     let solid = |slot| InkImage::new(1, 1, vec![slot]).unwrap();
-    let pointer = Cursor {
-        image: InkImage::new(2, 1, vec![1, 2]).unwrap(),
-        hotspot: (1, 0),
+    let cursor = |slot| Cursor {
+        frames: vec![solid(slot)],
+        hotspot: (0, 0),
     };
+    let cursors = [cursor(1), cursor(2), cursor(3), cursor(0), cursor(1)];
     let icons = [
         solid(0),
         solid(1),
@@ -36,8 +37,9 @@ fn ui_images_are_empty_unless_injected_and_found_by_icon() {
         solid(0),
         solid(2),
     ];
-    let rom = rom.with_ui(SystemUi::new(pointer.clone(), icons));
-    assert_eq!(rom.ui().pointer(), &pointer);
+    let rom = rom.with_ui(SystemUi::new(cursors, icons));
+    assert_eq!(rom.ui().cursor(SystemCursor::Text), &cursor(2));
+    assert_eq!(rom.ui().cursor(SystemCursor::Busy), &cursor(1));
     assert_eq!(rom.ui().icon(SystemIcon::Map), &solid(2));
     assert_eq!(rom.ui().icon(SystemIcon::Music), &solid(1));
     assert_eq!(rom.ui().icon(SystemIcon::Eyedropper), &solid(3));
@@ -54,4 +56,18 @@ fn a_rom_built_without_sounds_plays_nothing() {
         empty_font(),
     );
     assert!(rom.sounds().get(SystemSfx::Boot).steps().is_empty());
+}
+
+#[test]
+fn animated_cursors_loop_through_their_frames() {
+    let frame = |slot| InkImage::new(1, 1, vec![slot]).unwrap();
+    let cursor = Cursor {
+        frames: vec![frame(1), frame(2), frame(3)],
+        hotspot: (0, 0),
+    };
+    let shown: Vec<_> = (0..7)
+        .map(|n| cursor.frame(n).unwrap().pixel(0, 0))
+        .collect();
+    assert_eq!(shown, [1, 2, 3, 1, 2, 3, 1]);
+    assert_eq!(Cursor::default().frame(0), None);
 }

@@ -1,5 +1,7 @@
 //! Drawing the Code view.
 
+use std::ops::Range;
+
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -9,7 +11,7 @@ use glaux_video::draw::{draw_glyph, draw_ink_image, draw_text, fill_rect, pixel}
 use super::layout::{
     CHEVRON_WIDTH, CLOSE_SIZE, CodeLayout, LABEL_PAD, SETTINGS_MARGIN, StripHit, shorten_start,
 };
-use super::picker::{FilePicker, LIST_ROWS};
+use super::picker::FilePicker;
 use super::text_view::{TextGeometry, thumb};
 use super::{CodeEditor, labels, picker_layout, settings_layout};
 use crate::cartridge::Language;
@@ -56,9 +58,14 @@ impl CodeEditor {
                         let id = document.id();
                         let view = session.tabs().view(id).copied().unwrap_or_default();
                         let metrics = session.tabs().metrics(id);
-                        let caret = session.tabs().caret(id).unwrap_or_default();
+                        let selection = session
+                            .tabs()
+                            .selection(id)
+                            .unwrap_or_default()
+                            .reset(document);
                         let key = self.geometry(document).metrics_key();
-                        let caret = spot(document, caret.reset(document).byte(), key, font);
+                        let caret = spot(document, selection.caret().byte(), key, font);
+                        let caret_byte = selection.caret().byte();
                         painter.options_bar(document.language(), document.path().as_str(), &caret);
                         // The caret is hidden while an overlay has the keys.
                         let lit = self.caret_lit() && !self.has_overlay();
@@ -67,7 +74,8 @@ impl CodeEditor {
                             view,
                             metrics,
                             &self.settings,
-                            lit.then_some(&caret),
+                            lit.then_some((&caret, caret_byte)),
+                            selection.range(),
                         );
                     }
                     None => {
@@ -292,8 +300,12 @@ impl Painter<'_> {
     }
 
     /// The rows of `document` that fit from `view`, with line numbers,
-    /// scroll indicators and the caret at `caret` as `settings` and
-    /// `metrics` allow.
+    /// scroll indicators, the caret at `caret` (its spot and byte) and the
+    /// `selected` bytes as `settings` and `metrics` allow.
+    ///
+    /// Selected characters show inverted, each in its own cells however
+    /// shaping joins it with its neighbours, and a selected line ending
+    /// takes one cell after its line's last.
     ///
     /// Only the rows shown are laid out. `metrics` that don't describe this
     /// view leave the indicators and the caret out rather than being
@@ -304,7 +316,8 @@ impl Painter<'_> {
         view: DocumentView,
         metrics: Option<&TextMetrics>,
         settings: &EditorSettings,
-        caret: Option<&Spot>,
+        caret: Option<(&Spot, usize)>,
+        selected: Range<usize>,
     ) {
         let geometry = TextGeometry::new(self.layout, document.line_count(), settings);
         let metrics = metrics.filter(|metrics| metrics.key() == geometry.metrics_key());
@@ -342,12 +355,29 @@ impl Painter<'_> {
                 view.left_column
             };
             let end = first + geometry.columns;
+            let cell_rect = |column: usize, width: usize| -> Option<Rect> {
+                // Columns past the viewport's edges are cut off.
+                let left = column.max(first);
+                let right = (column + width).min(end);
+                (left < right).then(|| Rect {
+                    x: geometry.viewport.x + (left - first) as i32 * cell_w,
+                    y,
+                    width: (right - left) as i32 * cell_w,
+                    height: cell_h,
+                })
+            };
             // Shaping never changes which cells characters take, so each
             // glyph lands in its character's cell.
             let glyphs = self.font.shape(row.text, settings.features());
+            let mut row_end = row.start.column;
             for (cell, glyph) in row.cells(columns).zip(glyphs) {
+                row_end = cell.column + cell.width;
                 if cell.column >= end {
-                    break;
+                    continue;
+                }
+                let is_selected = selected.contains(&cell.byte);
+                if is_selected && let Some(rect) = cell_rect(cell.column, cell.width) {
+                    self.fill(rect, TEXT);
                 }
                 // Glyphs cut by either edge of the viewport are left out.
                 if cell.column < first || cell.column + cell.width > end {
@@ -357,22 +387,40 @@ impl Painter<'_> {
                 // do control characters other than tabs, so none of them
                 // goes unseen.
                 let own = self.font.glyph_id(cell.ch).is_some();
+                let (ink, missing) = if is_selected {
+                    (BACKGROUND, BACKGROUND)
+                } else {
+                    (TEXT, DIM)
+                };
                 let glyph = match glyph {
-                    Some(glyph) if own => Some((glyph, TEXT)),
+                    Some(glyph) if own => Some((glyph, ink)),
                     _ if cell.ch == '\t' => None,
-                    _ => self.font.fallback().map(|glyph| (glyph, DIM)),
+                    _ => self.font.fallback().map(|glyph| (glyph, missing)),
                 };
                 if let Some((glyph, color)) = glyph {
                     let x = geometry.viewport.x + (cell.column - first) as i32 * cell_w;
                     draw_glyph(self.framebuffer, self.font, glyph, x, y, color);
                 }
             }
+            let line_end = row.start.byte + row.text.len();
+            if !row.folds
+                && selected.contains(&line_end)
+                && line_end < document.text().len()
+                && let Some(rect) = cell_rect(row_end, 1)
+            {
+                self.fill(rect, TEXT);
+            }
         }
-        if let (Some(metrics), Some(caret)) = (metrics, caret)
+        if let (Some(metrics), Some((caret, byte))) = (metrics, caret)
             && let Some((x, y)) = geometry.caret_point(view, caret, metrics)
         {
             // A line on the left edge of the cell the next character
-            // takes.
+            // takes, inverted where that cell is selected.
+            let color = if selected.contains(&byte) {
+                BACKGROUND
+            } else {
+                TEXT
+            };
             self.fill(
                 Rect {
                     x,
@@ -380,7 +428,7 @@ impl Painter<'_> {
                     width: 1,
                     height: cell_h,
                 },
-                TEXT,
+                color,
             );
         }
         if let Some(metrics) = metrics {
@@ -527,7 +575,7 @@ impl Painter<'_> {
         for (row, path) in picker
             .matches()
             .skip(picker.first())
-            .take(LIST_ROWS)
+            .take(layout.rows)
             .enumerate()
         {
             let rect = layout.row(row);

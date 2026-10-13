@@ -34,12 +34,45 @@ impl SystemSounds {
     }
 }
 
-/// A pointer image and the pixel of it that marks the pointed-at position.
+/// A pointer image, or the frames of an animated one, and the pixel of it
+/// that marks the pointed-at position.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Cursor {
-    pub image: InkImage,
+    /// One image for a still cursor, or each frame of an animated one in
+    /// order, all the same size. Empty draws nothing.
+    pub frames: Vec<InkImage>,
     /// Offset of the pointed-at pixel from the image's top-left corner.
     pub hotspot: (u8, u8),
+}
+
+impl Cursor {
+    /// Frame `n` of the animation, counting on from the first after the
+    /// last. `None` for a cursor without frames.
+    pub fn frame(&self, n: usize) -> Option<&InkImage> {
+        self.frames.get(n.checked_rem(self.frames.len())?)
+    }
+}
+
+/// A mouse pointer the System ROM's UI shows, by what the pointer is over
+/// or doing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SystemCursor {
+    /// The arrow, over anything without a pointer of its own.
+    #[default]
+    Arrow,
+    /// An I-beam, over text the pointer places a caret in.
+    Text,
+    /// A pointing hand, over a control a click acts on.
+    Hand,
+    /// A closed hand, while something is being dragged.
+    Grab,
+    /// An hourglass, animated, while the system waits and takes no input.
+    Busy,
+}
+
+impl SystemCursor {
+    /// Number of cursors, the length of [`SystemUi::new`]'s `cursors`.
+    pub const COUNT: usize = 5;
 }
 
 /// An icon the System ROM's UI shows: one per workspace view, then the
@@ -68,19 +101,22 @@ impl SystemIcon {
 /// empty, so a ROM built without them draws nothing for them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SystemUi {
-    pointer: Cursor,
+    cursors: [Cursor; SystemCursor::COUNT],
     icons: [InkImage; SystemIcon::COUNT],
 }
 
 impl SystemUi {
-    /// `icons` are in [`SystemIcon`] declaration order.
-    pub fn new(pointer: Cursor, icons: [InkImage; SystemIcon::COUNT]) -> Self {
-        Self { pointer, icons }
+    /// `cursors` are in [`SystemCursor`] declaration order, and `icons` in
+    /// [`SystemIcon`] declaration order.
+    pub fn new(
+        cursors: [Cursor; SystemCursor::COUNT],
+        icons: [InkImage; SystemIcon::COUNT],
+    ) -> Self {
+        Self { cursors, icons }
     }
 
-    /// The default mouse pointer.
-    pub fn pointer(&self) -> &Cursor {
-        &self.pointer
+    pub fn cursor(&self, cursor: SystemCursor) -> &Cursor {
+        &self.cursors[cursor as usize]
     }
 
     pub fn icon(&self, icon: SystemIcon) -> &InkImage {

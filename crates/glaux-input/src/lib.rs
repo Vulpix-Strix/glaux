@@ -57,10 +57,15 @@ pub enum InputEvent {
     Backspace,
     Delete,
     Enter,
-    /// Step toward older entries, such as earlier commands in a history.
-    Up,
-    /// Step toward newer entries.
-    Down,
+    /// Step toward older entries, such as earlier commands in a history,
+    /// or move up a row.
+    Up {
+        select: bool,
+    },
+    /// Step toward newer entries, or move down a row.
+    Down {
+        select: bool,
+    },
     /// Request completion of the word being typed.
     Tab,
     /// Pause the running program and return to the system, or leave the
@@ -87,6 +92,8 @@ pub enum InputEvent {
     Redo,
     /// Write the open document to the cartridge (Ctrl+S on desktop).
     Save,
+    /// Select the whole text (Ctrl+A on desktop).
+    SelectAll,
     /// Ask to choose a file to open (Ctrl+P on desktop).
     OpenFile,
     /// Close the active document (Ctrl+W on desktop).
@@ -113,9 +120,13 @@ pub enum InputEvent {
     /// and no `PointerUp` follows for them.
     /// Presses that start outside the viewport, such as on the bars around
     /// it, are not reported, and neither are their releases.
+    ///
+    /// `select` is set when the press should extend the current selection
+    /// (typically Shift held) instead of starting a new one.
     PointerDown {
         button: PointerButton,
         at: Point,
+        select: bool,
     },
     /// A captured pointer button was released.
     PointerUp {

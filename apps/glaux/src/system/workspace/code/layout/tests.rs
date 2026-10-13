@@ -1,16 +1,10 @@
 use super::*;
 use crate::system::test_font::LAYOUT_FONT;
-use glaux_machine::font::FontMetrics;
 use pretty_assertions::assert_eq;
 
 fn layout() -> CodeLayout {
-    let metrics = FontMetrics::SYSTEM;
     CodeLayout::new(
-        Metrics {
-            cell_w: i32::from(metrics.cell_width()),
-            cell_h: i32::from(metrics.cell_height()),
-            top: 16,
-        },
+        crate::system::workspace::tests_support::CODE_METRICS,
         LAYOUT_FONT.clone(),
     )
 }

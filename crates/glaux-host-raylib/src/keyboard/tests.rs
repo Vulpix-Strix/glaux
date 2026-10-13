@@ -66,25 +66,20 @@ fn hold(key: KeyboardKey, frames: usize) -> Vec<usize> {
 
 #[test]
 fn movement_keys_select_only_with_shift() {
-    let keys = [KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END];
-    assert_eq!(
-        press(&keys, false),
-        [
-            InputEvent::Left { select: false },
-            InputEvent::Right { select: false },
-            InputEvent::Home { select: false },
-            InputEvent::End { select: false },
-        ]
-    );
-    assert_eq!(
-        press(&keys, true),
-        [
-            InputEvent::Left { select: true },
-            InputEvent::Right { select: true },
-            InputEvent::Home { select: true },
-            InputEvent::End { select: true },
-        ]
-    );
+    let keys = [KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END, KEY_UP, KEY_DOWN];
+    for select in [false, true] {
+        assert_eq!(
+            press(&keys, select),
+            [
+                InputEvent::Left { select },
+                InputEvent::Right { select },
+                InputEvent::Home { select },
+                InputEvent::End { select },
+                InputEvent::Up { select },
+                InputEvent::Down { select },
+            ]
+        );
+    }
 }
 
 #[test]
@@ -149,20 +144,11 @@ fn held_ctrl_page_keys_never_page_or_repeat() {
 
 #[test]
 fn editing_keys_ignore_shift() {
-    let keys = [
-        KEY_BACKSPACE,
-        KEY_DELETE,
-        KEY_ENTER,
-        KEY_UP,
-        KEY_DOWN,
-        KEY_TAB,
-    ];
+    let keys = [KEY_BACKSPACE, KEY_DELETE, KEY_ENTER, KEY_TAB];
     let expected = [
         InputEvent::Backspace,
         InputEvent::Delete,
         InputEvent::Enter,
-        InputEvent::Up,
-        InputEvent::Down,
         InputEvent::Tab,
     ];
     assert_eq!(press(&keys, false), expected);
@@ -204,6 +190,7 @@ fn view_and_pointer_events_are_kept_only_in_workspace_mode() {
         InputEvent::PointerDown {
             button: glaux_input::PointerButton::Primary,
             at,
+            select: false,
         },
         InputEvent::Wheel { delta: -1 },
         InputEvent::ButtonDown(Button::A),
@@ -241,6 +228,7 @@ fn ctrl_shortcuts_become_editing_commands() {
     assert_eq!(shortcuts(&[KEY_Y], false, true), [InputEvent::Redo]);
     assert_eq!(shortcuts(&[KEY_Y], true, true), [InputEvent::Redo]);
     assert_eq!(shortcuts(&[KEY_S], false, true), [InputEvent::Save]);
+    assert_eq!(shortcuts(&[KEY_A], false, true), [InputEvent::SelectAll]);
     assert_eq!(shortcuts(&[KEY_Q], false, true), []);
 }
 
@@ -289,6 +277,7 @@ fn editing_commands_are_kept_only_in_workspace_mode() {
         InputEvent::Undo,
         InputEvent::Redo,
         InputEvent::Save,
+        InputEvent::SelectAll,
         InputEvent::OpenFile,
         InputEvent::CloseDocument,
         InputEvent::NextDocument,
@@ -803,7 +792,10 @@ fn translated(mode: InputMode, keys: &[KeyboardKey], chars: &str) -> Vec<InputEv
 fn text_mode_keeps_editing_and_drops_buttons_and_keys() {
     assert_eq!(
         translated(InputMode::Text, &[KEY_LEFT, KEY_UP], ""),
-        [InputEvent::Left { select: false }, InputEvent::Up]
+        [
+            InputEvent::Left { select: false },
+            InputEvent::Up { select: false }
+        ]
     );
     assert_eq!(translated(InputMode::Text, &[KEY_Z], "z"), texts("z"));
     assert_eq!(translated(InputMode::Text, &[KEY_F2], ""), []);

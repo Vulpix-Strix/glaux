@@ -1,5 +1,13 @@
 use super::*;
 
+/// The sprite editor's metrics with the System ROM font, as the workspace
+/// lays it out.
+pub const SPRITE_METRICS: sprites::Metrics = Layout::new(FontMetrics::SYSTEM).sprite_metrics();
+
+/// The Code view's metrics with the System ROM font, as the workspace
+/// lays it out.
+pub const CODE_METRICS: code::Metrics = Layout::new(FontMetrics::SYSTEM).code_metrics();
+
 /// Where `tab` sits in the bar for a font with `metrics`.
 pub fn tab_rect(tab: Tab, metrics: FontMetrics) -> Rect {
     Layout::new(metrics).tabs()[tab.index()].1

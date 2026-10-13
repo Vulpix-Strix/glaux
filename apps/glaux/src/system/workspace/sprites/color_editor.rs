@@ -9,7 +9,7 @@ use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::palette::{PALETTE_LEN, Rgb};
-use glaux_machine::sprite::OBJ_TILE_WIDTH;
+use glaux_machine::sprite::{OBJ_TILE_CAPACITY, OBJ_TILE_WIDTH};
 use glaux_video::draw::{ObjPaletteChoice, draw_obj_tile_scaled, draw_text, fill_rect};
 
 use super::SpriteSource;
@@ -21,7 +21,7 @@ use crate::system::sprite_document::{
 };
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
-    AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,
+    BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window_with_detail, fill, text_cells as cells,
 };
 use hsv::{HUE_STEPS, Hsv, format_hex, parse_hex};
 
@@ -32,7 +32,6 @@ const APPLY: &str = "APPLY";
 /// The confirm button while other palette colors share the master and
 /// change with it.
 const APPLY_TO_ALL: &str = "APPLY TO ALL";
-const PREVIEW_LABEL: &str = "PREVIEW";
 const HUE_LABEL: &str = "HUE";
 const HEX_LABEL: &str = "HEX";
 /// Columns and rows of the saturation/value field's color cells.
@@ -429,11 +428,12 @@ impl ColorEditor {
             }
             InputEvent::Left { select } => self.step_across(false, select),
             InputEvent::Right { select } => self.step_across(true, select),
-            InputEvent::Up => self.step_along(true),
-            InputEvent::Down => self.step_along(false),
+            InputEvent::Up { .. } => self.step_along(true),
+            InputEvent::Down { .. } => self.step_along(false),
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                ..
             } => self.press(at, layout),
             InputEvent::PointerMove(Some(at)) => self.drag_to(at, layout),
             InputEvent::PointerUp {
@@ -619,19 +619,16 @@ impl ColorEditor {
         let text = |fb: &mut Framebuffer, text: &str, x: i32, y: i32, color: u8| {
             draw_text(fb, font, text, x, y, color);
         };
-        draw_window(
+        let heading = heading(self.target, &self.uses, layout.advanced);
+        draw_window_with_detail(
             framebuffer,
             font,
             layout.window,
             layout.title_bar,
             TITLE,
+            &heading,
             cell_w,
         );
-
-        let (heading, tile) = header(self.target, &self.uses, self.tile, layout.advanced);
-        text(framebuffer, &heading, layout.text_x, layout.header_y, INK);
-        let tile_x = layout.text_right - cells(&tile) * cell_w;
-        text(framebuffer, &tile, tile_x, layout.header_y, INK);
 
         // The saturation/value field and its marker.
         let area = layout.sat_val;
@@ -664,13 +661,14 @@ impl ColorEditor {
             contrasting(self.rgb),
         );
 
-        // The tile with the proposed color, then the old and new colors.
-        let label_x = layout.preview.x + (PREVIEW - cells(PREVIEW_LABEL) * cell_w) / 2;
+        // The tile with the proposed color, named over it, then the old and
+        // new colors.
+        let label = tile_label(self.tile);
         text(
             framebuffer,
-            PREVIEW_LABEL,
-            label_x,
-            layout.preview_label_y,
+            &label,
+            layout.tile_label.x,
+            layout.tile_label.y,
             INK,
         );
         outline(framebuffer, layout.preview.inset(-1), INK);
@@ -857,9 +855,9 @@ fn scale(offset: i32, span: i32, max: i32) -> i32 {
 
 /// The header's left and right text: the edited color, and the tile it
 /// is seen on.
-fn header(target: ColorTarget, uses: &ColorUses, tile: usize, advanced: bool) -> (String, String) {
+fn heading(target: ColorTarget, uses: &ColorUses, advanced: bool) -> String {
     let ColorTarget { bank, local } = target;
-    let heading = if advanced {
+    if advanced {
         let master = uses.master;
         format!(
             "OBP{} L{local:X}  Master ${master:02X} ({master})",
@@ -867,8 +865,12 @@ fn header(target: ColorTarget, uses: &ColorUses, tile: usize, advanced: bool) ->
         )
     } else {
         format!("Palette {}, color {local:X}", bank.get())
-    };
-    (heading, format!("Tile {tile:04}"))
+    }
+}
+
+/// The name of the tile the preview shows.
+fn tile_label(tile: usize) -> String {
+    format!("Tile {tile:04}")
 }
 
 /// `count` followed by `one` or `many`.
@@ -1056,12 +1058,12 @@ pub(super) fn fit(line: &str, columns: usize) -> String {
 pub struct ColorEditorLayout {
     pub window: Rect,
     pub title_bar: Rect,
-    pub header_y: i32,
     pub text_x: i32,
     pub text_right: i32,
     /// The saturation/value field, inside its frame.
     pub sat_val: Rect,
-    pub preview_label_y: i32,
+    /// Where the name of the previewed tile goes, over the preview.
+    pub tile_label: Rect,
     /// The tile preview, inside its frame.
     pub preview: Rect,
     /// The old and new swatches with the frame around them.
@@ -1094,12 +1096,14 @@ impl ColorEditorLayout {
         let hue_block = 2 * HUE_MARGIN + HUE_H;
         let impact_height = IMPACT_LINES as i32 * cell_h;
 
+        // The previewed tile's name, the tile and the old and new colors
+        // stack beside the saturation/value field, as tall as it or taller.
+        let column_height = cell_h + 1 + (PREVIEW + 2) + 1 + SWATCH_HEIGHT;
+        let section_height = column_height.max(SV_H + 2);
+
         let title_height = cell_h + 2;
         let body_height = PAD
-            + cell_h
-            + SECTION_GAP
-            + SV_H
-            + 2
+            + section_height
             + SECTION_GAP
             + hue_block
             + SECTION_GAP
@@ -1111,17 +1115,15 @@ impl ColorEditorLayout {
             + PAD;
         let width = inner_width + 2 * PAD + 2;
         let height = 1 + title_height + body_height + 1;
+        // The system font fits the area, as the layout tests check; a taller
+        // one would only push the window's bottom past it, never its title
+        // above it.
         let window = Rect {
-            x: area.x + (area.width - width - SHADOW_OFFSET) / 2,
-            y: area.y + (area.height - height - SHADOW_OFFSET) / 2,
+            x: (area.x + (area.width - width - SHADOW_OFFSET) / 2).max(area.x),
+            y: (area.y + (area.height - height - SHADOW_OFFSET) / 2).max(area.y),
             width,
             height,
         };
-        debug_assert!(
-            width + SHADOW_OFFSET <= area.width - 2 * AREA_MARGIN
-                && height + SHADOW_OFFSET <= area.height,
-            "the color editor must fit its area"
-        );
         let title_bar = Rect {
             x: window.x + 1,
             y: window.y + 1,
@@ -1130,17 +1132,23 @@ impl ColorEditorLayout {
         };
         let text_x = window.x + 1 + PAD;
         let text_right = text_x + inner_width;
-        let header_y = title_bar.bottom() + PAD;
-
-        let top = header_y + cell_h + SECTION_GAP;
+        let top = title_bar.bottom() + PAD;
+        // Both columns end together, on the section's bottom.
         let sat_val = Rect {
             x: text_x + 1,
-            y: top + 1,
+            y: top + section_height - (SV_H + 2) + 1,
             width: SV_W,
             height: SV_H,
         };
         let column_x = text_right - column_width;
-        let preview_label_y = top;
+        let label_width = cells(&tile_label(OBJ_TILE_CAPACITY - 1)) * cell_w;
+        // Centred over the preview, unless it would pass the text's right edge.
+        let tile_label = Rect {
+            x: (column_x + (column_width - label_width) / 2).min(text_right - label_width),
+            y: top,
+            width: label_width,
+            height: cell_h,
+        };
         let preview = Rect {
             x: column_x + 1,
             y: top + cell_h + 2,
@@ -1149,7 +1157,7 @@ impl ColorEditorLayout {
         };
         let swatches = Rect {
             x: column_x,
-            y: top + SV_H + 2 - SWATCH_HEIGHT,
+            y: top + section_height - SWATCH_HEIGHT,
             width: column_width,
             height: SWATCH_HEIGHT,
         };
@@ -1166,7 +1174,7 @@ impl ColorEditorLayout {
             ..old
         };
 
-        let hue_top = top + SV_H + 2 + SECTION_GAP;
+        let hue_top = top + section_height + SECTION_GAP;
         let hue = Rect {
             x: text_right - 1 - HUE_W,
             y: hue_top + HUE_MARGIN,
@@ -1213,11 +1221,10 @@ impl ColorEditorLayout {
         Self {
             window,
             title_bar,
-            header_y,
             text_x,
             text_right,
             sat_val,
-            preview_label_y,
+            tile_label,
             preview,
             swatches,
             old,

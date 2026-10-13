@@ -17,6 +17,7 @@ use glaux_video::draw::{
 
 use super::layout::{
     ADVANCED_LABELS, CANVAS_ZOOM, Hit, IMPORT_LABEL, SAVE_LABEL, SCROLLBAR, SpriteLayout, ToolSlot,
+    caption,
 };
 use super::sheet::{SheetView, Visible, grid_position};
 use super::{EditorDialog, SpriteEditor, SpriteSource};
@@ -384,13 +385,8 @@ impl Painter<'_> {
             self.outline(cell, PALE);
         }
 
-        let (column, row) = grid_position(editor.selected);
-        let caption = if editor.advanced {
-            format!("Tile {:04} ({column},{row})", editor.selected)
-        } else {
-            format!("Tile {:04}", editor.selected)
-        };
-        self.text(&caption, layout.canvas_frame.x, layout.caption_y, DIM);
+        let caption = caption(editor.selected, editor.advanced);
+        self.text(&caption, layout.caption.x, layout.caption.y, DIM);
     }
 
     fn sheet(&mut self, editor: &SpriteEditor, source: &SpriteSource<'_>, hover: Hit) {

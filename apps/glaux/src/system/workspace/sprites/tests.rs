@@ -3,11 +3,7 @@ use glaux_input::Point;
 use pretty_assertions::assert_eq;
 use sheet::Zoom;
 
-const METRICS: Metrics = Metrics {
-    cell_w: 6,
-    cell_h: 10,
-    top: 16,
-};
+const METRICS: Metrics = crate::system::workspace::tests_support::SPRITE_METRICS;
 
 fn editor() -> SpriteEditor {
     SpriteEditor::new(METRICS)
@@ -21,6 +17,7 @@ fn click(editor: &mut SpriteEditor, rect: crate::system::workspace::Rect) {
                 (rect.x + rect.width / 2) as u16,
                 (rect.y + rect.height / 2) as u16,
             ),
+            select: false,
         },
         None,
     );
@@ -32,8 +29,9 @@ fn clicking_a_visible_tile_selects_it_without_scrolling() {
     editor.handle_input(InputEvent::Wheel { delta: -5 }, None);
     let before = editor.sheet;
     let layout = editor.layout();
-    click(&mut editor, layout.sheet_cell(4, 21, Zoom::X1));
-    assert_eq!(editor.selected(), (10 + 21) * 16 + 4);
+    let last = layout.visible.rows - 1;
+    click(&mut editor, layout.sheet_cell(4, last, Zoom::X1));
+    assert_eq!(editor.selected(), (10 + last) * 16 + 4);
     assert_eq!(editor.sheet, before);
 }
 
@@ -54,30 +52,33 @@ fn the_wheel_scrolls_rows_and_shift_wheel_pans_at_two_x() {
     editor.handle_input(InputEvent::WheelHorizontal { delta: -100 }, None);
     assert_eq!(editor.sheet.left_column(), 5);
     editor.handle_input(InputEvent::Wheel { delta: i8::MIN }, None);
-    assert_eq!(editor.sheet.top_row(), 64 - 11);
+    let rows = editor.layout().visible.rows;
+    assert_eq!(editor.sheet.top_row(), 64 - rows);
 }
 
 #[test]
 fn arrows_move_the_selection_and_reveal_it_minimally() {
     let mut editor = editor();
     editor.handle_input(InputEvent::Left { select: false }, None);
-    editor.handle_input(InputEvent::Up, None);
+    editor.handle_input(InputEvent::Up { select: false }, None);
     assert_eq!(
         editor.selected(),
         0,
         "the grid's corner stops the selection"
     );
 
-    for _ in 0..22 {
-        editor.handle_input(InputEvent::Down, None);
+    // One row past the last one shown scrolls by one.
+    let rows = editor.layout().visible.rows;
+    for _ in 0..rows {
+        editor.handle_input(InputEvent::Down { select: false }, None);
     }
-    assert_eq!(editor.selected(), 22 * 16);
+    assert_eq!(editor.selected(), rows * 16);
     assert_eq!(editor.sheet.top_row(), 1);
 
     for _ in 0..20 {
         editor.handle_input(InputEvent::Right { select: false }, None);
     }
-    assert_eq!(editor.selected(), 22 * 16 + 15);
+    assert_eq!(editor.selected(), rows * 16 + 15);
     assert_eq!(editor.sheet.top_row(), 1);
 }
 
@@ -155,6 +156,7 @@ fn down(editor: &mut SpriteEditor, doc: &mut SpriteDocument, x: i32, y: i32) {
         InputEvent::PointerDown {
             button: PointerButton::Primary,
             at,
+            select: false,
         },
         Some(doc),
     );
@@ -287,7 +289,7 @@ fn changing_tool_or_tile_ends_the_stroke() {
 
     editor.handle_input(InputEvent::Text('p'), Some(&mut doc));
     down(&mut editor, &mut doc, 0, 1);
-    editor.handle_input(InputEvent::Down, Some(&mut doc));
+    editor.handle_input(InputEvent::Down { select: false }, Some(&mut doc));
     drag(&mut editor, &mut doc, 4, 1);
     assert_eq!(rows(&doc, 1)[1], "10000000");
     assert_eq!(rows(&doc, 17)[1], "00000000");
@@ -470,6 +472,7 @@ fn save_is_asked_for_only_with_unsaved_edits() {
     let press = InputEvent::PointerDown {
         button: PointerButton::Primary,
         at,
+        select: false,
     };
     assert_eq!(
         editor.handle_input(press, Some(&mut doc)),
@@ -496,6 +499,7 @@ fn tap(editor: &mut SpriteEditor, doc: &mut SpriteDocument, at: Point) -> Option
         InputEvent::PointerDown {
             button: PointerButton::Primary,
             at,
+            select: false,
         },
         Some(doc),
     );
@@ -563,6 +567,7 @@ fn the_open_picker_takes_every_event() {
         InputEvent::PointerDown {
             button: PointerButton::Primary,
             at: canvas,
+            select: false,
         },
         InputEvent::PointerMove(Some(canvas_point(&editor, 4, 4))),
         InputEvent::PointerUp {
@@ -596,8 +601,8 @@ fn applying_a_palette_is_one_undoable_edit() {
     let mut editor = editor();
     let mut doc = document();
     open_picker(&mut editor, &mut doc);
-    command(&mut editor, &mut doc, InputEvent::Down);
-    command(&mut editor, &mut doc, InputEvent::Down);
+    command(&mut editor, &mut doc, InputEvent::Down { select: false });
+    command(&mut editor, &mut doc, InputEvent::Down { select: false });
     assert_eq!(bank_of(&doc, 0), 0, "nothing changes before Apply");
     assert_eq!(command(&mut editor, &mut doc, InputEvent::Enter), None);
     assert!(!editor.has_dialog());
@@ -868,6 +873,7 @@ fn edit_color_takes_every_event() {
         InputEvent::PointerDown {
             button: PointerButton::Primary,
             at: canvas,
+            select: false,
         },
         InputEvent::PointerUp {
             button: PointerButton::Primary,
@@ -884,4 +890,39 @@ fn edit_color_takes_every_event() {
     assert!(editor.color_editor().is_some());
     assert!(!editor.is_advanced());
     assert_eq!(editor.tool, ToolSlot::Pencil);
+}
+
+#[test]
+fn the_pointer_is_a_hand_over_controls_and_an_hourglass_while_a_file_is_awaited() {
+    use glaux_machine::system_rom::SystemCursor;
+
+    let mut editor = editor();
+    let mut doc = document();
+    let layout = editor.layout();
+    let (_, tool) = layout.tools[1];
+    for (at, expected) in [
+        (centre_of(tool), SystemCursor::Hand),
+        (centre_of(layout.grid_button), SystemCursor::Hand),
+        (centre_of(layout.palette_button), SystemCursor::Hand),
+        (centre_of(layout.sheet), SystemCursor::Hand),
+        (canvas_point(&editor, 3, 3), SystemCursor::Arrow),
+        (centre_of(layout.status), SystemCursor::Arrow),
+    ] {
+        assert_eq!(editor.cursor(at), expected, "at {at:?}");
+    }
+
+    // Under a dialog nothing below takes a hand.
+    open_picker(&mut editor, &mut doc);
+    assert_eq!(editor.cursor(centre_of(tool)), SystemCursor::Arrow);
+    editor.handle_input(InputEvent::Break, Some(&mut doc));
+
+    let import = centre_of(editor.import_button_rect());
+    assert_eq!(
+        tap(&mut editor, &mut doc, import),
+        Some(SpriteRequest::Import)
+    );
+    assert!(editor.awaits_file());
+    assert_eq!(editor.cursor(centre_of(tool)), SystemCursor::Busy);
+    editor.stop_awaiting_file();
+    assert_eq!(editor.cursor(centre_of(tool)), SystemCursor::Hand);
 }

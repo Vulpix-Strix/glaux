@@ -4,9 +4,9 @@
 use glaux_input::Point;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS};
-use glaux_machine::sprite::{OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH};
+use glaux_machine::sprite::{OBJ_TILE_CAPACITY, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH};
 
-use super::sheet::{SheetView, Visible, Zoom};
+use super::sheet::{SheetView, Visible, Zoom, grid_position};
 use crate::system::workspace::Rect;
 
 /// Canvas pixels per tile pixel.
@@ -126,8 +126,10 @@ pub struct SpriteLayout {
     /// The canvas's frame, one pixel around [`canvas`](Self::canvas).
     pub canvas_frame: Rect,
     pub canvas: Rect,
-    /// Top of the caption under the canvas.
-    pub caption_y: i32,
+    /// Where the selected tile's caption goes, wide enough for the widest
+    /// one: under the canvas normally, and right of the OBP banks in
+    /// Advanced mode, where the canvas column has no row to spare.
+    pub caption: Rect,
     /// The tiles the sheet shows, exactly `visible` whole tiles.
     pub sheet: Rect,
     pub visible: Visible,
@@ -251,10 +253,20 @@ impl SpriteLayout {
         let advanced_button = button(text_cells("Advanced"), BUTTON_PAD, GAP);
         let grid_button = button(text_cells("Grid"), BUTTON_PAD, 0);
 
-        let caption_y = canvas_frame.bottom() + 2;
+        let caption_cells = text_cells(&caption(OBJ_TILE_CAPACITY - 1, advanced));
+        let under_canvas = Rect {
+            x: canvas_frame.x,
+            y: canvas_frame.bottom() + 2,
+            width: caption_cells * cell_w,
+            height: cell_h,
+        };
         let button_row = Rect {
             x: canvas_frame.x,
-            y: caption_y + cell_h + 2,
+            y: if advanced {
+                canvas_frame.bottom() + 2
+            } else {
+                under_canvas.bottom() + 2
+            },
             width: canvas_frame.width,
             height: bar,
         };
@@ -288,6 +300,17 @@ impl SpriteLayout {
             height: cell_h,
         };
 
+        let banks: [Rect; OBJ_PALETTE_BANKS] = std::array::from_fn(|i| cell(i, bank_y));
+        let caption = if advanced {
+            Rect {
+                x: banks[OBJ_PALETTE_BANKS - 1].right() + 2 * GAP,
+                y: bank_y,
+                ..under_canvas
+            }
+        } else {
+            under_canvas
+        };
+
         Self {
             metrics,
             options,
@@ -295,7 +318,7 @@ impl SpriteLayout {
             palette,
             canvas_frame,
             canvas,
-            caption_y,
+            caption,
             sheet,
             visible,
             tools,
@@ -309,7 +332,7 @@ impl SpriteLayout {
             palette_button,
             swatch_y,
             swatches: std::array::from_fn(|i| cell(i, swatch_y)),
-            banks: std::array::from_fn(|i| cell(i, bank_y)),
+            banks,
             bank_y,
             master_y,
             selection_y,
@@ -383,6 +406,16 @@ impl SpriteLayout {
             return Hit::Bank(bank as u8);
         }
         Hit::None
+    }
+}
+
+/// The caption naming `tile`, with its grid position in Advanced mode.
+pub fn caption(tile: usize, advanced: bool) -> String {
+    if advanced {
+        let (column, row) = grid_position(tile);
+        format!("Tile {tile:04} ({column},{row})")
+    } else {
+        format!("Tile {tile:04}")
     }
 }
 

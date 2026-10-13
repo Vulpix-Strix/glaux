@@ -97,8 +97,8 @@ fn sprite_editor_state_survives_tab_switches_and_shell_trips() {
     let system = open_sprites(loaded(&fixture));
     assert_eq!(workspace_tab(&system), Tab::Sprites);
     let system = system.update(&[
-        InputEvent::Down,
-        InputEvent::Down,
+        InputEvent::Down { select: false },
+        InputEvent::Down { select: false },
         InputEvent::Right { select: false },
         InputEvent::Text('a'),
         InputEvent::Text('+'),
@@ -114,7 +114,7 @@ fn sprite_editor_state_survives_tab_switches_and_shell_trips() {
     let system = system.update(&[
         InputEvent::NextView,
         InputEvent::Text('a'),
-        InputEvent::Down,
+        InputEvent::Down { select: false },
         InputEvent::Wheel { delta: 2 },
     ]);
     assert_eq!(workspace_tab(&system), Tab::Map);
@@ -306,7 +306,11 @@ fn a_cancelled_or_abandoned_drag_never_resumes() {
 
     let at = pixel(&system, 0, 7);
     let system = system.update(&[
-        InputEvent::PointerDown { button, at },
+        InputEvent::PointerDown {
+            button,
+            at,
+            select: false,
+        },
         InputEvent::PointerCancel,
     ]);
     let to = pixel(&system, 7, 7);
@@ -316,7 +320,11 @@ fn a_cancelled_or_abandoned_drag_never_resumes() {
 
     // The release of a drag left by closing the workspace never comes.
     let at = pixel(&system, 0, 6);
-    let system = press_break(system.update(&[InputEvent::PointerDown { button, at }]));
+    let system = press_break(system.update(&[InputEvent::PointerDown {
+        button,
+        at,
+        select: false,
+    }]));
     let to = pixel(&system, 7, 6);
     let system = press_break(system).update(&[InputEvent::PointerMove(Some(to))]);
     assert_eq!(document(&system).pixel(0, 0, 6), Some(1));
@@ -438,7 +446,11 @@ fn a_conflict_dialog_takes_all_input_and_escape_cancels_it() {
 fn overwrite_disk_writes_the_edits_over_the_outside_change() {
     let fixture = Fixture::new("sys-sprites-conflict-overwrite");
     let system = in_conflict(&fixture);
-    let system = system.update(&[InputEvent::Up, InputEvent::Up, InputEvent::Enter]);
+    let system = system.update(&[
+        InputEvent::Up { select: false },
+        InputEvent::Up { select: false },
+        InputEvent::Enter,
+    ]);
     assert_eq!(modal(&system), None);
     let saved = tiles_on_disk(&fixture);
     assert_eq!(saved, document(&system).tiles().as_bytes()[..2048]);
@@ -452,7 +464,11 @@ fn overwrite_after_a_further_change_asks_again() {
     let fixture = Fixture::new("sys-sprites-conflict-again");
     let system = in_conflict(&fixture);
     std::fs::write(fixture.root().join("pong/sprites.bin"), [0x66; 32]).unwrap();
-    let system = system.update(&[InputEvent::Up, InputEvent::Up, InputEvent::Enter]);
+    let system = system.update(&[
+        InputEvent::Up { select: false },
+        InputEvent::Up { select: false },
+        InputEvent::Enter,
+    ]);
     assert_eq!(
         modal(&system),
         Some(("FILE CONFLICT".to_owned(), conflict_labels()))
@@ -543,7 +559,7 @@ fn editing_without_saving_never_writes_the_cartridge() {
         InputEvent::Text('+'),
         InputEvent::Text('g'),
         InputEvent::Text('-'),
-        InputEvent::Down,
+        InputEvent::Down { select: false },
         InputEvent::Right { select: false },
         InputEvent::Wheel { delta: -2 },
         InputEvent::WheelHorizontal { delta: -1 },
@@ -808,7 +824,7 @@ fn escape_and_tab_keys_stay_inside_the_picker() {
     let system = picking(&fixture).update(&[
         InputEvent::NextView,
         InputEvent::PreviousView,
-        InputEvent::Down,
+        InputEvent::Down { select: false },
     ]);
     assert_eq!(workspace_tab(&system), Tab::Sprites);
     assert!(system.workspace.has_modal());

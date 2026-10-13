@@ -94,8 +94,8 @@ impl LineEditor {
             }
             // Navigation, completion and break act on the whole system, not
             // the line.
-            InputEvent::Up
-            | InputEvent::Down
+            InputEvent::Up { .. }
+            | InputEvent::Down { .. }
             | InputEvent::WordLeft { .. }
             | InputEvent::WordRight { .. }
             | InputEvent::DocumentStart { .. }
@@ -113,6 +113,7 @@ impl LineEditor {
             | InputEvent::Undo
             | InputEvent::Redo
             | InputEvent::Save
+            | InputEvent::SelectAll
             | InputEvent::OpenFile
             | InputEvent::CloseDocument
             | InputEvent::NextDocument

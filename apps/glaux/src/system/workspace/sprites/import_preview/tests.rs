@@ -4,11 +4,7 @@ use crate::system::video::VideoFiles;
 use crate::system::workspace::Rect;
 use pretty_assertions::assert_eq;
 
-const METRICS: Metrics = Metrics {
-    cell_w: 6,
-    cell_h: 10,
-    top: 16,
-};
+const METRICS: Metrics = crate::system::workspace::tests_support::SPRITE_METRICS;
 
 fn area(metrics: Metrics) -> Rect {
     Rect {
@@ -60,6 +56,7 @@ fn press(at: Point) -> InputEvent {
     InputEvent::PointerDown {
         button: PointerButton::Primary,
         at,
+        select: false,
     }
 }
 
@@ -106,6 +103,11 @@ fn the_parts_fit_the_window_without_overlapping() {
             }
         }
         assert_eq!(layout.preview.width, 128, "a whole grid row at 1x");
+        assert!(layout.window.bottom() + SHADOW_OFFSET <= area(metrics).bottom());
+        assert!(
+            layout.preview.height >= 8 * OBJ_TILE_HEIGHT as i32,
+            "{metrics:?}"
+        );
     }
 }
 

@@ -14,7 +14,7 @@ use super::render::{bank_name, checker, outline};
 use crate::system::PALE;
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
-    AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,
+    BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,
 };
 
 const TITLE: &str = "SELECT PALETTE";
@@ -107,8 +107,8 @@ impl PalettePicker {
         let banks = OBJ_PALETTE_BANKS as u8;
         let step = |bank: ObjBank, by: u8| ObjBank::new((bank.get() + by) % banks);
         match event {
-            InputEvent::Up => self.pending = step(self.pending, banks - 1)?,
-            InputEvent::Down => self.pending = step(self.pending, 1)?,
+            InputEvent::Up { .. } => self.pending = step(self.pending, banks - 1)?,
+            InputEvent::Down { .. } => self.pending = step(self.pending, 1)?,
             InputEvent::Text(key) => {
                 let bank = key.to_digit(10).and_then(|n| ObjBank::new(n as u8));
                 if let Some(bank) = bank {
@@ -120,6 +120,7 @@ impl PalettePicker {
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
+                ..
             } => {
                 self.armed = layout.button_at(at);
                 if let Some(bank) = layout.row_at(at) {
@@ -300,17 +301,15 @@ impl PickerLayout {
             PAD + cell_h + SECTION_GAP + rows_height + SECTION_GAP + button_height + PAD;
         let width = row_width + 2 * PAD + 2;
         let height = 1 + title_height + body_height + 1;
+        // The system font fits the area, as the layout tests check; a taller
+        // one would only push the window's bottom past it, never its title
+        // above it.
         let window = Rect {
-            x: area.x + (area.width - width - SHADOW_OFFSET) / 2,
-            y: area.y + (area.height - height - SHADOW_OFFSET) / 2,
+            x: (area.x + (area.width - width - SHADOW_OFFSET) / 2).max(area.x),
+            y: (area.y + (area.height - height - SHADOW_OFFSET) / 2).max(area.y),
             width,
             height,
         };
-        debug_assert!(
-            width + SHADOW_OFFSET <= area.width - 2 * AREA_MARGIN
-                && height + SHADOW_OFFSET <= area.height,
-            "the palette picker must fit its area"
-        );
         let title_bar = Rect {
             x: window.x + 1,
             y: window.y + 1,

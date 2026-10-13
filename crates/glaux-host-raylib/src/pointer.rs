@@ -112,7 +112,8 @@ pub(crate) struct PointerFrame {
     /// Horizontal wheel movement this frame, in notches; positive is
     /// toward the left.
     pub(crate) wheel_x: f32,
-    /// Whether Shift is held, which turns the vertical wheel sideways.
+    /// Whether Shift is held, which turns the vertical wheel sideways and
+    /// makes presses extend the selection.
     pub(crate) shift: bool,
     /// Whether the window has input focus. Losing it cancels captures,
     /// since the release may never reach the window.
@@ -182,7 +183,11 @@ impl PointerTracker {
                 Some(at) => {
                     self.captured[i] = true;
                     self.grip = at;
-                    out.push(InputEvent::PointerDown { button, at });
+                    out.push(InputEvent::PointerDown {
+                        button,
+                        at,
+                        select: frame.shift,
+                    });
                 }
                 None => self.ignored[i] = true,
             }
