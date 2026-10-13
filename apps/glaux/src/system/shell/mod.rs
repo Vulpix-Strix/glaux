@@ -55,7 +55,7 @@ const PROMPT: &str = "> ";
 /// run.
 pub(super) const EXPERIMENTAL_LANGUAGE_WARNING: &str =
     "RHAI SUPPORT IS EXPERIMENTAL. THE SCRIPTING API MAY CHANGE WITHOUT NOTICE.";
-/// Shell ticks the cursor spends in each blink phase: 600 ms at 60 Hz.
+/// Ticks a text cursor spends in each blink phase: 600 ms at 60 Hz.
 pub(super) const BLINK_TICKS: u32 = 36;
 
 /// A cartridge lifecycle change asked for by a shell command and carried
@@ -220,6 +220,14 @@ impl Shell {
             // workspace from the idle shell, and a paused cartridge is left
             // with the RESUME and STOP commands.
             InputEvent::Break => {}
+            // The prompt is one short line: word and page movement have
+            // nothing to move over that Left, Right, Home and End don't.
+            InputEvent::WordLeft { .. }
+            | InputEvent::WordRight { .. }
+            | InputEvent::DocumentStart { .. }
+            | InputEvent::DocumentEnd { .. }
+            | InputEvent::PageUp { .. }
+            | InputEvent::PageDown { .. } => {}
             // Game buttons and keys belong to a running cartridge; views and
             // the pointer belong to the workspace.
             InputEvent::ButtonDown(_)

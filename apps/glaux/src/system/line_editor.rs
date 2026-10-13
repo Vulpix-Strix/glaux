@@ -96,6 +96,12 @@ impl LineEditor {
             // the line.
             InputEvent::Up
             | InputEvent::Down
+            | InputEvent::WordLeft { .. }
+            | InputEvent::WordRight { .. }
+            | InputEvent::DocumentStart { .. }
+            | InputEvent::DocumentEnd { .. }
+            | InputEvent::PageUp { .. }
+            | InputEvent::PageDown { .. }
             | InputEvent::Tab
             | InputEvent::Break
             | InputEvent::ButtonDown(_)

@@ -115,3 +115,48 @@ fn metrics_measure_the_widest_line_and_the_folded_rows() {
         "rows past a line's end stop at its last"
     );
 }
+
+#[test]
+fn a_spot_counts_columns_with_tabs_expanded() {
+    let document = document("x\n\tab\u{feff}c");
+    let key = MetricsKey {
+        tab_size: 4,
+        wrap_columns: None,
+    };
+    let columns: Vec<_> = [2, 3, 4, 5, 8]
+        .map(|byte| {
+            let spot = spot(&document, byte, key);
+            (spot.line, spot.column)
+        })
+        .into();
+    // The mark inside the line is a character like any other.
+    assert_eq!(columns, [(1, 0), (1, 4), (1, 5), (1, 6), (1, 7)]);
+}
+
+#[test]
+fn a_position_where_a_line_folds_starts_the_next_row() {
+    // Folded at 5 columns: "aaaa ", "bbbb".
+    let document = document("aaaa bbbb");
+    let key = MetricsKey {
+        tab_size: 4,
+        wrap_columns: Some(5),
+    };
+    let at = |byte| {
+        let spot = spot(&document, byte, key);
+        (spot.row_in_line, spot.row_start.byte, spot.column)
+    };
+    assert_eq!(at(4), (0, 0, 4));
+    assert_eq!(at(5), (1, 5, 5));
+    assert_eq!(at(9), (1, 5, 9));
+}
+
+#[test]
+fn the_nearest_position_on_a_folded_row_stays_on_that_row() {
+    let document = document("aaaa bbbb");
+    let rows: Vec<_> = visual_rows(&document, 0, 0, Some(5), 4).collect();
+    assert_eq!((rows[0].folds, rows[1].folds), (true, false));
+    // Past the end of the first row: before its blank, not after it.
+    assert_eq!(rows[0].byte_near_column(40, 4), 4);
+    assert_eq!(rows[1].byte_near_column(40, 4), 9);
+    assert_eq!(rows[1].byte_near_column(6, 4), 6);
+}

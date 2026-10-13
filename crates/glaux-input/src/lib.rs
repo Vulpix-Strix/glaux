@@ -30,6 +30,30 @@ pub enum InputEvent {
     End {
         select: bool,
     },
+    /// Move to the start of the previous word (Ctrl+Left on desktop).
+    WordLeft {
+        select: bool,
+    },
+    /// Move past the end of the next word (Ctrl+Right on desktop).
+    WordRight {
+        select: bool,
+    },
+    /// Move to the start of the whole text (Ctrl+Home on desktop).
+    DocumentStart {
+        select: bool,
+    },
+    /// Move to the end of the whole text (Ctrl+End on desktop).
+    DocumentEnd {
+        select: bool,
+    },
+    /// Move up by one screenful.
+    PageUp {
+        select: bool,
+    },
+    /// Move down by one screenful.
+    PageDown {
+        select: bool,
+    },
     Backspace,
     Delete,
     Enter,

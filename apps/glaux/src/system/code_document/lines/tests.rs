@@ -46,3 +46,15 @@ fn ranges_are_byte_offsets_into_the_text() {
     assert_eq!(lines.range(text, 2), Some(7..7));
     assert_eq!(lines.range(text, 3), None);
 }
+
+#[test]
+fn each_byte_belongs_to_the_line_its_ending_closes() {
+    // BOM, "ab", CR LF, empty line's LF, "c".
+    let text = "\u{feff}ab\r\n\nc";
+    let lines = Lines::new(text);
+    let owners: Vec<_> = (0..=text.len()).map(|byte| lines.line_of(byte)).collect();
+    assert_eq!(owners, [0, 0, 0, 0, 0, 0, 0, 1, 2, 2]);
+    assert_eq!(lines.line_of(usize::MAX), 2);
+    assert_eq!(Lines::new("").line_of(0), 0);
+    assert_eq!(Lines::new("a\n").line_of(2), 1);
+}

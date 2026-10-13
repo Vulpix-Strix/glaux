@@ -21,6 +21,18 @@ fn frame(
     shift: bool,
     elapsed: Duration,
 ) -> Vec<InputEvent> {
+    let modifiers = Modifiers { shift, ctrl: false };
+    frame_with(edit, keys, state, modifiers, elapsed)
+}
+
+/// [`frame`] with any modifiers held.
+fn frame_with(
+    edit: &mut EditKeys,
+    keys: &[KeyboardKey],
+    state: KeyState,
+    modifiers: Modifiers,
+    elapsed: Duration,
+) -> Vec<InputEvent> {
     let mut out = Vec::new();
     edit.events(
         |key| {
@@ -30,7 +42,7 @@ fn frame(
                 KeyState::default()
             }
         },
-        Modifiers { shift, ctrl: false },
+        modifiers,
         elapsed,
         &mut out,
     );
@@ -72,6 +84,66 @@ fn movement_keys_select_only_with_shift() {
             InputEvent::Home { select: true },
             InputEvent::End { select: true },
         ]
+    );
+}
+
+#[test]
+fn ctrl_movement_keys_move_by_word_and_document() {
+    let keys = [KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END];
+    for shift in [false, true] {
+        let select = shift;
+        let ctrl = Modifiers { shift, ctrl: true };
+        assert_eq!(
+            frame_with(&mut EditKeys::default(), &keys, PRESSED, ctrl, FRAME),
+            [
+                InputEvent::WordLeft { select },
+                InputEvent::WordRight { select },
+                InputEvent::DocumentStart { select },
+                InputEvent::DocumentEnd { select },
+            ]
+        );
+    }
+}
+
+#[test]
+fn page_keys_page_without_ctrl() {
+    assert_eq!(
+        press(&[KEY_PAGE_UP, KEY_PAGE_DOWN], false),
+        [
+            InputEvent::PageUp { select: false },
+            InputEvent::PageDown { select: false },
+        ]
+    );
+    assert_eq!(
+        press(&[KEY_PAGE_DOWN], true),
+        [InputEvent::PageDown { select: true }]
+    );
+}
+
+#[test]
+fn held_ctrl_page_keys_never_page_or_repeat() {
+    // With Ctrl held, PageDown is only the NextDocument shortcut, which
+    // fires once per press.
+    let ctrl = Modifiers {
+        shift: false,
+        ctrl: true,
+    };
+    let mut edit = EditKeys::default();
+    let mut events = frame_with(&mut edit, &[KEY_PAGE_DOWN], PRESSED, ctrl, FRAME);
+    let mut commands = Vec::new();
+    shortcut_events(|key| key == KEY_PAGE_DOWN, ctrl, &mut commands);
+    for _ in 0..120 {
+        events.extend(frame_with(&mut edit, &[KEY_PAGE_DOWN], HELD, ctrl, FRAME));
+        shortcut_events(|_| false, ctrl, &mut commands);
+    }
+    assert_eq!(events, []);
+    assert_eq!(commands, [InputEvent::NextDocument]);
+
+    // Letting go of Ctrl mid-hold starts a fresh delay before paging.
+    assert_eq!(frame(&mut edit, &[KEY_PAGE_DOWN], HELD, false, FRAME), []);
+    assert_eq!(
+        frame(&mut edit, &[KEY_PAGE_DOWN], HELD, false, REPEAT_DELAY),
+        [InputEvent::PageDown { select: false }]
     );
 }
 
@@ -287,6 +359,10 @@ fn repeating_keys_repeat_while_held() {
         KEY_RIGHT,
         KEY_HOME,
         KEY_END,
+        KEY_UP,
+        KEY_DOWN,
+        KEY_PAGE_UP,
+        KEY_PAGE_DOWN,
         KEY_BACKSPACE,
         KEY_DELETE,
     ] {
@@ -305,10 +381,8 @@ fn enter_does_not_repeat() {
 }
 
 #[test]
-fn navigation_keys_do_not_repeat() {
-    for key in [KEY_UP, KEY_DOWN, KEY_TAB] {
-        assert_eq!(hold(key, 120).iter().sum::<usize>(), 1, "{key:?}");
-    }
+fn tab_does_not_repeat() {
+    assert_eq!(hold(KEY_TAB, 120).iter().sum::<usize>(), 1);
 }
 
 #[test]

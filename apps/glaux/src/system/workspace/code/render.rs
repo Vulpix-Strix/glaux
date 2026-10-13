@@ -16,7 +16,7 @@ use super::{CodeEditor, labels, picker_layout, settings_layout};
 use crate::cartridge::Language;
 use crate::system::code_document::CodeDocument;
 use crate::system::code_session::{CodeSession, DocumentView};
-use crate::system::code_text::{TextMetrics, visual_rows};
+use crate::system::code_text::{Spot, TextMetrics, spot, visual_rows};
 use crate::system::editor_settings::EditorSettings;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
@@ -54,11 +54,22 @@ impl CodeEditor {
                 painter.strip(session, hover_pointer, self.menu.is_some());
                 match session.active_document() {
                     Some(document) => {
-                        painter.options_bar(document.language(), document.path().as_str());
                         let id = document.id();
                         let view = session.tabs().view(id).copied().unwrap_or_default();
                         let metrics = session.tabs().metrics(id);
-                        painter.text_view(document, view, metrics, &self.settings);
+                        let caret = session.tabs().caret(id).unwrap_or_default();
+                        let key = self.geometry(document).metrics_key();
+                        let caret = spot(document, caret.reset(document).byte(), key);
+                        painter.options_bar(document.language(), document.path().as_str(), &caret);
+                        // The caret is hidden while an overlay has the keys.
+                        let lit = self.caret_lit() && !self.has_overlay();
+                        painter.text_view(
+                            document,
+                            view,
+                            metrics,
+                            &self.settings,
+                            lit.then_some(&caret),
+                        );
                     }
                     None => {
                         painter.options_bar_empty();
@@ -222,8 +233,9 @@ impl Painter<'_> {
         }
     }
 
-    /// The active document's language and path.
-    fn options_bar(&mut self, language: Language, path: &str) {
+    /// The active document's language and path, and the line and column
+    /// of its caret at `caret`.
+    fn options_bar(&mut self, language: Language, path: &str, caret: &Spot) {
         let bar = self.layout.options;
         self.options_rule();
         let y = self.bar_text_y(bar.y, bar.height - 1);
@@ -242,10 +254,13 @@ impl Painter<'_> {
 
         let read_only_x =
             self.layout.settings_button().x - self.cell_w() - cells(READ_ONLY) * self.cell_w();
+        let position = format!("Ln {}  Col {}", caret.line + 1, caret.column + 1);
+        let position_x = read_only_x - self.cell_w() - cells(&position) * self.cell_w();
         let path_x = tag_rect.right() + self.cell_w();
-        let room = (read_only_x - self.cell_w() - path_x) / self.cell_w().max(1);
+        let room = (position_x - self.cell_w() - path_x) / self.cell_w().max(1);
         let path = shorten_start(path, usize::try_from(room).unwrap_or(0));
         self.text(&path, path_x, y, PALE);
+        self.text(&position, position_x, y, PALE);
         self.text(READ_ONLY, read_only_x, y, DIM);
     }
 
@@ -276,17 +291,20 @@ impl Painter<'_> {
         fill_rect(self.framebuffer, bar.x, bar.bottom() - 1, bar.width, 1, BAR);
     }
 
-    /// The rows of `document` that fit from `view`, with line numbers and
-    /// scroll indicators as `settings` and `metrics` allow.
+    /// The rows of `document` that fit from `view`, with line numbers,
+    /// scroll indicators and the caret at `caret` as `settings` and
+    /// `metrics` allow.
     ///
     /// Only the rows shown are laid out. `metrics` that don't describe this
-    /// view leave the indicators out rather than being measured again here.
+    /// view leave the indicators and the caret out rather than being
+    /// measured again here.
     fn text_view(
         &mut self,
         document: &CodeDocument,
         view: DocumentView,
         metrics: Option<&TextMetrics>,
         settings: &EditorSettings,
+        caret: Option<&Spot>,
     ) {
         let geometry = TextGeometry::new(self.layout, document.line_count(), settings);
         let metrics = metrics.filter(|metrics| metrics.key() == geometry.metrics_key());
@@ -334,6 +352,21 @@ impl Painter<'_> {
                 self.glyph(cell.ch, x, y, TEXT);
             }
         }
+        if let (Some(metrics), Some(caret)) = (metrics, caret)
+            && let Some((x, y)) = geometry.caret_point(view, caret, metrics)
+        {
+            // A line on the left edge of the cell the next character
+            // takes.
+            self.fill(
+                Rect {
+                    x,
+                    y,
+                    width: 1,
+                    height: cell_h,
+                },
+                TEXT,
+            );
+        }
         if let Some(metrics) = metrics {
             let top = metrics.row_index(view.top_line, top_row);
             let track = geometry.vertical;
@@ -352,7 +385,7 @@ impl Painter<'_> {
             let sideways = thumb(
                 view.left_column,
                 geometry.columns,
-                metrics.widest(),
+                geometry.scroll_width(metrics),
                 track.width,
             );
             if let Some((start, length)) = sideways.filter(|_| !geometry.wrap) {

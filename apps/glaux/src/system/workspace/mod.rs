@@ -732,6 +732,7 @@ impl Workspace {
     /// Advances time-limited UI state by one tick.
     pub fn tick(&mut self) {
         self.sprites.tick();
+        self.code.tick();
         if let Some(notice) = &mut self.notice {
             notice.ticks_left = notice.ticks_left.saturating_sub(1);
             if notice.ticks_left == 0 {

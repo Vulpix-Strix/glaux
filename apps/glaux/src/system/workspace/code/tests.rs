@@ -282,14 +282,15 @@ fn each_document_keeps_its_own_scroll_position() {
     editor.handle_input(InputEvent::NextDocument, Some(&mut session));
     assert_eq!(view(&session, "b.luau"), at(6, 0, 6));
 
-    // The text never scrolls past its last screenful or its widest line,
-    // nor above the top or left of the first column.
+    // The text never scrolls past its last screenful or the column after
+    // its widest line, where the caret can be, nor above the top or left
+    // of the first column.
     editor.handle_input(InputEvent::Wheel { delta: i8::MIN }, Some(&mut session));
     editor.handle_input(
         InputEvent::WheelHorizontal { delta: i8::MIN },
         Some(&mut session),
     );
-    assert_eq!(view(&session, "b.luau"), at(101 - 18, 0, 60 - 47));
+    assert_eq!(view(&session, "b.luau"), at(101 - 18, 0, 61 - 47));
     editor.handle_input(InputEvent::Wheel { delta: i8::MAX }, Some(&mut session));
     editor.handle_input(
         InputEvent::WheelHorizontal { delta: i8::MAX },
@@ -432,4 +433,174 @@ fn settings_open_without_a_cartridge_and_survive_forgetting_one() {
             ..EditorSettings::default()
         }))
     );
+}
+
+fn caret_of(session: &CodeSession, name: &str) -> Caret {
+    session.tabs().caret(id_of(session, name)).unwrap()
+}
+
+fn feed(editor: &mut CodeEditor, session: &mut CodeSession, events: &[InputEvent]) {
+    for &event in events {
+        editor.handle_input(event, Some(session));
+    }
+}
+
+#[test]
+fn each_document_keeps_its_own_caret() {
+    let fixture = Fixture::new("code-ui-carets");
+    let (_, mut session) = session_with(&fixture, &["a.luau", "b.luau"], 10);
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+    let right = InputEvent::Right { select: false };
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::Down, InputEvent::Down, right],
+    );
+    // "line N\n" is 7 bytes: line 2, column 1.
+    assert_eq!(caret_of(&session, "b.luau").byte(), 15);
+
+    feed(&mut editor, &mut session, &[InputEvent::PreviousDocument]);
+    assert_eq!(caret_of(&session, "a.luau").byte(), 0);
+    feed(&mut editor, &mut session, &[right]);
+    feed(&mut editor, &mut session, &[InputEvent::NextDocument]);
+    assert_eq!(caret_of(&session, "b.luau").byte(), 15);
+    assert_eq!(caret_of(&session, "a.luau").byte(), 1);
+}
+
+#[test]
+fn a_click_in_the_text_moves_the_caret_and_one_elsewhere_does_not() {
+    let fixture = Fixture::new("code-ui-click");
+    let (_, mut session) = session_with(&fixture, &["a.luau"], 10);
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+    let geometry = editor.geometry(session.active_document().unwrap());
+    let click = |x: i32, y: i32| InputEvent::PointerDown {
+        button: PointerButton::Primary,
+        at: Point::new(x as u16, y as u16),
+    };
+    let (x0, y0) = (geometry.viewport.x, geometry.viewport.y);
+    feed(&mut editor, &mut session, &[click(x0 + 3 * 6, y0 + 25)]);
+    assert_eq!(caret_of(&session, "a.luau").byte(), 2 * 7 + 3);
+    // The strip and the options bar are not text.
+    let options = editor.layout().options;
+    feed(&mut editor, &mut session, &[click(x0, options.y + 2)]);
+    assert_eq!(caret_of(&session, "a.luau").byte(), 2 * 7 + 3);
+}
+
+#[test]
+fn moving_the_caret_past_the_view_scrolls_it_one_row_at_a_time() {
+    let fixture = Fixture::new("code-ui-caret-scroll");
+    let (_, mut session) = session_with(&fixture, &["a.luau"], 100);
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+    let rows = editor.geometry(session.active_document().unwrap()).rows;
+    let id = id_of(&session, "a.luau");
+    let downs = vec![InputEvent::Down; rows - 1];
+    feed(&mut editor, &mut session, &downs);
+    assert_eq!(session.tabs().view(id).unwrap().top_line, 0);
+    feed(&mut editor, &mut session, &[InputEvent::Down]);
+    assert_eq!(session.tabs().view(id).unwrap().top_line, 1);
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::DocumentStart { select: false }],
+    );
+    assert_eq!(session.tabs().view(id).unwrap().top_line, 0);
+}
+
+#[test]
+fn a_page_moves_the_caret_and_the_view_together() {
+    let fixture = Fixture::new("code-ui-page");
+    let (_, mut session) = session_with(&fixture, &["a.luau"], 100);
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+    let rows = editor.geometry(session.active_document().unwrap()).rows;
+    let id = id_of(&session, "a.luau");
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::Down, InputEvent::Down],
+    );
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::PageDown { select: false }],
+    );
+    let line = |session: &CodeSession| {
+        let byte = caret_of(session, "a.luau").byte();
+        session.active_document().unwrap().line_of(byte)
+    };
+    // The caret keeps its row on screen.
+    assert_eq!(line(&session), 2 + rows);
+    assert_eq!(session.tabs().view(id).unwrap().top_line, rows);
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::PageUp { select: false }],
+    );
+    assert_eq!(line(&session), 2);
+    assert_eq!(session.tabs().view(id).unwrap().top_line, 0);
+}
+
+#[test]
+fn end_of_a_long_line_scrolls_sideways_to_show_the_caret() {
+    let fixture = Fixture::new("code-ui-caret-sideways");
+    // 60 columns beside a two-digit gutter that leaves 48.
+    let (_, mut session) = session_with_text(&fixture, &["a.luau"], &"x".repeat(60));
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+    let id = id_of(&session, "a.luau");
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::End { select: false }],
+    );
+    assert_eq!(caret_of(&session, "a.luau").byte(), 60);
+    assert_eq!(session.tabs().view(id).unwrap().left_column, 61 - 48);
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::Home { select: false }],
+    );
+    assert_eq!(session.tabs().view(id).unwrap().left_column, 0);
+}
+
+#[test]
+fn changing_how_text_folds_keeps_the_caret_but_not_its_column() {
+    let fixture = Fixture::new("code-ui-caret-settings");
+    let (_, mut session) = session_with_text(&fixture, &["a.luau"], "abcdef\nab\nabcdef");
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::End { select: false }],
+    );
+    feed(&mut editor, &mut session, &[InputEvent::Down]);
+    let before = caret_of(&session, "a.luau");
+    assert_eq!((before.byte(), before.preferred_column()), (9, Some(6)));
+
+    editor.set_settings(EditorSettings {
+        word_wrap: true,
+        ..EditorSettings::default()
+    });
+    editor.refresh_metrics(&mut session);
+    let after = caret_of(&session, "a.luau");
+    assert_eq!((after.byte(), after.preferred_column()), (9, None));
+}
+
+#[test]
+fn caret_keys_do_nothing_while_an_overlay_is_open() {
+    let fixture = Fixture::new("code-ui-caret-overlay");
+    let (_, mut session) = session_with(&fixture, &["a.luau"], 10);
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+    editor.open_picker(Ok(ScriptListing::default()));
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::Down, InputEvent::End { select: false }],
+    );
+    assert_eq!(caret_of(&session, "a.luau").byte(), 0);
 }

@@ -6,6 +6,7 @@
 
 mod audio;
 mod boot;
+mod code_cursor;
 mod code_document;
 mod code_session;
 mod code_text;

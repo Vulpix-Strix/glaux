@@ -1,6 +1,7 @@
 //! The order of the Code view's document tabs, which one is active, and
 //! how each document is shown.
 
+use crate::system::code_cursor::Caret;
 use crate::system::code_document::DocumentId;
 use crate::system::code_text::TextMetrics;
 
@@ -20,6 +21,7 @@ pub struct DocumentView {
 struct OpenTab {
     id: DocumentId,
     view: DocumentView,
+    caret: Caret,
     /// The document's extent as last measured for the view.
     metrics: Option<TextMetrics>,
 }
@@ -66,6 +68,7 @@ impl DocumentTabs {
                 OpenTab {
                     id,
                     view: DocumentView::default(),
+                    caret: Caret::default(),
                     metrics: None,
                 },
             );
@@ -133,6 +136,22 @@ impl DocumentTabs {
             .iter_mut()
             .find(|tab| tab.id == id)
             .map(|tab| &mut tab.view)
+    }
+
+    /// Where the caret is in `id`'s document. Each tab keeps its own, so
+    /// switching documents returns to it.
+    pub fn caret(&self, id: DocumentId) -> Option<Caret> {
+        self.tabs
+            .iter()
+            .find(|tab| tab.id == id)
+            .map(|tab| tab.caret)
+    }
+
+    /// Moves the caret of `id`'s document. Does nothing if it has no tab.
+    pub fn set_caret(&mut self, id: DocumentId, caret: Caret) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.caret = caret;
+        }
     }
 
     /// `id`'s document's extent, as last given to

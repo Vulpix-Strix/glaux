@@ -37,61 +37,112 @@ struct EditKey {
     key: KeyboardKey,
     event: KeyEvent,
     repeats: bool,
+    /// The key is a [`SHORTCUTS`] key while Ctrl is held, so it produces
+    /// nothing here then.
+    plain_only: bool,
 }
 
-const EDIT_KEYS: [EditKey; 12] = [
+const EDIT_KEYS: [EditKey; 14] = [
     EditKey {
         key: KeyboardKey::KEY_LEFT,
-        event: |m| InputEvent::Left { select: m.shift },
+        event: |m| {
+            let select = m.shift;
+            if m.ctrl {
+                InputEvent::WordLeft { select }
+            } else {
+                InputEvent::Left { select }
+            }
+        },
         repeats: true,
+        plain_only: false,
     },
     EditKey {
         key: KeyboardKey::KEY_RIGHT,
-        event: |m| InputEvent::Right { select: m.shift },
+        event: |m| {
+            let select = m.shift;
+            if m.ctrl {
+                InputEvent::WordRight { select }
+            } else {
+                InputEvent::Right { select }
+            }
+        },
         repeats: true,
+        plain_only: false,
     },
     EditKey {
         key: KeyboardKey::KEY_HOME,
-        event: |m| InputEvent::Home { select: m.shift },
+        event: |m| {
+            let select = m.shift;
+            if m.ctrl {
+                InputEvent::DocumentStart { select }
+            } else {
+                InputEvent::Home { select }
+            }
+        },
         repeats: true,
+        plain_only: false,
     },
     EditKey {
         key: KeyboardKey::KEY_END,
-        event: |m| InputEvent::End { select: m.shift },
+        event: |m| {
+            let select = m.shift;
+            if m.ctrl {
+                InputEvent::DocumentEnd { select }
+            } else {
+                InputEvent::End { select }
+            }
+        },
         repeats: true,
+        plain_only: false,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_PAGE_UP,
+        event: |m| InputEvent::PageUp { select: m.shift },
+        repeats: true,
+        plain_only: true,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_PAGE_DOWN,
+        event: |m| InputEvent::PageDown { select: m.shift },
+        repeats: true,
+        plain_only: true,
     },
     EditKey {
         key: KeyboardKey::KEY_BACKSPACE,
         event: |_| InputEvent::Backspace,
         repeats: true,
+        plain_only: false,
     },
     EditKey {
         key: KeyboardKey::KEY_DELETE,
         event: |_| InputEvent::Delete,
         repeats: true,
+        plain_only: false,
     },
     // Enter does not repeat so that holding it submits a line only once.
     EditKey {
         key: KeyboardKey::KEY_ENTER,
         event: |_| InputEvent::Enter,
         repeats: false,
+        plain_only: false,
     },
     EditKey {
         key: KeyboardKey::KEY_KP_ENTER,
         event: |_| InputEvent::Enter,
         repeats: false,
+        plain_only: false,
     },
-    // Up and Down step through discrete entries such as command history,
-    // where a held key racing past them is more confusing than useful.
     EditKey {
         key: KeyboardKey::KEY_UP,
         event: |_| InputEvent::Up,
-        repeats: false,
+        repeats: true,
+        plain_only: false,
     },
     EditKey {
         key: KeyboardKey::KEY_DOWN,
         event: |_| InputEvent::Down,
-        repeats: false,
+        repeats: true,
+        plain_only: false,
     },
     // Ctrl+Tab switches views, leaving plain Tab free for completion and
     // indentation.
@@ -103,11 +154,13 @@ const EDIT_KEYS: [EditKey; 12] = [
             (true, true) => InputEvent::PreviousView,
         },
         repeats: false,
+        plain_only: false,
     },
     EditKey {
         key: KeyboardKey::KEY_ESCAPE,
         event: |_| InputEvent::Break,
         repeats: false,
+        plain_only: false,
     },
 ];
 
@@ -207,6 +260,12 @@ impl EditKeys {
     ) {
         for (edit, held) in EDIT_KEYS.iter().zip(&mut self.held) {
             let key = state(edit.key);
+            if edit.plain_only && modifiers.ctrl {
+                // A hold that outlasts Ctrl starts over, so the shortcut
+                // never turns into a burst of plain repeats.
+                *held = (edit.repeats && key.down).then_some(Hold::default());
+                continue;
+            }
             let fire = if key.pressed {
                 *held = edit.repeats.then_some(Hold::default());
                 true

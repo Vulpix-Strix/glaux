@@ -108,6 +108,14 @@ impl CodeDocument {
         self.lines.range(&self.text, n)
     }
 
+    /// The line, counted from 0, holding byte `byte` of
+    /// [`text`](Self::text). A line's ending belongs to it, and a byte
+    /// order mark to the first line. Offsets past the end are on the last
+    /// line.
+    pub fn line_of(&self, byte: usize) -> usize {
+        self.lines.line_of(byte)
+    }
+
     #[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
     pub fn origin(&self) -> &Origin {
         &self.origin

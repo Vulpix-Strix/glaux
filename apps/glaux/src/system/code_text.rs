@@ -257,12 +257,96 @@ pub struct VisualRow<'a> {
     pub text: &'a str,
     /// Where `text` starts in the document and in its line.
     pub start: RowStart,
+    /// Whether the line goes on in the next row.
+    pub folds: bool,
 }
 
 impl VisualRow<'_> {
     /// The row's cells.
     pub fn cells(&self, tab_size: usize) -> Cells<'_> {
         cells(self.text, self.start.byte, self.start.column, tab_size)
+    }
+
+    /// The document position on this row nearest column `column` of its
+    /// line, where a character spanning the column, such as a tab, gives
+    /// way to whichever of its edges is closer.
+    ///
+    /// Columns past the row's end give its end. A row its line folds
+    /// after ends before its last character, since the position after it
+    /// starts the next row.
+    pub fn byte_near_column(&self, column: usize, tab_size: usize) -> usize {
+        let mut last = None;
+        for cell in self.cells(tab_size) {
+            if column < cell.column + cell.width {
+                let after = cell.byte + cell.ch.len_utf8();
+                let ends_fold = self.folds && after == self.end();
+                return if (column - cell.column.min(column)) * 2 < cell.width || ends_fold {
+                    cell.byte
+                } else {
+                    after
+                };
+            }
+            last = Some(cell);
+        }
+        match last {
+            Some(cell) if self.folds => cell.byte,
+            _ => self.end(),
+        }
+    }
+
+    /// Offset in the document just past the row's text.
+    fn end(&self) -> usize {
+        self.start.byte + self.text.len()
+    }
+}
+
+/// Where a document position shows in a text view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Spot {
+    /// The source line, counted from 0.
+    pub line: usize,
+    /// Which fold of its line the position is on, 0 for the first.
+    pub row_in_line: usize,
+    /// Where that fold starts.
+    pub row_start: RowStart,
+    /// Column of the position within its line, tabs expanded.
+    pub column: usize,
+}
+
+/// Where position `byte` of `document` shows when the view is laid out
+/// with `key`. `byte` must be a character boundary within a line's
+/// content; a position where a line folds shows at the start of the next
+/// row.
+pub fn spot(document: &CodeDocument, byte: usize, key: MetricsKey) -> Spot {
+    let line = document.line_of(byte);
+    let (text, range) = line_and_range(document, line);
+    let byte = byte.clamp(range.start, range.end);
+    let mut row_start = RowStart {
+        byte: range.start,
+        column: 0,
+    };
+    let mut row_in_line = 0;
+    if let Some(columns) = key.wrap_columns {
+        while let Some(next) = next_row(text, range.start, row_start, columns, key.tab_size)
+            .filter(|next| next.byte <= byte)
+        {
+            row_start = next;
+            row_in_line += 1;
+        }
+    }
+    let column = cells(
+        &text[row_start.byte - range.start..byte - range.start],
+        row_start.byte,
+        row_start.column,
+        key.tab_size,
+    )
+    .last()
+    .map_or(row_start.column, |cell| cell.column + cell.width);
+    Spot {
+        line,
+        row_in_line,
+        row_start,
+        column,
     }
 }
 
@@ -322,6 +406,7 @@ impl<'a> Iterator for VisualRows<'a> {
                 row_in_line: self.row_in_line,
                 text: &self.document.text()[start.byte..end],
                 start,
+                folds: following.is_some(),
             };
             match following {
                 Some(next) => {

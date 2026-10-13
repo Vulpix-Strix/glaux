@@ -40,6 +40,13 @@ impl Lines {
         self.starts.len()
     }
 
+    /// The line holding byte `byte` of the text, counting a line's ending
+    /// as part of it and a leading byte order mark as part of the first.
+    /// Offsets past the end are on the last line.
+    pub fn line_of(&self, byte: usize) -> usize {
+        self.starts[1..].partition_point(|&start| start <= byte)
+    }
+
     /// Byte range of line `n`'s content in `text`, the text these lines were
     /// taken from. `None` past the last line.
     pub fn range(&self, text: &str, n: usize) -> Option<Range<usize>> {

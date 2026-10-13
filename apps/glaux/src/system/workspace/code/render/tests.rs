@@ -1,3 +1,4 @@
+use glaux_input::InputEvent;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::system_rom::SystemRom;
 use glaux_video::draw::clear;
@@ -6,6 +7,7 @@ use pretty_assertions::assert_eq;
 use super::super::tests::{editor, id_of, session_with_text};
 use super::*;
 use crate::cartridge_fs::fixture::Fixture;
+use crate::system::shell::BLINK_TICKS;
 
 const CELL_W: i32 = 6;
 const CELL_H: i32 = 10;
@@ -68,6 +70,14 @@ fn glyph(ch: char) -> Vec<bool> {
 
 fn blank() -> Vec<bool> {
     vec![false; (CELL_W * CELL_H) as usize]
+}
+
+/// Ticks `editor`'s caret into the hidden phase of its blink, so it
+/// doesn't cover the cells a test looks at.
+fn hide_caret(editor: &mut CodeEditor) {
+    for _ in 0..BLINK_TICKS {
+        editor.tick();
+    }
 }
 
 fn wrapping(editor: &mut CodeEditor) {
@@ -164,7 +174,8 @@ fn only_the_first_row_of_a_wrapped_line_is_numbered() {
 #[test]
 fn characters_the_font_lacks_show_as_boxes_in_their_own_cells() {
     let fixture = Fixture::new("code-render-unknown");
-    let editor = editor();
+    let mut editor = editor();
+    hide_caret(&mut editor);
     // The byte order mark is not shown. The tab after "é" reaches column
     // 4, and the bell character after "x" gets a box of its own.
     let session = showing(&fixture, &editor, "\u{feff}é\tx\u{7}");
@@ -215,4 +226,46 @@ fn indicators_show_only_where_text_overflows() {
     let geometry = geometry_of(&editor, &long);
     assert!(has(&framebuffer, geometry.vertical, DIM));
     assert!(!has(&framebuffer, geometry.horizontal, BAR));
+}
+
+#[test]
+fn the_caret_is_a_blinking_line_on_the_left_edge_of_its_cell() {
+    let fixture = Fixture::new("code-render-caret");
+    let mut editor = editor();
+    let mut session = showing(&fixture, &editor, "ab\ncd");
+    editor.handle_input(InputEvent::Down, Some(&mut session));
+    editor.handle_input(InputEvent::End { select: false }, Some(&mut session));
+    let geometry = geometry_of(&editor, &session);
+    // After "cd": the empty third cell of the second row.
+    let mut caret = blank();
+    for row in 0..CELL_H as usize {
+        caret[row * CELL_W as usize] = true;
+    }
+    let at = cell(&geometry, 2, 1);
+    assert_eq!(ink(&render(&editor, &session), at, TEXT), caret);
+
+    hide_caret(&mut editor);
+    assert_eq!(ink(&render(&editor, &session), at, TEXT), blank());
+    for _ in 0..BLINK_TICKS {
+        editor.tick();
+    }
+    assert_eq!(ink(&render(&editor, &session), at, TEXT), caret);
+    // Moving shows it again at once.
+    hide_caret(&mut editor);
+    editor.handle_input(InputEvent::Left { select: false }, Some(&mut session));
+    editor.handle_input(InputEvent::Right { select: false }, Some(&mut session));
+    assert_eq!(ink(&render(&editor, &session), at, TEXT), caret);
+}
+
+#[test]
+fn the_caret_hides_while_an_overlay_takes_the_keys() {
+    let fixture = Fixture::new("code-render-caret-overlay");
+    let mut editor = editor();
+    let session = showing(&fixture, &editor, "");
+    let geometry = geometry_of(&editor, &session);
+    let at = cell(&geometry, 0, 0);
+    assert!(ink(&render(&editor, &session), at, TEXT).contains(&true));
+    editor.open_picker(Ok(Default::default()));
+    // The picker window is centred and does not reach the first cell.
+    assert_eq!(ink(&render(&editor, &session), at, TEXT), blank());
 }

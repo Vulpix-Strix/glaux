@@ -21,10 +21,12 @@ use text_view::TextGeometry;
 use super::Rect;
 use crate::cartridge::source::{ScriptListing, SourcePath};
 use crate::cartridge_fs::FsError;
+use crate::system::code_cursor::Caret;
 use crate::system::code_document::{CodeDocument, DocumentId};
 use crate::system::code_session::{CodeSession, DocumentView};
-use crate::system::code_text::TextMetrics;
+use crate::system::code_text::{TextMetrics, spot};
 use crate::system::editor_settings::EditorSettings;
+use crate::system::shell::BLINK_TICKS;
 
 /// Rows the text moves per wheel notch.
 const WHEEL_LINES: isize = 3;
@@ -76,6 +78,8 @@ pub struct CodeEditor {
     pointer: Option<Point>,
     /// Why the cartridge's entry script could not be opened.
     entry_error: Option<String>,
+    /// Ticks since the caret blink last restarted in its visible phase.
+    blink: u32,
 }
 
 impl CodeEditor {
@@ -89,7 +93,18 @@ impl CodeEditor {
             drag: None,
             pointer: None,
             entry_error: None,
+            blink: 0,
         }
+    }
+
+    /// Advances the caret blink by one tick.
+    pub fn tick(&mut self) {
+        self.blink = self.blink.wrapping_add(1);
+    }
+
+    /// Whether the caret is in the visible phase of its blink.
+    fn caret_lit(&self) -> bool {
+        (self.blink / BLINK_TICKS).is_multiple_of(2)
     }
 
     /// Whether EDITOR SETTINGS, OPEN FILE or the list of open tabs is open
@@ -188,8 +203,10 @@ impl CodeEditor {
     }
 
     /// Measures each of `session`'s documents whose measurements don't
-    /// match how the view now shows it, moving its view back in range.
-    /// Documents already measured for the current settings are left alone.
+    /// match how the view now shows it, moving its view back in range and
+    /// its caret to a valid position without a preferred column, since
+    /// columns may now mean something else. Documents already measured
+    /// for the current settings are left alone.
     pub fn refresh_metrics(&self, session: &mut CodeSession) {
         let ids: Vec<DocumentId> = session.tabs().ids().collect();
         for id in ids {
@@ -202,9 +219,11 @@ impl CodeEditor {
                 continue;
             }
             let metrics = TextMetrics::measure(document, key);
+            let caret = session.tabs().caret(id).unwrap_or_default().reset(document);
             if let Some(view) = session.tabs_mut().view_mut(id) {
                 *view = geometry.clamp(*view, &metrics);
             }
+            session.tabs_mut().set_caret(id, caret);
             session.tabs_mut().set_metrics(id, metrics);
         }
     }
@@ -321,6 +340,9 @@ impl CodeEditor {
                             self.menu = Some(TabMenu { focus });
                         }
                     }
+                    StripHit::None if self.layout.text.contains(at) => {
+                        self.place_caret(session, at);
+                    }
                     StripHit::None => {}
                 }
             }
@@ -340,6 +362,37 @@ impl CodeEditor {
             }
             | InputEvent::PointerCancel => self.drag = None,
             InputEvent::Wheel { delta } => self.wheel(delta, &labels, session),
+            // Selection is not supported yet: extending moves like plain ones.
+            InputEvent::Left { .. } => self.move_caret(session, 0, |doc, caret, _| caret.left(doc)),
+            InputEvent::Right { .. } => {
+                self.move_caret(session, 0, |doc, caret, _| caret.right(doc));
+            }
+            InputEvent::WordLeft { .. } => {
+                self.move_caret(session, 0, |doc, caret, _| caret.word_left(doc));
+            }
+            InputEvent::WordRight { .. } => {
+                self.move_caret(session, 0, |doc, caret, _| caret.word_right(doc));
+            }
+            InputEvent::Home { .. } => self.move_caret(session, 0, |doc, caret, _| caret.home(doc)),
+            InputEvent::End { .. } => self.move_caret(session, 0, |doc, caret, _| caret.end(doc)),
+            InputEvent::DocumentStart { .. } => {
+                self.move_caret(session, 0, |doc, _, _| Caret::document_start(doc));
+            }
+            InputEvent::DocumentEnd { .. } => {
+                self.move_caret(session, 0, |doc, _, _| Caret::document_end(doc));
+            }
+            InputEvent::Up => {
+                self.move_caret(session, 0, |doc, caret, metrics| {
+                    caret.vertical(doc, -1, metrics)
+                });
+            }
+            InputEvent::Down => {
+                self.move_caret(session, 0, |doc, caret, metrics| {
+                    caret.vertical(doc, 1, metrics)
+                });
+            }
+            InputEvent::PageUp { .. } => self.page(session, -1),
+            InputEvent::PageDown { .. } => self.page(session, 1),
             InputEvent::WheelHorizontal { delta } if !self.pointer_over_strip() => {
                 // Positive turns move toward the left.
                 let step = -isize::from(delta) * WHEEL_COLUMNS;
@@ -373,6 +426,83 @@ impl CodeEditor {
         self.scroll_active(session, |geometry, view, metrics| {
             geometry.scroll_rows(view, step, metrics)
         });
+    }
+
+    /// Moves the active document's caret and its view one screenful up,
+    /// or down when `direction` is positive, so the caret keeps its place
+    /// on screen where the document allows.
+    fn page(&mut self, session: &mut CodeSession, direction: isize) {
+        let Some(document) = session.active_document() else {
+            return;
+        };
+        let rows = self.geometry(document).rows as isize * direction;
+        self.move_caret(session, rows, |doc, caret, metrics| {
+            caret.vertical(doc, rows, metrics)
+        });
+    }
+
+    /// Moves the active document's caret with `motion`, after scrolling
+    /// its view `scroll` rows, then scrolls as little as it takes to show
+    /// the caret. Does nothing until its measurements describe the view.
+    fn move_caret(
+        &mut self,
+        session: &mut CodeSession,
+        scroll: isize,
+        motion: impl FnOnce(&CodeDocument, Caret, &TextMetrics) -> Caret,
+    ) {
+        let Some(document) = session.active_document() else {
+            return;
+        };
+        let id = document.id();
+        let geometry = self.geometry(document);
+        let tabs = session.tabs();
+        let (Some(&view), Some(caret), Some(metrics)) =
+            (tabs.view(id), tabs.caret(id), tabs.metrics(id))
+        else {
+            return;
+        };
+        if metrics.key() != geometry.metrics_key() {
+            return;
+        }
+        let caret = motion(document, caret, metrics);
+        let view = geometry.scroll_rows(view, scroll, metrics);
+        let view = geometry.reveal(view, &spot(document, caret.byte(), metrics.key()), metrics);
+        self.show_caret(session, id, caret, view);
+    }
+
+    /// Puts the active document's caret at the position nearest `at`.
+    fn place_caret(&mut self, session: &mut CodeSession, at: Point) {
+        let Some(document) = session.active_document() else {
+            return;
+        };
+        let id = document.id();
+        let geometry = self.geometry(document);
+        let tabs = session.tabs();
+        let (Some(&view), Some(metrics)) = (tabs.view(id), tabs.metrics(id)) else {
+            return;
+        };
+        let Some(byte) = geometry.hit(view, at, document, metrics) else {
+            return;
+        };
+        let caret = Caret::at(document, byte);
+        let view = geometry.reveal(view, &spot(document, caret.byte(), metrics.key()), metrics);
+        self.show_caret(session, id, caret, view);
+    }
+
+    /// Records `id`'s caret and view, restarting the blink so the caret
+    /// shows while it moves.
+    fn show_caret(
+        &mut self,
+        session: &mut CodeSession,
+        id: DocumentId,
+        caret: Caret,
+        view: DocumentView,
+    ) {
+        session.tabs_mut().set_caret(id, caret);
+        if let Some(stored) = session.tabs_mut().view_mut(id) {
+            *stored = view;
+        }
+        self.blink = 0;
     }
 
     fn pointer_over_strip(&self) -> bool {
