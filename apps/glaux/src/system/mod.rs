@@ -8,6 +8,7 @@ mod audio;
 mod boot;
 mod code_cursor;
 mod code_document;
+mod code_edit;
 mod code_selection;
 mod code_session;
 mod code_text;
@@ -707,7 +708,10 @@ fn discard_documents(
     {
         tracing::info!("unsaved graphics changes discarded");
     }
-    if code.take().is_some() {
+    if let Some(session) = code.take() {
+        if session.is_modified() {
+            tracing::info!("unsaved code changes discarded");
+        }
         tracing::debug!("code documents closed");
     }
     workspace.forget_code();

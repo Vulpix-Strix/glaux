@@ -5,38 +5,38 @@ use std::ops::Range;
 use super::*;
 use pretty_assertions::assert_eq;
 
-fn select(event: fn(bool) -> InputEvent) -> InputEvent {
+pub(super) fn select(event: fn(bool) -> InputEvent) -> InputEvent {
     event(true)
 }
 
-fn plain(event: fn(bool) -> InputEvent) -> InputEvent {
+pub(super) fn plain(event: fn(bool) -> InputEvent) -> InputEvent {
     event(false)
 }
 
-fn right(select: bool) -> InputEvent {
+pub(super) fn right(select: bool) -> InputEvent {
     InputEvent::Right { select }
 }
 
-fn left(select: bool) -> InputEvent {
+pub(super) fn left(select: bool) -> InputEvent {
     InputEvent::Left { select }
 }
 
-fn down(select: bool) -> InputEvent {
+pub(super) fn down(select: bool) -> InputEvent {
     InputEvent::Down { select }
 }
 
-fn selected(session: &CodeSession) -> Range<usize> {
+pub(super) fn selected(session: &CodeSession) -> Range<usize> {
     let id = session.tabs().active().unwrap();
     session.tabs().selection(id).unwrap().range()
 }
 
-fn caret(session: &CodeSession) -> usize {
+pub(super) fn caret(session: &CodeSession) -> usize {
     let id = session.tabs().active().unwrap();
     session.tabs().selection(id).unwrap().caret().byte()
 }
 
 /// An editor showing `text` as the one open document, with `settings`.
-fn open(
+pub(super) fn open(
     fixture: &Fixture,
     text: &str,
     settings: EditorSettings,
@@ -48,13 +48,13 @@ fn open(
     (editor, cartridge, session)
 }
 
-fn geometry(editor: &CodeEditor, session: &CodeSession) -> TextGeometry {
+pub(super) fn geometry(editor: &CodeEditor, session: &CodeSession) -> TextGeometry {
     editor.geometry(session.active_document().unwrap())
 }
 
 /// The middle of the left edge of the cell at `column` of the view's row
 /// `row`, where a press puts the caret before that column's character.
-fn cell(geometry: &TextGeometry, row: i32, column: i32) -> Point {
+pub(super) fn cell(geometry: &TextGeometry, row: i32, column: i32) -> Point {
     let x = geometry.viewport.x + column * geometry.cell_w;
     let y = geometry.viewport.y + row * geometry.cell_h + geometry.cell_h / 2;
     Point::new(x as u16, y as u16)
@@ -68,7 +68,7 @@ fn shift_press(at: Point) -> InputEvent {
     }
 }
 
-fn click(editor: &mut CodeEditor, session: &mut CodeSession, at: Point) {
+pub(super) fn click(editor: &mut CodeEditor, session: &mut CodeSession, at: Point) {
     feed(
         editor,
         session,

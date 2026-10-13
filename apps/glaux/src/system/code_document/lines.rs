@@ -4,7 +4,7 @@ use std::ops::Range;
 
 /// The byte order mark a file may start with. It is part of the file, not
 /// of its first line.
-const BOM: char = '\u{feff}';
+pub const BOM: char = '\u{feff}';
 
 /// The lines of one text, split at `\n`.
 ///

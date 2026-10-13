@@ -9,7 +9,11 @@ mod tabs;
 
 pub use tabs::{DocumentTabs, DocumentView};
 
-use super::code_document::{CodeDocument, CodeDocumentError, CodeDocuments, DocumentId};
+use std::ops::Range;
+
+use super::code_document::{
+    CodeDocument, CodeDocumentError, CodeDocuments, DocumentId, EditError, Replaced,
+};
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::SourcePath;
 
@@ -46,6 +50,22 @@ impl CodeSession {
 
     pub fn document(&self, id: DocumentId) -> Option<&CodeDocument> {
         self.documents.get(id)
+    }
+
+    /// Replaces `range` of `id`'s text with `text`; see
+    /// [`CodeDocument::replace`]. `None` if `id` is not open.
+    pub fn edit(
+        &mut self,
+        id: DocumentId,
+        range: Range<usize>,
+        text: &str,
+    ) -> Option<Result<Replaced, EditError>> {
+        Some(self.documents.get_mut(id)?.replace(range, text))
+    }
+
+    /// Whether any open document differs from its file.
+    pub fn is_modified(&self) -> bool {
+        self.documents.is_modified()
     }
 
     /// The active tab's document.

@@ -1,9 +1,10 @@
-//! The Code view: tabs over the cartridge's open scripts, a read-only view
+//! The Code view: tabs over the cartridge's open scripts, an editable view
 //! of the active one, and OPEN FILE to open more.
 //!
 //! The documents and tabs belong to the cartridge and are lent in as a
 //! [`CodeSession`]; the editor keeps only what is on screen around them.
 
+mod edit;
 mod layout;
 mod picker;
 mod render;
@@ -339,10 +340,11 @@ impl CodeEditor {
     }
 
     /// Measures each of `session`'s documents whose measurements don't
-    /// match how the view now shows it, moving its view back in range and
-    /// its selection to valid positions without a preferred column, since
-    /// columns may now mean something else. Documents already measured
-    /// for the current settings are left alone.
+    /// match how the view now shows it or its current text, moving its
+    /// view back in range and its selection to valid positions without a
+    /// preferred column, since columns may now mean something else.
+    /// Documents already measured for the current settings and text are
+    /// left alone.
     pub fn refresh_metrics(&self, session: &mut CodeSession) {
         let ids: Vec<DocumentId> = session.tabs().ids().collect();
         for id in ids {
@@ -351,7 +353,11 @@ impl CodeEditor {
             };
             let geometry = self.geometry(document);
             let key = geometry.metrics_key();
-            if session.tabs().metrics(id).map(TextMetrics::key) == Some(key) {
+            if session
+                .tabs()
+                .metrics(id)
+                .is_some_and(|metrics| metrics.describes(document, key))
+            {
                 continue;
             }
             let metrics = TextMetrics::measure(document, key, &self.layout.font);
@@ -437,6 +443,9 @@ impl CodeEditor {
         }
         if let Some(menu) = self.menu {
             self.menu_input(event, menu, session);
+            return None;
+        }
+        if self.edit_input(event, session) {
             return None;
         }
         let labels = labels(&self.layout.font, session);
@@ -638,7 +647,7 @@ impl CodeEditor {
         else {
             return;
         };
-        if metrics.key() != geometry.metrics_key() {
+        if !metrics.describes(document, geometry.metrics_key()) {
             return;
         }
         let selection = match edge {
@@ -863,7 +872,7 @@ impl CodeEditor {
         let (Some(&view), Some(metrics)) = (tabs.view(id), tabs.metrics(id)) else {
             return;
         };
-        if metrics.key() != geometry.metrics_key() {
+        if !metrics.describes(document, geometry.metrics_key()) {
             return;
         }
         let moved = scroll(&geometry, view, metrics);

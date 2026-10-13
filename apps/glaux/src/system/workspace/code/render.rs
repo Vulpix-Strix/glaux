@@ -320,7 +320,7 @@ impl Painter<'_> {
         selected: Range<usize>,
     ) {
         let geometry = TextGeometry::new(self.layout, document.line_count(), settings);
-        let metrics = metrics.filter(|metrics| metrics.key() == geometry.metrics_key());
+        let metrics = metrics.filter(|metrics| metrics.describes(document, geometry.metrics_key()));
         let view = metrics.map_or(view, |metrics| geometry.clamp(view, metrics));
         let (cell_w, cell_h) = (self.cell_w(), self.cell_h());
         if let Some(gutter) = geometry.gutter {

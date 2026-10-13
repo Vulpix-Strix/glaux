@@ -228,7 +228,7 @@ impl TextGeometry {
         metrics: &TextMetrics,
         font: &BitmapFont,
     ) -> Option<usize> {
-        if metrics.key() != self.metrics_key() {
+        if !metrics.describes(document, self.metrics_key()) {
             return None;
         }
         let view = self.clamp(view, metrics);

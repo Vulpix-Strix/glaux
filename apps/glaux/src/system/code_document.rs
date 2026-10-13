@@ -7,7 +7,7 @@ mod lines;
 
 use std::ops::Range;
 
-use lines::Lines;
+use lines::{BOM, Lines};
 
 use crate::cartridge::source::SourcePath;
 use crate::cartridge::{Language, LoadedCartridge};
@@ -48,11 +48,94 @@ impl Origin {
     }
 }
 
+/// The line ending a document's new lines get.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineEnding {
+    Lf,
+    CrLf,
+}
+
+impl LineEnding {
+    /// The convention of `text`: that of its first line ending, or `\n`
+    /// when it has none.
+    fn of(text: &str) -> Self {
+        match text.find('\n') {
+            Some(at) if text[..at].ends_with('\r') => Self::CrLf,
+            _ => Self::Lf,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lf => "\n",
+            Self::CrLf => "\r\n",
+        }
+    }
+}
+
+/// What a document indents its lines with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Indent {
+    Tabs,
+    Spaces,
+}
+
+impl Indent {
+    /// The style of `text`: tabs only when more lines start with a tab
+    /// than with a space, so files that don't say fall back to spaces.
+    fn of(text: &str) -> Self {
+        let (mut tabs, mut spaces) = (0usize, 0usize);
+        for line in text.trim_start_matches(BOM).split('\n') {
+            match line.as_bytes().first() {
+                Some(b'\t') => tabs += 1,
+                Some(b' ') => spaces += 1,
+                _ => {}
+            }
+        }
+        if tabs > spaces {
+            Self::Tabs
+        } else {
+            Self::Spaces
+        }
+    }
+}
+
+/// What a successful [`CodeDocument::replace`] changed: enough to apply
+/// the reverse edit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Replaced {
+    /// Where the inserted text now sits in the document's text.
+    pub range: Range<usize>,
+    /// The text the edit took out.
+    pub removed: String,
+}
+
+/// Why [`CodeDocument::replace`] refused an edit. A refused edit changes
+/// nothing.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EditError {
+    #[error("edit range {start}..{end} is outside the text's {len} bytes")]
+    OutOfBounds {
+        start: usize,
+        end: usize,
+        len: usize,
+    },
+    #[error("edit boundary {0} is inside a character")]
+    NotCharBoundary(usize),
+    #[error("edit boundary {0} is inside the byte order mark")]
+    InsideBom(usize),
+    #[error("edit boundary {0} is between a \\r and its \\n")]
+    SplitsLineEnding(usize),
+    #[error("edit would start the text with a byte order mark")]
+    CreatesBom,
+}
+
 /// One script file of the cartridge as text.
 ///
 /// The text is the file's contents unaltered: line endings, a byte order
 /// mark and a missing final newline are all kept, so writing it back
-/// reproduces the file byte for byte.
+/// reproduces the file byte for byte. Edits change only the bytes they
+/// replace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeDocument {
     id: DocumentId,
@@ -60,6 +143,15 @@ pub struct CodeDocument {
     text: String,
     lines: Lines,
     origin: Origin,
+    /// Taken from the file when it was read, so it holds even after edits
+    /// remove every line ending.
+    line_ending: LineEnding,
+    /// Taken from the file when it was read, so it stays the same however
+    /// the text is edited.
+    indent: Indent,
+    /// Counts successful edits. It never goes back, even when an edit
+    /// restores earlier text.
+    revision: u64,
 }
 
 impl CodeDocument {
@@ -67,14 +159,23 @@ impl CodeDocument {
     /// documents.
     #[cfg(test)]
     pub(crate) fn from_text(path: &str, text: &str) -> Self {
+        Self::new(
+            DocumentId(0),
+            SourcePath::parse(path).expect("test paths are valid"),
+            text.to_owned(),
+        )
+    }
+
+    fn new(id: DocumentId, path: SourcePath, text: String) -> Self {
         Self {
-            id: DocumentId(0),
-            path: SourcePath::parse(path).expect("test paths are valid"),
-            text: text.to_owned(),
-            lines: Lines::new(text),
-            origin: Origin {
-                text: text.to_owned(),
-            },
+            id,
+            path,
+            lines: Lines::new(&text),
+            origin: Origin { text: text.clone() },
+            line_ending: LineEnding::of(&text),
+            indent: Indent::of(&text),
+            revision: 0,
+            text,
         }
     }
 
@@ -119,6 +220,83 @@ impl CodeDocument {
     #[cfg_attr(not(test), expect(dead_code, reason = "no caller outside tests"))]
     pub fn origin(&self) -> &Origin {
         &self.origin
+    }
+
+    /// The line ending new lines get: the one the file used when read.
+    pub fn line_ending(&self) -> LineEnding {
+        self.line_ending
+    }
+
+    /// What indentation inserts: the style the file used when read.
+    pub fn indent(&self) -> Indent {
+        self.indent
+    }
+
+    /// Changes whenever the text does, so anything derived from the text
+    /// can tell it is out of date. Unrelated to [`is_modified`](Self::is_modified):
+    /// an edit that restores the file's text still changes it.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Whether the text differs from what the file held when read.
+    pub fn is_modified(&self) -> bool {
+        self.text != self.origin.text
+    }
+
+    /// Replaces the bytes in `range` of the text with `text`.
+    ///
+    /// Both ends of `range` must be character boundaries outside the byte
+    /// order mark and not between a `\r` and its `\n`, and the edit must
+    /// not give a text without a byte order mark one. Otherwise nothing
+    /// changes. `text` is inserted exactly as given; callers choose its
+    /// line endings.
+    pub fn replace(&mut self, range: Range<usize>, text: &str) -> Result<Replaced, EditError> {
+        self.check(&range, text)?;
+        let removed = self.text[range.clone()].to_owned();
+        self.text.replace_range(range.clone(), text);
+        self.lines = Lines::new(&self.text);
+        self.revision += 1;
+        Ok(Replaced {
+            range: range.start..range.start + text.len(),
+            removed,
+        })
+    }
+
+    fn check(&self, range: &Range<usize>, text: &str) -> Result<(), EditError> {
+        let current = &self.text;
+        if range.start > range.end || range.end > current.len() {
+            return Err(EditError::OutOfBounds {
+                start: range.start,
+                end: range.end,
+                len: current.len(),
+            });
+        }
+        let bom = if current.starts_with(BOM) {
+            BOM.len_utf8()
+        } else {
+            0
+        };
+        for at in [range.start, range.end] {
+            if !current.is_char_boundary(at) {
+                return Err(EditError::NotCharBoundary(at));
+            }
+            if at < bom {
+                return Err(EditError::InsideBom(at));
+            }
+            if current[..at].ends_with('\r') && current[at..].starts_with('\n') {
+                return Err(EditError::SplitsLineEnding(at));
+            }
+        }
+        let starts_with_bom = if text.is_empty() {
+            current[range.end..].starts_with(BOM)
+        } else {
+            text.starts_with(BOM)
+        };
+        if bom == 0 && range.start == 0 && starts_with_bom {
+            return Err(EditError::CreatesBom);
+        }
+        Ok(())
     }
 }
 
@@ -184,18 +362,22 @@ impl CodeDocuments {
         let id = DocumentId(self.next_id);
         self.next_id += 1;
         tracing::debug!(file = %path, "code document opened");
-        self.documents.push(CodeDocument {
-            id,
-            path: path.clone(),
-            origin: Origin { text: text.clone() },
-            lines: Lines::new(&text),
-            text,
-        });
+        self.documents
+            .push(CodeDocument::new(id, path.clone(), text));
         Ok(id)
     }
 
     pub fn get(&self, id: DocumentId) -> Option<&CodeDocument> {
         self.documents.iter().find(|doc| doc.id == id)
+    }
+
+    pub fn get_mut(&mut self, id: DocumentId) -> Option<&mut CodeDocument> {
+        self.documents.iter_mut().find(|doc| doc.id == id)
+    }
+
+    /// Whether any open document differs from its file.
+    pub fn is_modified(&self) -> bool {
+        self.documents.iter().any(CodeDocument::is_modified)
     }
 
     /// Closes the document `id`, returning it, or `None` if it is not open.

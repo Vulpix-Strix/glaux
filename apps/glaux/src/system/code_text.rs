@@ -185,6 +185,8 @@ pub struct TextMetrics {
     /// fold, as each line is then one row.
     row_starts: Vec<usize>,
     lines: usize,
+    /// The document's [`revision`](CodeDocument::revision) when measured.
+    revision: u64,
 }
 
 impl TextMetrics {
@@ -214,11 +216,19 @@ impl TextMetrics {
             widest,
             row_starts,
             lines,
+            revision: document.revision(),
         }
     }
 
     pub fn key(&self) -> MetricsKey {
         self.key
+    }
+
+    /// Whether these measurements still describe `document` as a view
+    /// measuring with `key` shows it: taken with `key`, and since its text
+    /// last changed.
+    pub fn describes(&self, document: &CodeDocument, key: MetricsKey) -> bool {
+        self.key == key && self.revision == document.revision()
     }
 
     /// Columns of the widest line.
