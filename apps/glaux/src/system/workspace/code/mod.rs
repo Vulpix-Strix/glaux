@@ -13,6 +13,7 @@ mod layout;
 mod new_file;
 mod picker;
 mod prompt;
+mod rename;
 mod render;
 mod searching;
 mod settings;
@@ -25,14 +26,15 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::machine::TICK_RATE;
 use glaux_machine::system_rom::SystemCursor;
 
-use actions::{CodeAction, file_menu, text_menu};
+use actions::{CodeAction, TabTarget, file_menu, text_menu};
 use find::{FindBar, FindLayout};
 use go_to_line::GoToLine;
 pub use layout::Metrics;
 use layout::{CodeLayout, StripHit, tab_labels};
-use new_file::{NewFile, NewFileAction};
+use new_file::{CODE_DIR, NewFile, NewFileAction};
 use picker::{FilePicker, PickerAction, PickerLayout};
 use prompt::{Prompt, PromptLayout};
+use rename::{RenameAction, RenameScript};
 use settings::{SettingsAction, SettingsDialog, SettingsLayout};
 use text_view::TextGeometry;
 
@@ -71,6 +73,8 @@ const VIEW_HINT: &str = "Ctrl+S: save  Ctrl+F: find  Ctrl+N: new  Esc: shell";
 const FIND_HINT: &str = "Enter: next  Up: previous  Tab: field  Esc: close";
 /// The status bar hint while NEW FILE is open.
 const NEW_FILE_HINT: &str = "Type: path  Enter: create  Esc: close";
+/// The status bar hint while RENAME SCRIPT is open.
+const RENAME_HINT: &str = "Type: path  Enter: move  Esc: close";
 /// The status bar hint while GO TO LINE is open.
 const GO_TO_HINT: &str = "Type: line  Enter: go  Esc: close";
 /// The status bar hint while OPEN FILE is open.
@@ -105,6 +109,11 @@ pub enum CodeRequest {
     /// Create this empty script and open it; answer with
     /// [`CodeEditor::script_created`].
     Create(SourcePath),
+    /// Ask whether to delete this document's file.
+    DeleteScript(DocumentId),
+    /// Move this document's file to this path; answer with
+    /// [`CodeEditor::script_renamed`].
+    Rename { id: DocumentId, to: SourcePath },
     /// Show this in the status bar for a moment.
     Notice(String),
 }
@@ -176,6 +185,8 @@ pub struct CodeEditor {
     /// While open, takes every input.
     new_file: Option<NewFile>,
     /// While open, takes every input.
+    rename: Option<RenameScript>,
+    /// While open, takes every input.
     go_to: Option<GoToLine>,
     /// Docked over the text while open; takes the keys only while one of
     /// its parts has them.
@@ -186,6 +197,8 @@ pub struct CodeEditor {
     pointer: Option<Point>,
     /// Why the cartridge's entry script could not be opened.
     entry_error: Option<String>,
+    /// The cartridge's entry script, which cannot be renamed or deleted.
+    entry: Option<SourcePath>,
     /// Ticks since the caret blink last restarted in its visible phase.
     blink: u32,
     /// The selection being dragged out in the text, while its press is held.
@@ -208,11 +221,13 @@ impl CodeEditor {
             menu: None,
             context_menu: None,
             new_file: None,
+            rename: None,
             go_to: None,
             find: None,
             drag: None,
             pointer: None,
             entry_error: None,
+            entry: None,
             blink: 0,
             selecting: None,
             last_click: None,
@@ -246,7 +261,7 @@ impl CodeEditor {
     }
 
     /// Whether a window or menu is open over the view and taking all
-    /// input: EDITOR SETTINGS, OPEN FILE, NEW FILE, GO TO LINE, the list
+    /// input: EDITOR SETTINGS, OPEN FILE, NEW FILE, RENAME SCRIPT, GO TO LINE, the list
     /// of open tabs or a context menu.
     pub fn has_overlay(&self) -> bool {
         self.settings_dialog.is_some()
@@ -254,6 +269,7 @@ impl CodeEditor {
             || self.menu.is_some()
             || self.context_menu.is_some()
             || self.new_file.is_some()
+            || self.rename.is_some()
             || self.go_to.is_some()
     }
 
@@ -280,6 +296,8 @@ impl CodeEditor {
             CONTEXT_MENU_HINT
         } else if self.new_file.is_some() {
             NEW_FILE_HINT
+        } else if self.rename.is_some() {
+            RENAME_HINT
         } else if self.go_to.is_some() {
             GO_TO_HINT
         } else if self.find_focused() {
@@ -299,9 +317,29 @@ impl CodeEditor {
         self.context_menu.as_ref()
     }
 
+    /// The label and whether it can be chosen of each item of the open
+    /// context menu, separators left out.
+    #[cfg(test)]
+    pub fn menu_items(&self) -> Vec<(&'static str, bool)> {
+        use crate::system::workspace::context_menu::MenuEntry;
+        self.context_menu
+            .iter()
+            .flat_map(ContextMenu::entries)
+            .filter_map(|entry| match *entry {
+                MenuEntry::Item { label, enabled, .. } => Some((label, enabled)),
+                MenuEntry::Separator => None,
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     pub fn new_file(&self) -> Option<&NewFile> {
         self.new_file.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn rename(&self) -> Option<&RenameScript> {
+        self.rename.as_ref()
     }
 
     #[cfg(test)]
@@ -419,6 +457,7 @@ impl CodeEditor {
             .new_file
             .as_ref()
             .map(NewFile::prompt)
+            .or(self.rename.as_ref().map(RenameScript::prompt))
             .or(self.go_to.as_ref().map(GoToLine::prompt));
         if let Some(prompt) = prompt {
             return if self.prompt_layout(prompt).field.contains(at) {
@@ -512,11 +551,13 @@ impl CodeEditor {
         self.menu = None;
         self.context_menu = None;
         self.new_file = None;
+        self.rename = None;
         self.go_to = None;
         self.find = None;
         self.end_drag();
         self.last_click = None;
         self.entry_error = None;
+        self.entry = None;
     }
 
     /// Ends a tab drag or a selection drag in progress.
@@ -549,14 +590,31 @@ impl CodeEditor {
         }
     }
 
+    /// Reports how moving the file RENAME SCRIPT asked for went: it closes
+    /// once the file moved, and shows why otherwise.
+    pub fn script_renamed(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => self.rename = None,
+            Err(message) => {
+                if let Some(dialog) = &mut self.rename {
+                    dialog.set_failure(message);
+                }
+            }
+        }
+    }
+
     /// Inserts the clipboard's `text` where the keys are: a field of NEW
-    /// FILE, GO TO LINE or the find bar, or else the active document of
+    /// FILE, RENAME SCRIPT, GO TO LINE or the find bar, or else the active document of
     /// `session`. `None`, an empty clipboard, inserts nothing.
     pub fn paste(&mut self, text: Option<String>, session: Option<&mut CodeSession>) {
         let Some(text) = text else {
             return;
         };
         if let Some(dialog) = &mut self.new_file {
+            dialog.paste(&text);
+            return;
+        }
+        if let Some(dialog) = &mut self.rename {
             dialog.paste(&text);
             return;
         }
@@ -710,6 +768,9 @@ impl CodeEditor {
         }
         if self.new_file.is_some() {
             return self.new_file_input(event);
+        }
+        if self.rename.is_some() {
+            return self.rename_input(event);
         }
         if self.go_to.is_some() {
             return self.go_to_input(event, session);
@@ -909,6 +970,14 @@ impl CodeEditor {
                 return;
             }
         };
+        let tab = tab.and_then(|id| {
+            let path = session.document(id)?.path();
+            Some(TabTarget {
+                id,
+                protected: self.entry.as_ref() == Some(path),
+                renamable: path.as_str().starts_with(CODE_DIR),
+            })
+        });
         self.context_menu = Some(file_menu(tab, at));
     }
 
@@ -962,6 +1031,28 @@ impl CodeEditor {
             }
             NewFileAction::Copy(text) => Some(CodeRequest::Copy(text)),
             NewFileAction::Paste => Some(CodeRequest::Paste),
+        }
+    }
+
+    fn rename_input(&mut self, event: InputEvent) -> Option<CodeRequest> {
+        let layout = self.prompt_layout(self.rename.as_ref()?.prompt());
+        match self.rename.as_mut()?.handle_input(event, &layout) {
+            RenameAction::None => None,
+            RenameAction::Rename { id, to } => Some(CodeRequest::Rename { id, to }),
+            RenameAction::Close => {
+                self.rename = None;
+                None
+            }
+            RenameAction::Copy(text) => Some(CodeRequest::Copy(text)),
+            RenameAction::Paste => Some(CodeRequest::Paste),
+        }
+    }
+
+    /// Remembers which script is the cartridge's entry, from its manifest
+    /// path, so the menus can keep it from being renamed or deleted.
+    pub fn set_entry(&mut self, entry: &str) {
+        if self.entry.as_ref().map(SourcePath::as_str) != Some(entry) {
+            self.entry = SourcePath::parse(entry).ok();
         }
     }
 

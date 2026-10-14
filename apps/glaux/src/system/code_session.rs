@@ -14,13 +14,14 @@ use std::ops::Range;
 
 use super::code_cursor::Caret;
 use super::code_document::{
-    CodeDocument, CodeDocumentError, CodeDocuments, CodeSaveError, CodeSaved, DocumentId,
-    EditError, Replaced,
+    CodeDocument, CodeDocumentError, CodeDocuments, CodeRenameError, CodeSaveError, CodeSaved,
+    DiskState, DocumentId, EditError, Replaced,
 };
 use super::code_history::{EditHistory, EditKind};
 use super::code_selection::Selection;
 use crate::cartridge::LoadedCartridge;
-use crate::cartridge::source::SourcePath;
+use crate::cartridge::source::{SourceEditError, SourcePath};
+use crate::cartridge_fs::FsError;
 
 /// The Code view's documents and tabs for one cartridge.
 #[derive(Debug, Default)]
@@ -171,6 +172,61 @@ impl CodeSession {
         self.documents.is_modified()
     }
 
+    /// Moves `id`'s file to `to` and points the document there.
+    ///
+    /// Everything that can be refused is checked before the file moves:
+    /// another document holding `to`, a file that changed on disk outside
+    /// Glaux or is gone, the entry script. Then the file moves, and then
+    /// the document follows. Should the document refuse after all, the file
+    /// is moved back, so the disk and the tab never name different paths.
+    /// The file moves as it is, so unsaved edits stay in the document and
+    /// are written to `to` by the next save. Id, tab, selection and
+    /// history are kept. Moving to the path it already has does nothing.
+    pub fn move_script(
+        &mut self,
+        cartridge: &LoadedCartridge,
+        id: DocumentId,
+        to: &SourcePath,
+    ) -> Result<(), MoveScriptError> {
+        let from = self
+            .documents
+            .get(id)
+            .ok_or(CodeRenameError::NotOpen)?
+            .path()
+            .clone();
+        if from == *to {
+            return Ok(());
+        }
+        self.documents.can_rename(id, to)?;
+        match self.documents.disk_state(cartridge, id) {
+            Some(Ok(DiskState::InSync(_))) | None => {}
+            Some(Ok(DiskState::Modified(_))) => return Err(MoveScriptError::Changed(from)),
+            Some(Ok(DiskState::Missing)) => return Err(MoveScriptError::Missing(from)),
+            Some(Err(err)) => return Err(SourceEditError::Fs(err).into()),
+        }
+        cartridge.rename_source(&from, to)?;
+        if let Err(err) = self.documents.rename(id, to) {
+            // Checked above, so this is not expected; keep disk and tab
+            // together anyway.
+            tracing::warn!(error = %err, "document refused a move after its file moved, moving the file back");
+            if let Err(undo) = cartridge.rename_source(to, &from) {
+                tracing::warn!(error = %undo, "file could not be moved back");
+            }
+            return Err(err.into());
+        }
+        Ok(())
+    }
+
+    /// How `id`'s file compares with its baseline; see
+    /// [`CodeDocuments::disk_state`].
+    pub fn disk_state(
+        &self,
+        cartridge: &LoadedCartridge,
+        id: DocumentId,
+    ) -> Option<Result<DiskState, FsError>> {
+        self.documents.disk_state(cartridge, id)
+    }
+
     /// The documents that differ from their files, in tab order.
     pub fn modified(&self) -> Vec<&CodeDocument> {
         self.tabs
@@ -206,6 +262,19 @@ impl CodeSession {
     pub fn take_entry_request(&mut self) -> bool {
         !std::mem::replace(&mut self.entry_requested, true)
     }
+}
+
+/// Why [`CodeSession::move_script`] left the script where it was.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum MoveScriptError {
+    #[error(transparent)]
+    Document(#[from] CodeRenameError),
+    #[error("{0} changed on disk outside Glaux. Close and reopen it before renaming.")]
+    Changed(SourcePath),
+    #[error("{0} no longer exists on disk.")]
+    Missing(SourcePath),
+    #[error(transparent)]
+    File(#[from] SourceEditError),
 }
 
 #[cfg(test)]

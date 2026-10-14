@@ -30,6 +30,18 @@ pub fn modal(workspace: &Workspace) -> Option<(&str, Vec<&str>)> {
     Some((dialog.title(), dialog.labels()))
 }
 
+/// The open dialog's focused button and message lines.
+pub fn modal_details(workspace: &Workspace) -> Option<(usize, Vec<String>)> {
+    let dialog = &workspace.modal.as_ref()?.dialog;
+    Some((dialog.focus(), dialog.message().to_vec()))
+}
+
+/// The label and whether it can be chosen of each item of the Code view's
+/// open context menu.
+pub fn code_menu_items(workspace: &Workspace) -> Vec<(&'static str, bool)> {
+    workspace.code.menu_items()
+}
+
 /// Where the open dialog draws its window and buttons.
 pub fn modal_layout(workspace: &Workspace) -> Option<dialog::DialogLayout> {
     let layout = workspace.layout;

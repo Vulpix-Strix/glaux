@@ -927,3 +927,225 @@ mod symlinks {
         assert_eq!(found.gaps, [WalkGap::Unreadable("/tools/locked".into())]);
     }
 }
+
+mod removing_and_moving {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn write(fixture: &Fixture, path: &str, text: &str) {
+        let host = fixture.root().join(path);
+        fs::create_dir_all(host.parent().unwrap()).unwrap();
+        fs::write(host, text).unwrap();
+    }
+
+    fn read(fixture: &Fixture, path: &str) -> String {
+        fs::read_to_string(fixture.root().join(path)).unwrap()
+    }
+
+    #[test]
+    fn removing_a_file_leaves_its_directory_and_neighbours() {
+        let fixture = Fixture::new("remove-file");
+        write(&fixture, "tools/a.luau", "a");
+        write(&fixture, "tools/b.luau", "b");
+        fixture.open().remove_file("/tools/a.luau").unwrap();
+        assert_eq!(ls(&fixture.open(), Some("/tools")), ["b.luau"]);
+    }
+
+    #[test]
+    fn removing_refuses_what_is_not_a_plain_file() {
+        let fixture = Fixture::new("remove-refused");
+        write(&fixture, "tools/a.luau", "a");
+        let fs = fixture.open();
+        assert_eq!(fs.remove_file("/tools/gone"), Err(not_found("/tools/gone")));
+        assert_eq!(
+            fs.remove_file("/tools"),
+            Err(FsError::NotAFile("/tools".into()))
+        );
+        assert_eq!(
+            fs.remove_file("/tools/.glaux-staging-x"),
+            Err(FsError::Unwritable("/tools/.glaux-staging-x".into()))
+        );
+        assert_eq!(read(&fixture, "tools/a.luau"), "a");
+    }
+
+    #[test]
+    fn removing_a_read_only_file_leaves_it() {
+        let fixture = Fixture::new("remove-read-only");
+        write(&fixture, "tools/a.luau", "a");
+        let host = fixture.root().join("tools/a.luau");
+        let mut permissions = fs::metadata(&host).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&host, permissions).unwrap();
+        assert_eq!(
+            fixture.open().remove_file("/tools/a.luau"),
+            Err(FsError::ReadOnly("/tools/a.luau".into()))
+        );
+        assert!(host.exists());
+    }
+
+    #[test]
+    fn moving_creates_directories_and_keeps_the_emptied_one() {
+        let fixture = Fixture::new("move-nested");
+        write(&fixture, "tools/old/a.luau", "contents");
+        fixture
+            .open()
+            .rename_file("/tools/old/a.luau", "/tools/new/deeper/b.luau")
+            .unwrap();
+        assert_eq!(read(&fixture, "tools/new/deeper/b.luau"), "contents");
+        assert!(!fixture.root().join("tools/old/a.luau").exists());
+        assert!(fixture.root().join("tools/old").is_dir());
+    }
+
+    #[test]
+    fn moving_never_replaces_an_existing_file() {
+        let fixture = Fixture::new("move-exists");
+        write(&fixture, "tools/a.luau", "a");
+        write(&fixture, "tools/b.luau", "b");
+        assert_eq!(
+            fixture.open().rename_file("/tools/a.luau", "/tools/b.luau"),
+            Err(FsError::AlreadyExists("/tools/b.luau".into()))
+        );
+        assert_eq!(read(&fixture, "tools/a.luau"), "a");
+        assert_eq!(read(&fixture, "tools/b.luau"), "b");
+    }
+
+    #[test]
+    fn moving_refuses_missing_sources_directories_and_staging_names() {
+        let fixture = Fixture::new("move-refused");
+        write(&fixture, "tools/a.luau", "a");
+        let fs = fixture.open();
+        assert_eq!(
+            fs.rename_file("/tools/gone.luau", "/tools/b.luau"),
+            Err(not_found("/tools/gone.luau"))
+        );
+        assert_eq!(
+            fs.rename_file("/tools", "/other"),
+            Err(FsError::NotAFile("/tools".into()))
+        );
+        assert_eq!(
+            fs.rename_file("/tools/a.luau", "/tools/.glaux-staging-b"),
+            Err(FsError::Unwritable("/tools/.glaux-staging-b".into()))
+        );
+        assert_eq!(read(&fixture, "tools/a.luau"), "a");
+    }
+
+    #[test]
+    fn a_name_that_appears_during_the_move_is_not_replaced() {
+        // `rename_file` looks before it moves; the primitive itself must
+        // still refuse when the name is taken in between.
+        let fixture = Fixture::new("move-race");
+        write(&fixture, "tools/a.luau", "a");
+        write(&fixture, "tools/b.luau", "b");
+        let (from, to) = (
+            fixture.root().join("tools/a.luau"),
+            fixture.root().join("tools/b.luau"),
+        );
+        for result in [move_no_replace(&from, &to), link_then_unlink(&from, &to)] {
+            assert!(matches!(
+                result,
+                Err(MoveError::Io(err)) if err.kind() == ErrorKind::AlreadyExists
+            ));
+        }
+        assert_eq!(read(&fixture, "tools/a.luau"), "a");
+        assert_eq!(read(&fixture, "tools/b.luau"), "b");
+    }
+
+    #[test]
+    fn the_linking_fallback_moves_the_file() {
+        let fixture = Fixture::new("move-link");
+        write(&fixture, "tools/a.luau", "a");
+        let (from, to) = (
+            fixture.root().join("tools/a.luau"),
+            fixture.root().join("tools/b.luau"),
+        );
+        assert!(link_then_unlink(&from, &to).is_ok());
+        assert!(!from.exists());
+        assert_eq!(read(&fixture, "tools/b.luau"), "a");
+    }
+
+    #[test]
+    fn dot_dot_cannot_move_a_file_out_of_the_root() {
+        let fixture = Fixture::new("move-dotdot");
+        write(&fixture, "tools/a.luau", "a");
+        fixture
+            .open()
+            .rename_file("/tools/a.luau", "/../../escaped.luau")
+            .unwrap();
+        // `..` stops at the root, so the file landed directly inside it.
+        assert_eq!(read(&fixture, "escaped.luau"), "a");
+        assert!(!fixture.outside().join("escaped.luau").exists());
+    }
+
+    #[cfg(unix)]
+    mod symlinks {
+        use super::*;
+        use pretty_assertions::assert_eq;
+        use std::os::unix::fs::symlink;
+
+        #[test]
+        fn a_link_is_neither_removed_nor_moved_nor_followed() {
+            let fixture = Fixture::new("move-links");
+            let root = fixture.root();
+            write(&fixture, "tools/real.luau", "real");
+            symlink("real.luau", root.join("tools/alias.luau")).unwrap();
+            symlink(
+                fixture.outside().join("secret"),
+                root.join("tools/out.luau"),
+            )
+            .unwrap();
+            let fs = fixture.open();
+            for link in ["/tools/alias.luau", "/tools/out.luau"] {
+                assert_eq!(
+                    fs.remove_file(link),
+                    Err(FsError::Unwritable(link.into())),
+                    "{link}"
+                );
+                assert_eq!(
+                    fs.rename_file(link, "/tools/moved.luau"),
+                    Err(FsError::Unwritable(link.into())),
+                    "{link}"
+                );
+            }
+            assert!(fs::symlink_metadata(root.join("tools/alias.luau")).is_ok());
+            assert!(fs::symlink_metadata(root.join("tools/out.luau")).is_ok());
+            assert_eq!(read(&fixture, "tools/real.luau"), "real");
+            assert_eq!(
+                fs::read_to_string(fixture.outside().join("secret")).unwrap(),
+                ""
+            );
+            assert!(!root.join("tools/moved.luau").exists());
+        }
+
+        #[test]
+        fn a_link_holding_the_destination_name_counts_as_taken() {
+            let fixture = Fixture::new("move-dest-link");
+            let root = fixture.root();
+            write(&fixture, "tools/a.luau", "a");
+            symlink("missing", root.join("tools/dangling.luau")).unwrap();
+            symlink(fixture.outside().join("new"), root.join("tools/out.luau")).unwrap();
+            for name in ["dangling", "out"] {
+                assert_eq!(
+                    fixture
+                        .open()
+                        .rename_file("/tools/a.luau", &format!("/tools/{name}.luau")),
+                    Err(FsError::AlreadyExists(format!("/tools/{name}.luau")))
+                );
+            }
+            assert_eq!(read(&fixture, "tools/a.luau"), "a");
+            assert!(!fixture.outside().join("new").exists());
+        }
+
+        #[test]
+        fn a_link_leading_out_of_the_root_never_receives_the_file() {
+            let fixture = Fixture::new("move-out-dir");
+            write(&fixture, "tools/a.luau", "a");
+            symlink(fixture.outside(), fixture.root().join("out")).unwrap();
+            assert_eq!(
+                fixture.open().rename_file("/tools/a.luau", "/out/a.luau"),
+                Err(FsError::Unwritable("/out".into()))
+            );
+            assert_eq!(read(&fixture, "tools/a.luau"), "a");
+            assert!(!fixture.outside().join("a.luau").exists());
+        }
+    }
+}

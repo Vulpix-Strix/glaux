@@ -594,6 +594,98 @@ impl CartridgeFs {
         }
     }
 
+    /// Deletes the regular file at `path`, absolute or relative to the
+    /// current directory. Directories above it are left in place.
+    ///
+    /// A symlink is never followed or removed, even one that stays inside
+    /// the root: the name must hold a regular file itself. A file marked
+    /// read-only is [`FsError::ReadOnly`] and is left alone.
+    pub fn remove_file(&self, path: &str) -> Result<(), FsError> {
+        let target = self.resolve(path)?;
+        let host = self.entry_file(&target)?;
+        writable_file(&host, &target)?;
+        fs::remove_file(&host).map_err(|err| match err.kind() {
+            ErrorKind::NotFound => FsError::NotFound(virtual_path(&target)),
+            _ => write_failure(err, &target),
+        })?;
+        if let Some(dir) = host.parent()
+            && let Err(err) = sync_dir(dir)
+        {
+            tracing::warn!(path = %virtual_path(&target), error = %err, "failed to sync a deleted file's directory");
+        }
+        Ok(())
+    }
+
+    /// Moves the regular file at `from` to `to`, both absolute or relative
+    /// to the current directory, creating the directories above `to` that
+    /// are missing. Directories left empty above `from` are kept, and so
+    /// are directories created for a move that then fails.
+    ///
+    /// Nothing is ever replaced. If anything holds the name `to`, including
+    /// a dangling symlink or one leading out of the root, or gets it while
+    /// the move runs, the result is [`FsError::AlreadyExists`] and `from`
+    /// is untouched. Neither end is followed through a symlink; `from` must
+    /// be a regular file itself.
+    ///
+    /// The move is one atomic no-replace rename where the platform has one
+    /// (`renameat2` with `RENAME_NOREPLACE` on Linux, `renamex_np` with
+    /// `RENAME_EXCL` on macOS, `MoveFileExW` without
+    /// `MOVEFILE_REPLACE_EXISTING` on Windows), so `from` has either moved
+    /// or stayed. On a filesystem that rejects the flag, a hard link to the
+    /// new name followed by removal of the old one stands in. That fallback
+    /// is not atomic: both names exist for an instant. If removing the old
+    /// name fails, the new one is removed again and the move fails with
+    /// the file where it was; only if that cleanup fails too are both names
+    /// left, and the error says so. The fallback never overwrites either.
+    pub fn rename_file(&self, from: &str, to: &str) -> Result<(), FsError> {
+        let source = self.resolve(from)?;
+        let target = self.resolve(to)?;
+        let src = self.entry_file(&source)?;
+        let Some((name, parent)) = target.split_last() else {
+            return Err(FsError::NotAFile(virtual_path(&target)));
+        };
+        if name.starts_with(STAGING_PREFIX) {
+            return Err(FsError::Unwritable(virtual_path(&target)));
+        }
+        self.create_dirs(&virtual_path(parent))?;
+        let dest = self.directory(parent)?.join(name);
+        // Reported before attempting anything, for a clear error; the
+        // no-replace move below is what actually guarantees it.
+        match fs::symlink_metadata(&dest) {
+            Ok(_) => return Err(FsError::AlreadyExists(virtual_path(&target))),
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => return Err(io_failure(err, &target)),
+        }
+        move_no_replace(&src, &dest).map_err(|err| match err {
+            MoveError::Io(err) if err.kind() == ErrorKind::AlreadyExists => {
+                FsError::AlreadyExists(virtual_path(&target))
+            }
+            MoveError::Io(err) if err.kind() == ErrorKind::NotFound => {
+                FsError::NotFound(virtual_path(&source))
+            }
+            MoveError::Io(err) => write_failure(err, &target),
+            MoveError::BothNames(err) => {
+                tracing::warn!(
+                    from = %virtual_path(&source),
+                    to = %virtual_path(&target),
+                    error = %err,
+                    "a moved file is left under both names"
+                );
+                FsError::Unwritable(format!(
+                    "{} (the file is also still at {})",
+                    virtual_path(&target),
+                    virtual_path(&source)
+                ))
+            }
+        })?;
+        for dir in [dest.parent(), src.parent()].into_iter().flatten() {
+            if let Err(err) = sync_dir(dir) {
+                tracing::warn!(path = %virtual_path(&target), error = %err, "failed to sync a moved file's directory");
+            }
+        }
+        Ok(())
+    }
+
     /// Creates the directory `name` in the current directory holding
     /// `files`, given as `/`-separated paths relative to it, and returns its
     /// virtual path.
@@ -670,6 +762,26 @@ impl CartridgeFs {
             }
         }
         Ok(components)
+    }
+
+    /// Host path of the regular file at `components`, which must hold it
+    /// itself rather than through a symlink.
+    fn entry_file(&self, components: &[String]) -> Result<PathBuf, FsError> {
+        let Some((name, parent)) = components.split_last() else {
+            return Err(FsError::NotAFile(virtual_path(components)));
+        };
+        if name.starts_with(STAGING_PREFIX) {
+            return Err(FsError::Unwritable(virtual_path(components)));
+        }
+        let host = self.directory(parent)?.join(name);
+        let meta = fs::symlink_metadata(&host).map_err(|err| io_failure(err, components))?;
+        if meta.file_type().is_symlink() {
+            Err(FsError::Unwritable(virtual_path(components)))
+        } else if meta.is_file() {
+            Ok(host)
+        } else {
+            Err(FsError::NotAFile(virtual_path(components)))
+        }
     }
 
     /// Host path of the directory at `components`.
@@ -930,6 +1042,115 @@ fn publish_dir(staging: &Path, target: &Path) -> io::Result<()> {
     let (from, to) = (wide(staging), wide(target));
     // SAFETY: `from` and `to` are NUL-terminated UTF-16 strings that outlive
     // the call. Without MOVEFILE_REPLACE_EXISTING the move fails if `target`
+    // exists.
+    let moved = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) };
+    if moved == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// Why [`move_no_replace`] failed.
+#[derive(Debug)]
+enum MoveError {
+    Io(io::Error),
+    /// The hard-link fallback linked the new name but could neither remove
+    /// the old name nor undo the link, so the file exists under both.
+    BothNames(io::Error),
+}
+
+/// Moves the file `from` to `to`, failing with
+/// [`ErrorKind::AlreadyExists`] instead of replacing anything at `to`.
+fn move_no_replace(from: &Path, to: &Path) -> Result<(), MoveError> {
+    match rename_no_replace(from, to) {
+        Err(err) if matches!(err.kind(), ErrorKind::Unsupported | ErrorKind::InvalidInput) => {
+            // The filesystem rejects the no-replace flag. Linking never
+            // replaces either, so the guarantee holds; atomicity does not.
+            tracing::debug!(error = %err, "no-replace rename unsupported, linking instead");
+            link_then_unlink(from, to)
+        }
+        other => other.map_err(MoveError::Io),
+    }
+}
+
+/// Gives `from` the second name `to` with a hard link, which fails with
+/// [`ErrorKind::AlreadyExists`] rather than replacing, then removes `from`.
+/// Undoes the link if `from` cannot be removed.
+fn link_then_unlink(from: &Path, to: &Path) -> Result<(), MoveError> {
+    fs::hard_link(from, to).map_err(MoveError::Io)?;
+    let Err(err) = fs::remove_file(from) else {
+        return Ok(());
+    };
+    match fs::remove_file(to) {
+        Ok(()) => Err(MoveError::Io(err)),
+        Err(_) => Err(MoveError::BothNames(err)),
+    }
+}
+
+#[cfg(unix)]
+fn c_path(path: &Path) -> io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "path contains a NUL byte"))
+}
+
+/// Renames `from` to `to` in one step, failing if `to` exists.
+#[cfg(target_os = "linux")]
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: `from` and `to` are NUL-terminated strings that outlive the
+    // call, and renameat2 reads them without keeping the pointers.
+    // RENAME_NOREPLACE makes it fail with EEXIST rather than replace `to`.
+    let moved = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if moved == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Renames `from` to `to` in one step, failing if `to` exists.
+#[cfg(target_os = "macos")]
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    let (from, to) = (c_path(from)?, c_path(to)?);
+    // SAFETY: `from` and `to` are NUL-terminated strings that outlive the
+    // call, and renamex_np reads them without keeping the pointers.
+    // RENAME_EXCL makes it fail with EEXIST rather than replace `to`.
+    let moved = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
+    if moved == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Other Unix systems have no portable no-replace rename; the caller falls
+/// back to linking.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+fn rename_no_replace(_from: &Path, _to: &Path) -> io::Result<()> {
+    Err(io::Error::from(ErrorKind::Unsupported))
+}
+
+/// Renames `from` to `to` in one step, failing if `to` exists.
+#[cfg(windows)]
+fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let wide = |path: &Path| -> Vec<u16> { path.as_os_str().encode_wide().chain([0]).collect() };
+    let (from, to) = (wide(from), wide(to));
+    // SAFETY: `from` and `to` are NUL-terminated UTF-16 strings that outlive
+    // the call. Without MOVEFILE_REPLACE_EXISTING the move fails if `to`
     // exists.
     let moved = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) };
     if moved == 0 {

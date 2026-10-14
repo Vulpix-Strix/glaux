@@ -688,6 +688,7 @@ dependencies = [
  "glaux-rhai",
  "glaux-script",
  "glaux-video",
+ "libc",
  "png",
  "pretty_assertions",
  "proptest",

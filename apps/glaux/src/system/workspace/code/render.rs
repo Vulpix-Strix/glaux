@@ -136,6 +136,10 @@ impl CodeEditor {
             let layout = self.prompt_layout(dialog.prompt());
             dialog.render(painter.framebuffer, font, &layout, lit);
         }
+        if let Some(dialog) = &self.rename {
+            let layout = self.prompt_layout(dialog.prompt());
+            dialog.render(painter.framebuffer, font, &layout, lit);
+        }
         if let Some(dialog) = &self.go_to {
             let layout = self.prompt_layout(dialog.prompt());
             dialog.render(painter.framebuffer, font, &layout, lit);

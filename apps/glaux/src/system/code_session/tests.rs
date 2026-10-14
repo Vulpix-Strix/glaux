@@ -193,3 +193,166 @@ fn documents_keep_separate_histories_until_closed() {
     let b = session.open(&cart, &path("code/b.luau")).unwrap();
     assert_eq!(session.undo(b), None);
 }
+
+mod moving {
+    use super::*;
+    use crate::system::code_document::{CodeRenameError, DiskState};
+    use crate::system::code_history::EditKind;
+    use pretty_assertions::assert_eq;
+
+    fn host(fixture: &Fixture, file: &str) -> std::path::PathBuf {
+        fixture.root().join("games/pong").join(file)
+    }
+
+    /// `code/a.luau` holding `base`, opened and edited to `base!`.
+    fn edited(
+        fixture: &Fixture,
+        other: &[(&str, &[u8])],
+    ) -> (LoadedCartridge, CodeSession, DocumentId) {
+        let mut files = vec![("code/a.luau", b"base".as_slice())];
+        files.extend_from_slice(other);
+        let cart = cartridge(fixture, &files);
+        let mut session = CodeSession::default();
+        let id = session.open(&cart, &path("code/a.luau")).unwrap();
+        session
+            .edit(id, 4..4, "!", EditKind::Typing, None)
+            .unwrap()
+            .unwrap();
+        (cart, session, id)
+    }
+
+    #[test]
+    fn a_moved_document_keeps_its_id_tab_edits_history_and_modified_state() {
+        let fixture = Fixture::new("code-session-move");
+        let (cart, mut session, id) = edited(&fixture, &[("code/b.luau", b"b")]);
+        let b = session.open(&cart, &path("code/b.luau")).unwrap();
+        session.tabs_mut().activate(id);
+
+        session
+            .move_script(&cart, id, &path("code/lib/renamed.luau"))
+            .unwrap();
+
+        let document = session.document(id).unwrap();
+        assert_eq!(document.path().as_str(), "code/lib/renamed.luau");
+        assert_eq!(document.text(), "base!");
+        assert!(document.is_modified());
+        assert_eq!(session.tabs().ids().collect::<Vec<_>>(), [id, b]);
+        assert_eq!(session.tabs().active(), Some(id));
+        assert!(session.is_open(&path("code/lib/renamed.luau")));
+        assert!(!session.is_open(&path("code/a.luau")));
+        assert_eq!(
+            std::fs::read(host(&fixture, "code/lib/renamed.luau")).unwrap(),
+            b"base"
+        );
+        assert!(!host(&fixture, "code/a.luau").exists());
+
+        // The history survived: undo returns to the unmodified text.
+        assert!(session.can_undo(id));
+        session.undo(id).unwrap();
+        assert!(!session.document(id).unwrap().is_modified());
+    }
+
+    #[test]
+    fn saving_after_a_move_writes_the_new_path_only() {
+        let fixture = Fixture::new("code-session-move-save");
+        let (cart, mut session, id) = edited(&fixture, &[]);
+        session
+            .move_script(&cart, id, &path("code/z.luau"))
+            .unwrap();
+
+        session.save(&cart, id).unwrap();
+        assert_eq!(
+            std::fs::read(host(&fixture, "code/z.luau")).unwrap(),
+            b"base!"
+        );
+        assert!(!host(&fixture, "code/a.luau").exists());
+        assert!(!session.is_modified());
+    }
+
+    #[test]
+    fn a_path_open_in_another_tab_is_refused_before_anything_moves() {
+        let fixture = Fixture::new("code-session-move-taken");
+        let (cart, mut session, id) = edited(&fixture, &[("code/b.luau", b"b")]);
+        session.open(&cart, &path("code/b.luau")).unwrap();
+
+        assert_eq!(
+            session.move_script(&cart, id, &path("code/b.luau")),
+            Err(MoveScriptError::Document(CodeRenameError::PathTaken(path(
+                "code/b.luau"
+            ))))
+        );
+        assert_eq!(session.document(id).unwrap().path().as_str(), "code/a.luau");
+        assert_eq!(
+            std::fs::read(host(&fixture, "code/a.luau")).unwrap(),
+            b"base"
+        );
+        assert_eq!(std::fs::read(host(&fixture, "code/b.luau")).unwrap(), b"b");
+    }
+
+    #[test]
+    fn a_file_in_the_way_that_is_not_open_is_never_replaced() {
+        let fixture = Fixture::new("code-session-move-exists");
+        let (cart, mut session, id) = edited(&fixture, &[("code/b.luau", b"b")]);
+
+        let result = session.move_script(&cart, id, &path("code/b.luau"));
+        assert!(
+            matches!(result, Err(MoveScriptError::File(_))),
+            "{result:?}"
+        );
+        assert_eq!(session.document(id).unwrap().path().as_str(), "code/a.luau");
+        assert_eq!(std::fs::read(host(&fixture, "code/b.luau")).unwrap(), b"b");
+        assert_eq!(
+            std::fs::read(host(&fixture, "code/a.luau")).unwrap(),
+            b"base"
+        );
+    }
+
+    #[test]
+    fn a_file_changed_or_deleted_outside_glaux_stays_where_it_is() {
+        let fixture = Fixture::new("code-session-move-outside");
+        let (cart, mut session, id) = edited(&fixture, &[]);
+        let a = host(&fixture, "code/a.luau");
+
+        std::fs::write(&a, "changed elsewhere").unwrap();
+        assert_eq!(
+            session.disk_state(&cart, id),
+            Some(Ok(DiskState::Modified(b"changed elsewhere".to_vec())))
+        );
+        assert_eq!(
+            session.move_script(&cart, id, &path("code/z.luau")),
+            Err(MoveScriptError::Changed(path("code/a.luau")))
+        );
+        assert_eq!(std::fs::read(&a).unwrap(), b"changed elsewhere");
+
+        std::fs::remove_file(&a).unwrap();
+        assert_eq!(session.disk_state(&cart, id), Some(Ok(DiskState::Missing)));
+        assert_eq!(
+            session.move_script(&cart, id, &path("code/z.luau")),
+            Err(MoveScriptError::Missing(path("code/a.luau")))
+        );
+        assert_eq!(session.document(id).unwrap().path().as_str(), "code/a.luau");
+        assert_eq!(session.document(id).unwrap().text(), "base!");
+        assert!(!host(&fixture, "code/z.luau").exists());
+    }
+
+    #[test]
+    fn the_entry_script_and_other_languages_are_refused_and_the_same_path_is_a_no_op() {
+        let fixture = Fixture::new("code-session-move-refused");
+        let (cart, mut session, id) = edited(&fixture, &[]);
+        let main = session.open(&cart, &path("code/main.luau")).unwrap();
+
+        assert!(matches!(
+            session.move_script(&cart, main, &path("code/x.luau")),
+            Err(MoveScriptError::File(SourceEditError::Entry(_)))
+        ));
+        assert_eq!(
+            session.move_script(&cart, id, &path("code/a.rhai")),
+            Err(MoveScriptError::Document(CodeRenameError::Language(path(
+                "code/a.rhai"
+            ))))
+        );
+        assert_eq!(session.move_script(&cart, id, &path("code/a.luau")), Ok(()));
+        assert_eq!(session.document(id).unwrap().path().as_str(), "code/a.luau");
+        assert!(host(&fixture, "code/main.luau").exists());
+    }
+}

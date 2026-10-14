@@ -26,9 +26,10 @@ use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill
 use glaux_video::preview::ObjPreviewPalette;
 
 use super::code_document::{
-    CodeDocumentError, CodeSaveError, CodeSaved, DocumentId, SourceConflict, SourceConflictKind,
+    CodeDocumentError, CodeSaveError, CodeSaved, DiskState, DocumentId, SourceConflict,
+    SourceConflictKind,
 };
-use super::code_session::CodeSession;
+use super::code_session::{CodeSession, MoveScriptError};
 use super::editor_settings::EditorSettings;
 use super::sprite_document::{
     Conflict, ConflictKind, DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile,
@@ -36,7 +37,7 @@ use super::sprite_document::{
 };
 use super::video::CartridgeVideoDefaults;
 use super::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
-use crate::cartridge::source::{ScriptListing, SourcePath};
+use crate::cartridge::source::{ScriptListing, SourceEditError, SourcePath};
 use crate::cartridge::{CartridgeError, Language, LoadedCartridge, VideoAsset};
 use crate::cartridge_fs::FsError;
 use crate::rom::ICON_SIZE;
@@ -132,6 +133,19 @@ pub enum WorkspaceRequest {
     /// Create this empty script and open it in a tab; answer with
     /// [`Workspace::script_created`].
     CreateScript(SourcePath),
+    /// Read the state of this script's file for DELETE SCRIPT; answer with
+    /// [`Workspace::delete_prompt`].
+    PrepareDelete(DocumentId),
+    /// Delete this script's file and close its tab, provided the file still
+    /// holds `seen` (`None`: is still absent); answer with
+    /// [`Workspace::script_deleted`].
+    DeleteScript {
+        id: DocumentId,
+        seen: Option<Vec<u8>>,
+    },
+    /// Move this script's file to this path; answer with
+    /// [`Workspace::script_renamed`].
+    RenameScript { id: DocumentId, to: SourcePath },
     /// Put this text on the host's clipboard.
     Copy(String),
     /// Read the host's clipboard; answer with [`Workspace::paste`].
@@ -147,6 +161,8 @@ pub(super) enum Choice {
     Discard,
     Overwrite,
     Reload,
+    /// Delete the script's file.
+    Delete,
     Cancel,
     /// Close a message that offers no decision.
     Dismiss,
@@ -174,6 +190,12 @@ pub(super) enum Target {
     },
     /// The tab of a script document with unsaved edits.
     CloseScript(DocumentId),
+    /// The file of a script document to delete, holding `seen` when the
+    /// dialog was shown (`None`: absent).
+    DeleteScript {
+        id: DocumentId,
+        seen: Option<Vec<u8>>,
+    },
 }
 
 /// A short message in the status bar answering what the user just did.
@@ -567,6 +589,59 @@ fn close_dialog(path: &SourcePath) -> Dialog<Choice> {
     )
 }
 
+/// Asks whether to delete the file at `path` of script document `id`.
+/// `modified` is whether the document has unsaved edits, `external`
+/// whether the file changed outside Glaux, and `seen` what the file holds
+/// (`None`: nothing, it is gone). Cancel is focused so a stray Enter
+/// deletes nothing.
+fn delete_dialog(
+    id: DocumentId,
+    path: &SourcePath,
+    modified: bool,
+    external: bool,
+    seen: Option<Vec<u8>>,
+) -> (Dialog<Choice>, Target) {
+    let mut lines = vec![format!("Delete {path} from the cartridge?")];
+    match &seen {
+        None => lines.push(format!(
+            "{path} was already deleted outside Glaux. DELETE only closes its tab."
+        )),
+        Some(_) => lines.push("The file cannot be recovered.".to_owned()),
+    }
+    if external {
+        lines.push("It changed outside Glaux; those changes will be lost.".to_owned());
+    }
+    if modified {
+        lines.push("Its unsaved changes will be lost.".to_owned());
+    }
+    let dialog = Dialog::new(
+        "DELETE SCRIPT",
+        lines,
+        vec![("DELETE", Choice::Delete), ("CANCEL", Choice::Cancel)],
+        1,
+        Some(Choice::Cancel),
+    )
+    .destructive(0);
+    (dialog, Target::DeleteScript { id, seen })
+}
+
+/// What to tell the user when deleting or moving the script at `path`
+/// failed.
+fn edit_failure(path: &SourcePath, err: &SourceEditError) -> String {
+    match err {
+        SourceEditError::Fs(FsError::ReadOnly(_)) => {
+            format!("{path} is read-only. Make it writable, then try again.")
+        }
+        SourceEditError::Fs(FsError::AlreadyExists(existing)) => {
+            format!("{} already exists.", existing.trim_start_matches('/'))
+        }
+        SourceEditError::Fs(FsError::Unwritable(_)) => format!(
+            "Glaux could not change {path}. Check the cartridge folder's permissions, and that it is a regular file."
+        ),
+        err => err.to_string(),
+    }
+}
+
 /// Asks whether to overwrite the file of script document `id` in
 /// `conflict` with the document's text or leave both as they are. `saved`,
 /// if any, tells what was saved before the conflict was found. Cancel is
@@ -885,6 +960,9 @@ impl Workspace {
                 (Choice::Reload, Target::Assets(seen)) => Some(WorkspaceRequest::Reload(
                     seen.iter().map(|disk| disk.asset).collect(),
                 )),
+                (Choice::Delete, Target::DeleteScript { id, seen }) => {
+                    Some(WorkspaceRequest::DeleteScript { id, seen })
+                }
                 (Choice::Save, Target::CloseScript(id)) => {
                     Some(WorkspaceRequest::SaveAndCloseScript(id))
                 }
@@ -942,6 +1020,8 @@ impl Workspace {
             CodeRequest::Paste => Some(WorkspaceRequest::Paste),
             CodeRequest::NewFile => Some(WorkspaceRequest::NewScript),
             CodeRequest::Create(path) => Some(WorkspaceRequest::CreateScript(path)),
+            CodeRequest::DeleteScript(id) => Some(WorkspaceRequest::PrepareDelete(id)),
+            CodeRequest::Rename { id, to } => Some(WorkspaceRequest::RenameScript { id, to }),
             CodeRequest::Notice(text) => {
                 self.notify(text, PALE);
                 None
@@ -1050,6 +1130,98 @@ impl Workspace {
             }
         }
         self.code.script_created(result);
+    }
+
+    /// Tells the Code view which script is the cartridge's entry, as the
+    /// manifest gives it.
+    pub fn set_entry_script(&mut self, entry: &str) {
+        self.code.set_entry(entry);
+    }
+
+    /// Opens DELETE SCRIPT for document `id`, given how its file compares
+    /// with what the document was read from, or tells why that could not
+    /// be read.
+    pub fn delete_prompt(
+        &mut self,
+        code: &CodeSession,
+        id: DocumentId,
+        state: Result<DiskState, FsError>,
+    ) {
+        let Some(document) = code.document(id) else {
+            return;
+        };
+        let path = document.path();
+        let external = matches!(state, Ok(DiskState::Modified(_)));
+        let seen = match state {
+            Ok(DiskState::InSync(bytes) | DiskState::Modified(bytes)) => Some(bytes),
+            Ok(DiskState::Missing) => None,
+            Err(err) => {
+                tracing::debug!(file = %path, %err, "script not readable for deletion");
+                self.open_message(
+                    "DELETE FAILED",
+                    vec![
+                        format!("Glaux could not read {path} to check it for outside changes."),
+                        "Nothing was deleted.".to_owned(),
+                    ],
+                );
+                return;
+            }
+        };
+        self.code.end_drag();
+        let (dialog, target) = delete_dialog(id, path, document.is_modified(), external, seen);
+        self.modal = Some(Modal { dialog, target });
+    }
+
+    /// Reports how deleting the file of script document `id` went. The
+    /// tab closed if it was deleted; otherwise a message says why not.
+    pub fn script_deleted(
+        &mut self,
+        code: &mut CodeSession,
+        path: &SourcePath,
+        result: Result<(), SourceEditError>,
+    ) {
+        match result {
+            Ok(()) => {
+                tracing::info!(file = %path, "script deleted");
+                self.code.refresh_metrics(code);
+                self.script_closed(code);
+                self.notify(format!("Deleted {path}"), PALE);
+            }
+            Err(err) => {
+                tracing::debug!(file = %path, %err, "script not deleted");
+                self.open_message(
+                    "DELETE FAILED",
+                    vec![edit_failure(path, &err), "Nothing was deleted.".to_owned()],
+                );
+            }
+        }
+    }
+
+    /// Reports how moving the file of a script document to `to` went: the
+    /// tab shows the new name once it moved, and RENAME SCRIPT says why
+    /// otherwise.
+    pub fn script_renamed(
+        &mut self,
+        code: &mut CodeSession,
+        to: &SourcePath,
+        result: Result<(), MoveScriptError>,
+    ) {
+        let result = result.map_err(|err| match &err {
+            MoveScriptError::File(SourceEditError::Fs(fs)) => edit_failure(to, &fs.clone().into()),
+            _ => err.to_string(),
+        });
+        match &result {
+            Ok(()) => {
+                tracing::info!(file = %to, "script renamed");
+                self.code.refresh_metrics(code);
+                self.code.reveal_active(code);
+                self.notify(format!("Renamed to {to}"), PALE);
+            }
+            Err(message) => {
+                tracing::debug!(file = %to, error = %message, "script not renamed");
+            }
+        }
+        self.code.script_renamed(result);
     }
 
     /// Hands the clipboard's `text` to the Code view, which inserts it

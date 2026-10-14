@@ -27,6 +27,7 @@ mod new_cartridge;
 mod pausing;
 mod rhai;
 mod rom_audio;
+mod script_management;
 mod shell_screen;
 mod sprite_editor;
 mod sprite_import;

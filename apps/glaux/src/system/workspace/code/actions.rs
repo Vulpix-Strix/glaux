@@ -3,6 +3,7 @@
 
 use glaux_input::{InputEvent, Point};
 
+use super::rename::RenameScript;
 use super::{CodeEditor, CodeRequest, close_tab};
 use crate::system::code_document::DocumentId;
 use crate::system::code_session::CodeSession;
@@ -23,6 +24,8 @@ pub enum CodeAction {
     NewFile,
     OpenFile,
     CloseTab(DocumentId),
+    RenameScript(DocumentId),
+    DeleteScript(DocumentId),
 }
 
 impl CodeAction {
@@ -41,7 +44,7 @@ impl CodeAction {
             Self::GoToLine => InputEvent::GoToLine,
             Self::NewFile => InputEvent::NewFile,
             Self::OpenFile => InputEvent::OpenFile,
-            Self::CloseTab(_) => return None,
+            Self::CloseTab(_) | Self::RenameScript(_) | Self::DeleteScript(_) => return None,
         })
     }
 }
@@ -83,19 +86,44 @@ pub fn text_menu(session: &CodeSession, at: Point) -> ContextMenu<CodeAction> {
     )
 }
 
+/// The tab a file menu was opened on, and what may be done to its script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TabTarget {
+    pub id: DocumentId,
+    /// The script is the cartridge's entry, which is neither renamed nor
+    /// deleted.
+    pub protected: bool,
+    /// The script lives under `code/`, where scripts can be moved.
+    pub renamable: bool,
+}
+
 /// The menu for the tab strip and the empty view: files to create or
-/// open, and closing `tab` when the press landed on one.
-pub fn file_menu(tab: Option<DocumentId>, at: Point) -> ContextMenu<CodeAction> {
+/// open, and what can be done to the script of `tab` when the press landed
+/// on one.
+pub fn file_menu(tab: Option<TabTarget>, at: Point) -> ContextMenu<CodeAction> {
     let mut entries = vec![
         MenuEntry::item("New file...", Some("Ctrl+N"), CodeAction::NewFile),
         MenuEntry::item("Open file...", Some("Ctrl+P"), CodeAction::OpenFile),
     ];
-    if let Some(id) = tab {
+    if let Some(tab) = tab {
         entries.push(MenuEntry::Separator);
         entries.push(MenuEntry::item(
             "Close tab",
             Some("Ctrl+W"),
-            CodeAction::CloseTab(id),
+            CodeAction::CloseTab(tab.id),
+        ));
+        entries.push(MenuEntry::Separator);
+        entries.push(MenuEntry::when(
+            tab.renamable && !tab.protected,
+            "Rename script...",
+            None,
+            CodeAction::RenameScript(tab.id),
+        ));
+        entries.push(MenuEntry::when(
+            !tab.protected,
+            "Delete script...",
+            None,
+            CodeAction::DeleteScript(tab.id),
         ));
     }
     ContextMenu::new(entries, at)
@@ -112,6 +140,12 @@ impl CodeEditor {
             Some(event) => self.input(event, session),
             None => match action {
                 CodeAction::CloseTab(id) => close_tab(session, id),
+                CodeAction::RenameScript(id) => {
+                    let path = session.document(id)?.path().clone();
+                    self.rename = RenameScript::new(id, path);
+                    None
+                }
+                CodeAction::DeleteScript(id) => Some(CodeRequest::DeleteScript(id)),
                 _ => None,
             },
         }

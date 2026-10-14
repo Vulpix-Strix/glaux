@@ -92,6 +92,24 @@ pub enum SourceWriteError {
     Changed(Option<Vec<u8>>),
 }
 
+/// A failed [`LoadedCartridge::delete_source`] or
+/// [`LoadedCartridge::rename_source`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SourceEditError {
+    /// The manifest names the file as the cartridge's entry, which Glaux
+    /// neither deletes nor moves.
+    #[error("{0} is the entry script of this cartridge")]
+    Entry(SourcePath),
+    /// A script keeps the language its extension names.
+    #[error("{from} cannot become {to}: a script keeps its language")]
+    Language { from: SourcePath, to: SourcePath },
+    /// The file no longer holds what the caller saw. Nothing was deleted.
+    #[error("{0} changed on disk, so it was not deleted")]
+    Changed(SourcePath),
+    #[error(transparent)]
+    Fs(#[from] FsError),
+}
+
 impl fmt::Display for SourcePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.path)
@@ -147,6 +165,69 @@ impl LoadedCartridge {
                 ReplaceError::Changed(_) => FsError::AlreadyExists(format!("/{path}")),
                 ReplaceError::Fs(err) => err,
             })
+    }
+
+    /// Whether `path` is the entry script the manifest declares.
+    pub fn is_entry(&self, path: &SourcePath) -> bool {
+        self.manifest.runtime.entry == path.as_str()
+    }
+
+    /// Deletes the script file at `path`, provided it still holds exactly
+    /// `expected` (`None`: provided it is absent, in which case there is
+    /// nothing to delete). A file that vanished meanwhile is as good as
+    /// deleted. The entry script is never deleted, and directories above
+    /// the file are kept.
+    ///
+    /// See [`CartridgeFs::remove_file`]: a link is never followed. No
+    /// portable primitive compares and unlinks in one step, so a write
+    /// landing between the comparison and the removal is deleted with the
+    /// file.
+    ///
+    /// [`CartridgeFs::remove_file`]: crate::cartridge_fs::CartridgeFs::remove_file
+    pub fn delete_source(
+        &self,
+        path: &SourcePath,
+        expected: Option<&[u8]>,
+    ) -> Result<(), SourceEditError> {
+        if self.is_entry(path) {
+            return Err(SourceEditError::Entry(path.clone()));
+        }
+        let current = match self.read_source(path) {
+            Ok(bytes) => bytes,
+            Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => return Ok(()),
+            Err(err) => return Err(err.into()),
+        };
+        if Some(current.as_slice()) != expected {
+            return Err(SourceEditError::Changed(path.clone()));
+        }
+        self.files.remove_file(&format!("/{path}"))?;
+        Ok(())
+    }
+
+    /// Moves the script file at `from` to `to`, creating the directories
+    /// above `to` that are missing. The entry script never moves, and
+    /// neither does a file to a path of another language.
+    ///
+    /// See [`CartridgeFs::rename_file`]: nothing at `to` is ever replaced,
+    /// and a link is never followed.
+    ///
+    /// [`CartridgeFs::rename_file`]: crate::cartridge_fs::CartridgeFs::rename_file
+    pub fn rename_source(&self, from: &SourcePath, to: &SourcePath) -> Result<(), SourceEditError> {
+        if self.is_entry(from) {
+            return Err(SourceEditError::Entry(from.clone()));
+        }
+        if self.is_entry(to) {
+            return Err(FsError::AlreadyExists(format!("/{to}")).into());
+        }
+        if from.language() != to.language() {
+            return Err(SourceEditError::Language {
+                from: from.clone(),
+                to: to.clone(),
+            });
+        }
+        self.files
+            .rename_file(&format!("/{from}"), &format!("/{to}"))?;
+        Ok(())
     }
 
     /// Every `.luau` and `.rhai` file in the cartridge, in any directory.

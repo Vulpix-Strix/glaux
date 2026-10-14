@@ -61,7 +61,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use crate::cartridge::LoadedCartridge;
-use crate::cartridge::source::SourcePath;
+use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge_fs::CartridgeStorage;
 use crate::sprite_import::SheetSource;
 
@@ -1067,6 +1067,7 @@ fn workspace_tick(
 ) -> (SystemState, Vec<HostRequest>) {
     let Documents { sprites, code } = documents;
     let code = code.get_or_insert_default();
+    workspace.set_entry_script(&cartridge.manifest().runtime.entry);
     workspace.tick(Some(code));
     let mut host_requests = Vec::new();
     for &event in input {
@@ -1135,6 +1136,37 @@ fn workspace_tick(
                 workspace.script_created(code, &path, result);
                 continue;
             }
+            WorkspaceRequest::PrepareDelete(id) => {
+                let Some(path) = code.document(id).map(|document| document.path().clone()) else {
+                    continue;
+                };
+                if cartridge.is_entry(&path) {
+                    workspace.script_deleted(
+                        code,
+                        &path,
+                        Err(SourceEditError::Entry(path.clone())),
+                    );
+                } else if let Some(state) = code.disk_state(&cartridge, id) {
+                    workspace.delete_prompt(code, id, state);
+                }
+                continue;
+            }
+            WorkspaceRequest::DeleteScript { id, seen } => {
+                let Some(path) = code.document(id).map(|document| document.path().clone()) else {
+                    continue;
+                };
+                let result = cartridge.delete_source(&path, seen.as_deref());
+                if result.is_ok() {
+                    code.close(id);
+                }
+                workspace.script_deleted(code, &path, result);
+                continue;
+            }
+            WorkspaceRequest::RenameScript { id, to } => {
+                let result = code.move_script(&cartridge, id, &to);
+                workspace.script_renamed(code, &to, result);
+                continue;
+            }
             WorkspaceRequest::Copy(text) => {
                 clipboard.set_text(&text);
                 continue;
@@ -1172,6 +1204,9 @@ fn workspace_tick(
             | WorkspaceRequest::SaveAndCloseScript(_)
             | WorkspaceRequest::NewScript
             | WorkspaceRequest::CreateScript(_)
+            | WorkspaceRequest::PrepareDelete(_)
+            | WorkspaceRequest::DeleteScript { .. }
+            | WorkspaceRequest::RenameScript { .. }
             | WorkspaceRequest::Copy(_)
             | WorkspaceRequest::Paste => {
                 unreachable!("code requests are carried out above")

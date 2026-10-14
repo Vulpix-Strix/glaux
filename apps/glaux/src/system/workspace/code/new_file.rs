@@ -119,7 +119,7 @@ impl NewFile {
 }
 
 /// The script `typed` names under [`CODE_DIR`] in `language`.
-pub fn path_for(typed: &str, language: Language) -> Result<SourcePath, String> {
+pub(super) fn path_for(typed: &str, language: Language) -> Result<SourcePath, String> {
     if typed.is_empty() {
         return Err("Type a name for the script.".to_owned());
     }

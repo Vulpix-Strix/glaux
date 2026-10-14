@@ -122,7 +122,9 @@ fn the_tab_strip_menu_creates_opens_and_closes_files() {
         [
             ("New file...", true),
             ("Open file...", true),
-            ("Close tab", true)
+            ("Close tab", true),
+            ("Rename script...", true),
+            ("Delete script...", true),
         ]
     );
     let id = session.tabs().active().unwrap();
@@ -237,4 +239,156 @@ fn go_to_line_checks_the_number_then_moves_there() {
     let view = session.tabs().view(id).unwrap();
     let rows = geometry(&editor, &session).rows;
     assert!(view.top_line <= 79 && 79 < view.top_line + rows, "{view:?}");
+}
+
+/// Opens the tab menu on tab `index` of `session`.
+fn tab_menu(editor: &mut CodeEditor, session: &mut CodeSession, index: usize) {
+    let (_, tab, _) = editor.tab_rects(session)[index];
+    feed(
+        editor,
+        session,
+        &[press(PointerButton::Secondary, centre(tab))],
+    );
+}
+
+#[test]
+fn the_entry_script_cannot_be_renamed_or_deleted_from_its_tab() {
+    let fixture = Fixture::new("code-menu-entry");
+    let (_, mut session) = session_with_text(&fixture, &["a.luau", "b.luau"], "");
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+    // The manifest, not a file name, decides which script is the entry.
+    editor.set_entry("code/b.luau");
+
+    tab_menu(&mut editor, &mut session, 0);
+    assert!(enabled(&editor, "Rename script..."));
+    assert!(enabled(&editor, "Delete script..."));
+    feed(&mut editor, &mut session, &[InputEvent::Break]);
+
+    tab_menu(&mut editor, &mut session, 1);
+    assert!(!enabled(&editor, "Rename script..."));
+    assert!(!enabled(&editor, "Delete script..."));
+    // Disabled items are skipped, so Enter cannot reach them.
+    assert_eq!(
+        requests(
+            &mut editor,
+            &mut session,
+            &[InputEvent::Down { select: false }; 6]
+        ),
+        []
+    );
+    assert_eq!(
+        requests(&mut editor, &mut session, &[InputEvent::Enter]),
+        []
+    );
+}
+
+#[test]
+fn a_script_outside_code_can_be_deleted_but_not_renamed() {
+    let fixture = Fixture::new("code-menu-outside-code");
+    let (cart, mut session) = session_with_text(&fixture, &["a.luau"], "");
+    let dir = fixture.root().join("games/pong");
+    std::fs::create_dir_all(dir.join("tools")).unwrap();
+    std::fs::write(dir.join("tools/t.luau"), "").unwrap();
+    session
+        .open(&cart, &SourcePath::parse("tools/t.luau").unwrap())
+        .unwrap();
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+
+    tab_menu(&mut editor, &mut session, 1);
+    assert!(!enabled(&editor, "Rename script..."));
+    assert!(enabled(&editor, "Delete script..."));
+}
+
+#[test]
+fn delete_script_asks_the_workspace_and_changes_nothing_itself() {
+    let fixture = Fixture::new("code-menu-delete");
+    let (mut editor, _, mut session) = open(&fixture, "abc", EditorSettings::default());
+    feed(&mut editor, &mut session, &typing("x"));
+    let id = session.tabs().active().unwrap();
+    tab_menu(&mut editor, &mut session, 0);
+    assert_eq!(
+        choose(&mut editor, &mut session, "Delete script..."),
+        [CodeRequest::DeleteScript(id)]
+    );
+    assert!(session.document(id).unwrap().is_modified());
+    assert_eq!(session.tabs().len(), 1);
+}
+
+#[test]
+fn rename_script_starts_from_the_current_path_and_takes_every_key() {
+    let fixture = Fixture::new("code-menu-rename");
+    let (mut editor, _, mut session) = open(&fixture, "abc", EditorSettings::default());
+    feed(&mut editor, &mut session, &typing("x"));
+    let id = session.tabs().active().unwrap();
+    tab_menu(&mut editor, &mut session, 0);
+    assert_eq!(choose(&mut editor, &mut session, "Rename script..."), []);
+
+    let dialog = editor.rename().unwrap();
+    assert_eq!(
+        dialog.prompt().text(),
+        "a",
+        "without code/ and the extension"
+    );
+    assert!(editor.has_overlay());
+    assert_eq!(
+        requests(
+            &mut editor,
+            &mut session,
+            &[InputEvent::Save, InputEvent::Find, InputEvent::Undo]
+        ),
+        [],
+        "document commands are swallowed"
+    );
+    assert_eq!(session.active_document().unwrap().text(), "xabc");
+
+    // The prefilled name is selected, so typing replaces it.
+    feed(&mut editor, &mut session, &typing("ui/hud"));
+    assert_eq!(
+        requests(&mut editor, &mut session, &[InputEvent::Enter]),
+        [CodeRequest::Rename {
+            id,
+            to: SourcePath::parse("code/ui/hud.luau").unwrap()
+        }]
+    );
+    editor.script_renamed(Err("code/ui/hud.luau already exists.".into()));
+    assert_eq!(
+        editor.rename().unwrap().message().0,
+        "code/ui/hud.luau already exists.",
+        "stays open to fix the path"
+    );
+    editor.script_renamed(Ok(()));
+    assert!(editor.rename().is_none());
+}
+
+#[test]
+fn rename_script_rejects_bad_paths_without_asking_and_closes_on_the_same_path() {
+    let fixture = Fixture::new("code-menu-rename-invalid");
+    let (mut editor, _, mut session) = open(&fixture, "abc", EditorSettings::default());
+    tab_menu(&mut editor, &mut session, 0);
+    choose(&mut editor, &mut session, "Rename script...");
+
+    for typed in ["", "x.luau", "x.rhai", "../x", "a//b", "a\\b"] {
+        feed(&mut editor, &mut session, &[InputEvent::SelectAll]);
+        feed(&mut editor, &mut session, &typing(typed));
+        if typed.is_empty() {
+            feed(&mut editor, &mut session, &[InputEvent::Backspace]);
+        }
+        assert_eq!(
+            requests(&mut editor, &mut session, &[InputEvent::Enter]),
+            [],
+            "{typed:?}"
+        );
+        assert!(editor.rename().is_some(), "{typed:?} keeps the window open");
+    }
+
+    // Typing the path it already has asks the filesystem for nothing.
+    feed(&mut editor, &mut session, &[InputEvent::SelectAll]);
+    feed(&mut editor, &mut session, &typing("a"));
+    assert_eq!(
+        requests(&mut editor, &mut session, &[InputEvent::Enter]),
+        []
+    );
+    assert!(editor.rename().is_none());
 }

@@ -227,6 +227,12 @@ impl CodeDocument {
         &self.path
     }
 
+    /// Points the document at the file it was moved to. Text, baseline and
+    /// everything derived from the text are untouched.
+    fn set_path(&mut self, path: SourcePath) {
+        self.path = path;
+    }
+
     /// The language the file's extension names.
     pub fn language(&self) -> Language {
         self.path.language()
@@ -403,6 +409,31 @@ pub enum CodeSaveError {
     Failed { path: SourcePath, error: FsError },
 }
 
+/// How a document's file compares with what the document was read from or
+/// last saved to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiskState {
+    /// The file holds exactly the baseline. Holds those bytes.
+    InSync(Vec<u8>),
+    /// The file was changed outside Glaux. Holds what it holds now.
+    Modified(Vec<u8>),
+    /// The file no longer exists.
+    Missing,
+}
+
+/// Why a document cannot be moved to another path.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CodeRenameError {
+    #[error("The script is not open")]
+    NotOpen,
+    /// Another open document holds the path.
+    #[error("{0} is already open in another tab")]
+    PathTaken(SourcePath),
+    /// A document keeps the language its path names.
+    #[error("{0} is not a script of the same language")]
+    Language(SourcePath),
+}
+
 /// The documents open on one cartridge, at most one per file.
 ///
 /// Documents and their ids belong to the cartridge they were read from:
@@ -466,6 +497,50 @@ impl CodeDocuments {
     /// Whether any open document differs from its file.
     pub fn is_modified(&self) -> bool {
         self.documents.iter().any(CodeDocument::is_modified)
+    }
+
+    /// How document `id`'s file compares with its baseline, read now.
+    /// `None` if `id` is not open.
+    pub fn disk_state(
+        &self,
+        cartridge: &LoadedCartridge,
+        id: DocumentId,
+    ) -> Option<Result<DiskState, FsError>> {
+        let document = self.get(id)?;
+        Some(read_disk(cartridge, &document.path).map(|disk| match disk {
+            None => DiskState::Missing,
+            Some(bytes) if bytes == document.origin.bytes() => DiskState::InSync(bytes),
+            Some(bytes) => DiskState::Modified(bytes),
+        }))
+    }
+
+    /// Whether document `id` can be moved to `to`, which checks everything
+    /// [`rename`](Self::rename) does before changing anything.
+    pub fn can_rename(&self, id: DocumentId, to: &SourcePath) -> Result<(), CodeRenameError> {
+        let document = self.get(id).ok_or(CodeRenameError::NotOpen)?;
+        if document.path.language() != to.language() {
+            return Err(CodeRenameError::Language(to.clone()));
+        }
+        if self
+            .documents
+            .iter()
+            .any(|doc| doc.id != id && doc.path == *to)
+        {
+            return Err(CodeRenameError::PathTaken(to.clone()));
+        }
+        Ok(())
+    }
+
+    /// Points document `id` at `to`, after its file was moved there. The
+    /// id, text, baseline and revision stay as they are, so the document
+    /// keeps its modified state and a later save writes `to`. On error
+    /// nothing changes.
+    pub fn rename(&mut self, id: DocumentId, to: &SourcePath) -> Result<(), CodeRenameError> {
+        self.can_rename(id, to)?;
+        let document = self.get_mut(id).ok_or(CodeRenameError::NotOpen)?;
+        tracing::debug!(from = %document.path, to = %to, "code document moved");
+        document.set_path(to.clone());
+        Ok(())
     }
 
     /// Writes document `id`'s text to its file, provided the file still
@@ -532,11 +607,7 @@ impl CodeDocuments {
             })
         };
 
-        let disk = match cartridge.read_source(&path) {
-            Ok(bytes) => Some(bytes),
-            Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => None,
-            Err(err) => return Err(failed(err)),
-        };
+        let disk = read_disk(cartridge, &path).map_err(failed)?;
         if disk.as_deref() != expected {
             tracing::info!(file = %path, "script changed on disk, not saved");
             return Err(conflict(disk));
@@ -563,6 +634,15 @@ impl CodeDocuments {
     pub fn close(&mut self, id: DocumentId) -> Option<CodeDocument> {
         let index = self.documents.iter().position(|doc| doc.id == id)?;
         Some(self.documents.remove(index))
+    }
+}
+
+/// The bytes of the file at `path` now, `None` when it is absent.
+fn read_disk(cartridge: &LoadedCartridge, path: &SourcePath) -> Result<Option<Vec<u8>>, FsError> {
+    match cartridge.read_source(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => Ok(None),
+        Err(err) => Err(err),
     }
 }
 

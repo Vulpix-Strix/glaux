@@ -11,7 +11,7 @@ use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
 use super::{BAR, Rect, take_cells, wrap};
-use crate::system::{BACKGROUND, TEXT};
+use crate::system::{BACKGROUND, ERROR, TEXT};
 
 /// Window body.
 pub const BODY: u8 = TEXT;
@@ -48,6 +48,8 @@ pub struct Dialog<A> {
     /// The button a primary press started on. Releasing on the same button
     /// chooses it.
     armed: Option<usize>,
+    /// The button that destroys something, drawn apart from the others.
+    destructive: Option<usize>,
 }
 
 /// Where a dialog's parts sit for one area and font. Rendering and
@@ -90,7 +92,20 @@ impl<A: Copy> Dialog<A> {
             focus,
             cancel,
             armed: None,
+            destructive: None,
         }
+    }
+
+    /// Draws the action at `index` as the one that destroys something.
+    ///
+    /// # Panics
+    ///
+    /// If `index` is not one of the actions.
+    #[must_use]
+    pub fn destructive(mut self, index: usize) -> Self {
+        assert!(index < self.actions.len(), "no such action to mark");
+        self.destructive = Some(index);
+        self
     }
 
     #[cfg(test)]
@@ -260,14 +275,19 @@ impl<A: Copy> Dialog<A> {
             draw_text(framebuffer, font, line, layout.text_x, *y, INK);
         }
         for (index, ((label, _), &rect)) in self.actions.iter().zip(&layout.buttons).enumerate() {
-            draw_button(
+            let tone = if self.destructive == Some(index) {
+                Tone::Destructive
+            } else {
+                Tone::Plain
+            };
+            draw_button_toned(
                 framebuffer,
                 font,
                 rect,
                 label,
                 index == self.focus,
-                cell_w,
-                cell_h,
+                tone,
+                (cell_w, cell_h),
             );
         }
     }
@@ -330,14 +350,51 @@ pub fn draw_button(
     cell_w: i32,
     cell_h: i32,
 ) {
+    draw_button_toned(
+        framebuffer,
+        font,
+        rect,
+        label,
+        focused,
+        Tone::Plain,
+        (cell_w, cell_h),
+    );
+}
+
+/// How a button is colored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Plain,
+    /// The error color replaces the face, or the ring while focused, so
+    /// the button reads as different even unfocused.
+    Destructive,
+}
+
+fn draw_button_toned(
+    framebuffer: &mut Framebuffer,
+    font: &BitmapFont,
+    rect: Rect,
+    label: &str,
+    focused: bool,
+    tone: Tone,
+    (cell_w, cell_h): (i32, i32),
+) {
+    let accent = match tone {
+        Tone::Plain => BODY,
+        Tone::Destructive => ERROR,
+    };
     fill(framebuffer, rect, INK);
-    let (face, ink) = if focused { (INK, BODY) } else { (BODY, INK) };
+    let (face, ink) = if focused {
+        (INK, accent)
+    } else {
+        (accent, INK)
+    };
     fill(framebuffer, rect.inset(1), face);
     if focused {
         // An inner rule marks the focused button even where the inversion
         // alone is hard to see.
         let ring = rect.inset(2);
-        fill(framebuffer, ring, BODY);
+        fill(framebuffer, ring, accent);
         fill(framebuffer, ring.inset(1), INK);
     }
     let x = rect.x + (rect.width - text_cells(label) * cell_w) / 2;
