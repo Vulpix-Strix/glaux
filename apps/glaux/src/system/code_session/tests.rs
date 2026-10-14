@@ -4,6 +4,7 @@ use super::*;
 use crate::cartridge::Language;
 use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
+use crate::system::code_cursor::Caret;
 use crate::system::code_document::CodeDocumentError;
 use pretty_assertions::assert_eq;
 
@@ -124,4 +125,71 @@ fn the_entry_is_requested_once() {
     let mut session = CodeSession::default();
     assert!(session.take_entry_request());
     assert!(!session.take_entry_request());
+}
+
+/// Types `text` into `id` at `at` the way the Code view does: one
+/// character at a time, each from where the last left the caret.
+fn type_at(session: &mut CodeSession, id: DocumentId, at: usize, text: &str) {
+    let mut at = at;
+    for ch in text.chars() {
+        let document = session.document(id).unwrap();
+        let selection = Selection::collapsed(Caret::at(document, at));
+        session.tabs_mut().set_selection(id, selection);
+        let typed = ch.to_string();
+        session
+            .edit(id, at..at, &typed, EditKind::Typing)
+            .unwrap()
+            .unwrap();
+        at += typed.len();
+    }
+}
+
+fn text(session: &CodeSession, id: DocumentId) -> &str {
+    session.document(id).unwrap().text()
+}
+
+#[test]
+fn undo_follows_the_saved_text_for_dirty_state_and_keeps_history_across_saves() {
+    let fixture = Fixture::new("code-session-undo-save");
+    let cart = cartridge(&fixture, &[("code/a.luau", b"x")]);
+    let mut session = CodeSession::default();
+    let a = session.open(&cart, &path("code/a.luau")).unwrap();
+
+    type_at(&mut session, a, 1, "ab");
+    session.save(&cart, a).unwrap();
+    assert!(!session.is_modified());
+    // Saving ends the run, so undo stops at the saved text.
+    type_at(&mut session, a, 3, "cd");
+    assert!(session.is_modified());
+
+    assert!(session.undo(a).is_some());
+    assert_eq!(text(&session, a), "xab");
+    assert!(!session.is_modified());
+    assert!(session.undo(a).is_some());
+    assert_eq!(text(&session, a), "x");
+    assert!(session.is_modified());
+    assert_eq!(session.modified().len(), 1);
+
+    assert!(session.redo(a).is_some());
+    assert!(!session.is_modified());
+    assert!(session.modified().is_empty());
+}
+
+#[test]
+fn documents_keep_separate_histories_until_closed() {
+    let fixture = Fixture::new("code-session-undo-docs");
+    let cart = cartridge(&fixture, &[("code/a.luau", b""), ("code/b.luau", b"")]);
+    let mut session = CodeSession::default();
+    let a = session.open(&cart, &path("code/a.luau")).unwrap();
+    let b = session.open(&cart, &path("code/b.luau")).unwrap();
+    type_at(&mut session, a, 0, "aa");
+    type_at(&mut session, b, 0, "bb");
+
+    assert!(session.undo(a).is_some());
+    assert_eq!((text(&session, a), text(&session, b)), ("", "bb"));
+    assert_eq!(session.undo(a), None);
+
+    session.close(b);
+    let b = session.open(&cart, &path("code/b.luau")).unwrap();
+    assert_eq!(session.undo(b), None);
 }

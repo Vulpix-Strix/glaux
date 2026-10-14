@@ -165,7 +165,15 @@ fn run(
     let mut presented = Framebuffer::new();
     let mut picker = FilePicker::new();
     // Render before updating so the initial state is the first frame shown.
-    while !host.should_close() {
+    loop {
+        // Closing the window only asks: the system may first ask what to do
+        // with unsaved edits, and quits once they are saved or discarded.
+        if host.should_close() {
+            system.request_exit();
+        }
+        if system.exit_confirmed() {
+            break;
+        }
         tracker.observe(snapshot(&host, &tracker));
         for launch in instance.drain() {
             tracing::info!(args = ?launch.args, cwd = %launch.cwd.display(), "another launch was forwarded here");

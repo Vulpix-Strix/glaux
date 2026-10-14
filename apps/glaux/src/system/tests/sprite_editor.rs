@@ -213,44 +213,40 @@ fn restoring_every_edit_rereads_the_files_and_unblocks_load() {
 }
 
 #[test]
-fn unsaved_edits_block_load_new_and_unload_without_discard() {
+fn unsaved_edits_ask_before_load_new_and_unload() {
     let fixture = Fixture::new("sys-sprites-edit-guard");
     let system = press_break(edited(&fixture));
     let before = snapshot(&fixture.root());
 
+    // Escape, Enter on the focused CANCEL, and a click elsewhere all leave
+    // everything as it was.
     let system = enter(system, "load pong");
-    assert_eq!(
-        after(&system, "> load pong"),
-        [
-            "! Pong 0.1.0 has unsaved graphics changes; --discard drops them",
-            "Try: load --discard pong",
-        ]
-    );
+    assert_eq!(unsaved_question(&system), asks_about_unsaved());
+    assert_eq!(system.unsaved_flow().unwrap().dialog().focus(), 2);
+    let system = press_break(system);
     let system = enter(system, "new other --name Other");
-    assert_eq!(
-        after(&system, "> new other --name Other"),
-        [
-            "! Pong 0.1.0 has unsaved graphics changes; --discard drops them",
-            "Try: new --discard other --name Other",
-        ]
-    );
+    assert_eq!(unsaved_question(&system), asks_about_unsaved());
+    let system = system.update(&[InputEvent::Enter]);
     let system = enter(system, "unload");
-    assert_eq!(
-        after(&system, "> unload"),
-        [
-            "! Pong 0.1.0 has unsaved graphics changes; --discard drops them",
-            "Try: unload --discard",
-        ]
-    );
+    assert_eq!(unsaved_question(&system), asks_about_unsaved());
+    let system = press_break(system);
+
+    assert_eq!(unsaved_question(&system), None);
+    assert_eq!(after(&system, "> unload"), Vec::<String>::new());
     assert_eq!(snapshot(&fixture.root()), before, "new created nothing");
+    assert_eq!(loaded_name(&system), Some("Pong"));
     assert!(document(&system).is_modified());
 
-    let system = enter(system, "load --discard pong");
-    assert_eq!(
-        after(&system, "> load --discard pong"),
-        ["Loaded Pong 0.1.0"]
-    );
+    let system = enter(system, "load pong");
+    let system = system.update(&[InputEvent::Up { select: false }, InputEvent::Enter]);
+    assert_eq!(unsaved_question(&system), None);
+    assert_eq!(after(&system, "> load pong"), ["Loaded Pong 0.1.0"]);
     assert!(system.sprites.is_none());
+    assert_eq!(
+        snapshot(&fixture.root()),
+        before,
+        "discarding wrote nothing"
+    );
     let system = press_break(system);
     assert_eq!(document(&system).pixel(0, 0, 0), Some(3));
 }
@@ -647,7 +643,7 @@ fn palette_changes_show_at_once_and_undo_restores_them() {
 }
 
 #[test]
-fn palette_changes_block_load_survive_trips_and_reach_a_run() {
+fn palette_changes_hold_up_load_survive_trips_and_reach_a_run() {
     let fixture = Fixture::new("sys-palette-run");
     let rom = fake_rom();
     let dir = fixture.root().join("pong");
@@ -655,14 +651,8 @@ fn palette_changes_block_load_survive_trips_and_reach_a_run() {
     let before = snapshot(&dir);
 
     let system = enter(press_break(system), "load pong");
-    assert_eq!(
-        after(&system, "> load pong"),
-        [
-            "! Pong 0.1.0 has unsaved graphics changes; --discard drops them",
-            "Try: load --discard pong",
-        ]
-    );
-    let system = press_break(system);
+    assert_eq!(unsaved_question(&system), asks_about_unsaved());
+    let system = press_break(press_break(system));
     assert!(is_workspace(&system));
     assert!(modal(&system).is_none());
     assert_eq!(document(&system).video().palette.get(101), RED);
@@ -1037,4 +1027,25 @@ fn only_this_palette_keeps_the_other_palettes_and_saves_both_files() {
         distinct_palette().get(103),
         "one undo puts both files' changes back"
     );
+}
+
+#[test]
+fn quitting_with_unsaved_graphics_asks_and_save_all_writes_them() {
+    let fixture = Fixture::new("sys-sprites-quit");
+    let mut system = edited(&fixture);
+    let tiles = fixture.root().join("pong/sprites.bin");
+    let before = std::fs::read(&tiles).unwrap();
+    system.request_exit();
+    let system = system.update(&[]);
+    assert_eq!(unsaved_question(&system), asks_about_unsaved());
+    assert_eq!(
+        system.unsaved_flow().unwrap().dialog().message()[0],
+        "graphics has unsaved changes."
+    );
+
+    let up = InputEvent::Up { select: false };
+    let system = system.update(&[up, up, InputEvent::Enter]);
+    assert!(system.exit_confirmed());
+    assert!(!document(&system).is_modified());
+    assert_ne!(std::fs::read(&tiles).unwrap(), before);
 }

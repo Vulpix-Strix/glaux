@@ -79,6 +79,10 @@ pub enum ShellRequest {
     Resume,
     /// Dispose of the paused cartridge's VM, keeping the cartridge loaded.
     Stop,
+    /// Ask what to do with the loaded cartridge's unsaved edits before
+    /// `action`, the command as typed, which would drop them. `line` runs
+    /// it without asking again; see [`Shell::run_confirmed`].
+    ConfirmUnsaved { action: String, line: String },
 }
 
 /// Where a cartridge asked to be loaded comes from, which decides how its
@@ -342,6 +346,21 @@ impl Shell {
         }
         self.scrollback.push(Entry::Command(line.to_owned()));
         self.history.push(line);
+        self.execute(line, slot)
+    }
+
+    /// Runs `line`, the command a [`ShellRequest::ConfirmUnsaved`] gave,
+    /// once the user has answered. The command was echoed when typed, so
+    /// it is neither echoed again nor added to the history.
+    pub(super) fn run_confirmed(
+        &mut self,
+        line: &str,
+        slot: CartridgeSlot<'_>,
+    ) -> Option<ShellRequest> {
+        self.execute(line, slot)
+    }
+
+    fn execute(&mut self, line: &str, slot: CartridgeSlot<'_>) -> Option<ShellRequest> {
         match parser::parse(line) {
             Ok(Some(invocation)) => {
                 let mut request = None;

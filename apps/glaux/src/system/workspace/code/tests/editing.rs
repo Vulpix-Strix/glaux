@@ -394,3 +394,76 @@ fn ctrl_s_asks_to_save_the_active_document_only_when_nothing_covers_it() {
         None
     );
 }
+
+#[test]
+fn undo_and_redo_restore_the_text_and_selection_and_show_the_caret() {
+    let fixture = Fixture::new("code-edit-undo");
+    let text_before = "alpha beta\n".repeat(60);
+    let (mut editor, _, mut session) = open(&fixture, &text_before, EditorSettings::default());
+    feed(
+        &mut editor,
+        &mut session,
+        &[plain(right), InputEvent::WordRight { select: true }],
+    );
+    assert_eq!(selected(&session), 1..5);
+    feed(&mut editor, &mut session, &typing("XY"));
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::DocumentEnd { select: false }],
+    );
+    assert_ne!(view(&session), DocumentView::default());
+
+    feed(&mut editor, &mut session, &[InputEvent::Undo]);
+    assert_eq!(text(&session), text_before);
+    assert_eq!((selected(&session), caret(&session)), (1..5, 5));
+    assert!(caret_shown(&editor, &session));
+
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::DocumentEnd { select: false }, InputEvent::Redo],
+    );
+    assert!(text(&session).starts_with("aXY beta\n"));
+    assert_eq!((selected(&session), caret(&session)), (3..3, 3));
+    assert!(caret_shown(&editor, &session));
+}
+
+#[test]
+fn a_pause_in_typing_starts_a_new_undo_step() {
+    let fixture = Fixture::new("code-edit-undo-idle");
+    for (pause, after_undo) in [(UNDO_IDLE_TICKS - 1, ""), (UNDO_IDLE_TICKS, "ab")] {
+        let (mut editor, _, mut session) = open(&fixture, "", EditorSettings::default());
+        feed(&mut editor, &mut session, &typing("ab"));
+        for _ in 0..pause {
+            editor.tick(Some(&mut session));
+        }
+        feed(&mut editor, &mut session, &typing("cd"));
+        feed(&mut editor, &mut session, &[InputEvent::Undo]);
+        assert_eq!(text(&session), after_undo, "after a {pause}-tick pause");
+    }
+}
+
+#[test]
+fn each_document_undoes_its_own_edits_across_tab_switches() {
+    let fixture = Fixture::new("code-edit-undo-tabs");
+    let (_, mut session) = session_with_text(&fixture, &["a.luau", "b.luau"], "");
+    let mut editor = editor();
+    editor.refresh_metrics(&mut session);
+    feed(&mut editor, &mut session, &typing("in b"));
+    feed(&mut editor, &mut session, &[InputEvent::NextDocument]);
+    feed(&mut editor, &mut session, &typing("in a"));
+
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::NextDocument, InputEvent::Undo],
+    );
+    assert_eq!(text(&session), "");
+    feed(&mut editor, &mut session, &[InputEvent::NextDocument]);
+    assert_eq!(text(&session), "in a");
+    feed(&mut editor, &mut session, &[InputEvent::Undo]);
+    assert_eq!(text(&session), "");
+    feed(&mut editor, &mut session, &[InputEvent::Undo]);
+    assert_eq!(text(&session), "");
+}

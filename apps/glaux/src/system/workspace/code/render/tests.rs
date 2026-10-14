@@ -7,6 +7,7 @@ use pretty_assertions::assert_eq;
 use super::super::tests::{editor, id_of, session_with_text};
 use super::*;
 use crate::cartridge_fs::fixture::Fixture;
+use crate::system::code_history::EditKind;
 use crate::system::shell::BLINK_TICKS;
 
 mod selection;
@@ -359,7 +360,10 @@ fn modified_tabs_show_a_dot_where_close_is_until_hovered() {
     let editor = editor();
     let (cartridge, mut session) = session_with_text(&fixture, &["a.luau", "b.luau"], "x");
     let (a, b) = (id_of(&session, "a.luau"), id_of(&session, "b.luau"));
-    session.edit(a, 0..0, "y").unwrap().unwrap();
+    session
+        .edit(a, 0..0, "y", EditKind::Structural)
+        .unwrap()
+        .unwrap();
     let labels = labels(&editor.layout().font, &session);
     let tabs = editor.layout().strip_tabs(&labels, 0);
     let (tab_a, tab_b) = (tabs[0], tabs[1]);
@@ -380,14 +384,20 @@ fn modified_tabs_show_a_dot_where_close_is_until_hovered() {
 
     // The active tab takes the dot too, and each tab follows its own
     // document: saving one leaves the other marked.
-    session.edit(b, 0..0, "y").unwrap().unwrap();
+    session
+        .edit(b, 0..0, "y", EditKind::Structural)
+        .unwrap()
+        .unwrap();
     session.save(&cartridge, a).unwrap();
     let framebuffer = render_at(&editor, &session, None);
     assert_eq!(close_cell(&framebuffer, tab_a.close), cross(IDLE_SHADE));
     assert_eq!(close_cell(&framebuffer, tab_b.close), dot());
 
     // Text edited back to what was saved is clean again.
-    session.edit(b, 0..1, "").unwrap().unwrap();
+    session
+        .edit(b, 0..1, "", EditKind::Structural)
+        .unwrap()
+        .unwrap();
     let framebuffer = render_at(&editor, &session, None);
     assert_eq!(close_cell(&framebuffer, tab_b.close), cross(DIM));
 }

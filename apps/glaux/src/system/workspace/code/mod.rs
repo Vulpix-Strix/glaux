@@ -47,6 +47,9 @@ const MULTI_CLICK_TICKS: u32 = TICK_RATE * 2 / 5;
 const MULTI_CLICK_SLOP: u16 = 2;
 /// Ticks between the scroll steps of a selection dragged past the text.
 const AUTOSCROLL_TICKS: u32 = 4;
+/// Ticks without an edit after which the next one starts a new undo step,
+/// even where it continues the last.
+const UNDO_IDLE_TICKS: u32 = TICK_RATE;
 
 /// The status bar hint while nothing covers the view.
 const VIEW_HINT: &str = "Ctrl+S: save  Ctrl+P: open  Ctrl+W: close  Esc: shell";
@@ -69,6 +72,9 @@ pub enum CodeRequest {
     SaveSettings(EditorSettings),
     /// Write this document to its file.
     Save(DocumentId),
+    /// Ask whether to save this document's unsaved edits before closing
+    /// its tab.
+    ConfirmClose(DocumentId),
 }
 
 /// The list of every open tab, dropped from the strip's right end.
@@ -147,6 +153,8 @@ pub struct CodeEditor {
     last_click: Option<Click>,
     /// Ticks the pointer has spent past the text while selecting.
     autoscroll: u32,
+    /// Ticks since the last edit, saturating.
+    idle: u32,
 }
 
 impl CodeEditor {
@@ -164,6 +172,7 @@ impl CodeEditor {
             selecting: None,
             last_click: None,
             autoscroll: 0,
+            idle: 0,
         }
     }
 
@@ -172,6 +181,7 @@ impl CodeEditor {
     /// past its text.
     pub fn tick(&mut self, session: Option<&mut CodeSession>) {
         self.blink = self.blink.wrapping_add(1);
+        self.idle = self.idle.saturating_add(1);
         self.last_click = self.last_click.and_then(|click| {
             let ticks_left = click.ticks_left.checked_sub(1).filter(|&left| left > 0)?;
             Some(Click {
@@ -457,9 +467,10 @@ impl CodeEditor {
             InputEvent::OpenFile => return Some(CodeRequest::ListScripts),
             InputEvent::Save => return session.tabs().active().map(CodeRequest::Save),
             InputEvent::CloseDocument => {
-                if let Some(active) = session.tabs().active() {
-                    session.close(active);
-                }
+                return session
+                    .tabs()
+                    .active()
+                    .and_then(|active| close_tab(session, active));
             }
             InputEvent::NextDocument => session.tabs_mut().cycle(1),
             InputEvent::PreviousDocument => session.tabs_mut().cycle(-1),
@@ -490,9 +501,7 @@ impl CodeEditor {
                         session.tabs_mut().activate(ids[index]);
                         self.drag = Some(index);
                     }
-                    StripHit::Close(index) => {
-                        session.close(ids[index]);
-                    }
+                    StripHit::Close(index) => return close_tab(session, ids[index]),
                     StripHit::More => {
                         let active = session.tabs().active();
                         if let Some(focus) = active.and_then(|id| session.tabs().index_of(id)) {
@@ -513,7 +522,7 @@ impl CodeEditor {
                 if let StripHit::Tab(index) | StripHit::Close(index) =
                     self.layout.strip_hit(&labels, scroll, at)
                 {
-                    session.close(ids[index]);
+                    return close_tab(session, ids[index]);
                 }
             }
             InputEvent::PointerUp {
@@ -953,6 +962,16 @@ impl CodeEditor {
             .collect();
         (window, rows)
     }
+}
+
+/// Closes `id`'s tab if its document has no unsaved edits, and otherwise
+/// asks to confirm.
+fn close_tab(session: &mut CodeSession, id: DocumentId) -> Option<CodeRequest> {
+    if session.document(id).is_some_and(CodeDocument::is_modified) {
+        return Some(CodeRequest::ConfirmClose(id));
+    }
+    session.close(id);
+    None
 }
 
 /// Whether a press at `b` lands close enough to one at `a` to continue its

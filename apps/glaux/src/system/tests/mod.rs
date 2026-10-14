@@ -29,6 +29,7 @@ mod rom_audio;
 mod shell_screen;
 mod sprite_editor;
 mod sprite_import;
+mod unsaved_changes;
 mod workspace_ui;
 
 const CELL_W: i32 = 4;
@@ -377,4 +378,26 @@ fn click(at: Point) -> [InputEvent; 2] {
         },
         InputEvent::PointerUp { button, at },
     ]
+}
+
+/// The title and buttons of the question about unsaved edits, while open.
+fn unsaved_question(system: &System) -> Option<(String, Vec<String>)> {
+    let dialog = system.unsaved_flow()?.dialog();
+    Some((
+        dialog.title().to_owned(),
+        dialog.labels().into_iter().map(str::to_owned).collect(),
+    ))
+}
+
+/// The question about unsaved edits that quitting or a shell command
+/// asks, as it first opens.
+fn asks_about_unsaved() -> Option<(String, Vec<String>)> {
+    Some((
+        "UNSAVED CHANGES".to_owned(),
+        vec![
+            "SAVE ALL".to_owned(),
+            "DISCARD".to_owned(),
+            "CANCEL".to_owned(),
+        ],
+    ))
 }

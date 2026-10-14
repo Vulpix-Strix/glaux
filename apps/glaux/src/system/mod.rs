@@ -9,6 +9,7 @@ mod boot;
 mod code_cursor;
 mod code_document;
 mod code_edit;
+mod code_history;
 mod code_selection;
 mod code_session;
 mod code_text;
@@ -23,6 +24,7 @@ mod sprite_document;
 mod test_font;
 #[cfg(test)]
 mod test_frames;
+mod unsaved;
 mod video;
 mod workspace;
 
@@ -48,6 +50,7 @@ use running::{FailedStart, RunningCartridge, StartError};
 use semver::Version;
 use sfx::SystemSound;
 use shell::{CartridgeSlot, ShellRequest, cartridge_identity};
+use unsaved::{Edits, Outcome, Pending, UnsavedFlow};
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -205,6 +208,33 @@ pub struct System {
     code: Option<CodeSession>,
     /// Host work asked for and not yet taken by the host, oldest first.
     host_requests: VecDeque<HostRequest>,
+    /// The question about unsaved edits that holds up quitting or a shell
+    /// command. While open it takes every input, whatever the state.
+    unsaved: Option<UnsavedFlow>,
+    /// Quitting was asked for with unsaved edits, and the next update asks
+    /// about them.
+    exit_requested: bool,
+    /// Quitting was confirmed; see [`exit_confirmed`](Self::exit_confirmed).
+    exiting: bool,
+}
+
+/// What the states lend the shell and the question about unsaved edits.
+struct Context<'a> {
+    video_defaults: &'a CartridgeVideoDefaults,
+    workspace: &'a mut Workspace,
+    sprites: &'a mut Option<SpriteDocument>,
+    code: &'a mut Option<CodeSession>,
+    unsaved: &'a mut Option<UnsavedFlow>,
+}
+
+impl Context<'_> {
+    /// Whether the editors hold edits not written to the cartridge.
+    fn has_unsaved(&self) -> bool {
+        self.sprites
+            .as_ref()
+            .is_some_and(SpriteDocument::is_modified)
+            || self.code.as_ref().is_some_and(CodeSession::is_modified)
+    }
 }
 
 impl System {
@@ -234,7 +264,42 @@ impl System {
             sprites: None,
             code: None,
             host_requests: VecDeque::new(),
+            unsaved: None,
+            exit_requested: false,
+            exiting: false,
         }
+    }
+
+    /// Asks to quit Glaux, as closing the window does. Without unsaved
+    /// edits quitting is confirmed at once; with them, the next update
+    /// asks whether to save them, pausing a running cartridge first. A
+    /// request while that question is open is ignored.
+    pub fn request_exit(&mut self) {
+        if self.exiting || self.unsaved.is_some() {
+            return;
+        }
+        let unsaved = self
+            .sprites
+            .as_ref()
+            .is_some_and(SpriteDocument::is_modified)
+            || self.code.as_ref().is_some_and(CodeSession::is_modified);
+        if unsaved {
+            tracing::info!("quit requested with unsaved edits");
+            self.exit_requested = true;
+        } else {
+            self.exiting = true;
+        }
+    }
+
+    /// Whether Glaux should quit now: asked to, and its edits saved or
+    /// discarded.
+    pub fn exit_confirmed(&self) -> bool {
+        self.exiting
+    }
+
+    #[cfg(test)]
+    fn unsaved_flow(&self) -> Option<&UnsavedFlow> {
+        self.unsaved.as_ref()
     }
 
     /// Shows code in the workspace with `settings`, the ones kept from an
@@ -280,9 +345,16 @@ impl System {
         if !matches!(self.state, SystemState::Workspace { .. }) {
             return;
         }
-        let (cursor, frame) = match pointer {
-            Some(at) => self.workspace.cursor(at, self.code.as_ref()),
-            None => (SystemCursor::Arrow, 0),
+        let (cursor, frame) = match (pointer, &self.unsaved) {
+            (Some(at), Some(flow)) => {
+                let layout = self.workspace.dialog_layout(flow.dialog(), false);
+                match layout.button_at(at) {
+                    Some(_) => (SystemCursor::Hand, 0),
+                    None => (SystemCursor::Arrow, 0),
+                }
+            }
+            (Some(at), None) => self.workspace.cursor(at, self.code.as_ref()),
+            (None, _) => (SystemCursor::Arrow, 0),
         };
         workspace::draw_cursor(framebuffer, rom.ui().cursor(cursor), frame, pointer);
     }
@@ -295,6 +367,9 @@ impl System {
     /// Break pauses it and button events reach its `btn` and `btnp`;
     /// anything else is ignored. On the pause screen, Break resumes the
     /// cartridge and Enter opens the shell with it still paused.
+    ///
+    /// While the system asks what to do with unsaved edits, its dialog
+    /// takes every input instead, and nothing else advances.
     pub fn update(self, input: &[InputEvent]) -> Self {
         let Self {
             state,
@@ -306,68 +381,76 @@ impl System {
             mut sprites,
             mut code,
             mut host_requests,
+            mut unsaved,
+            exit_requested,
+            mut exiting,
         } = self;
-        let state = match state {
-            SystemState::Boot {
-                mut boot,
-                cartridges,
-            } => {
-                if let Some(sfx) = boot.tick() {
-                    sound.play(sfx);
-                }
-                if boot.is_finished() {
-                    tracing::info!("boot finished, entering shell");
-                    sound.stop();
-                    SystemState::Shell {
-                        shell: Box::new(Shell::new(info.clone(), cartridges)),
-                        loaded: None,
+        let mut ctx = Context {
+            video_defaults: &video_defaults,
+            workspace: &mut workspace,
+            sprites: &mut sprites,
+            code: &mut code,
+            unsaved: &mut unsaved,
+        };
+        let mut state = state;
+        if exit_requested {
+            state = guard_exit(state, &mut ctx, &mut exiting);
+        }
+        let state = if ctx.unsaved.is_some() {
+            unsaved_tick(state, input, &mut ctx, &mut exiting)
+        } else {
+            match state {
+                SystemState::Boot {
+                    mut boot,
+                    cartridges,
+                } => {
+                    if let Some(sfx) = boot.tick() {
+                        sound.play(sfx);
                     }
-                } else {
-                    SystemState::Boot { boot, cartridges }
+                    if boot.is_finished() {
+                        tracing::info!("boot finished, entering shell");
+                        sound.stop();
+                        SystemState::Shell {
+                            shell: Box::new(Shell::new(info.clone(), cartridges)),
+                            loaded: None,
+                        }
+                    } else {
+                        SystemState::Boot { boot, cartridges }
+                    }
                 }
-            }
-            SystemState::Shell { shell, loaded } => shell_tick(
-                shell,
-                loaded,
-                input,
-                &video_defaults,
-                &mut workspace,
-                Documents {
-                    sprites: &mut sprites,
-                    code: &mut code,
-                },
-            ),
-            SystemState::Workspace {
-                shell,
-                cartridge,
-                video,
-            } => {
-                let (state, requests) = workspace_tick(
+                SystemState::Shell { shell, loaded } => shell_tick(shell, loaded, input, &mut ctx),
+                SystemState::Workspace {
                     shell,
                     cartridge,
                     video,
-                    &mut workspace,
-                    Documents {
-                        sprites: &mut sprites,
-                        code: &mut code,
-                    },
-                    &video_defaults,
-                    input,
-                );
-                host_requests.extend(requests);
-                state
+                } => {
+                    let (state, requests) = workspace_tick(
+                        shell,
+                        cartridge,
+                        video,
+                        ctx.workspace,
+                        Documents {
+                            sprites: ctx.sprites,
+                            code: ctx.code,
+                        },
+                        ctx.video_defaults,
+                        input,
+                    );
+                    host_requests.extend(requests);
+                    state
+                }
+                SystemState::Running { shell, running } => running_tick(shell, running, input),
+                SystemState::Paused {
+                    shell,
+                    running,
+                    view: PausedView::Game(overlay),
+                } => paused_game_tick(shell, running, overlay, input),
+                SystemState::Paused {
+                    shell,
+                    running,
+                    view: PausedView::Shell,
+                } => paused_shell_tick(shell, running, input),
             }
-            SystemState::Running { shell, running } => running_tick(shell, running, input),
-            SystemState::Paused {
-                shell,
-                running,
-                view: PausedView::Game(overlay),
-            } => paused_game_tick(shell, running, overlay, input),
-            SystemState::Paused {
-                shell,
-                running,
-                view: PausedView::Shell,
-            } => paused_shell_tick(shell, running, input),
         };
         sound.tick();
         Self {
@@ -380,6 +463,9 @@ impl System {
             sprites,
             code,
             host_requests,
+            unsaved,
+            exit_requested: false,
+            exiting,
         }
     }
 
@@ -509,9 +595,22 @@ impl System {
     }
 
     /// Redraws the whole framebuffer for the current state using the ROM's
-    /// font and UI images. In the workspace, `pointer` is the logical pixel
+    /// font and UI images, with the question about unsaved edits on top
+    /// while it is open. In the workspace, `pointer` is the logical pixel
     /// under the host's pointer, used to highlight what it hovers.
     pub fn render(&self, framebuffer: &mut Framebuffer, rom: &SystemRom, pointer: Option<Point>) {
+        let Some(flow) = &self.unsaved else {
+            self.render_state(framebuffer, rom, pointer);
+            return;
+        };
+        // Nothing under the dialog reacts to the pointer.
+        self.render_state(framebuffer, rom, None);
+        let whole_screen = !matches!(self.state, SystemState::Workspace { .. });
+        let layout = self.workspace.dialog_layout(flow.dialog(), whole_screen);
+        flow.dialog().render(framebuffer, rom.font(), &layout);
+    }
+
+    fn render_state(&self, framebuffer: &mut Framebuffer, rom: &SystemRom, pointer: Option<Point>) {
         let font = rom.font();
         let metrics = font.metrics();
         let (cell_w, cell_h) = (
@@ -609,34 +708,46 @@ fn shell_audio(shell: &Shell, psg: &mut Psg) {
 /// A started cartridge does not take input, so events that follow a
 /// successful `run` in the same tick are dropped. So are events after a
 /// Break that opens the workspace, so keys meant for the shell never act
-/// on it.
+/// on it, and events after a command that asks what to do with unsaved
+/// edits, which the question takes instead.
 ///
-/// Replacing or unloading the cartridge drops its `documents`, once the
-/// new cartridge has loaded or the old one is unloaded; a `load` that
-/// fails keeps them. The shell refuses to while they hold unsaved edits
-/// unless told to discard them.
+/// Replacing or unloading the cartridge drops its documents, once the new
+/// cartridge has loaded or the old one is unloaded; a `load` that fails
+/// keeps them. While they hold unsaved edits, the shell asks first unless
+/// told to discard them.
 fn shell_tick(
+    mut shell: Box<Shell>,
+    loaded: Option<LoadedCartridge>,
+    input: &[InputEvent],
+    ctx: &mut Context<'_>,
+) -> SystemState {
+    // Ticking before the input lets this tick's input restart the blink.
+    shell.tick();
+    shell_input(shell, loaded, input, ctx)
+}
+
+/// Feeds `input` to the shell, as [`shell_tick`] does, without ticking it.
+fn shell_input(
     mut shell: Box<Shell>,
     mut loaded: Option<LoadedCartridge>,
     input: &[InputEvent],
-    video_defaults: &CartridgeVideoDefaults,
-    workspace: &mut Workspace,
-    documents: Documents<'_>,
+    ctx: &mut Context<'_>,
 ) -> SystemState {
-    let Documents { sprites, code } = documents;
-    // Ticking before the input lets this tick's input restart the blink.
-    shell.tick();
     // Input is deliberately not logged: user input stays out of
     // application logs.
     for (index, &event) in input.iter().enumerate() {
         if event == InputEvent::Break {
             match loaded {
                 Some(cartridge) => {
+                    let video_defaults = ctx.video_defaults;
                     return open_workspace(
                         shell,
                         cartridge,
-                        workspace,
-                        Documents { sprites, code },
+                        ctx.workspace,
+                        Documents {
+                            sprites: ctx.sprites,
+                            code: ctx.code,
+                        },
                         video_defaults,
                     );
                 }
@@ -646,47 +757,209 @@ fn shell_tick(
                 }
             }
         }
-        let unsaved = sprites.as_ref().is_some_and(SpriteDocument::is_modified);
-        match shell.handle_input(event, CartridgeSlot::loaded(loaded.as_ref(), unsaved)) {
-            None => {}
-            // The shell only asks to load a cartridge that already loaded.
-            Some(ShellRequest::Load { cartridge, origin }) => {
-                discard_documents(sprites, code, workspace);
-                let cartridge = loaded.insert(*cartridge);
-                shell.announce_loaded(cartridge.manifest(), origin);
+        let slot = CartridgeSlot::loaded(loaded.as_ref(), ctx.has_unsaved());
+        let request = shell.handle_input(event, slot);
+        match shell_request(shell, loaded, request, &input[index + 1..], ctx) {
+            (
+                SystemState::Shell {
+                    shell: kept,
+                    loaded: still,
+                },
+                true,
+            ) => {
+                (shell, loaded) = (kept, still);
             }
-            Some(ShellRequest::Unload) => {
-                let Some(cartridge) = loaded.take() else {
-                    unreachable!("UNLOAD was requested without a loaded cartridge");
-                };
-                discard_documents(sprites, code, workspace);
-                let identity = cartridge_identity(cartridge.manifest());
-                tracing::info!(cartridge = %identity, "cartridge unloaded");
-                shell.report(format!("Unloaded {identity}"));
-            }
-            Some(ShellRequest::Run) => {
-                // `run` only asks to start when a cartridge is loaded.
-                let Some(cartridge) = loaded else {
-                    unreachable!("RUN was requested without a loaded cartridge");
-                };
-                return match start(shell, cartridge, video_defaults, sprites.as_ref()) {
-                    SystemState::Shell { shell, loaded } => shell_tick(
-                        shell,
-                        loaded,
-                        &input[index + 1..],
-                        video_defaults,
-                        workspace,
-                        Documents { sprites, code },
-                    ),
-                    state => state,
-                };
-            }
-            Some(_request @ (ShellRequest::Resume | ShellRequest::Stop)) => {
-                unreachable!("{_request:?} was requested without a paused cartridge")
-            }
+            (state, _) => return state,
         }
     }
     SystemState::Shell { shell, loaded }
+}
+
+/// Carries out `request`, a shell command's cartridge request. `rest` is
+/// the input that followed it in this tick. Returns the state that
+/// follows, and whether the shell still takes the rest of this tick's
+/// input.
+fn shell_request(
+    mut shell: Box<Shell>,
+    mut loaded: Option<LoadedCartridge>,
+    request: Option<ShellRequest>,
+    rest: &[InputEvent],
+    ctx: &mut Context<'_>,
+) -> (SystemState, bool) {
+    match request {
+        None => {}
+        // The shell only asks to load a cartridge that already loaded.
+        Some(ShellRequest::Load { cartridge, origin }) => {
+            discard_documents(ctx.sprites, ctx.code, ctx.workspace);
+            let cartridge = loaded.insert(*cartridge);
+            shell.announce_loaded(cartridge.manifest(), origin);
+        }
+        Some(ShellRequest::Unload) => {
+            let Some(cartridge) = loaded.take() else {
+                unreachable!("UNLOAD was requested without a loaded cartridge");
+            };
+            discard_documents(ctx.sprites, ctx.code, ctx.workspace);
+            let identity = cartridge_identity(cartridge.manifest());
+            tracing::info!(cartridge = %identity, "cartridge unloaded");
+            shell.report(format!("Unloaded {identity}"));
+        }
+        Some(ShellRequest::Run) => {
+            // `run` only asks to start when a cartridge is loaded.
+            let Some(cartridge) = loaded else {
+                unreachable!("RUN was requested without a loaded cartridge");
+            };
+            let state = match start(shell, cartridge, ctx.video_defaults, ctx.sprites.as_ref()) {
+                SystemState::Shell { shell, loaded } => shell_input(shell, loaded, rest, ctx),
+                state => state,
+            };
+            return (state, false);
+        }
+        Some(ShellRequest::ConfirmUnsaved { action, line }) => {
+            let pending = Pending::Command {
+                action,
+                line: line.clone(),
+            };
+            match UnsavedFlow::new(pending, ctx.code.as_ref(), ctx.sprites.as_ref()) {
+                Some(flow) => {
+                    tracing::info!("asking what to do with unsaved edits");
+                    *ctx.unsaved = Some(flow);
+                    return (SystemState::Shell { shell, loaded }, false);
+                }
+                // Nothing is unsaved after all: run it as confirmed.
+                None => {
+                    let slot = CartridgeSlot::loaded(loaded.as_ref(), false);
+                    let request = shell.run_confirmed(&line, slot);
+                    return shell_request(shell, loaded, request, rest, ctx);
+                }
+            }
+        }
+        Some(_request @ (ShellRequest::Resume | ShellRequest::Stop)) => {
+            unreachable!("{_request:?} was requested without a paused cartridge")
+        }
+    }
+    (SystemState::Shell { shell, loaded }, true)
+}
+
+/// Asks what to do with unsaved edits before quitting, or confirms
+/// quitting at once without any. A running cartridge is paused and the
+/// question asked over the shell, so cancelling loses nothing; an
+/// unfinished sprite stroke is ended first so its edit is saved whole.
+fn guard_exit(state: SystemState, ctx: &mut Context<'_>, exiting: &mut bool) -> SystemState {
+    if ctx.unsaved.is_some() {
+        return state;
+    }
+    if matches!(state, SystemState::Workspace { .. }) {
+        ctx.workspace.end_stroke(ctx.sprites.as_mut());
+    }
+    let Some(flow) = UnsavedFlow::new(Pending::Exit, ctx.code.as_ref(), ctx.sprites.as_ref())
+    else {
+        *exiting = true;
+        return state;
+    };
+    *ctx.unsaved = Some(flow);
+    let (shell, running) = match state {
+        SystemState::Running { shell, running } => match pause(shell, running) {
+            SystemState::Paused { shell, running, .. } => (shell, running),
+            state => return state,
+        },
+        SystemState::Paused { shell, running, .. } => (shell, running),
+        state => return state,
+    };
+    SystemState::Paused {
+        shell,
+        running,
+        view: PausedView::Shell,
+    }
+}
+
+/// Feeds `input` to the open question about unsaved edits, and once it is
+/// answered carries out what waited on it. Events after the answer are
+/// dropped, as after any change of screen.
+fn unsaved_tick(
+    mut state: SystemState,
+    input: &[InputEvent],
+    ctx: &mut Context<'_>,
+    exiting: &mut bool,
+) -> SystemState {
+    for &event in input {
+        let Some(flow) = ctx.unsaved.as_mut() else {
+            break;
+        };
+        let whole_screen = !matches!(state, SystemState::Workspace { .. });
+        let layout = ctx.workspace.dialog_layout(flow.dialog(), whole_screen);
+        let Some(cartridge) = cartridge_of(&state) else {
+            // Unsaved edits always belong to a cartridge the system holds.
+            *ctx.unsaved = None;
+            break;
+        };
+        let edits = Edits {
+            cartridge,
+            code: ctx.code.get_or_insert_default(),
+            sprites: ctx.sprites.as_mut(),
+            defaults: ctx.video_defaults,
+        };
+        match flow.handle_input(event, &layout, edits) {
+            Outcome::Open => continue,
+            Outcome::Stopped(message) => {
+                tracing::info!("unsaved edits kept, nothing went ahead");
+                if let Some(message) = message {
+                    report(&mut state, ctx.workspace, message);
+                }
+            }
+            Outcome::Proceed(Pending::Exit) => {
+                tracing::info!("quitting");
+                *exiting = true;
+            }
+            Outcome::Proceed(Pending::Command { line, .. }) => {
+                *ctx.unsaved = None;
+                state = run_confirmed(state, &line, ctx);
+            }
+        }
+        *ctx.unsaved = None;
+        break;
+    }
+    if let SystemState::Workspace { video, .. } = &mut state
+        && let Some(document) = ctx.sprites.as_ref()
+    {
+        ctx.workspace.refresh_video(video, document);
+    }
+    state
+}
+
+/// The cartridge `state` holds, if any.
+fn cartridge_of(state: &SystemState) -> Option<&LoadedCartridge> {
+    match state {
+        SystemState::Boot { .. } => None,
+        SystemState::Shell { loaded, .. } => loaded.as_ref(),
+        SystemState::Workspace { cartridge, .. } => Some(cartridge),
+        SystemState::Running { running, .. } | SystemState::Paused { running, .. } => {
+            Some(running.cartridge())
+        }
+    }
+}
+
+/// Shows `message` where `state` shows notices: the shell's scrollback or
+/// the workspace's status bar.
+fn report(state: &mut SystemState, workspace: &mut Workspace, message: String) {
+    match state {
+        SystemState::Shell { shell, .. } | SystemState::Paused { shell, .. } => {
+            shell.report(message);
+        }
+        SystemState::Workspace { .. } => workspace.report(message),
+        SystemState::Boot { .. } | SystemState::Running { .. } => {}
+    }
+}
+
+/// Runs the shell command `line` once its unsaved edits were saved or
+/// discarded.
+fn run_confirmed(state: SystemState, line: &str, ctx: &mut Context<'_>) -> SystemState {
+    let SystemState::Shell { mut shell, loaded } = state else {
+        tracing::warn!("a confirmed shell command found no shell to run in");
+        return state;
+    };
+    let slot = CartridgeSlot::loaded(loaded.as_ref(), ctx.has_unsaved());
+    let request = shell.run_confirmed(line, slot);
+    shell_request(shell, loaded, request, &[], ctx).0
 }
 
 /// The documents of the loaded cartridge, lent together.
@@ -815,6 +1088,16 @@ fn workspace_tick(
                 workspace.script_saved(id, result);
                 continue;
             }
+            WorkspaceRequest::SaveAndCloseScript(id) => {
+                let result = code.save(&cartridge, id);
+                let written = result.is_ok();
+                workspace.script_saved(id, result);
+                if written {
+                    code.close(id);
+                    workspace.script_closed(code);
+                }
+                continue;
+            }
             request => request,
         };
         let Some(document) = sprites.as_mut().filter(|_| video.is_ready()) else {
@@ -840,7 +1123,8 @@ fn workspace_tick(
             | WorkspaceRequest::OpenScript(_)
             | WorkspaceRequest::SaveEditorSettings(_)
             | WorkspaceRequest::SaveScript(_)
-            | WorkspaceRequest::OverwriteScript { .. } => {
+            | WorkspaceRequest::OverwriteScript { .. }
+            | WorkspaceRequest::SaveAndCloseScript(_) => {
                 unreachable!("code requests are carried out above")
             }
         }
@@ -997,9 +1281,13 @@ fn paused_shell_tick(
             None => {}
             Some(ShellRequest::Resume) => return resume(shell, running),
             Some(ShellRequest::Stop) => return stop(shell, running, StopReason::Stopped),
-            // `load`, `unload` and `run` refuse to replace a paused cartridge.
+            // `load`, `unload`, `new` and `run` refuse to replace a paused
+            // cartridge before asking about unsaved edits.
             Some(
-                _request @ (ShellRequest::Load { .. } | ShellRequest::Unload | ShellRequest::Run),
+                _request @ (ShellRequest::Load { .. }
+                | ShellRequest::Unload
+                | ShellRequest::Run
+                | ShellRequest::ConfirmUnsaved { .. }),
             ) => {
                 unreachable!("{_request:?} was requested while a cartridge is paused")
             }

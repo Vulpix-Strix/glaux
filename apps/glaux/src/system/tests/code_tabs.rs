@@ -22,7 +22,7 @@ fn notice(system: &System) -> Option<&str> {
 }
 
 /// Opens `filter`'s best match through OPEN FILE.
-fn open_file(system: System, filter: &str) -> System {
+pub(super) fn open_file(system: System, filter: &str) -> System {
     let mut input = vec![InputEvent::OpenFile];
     input.extend(filter.chars().map(InputEvent::Text));
     input.push(InputEvent::Enter);
@@ -30,7 +30,7 @@ fn open_file(system: System, filter: &str) -> System {
 }
 
 /// The `Pong` cartridge loaded with `files` written beside its entry.
-fn loaded_with(fixture: &Fixture, files: &[(&str, &str)]) -> System {
+pub(super) fn loaded_with(fixture: &Fixture, files: &[(&str, &str)]) -> System {
     let system = shell_with_cartridge(fixture, "-- main\n");
     let dir = fixture.root().join("pong");
     for (path, text) in files {

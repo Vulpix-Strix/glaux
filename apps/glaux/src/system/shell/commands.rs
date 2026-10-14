@@ -287,30 +287,28 @@ const NOT_PAUSED_ERROR: &str = "No paused cartridge";
 /// Reported by commands that act on the loaded cartridge when there is none.
 const NOT_LOADED_ERROR: &str = "No cartridge loaded";
 
-/// Refuses, with the line that would proceed, when the command in
-/// `invocation` would replace a loaded cartridge whose edits are unsaved
-/// and `--discard` was not given. Returns whether it refused.
-fn refuse_unsaved(invocation: &Invocation<'_>, ctx: &mut Context<'_>) -> bool {
-    let CartridgeSlot::Loaded {
-        cartridge,
-        unsaved: true,
-    } = ctx.slot
-    else {
+/// Asks the system what to do with the unsaved edits first when the
+/// command in `invocation` would replace a loaded cartridge holding them
+/// and `--discard` was not given. Returns whether it asked, in which case
+/// the command does nothing yet: the system runs it again with
+/// `--discard` once the edits are saved or the user discards them.
+fn confirm_unsaved(invocation: &Invocation<'_>, ctx: &mut Context<'_>) -> bool {
+    let CartridgeSlot::Loaded { unsaved: true, .. } = ctx.slot else {
         return false;
     };
     if invocation.flags.contains(&"discard") {
         return false;
     }
-    let identity = cartridge_identity(cartridge.manifest());
-    let mut line = format!("{} --discard", invocation.name.to_ascii_lowercase());
-    for arg in &invocation.args {
-        line.push(' ');
-        line.push_str(&quote(arg));
-    }
-    ctx.suggest(
-        format!("{identity} has unsaved graphics changes; --discard drops them"),
-        line,
-    );
+    let name = invocation.name.to_ascii_lowercase();
+    let args: String = invocation
+        .args
+        .iter()
+        .map(|arg| format!(" {}", quote(arg)))
+        .collect();
+    *ctx.request = Some(ShellRequest::ConfirmUnsaved {
+        action: format!("{name}{args}"),
+        line: format!("{name} --discard{args}"),
+    });
     true
 }
 
@@ -527,7 +525,7 @@ fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         ctx.error(PAUSED_ERROR);
         return;
     }
-    if refuse_unsaved(invocation, ctx) {
+    if confirm_unsaved(invocation, ctx) {
         return;
     }
     let split = match split_options(&invocation.args, NEW_OPTIONS) {
@@ -676,7 +674,7 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         ctx.error(PAUSED_ERROR);
         return;
     }
-    if refuse_unsaved(invocation, ctx) {
+    if confirm_unsaved(invocation, ctx) {
         return;
     }
     let path = &invocation.args[0];
@@ -697,7 +695,7 @@ fn unload(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
         CartridgeSlot::Empty => ctx.error(NOT_LOADED_ERROR),
         CartridgeSlot::Loaded { .. } => {
-            if !refuse_unsaved(invocation, ctx) {
+            if !confirm_unsaved(invocation, ctx) {
                 *ctx.request = Some(ShellRequest::Unload);
             }
         }

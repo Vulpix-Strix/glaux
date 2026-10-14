@@ -40,7 +40,7 @@ use crate::cartridge_fs::FsError;
 use crate::rom::ICON_SIZE;
 use crate::sprite_import::SheetSource;
 use code::{CodeEditor, CodeRequest};
-use dialog::Dialog;
+pub(super) use dialog::{Dialog, DialogLayout};
 #[cfg(test)]
 pub use sprites::ImportPreview;
 #[cfg(not(test))]
@@ -120,11 +120,19 @@ pub enum WorkspaceRequest {
         id: DocumentId,
         seen: Option<Vec<u8>>,
     },
+    /// Write this script document to its file and, once it is written,
+    /// close its tab; answer with [`Workspace::script_saved`] and, if it
+    /// closed, [`Workspace::script_closed`].
+    SaveAndCloseScript(DocumentId),
 }
 
-/// What a workspace dialog's buttons do.
+/// What a dialog's buttons do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Choice {
+pub(super) enum Choice {
+    /// Save unsaved edits, then go on with what asked.
+    Save,
+    /// Drop unsaved edits and go on with what asked.
+    Discard,
     Overwrite,
     Reload,
     Cancel,
@@ -136,14 +144,14 @@ enum Choice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Modal {
     dialog: Dialog<Choice>,
-    conflict: ConflictTarget,
+    target: Target,
 }
 
-/// What a conflict dialog showed, as it showed it: what Overwrite may
-/// replace and Reload reads again.
+/// What a dialog's choice acts on, as the dialog showed it: what Overwrite
+/// may replace, Reload reads again, or Save and Discard close.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ConflictTarget {
-    /// The dialog settles no conflict.
+pub(super) enum Target {
+    /// The dialog acts on nothing.
     None,
     /// Asset files of the sprite document.
     Assets(Vec<DiskAsset>),
@@ -152,6 +160,8 @@ enum ConflictTarget {
         id: DocumentId,
         seen: Option<Vec<u8>>,
     },
+    /// The tab of a script document with unsaved edits.
+    CloseScript(DocumentId),
 }
 
 /// A short message in the status bar answering what the user just did.
@@ -437,7 +447,7 @@ fn wrap(font: &BitmapFont, text: &str, columns: usize) -> Vec<String> {
 }
 
 /// What to tell the user when saving an asset file failed.
-fn write_advice(err: &CartridgeError) -> String {
+pub(super) fn write_advice(err: &CartridgeError) -> String {
     match err {
         CartridgeError::AssetReadOnly(asset) => {
             format!("{asset} is read-only. Make it writable, then save again.")
@@ -456,7 +466,7 @@ fn write_advice(err: &CartridgeError) -> String {
 }
 
 /// What to tell the user when saving the script at `path` failed.
-fn source_write_advice(path: &SourcePath, err: &FsError) -> String {
+pub(super) fn source_write_advice(path: &SourcePath, err: &FsError) -> String {
     match err {
         FsError::ReadOnly(_) => format!("{path} is read-only. Make it writable, then save again."),
         FsError::NotAFile(_) => {
@@ -477,12 +487,166 @@ fn source_write_advice(path: &SourcePath, err: &FsError) -> String {
 
 /// The line telling which files a save that stopped partway did write.
 fn saved_line(written: &[SavedFile]) -> Option<String> {
-    (!written.is_empty()).then(|| {
-        format!(
-            "Saved {} before stopping.",
-            file_list(written.iter().map(|file| file.asset))
-        )
-    })
+    let names: Vec<String> = written
+        .iter()
+        .map(|file| file.asset.file_name().to_owned())
+        .collect();
+    saved_before_stopping(&names)
+}
+
+/// The line telling which of `names` a run of saves that stopped partway
+/// did write, if any.
+pub(super) fn saved_before_stopping(names: &[String]) -> Option<String> {
+    (!names.is_empty()).then(|| format!("Saved {} before stopping.", names.join(", ")))
+}
+
+/// `names` as one phrase, as in `a.luau, b.luau and graphics`.
+fn phrase(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// Asks whether to save the unsaved edits to `names` before `what` goes
+/// ahead, as in "runs load pong". Cancel is focused so a stray Enter
+/// loses nothing.
+pub(super) fn unsaved_dialog(names: &[String], what: &str) -> Dialog<Choice> {
+    let (have, them) = match names {
+        [_] => ("has", "it"),
+        _ => ("have", "them"),
+    };
+    Dialog::new(
+        "UNSAVED CHANGES",
+        vec![
+            format!("{} {have} unsaved changes.", phrase(names)),
+            format!(
+                "SAVE ALL saves {them}, then {what}. DISCARD throws {them} away and {what} anyway."
+            ),
+        ],
+        vec![
+            ("SAVE ALL", Choice::Save),
+            ("DISCARD", Choice::Discard),
+            ("CANCEL", Choice::Cancel),
+        ],
+        2,
+        Some(Choice::Cancel),
+    )
+}
+
+/// Asks whether to save the unsaved edits to the script at `path` before
+/// closing its tab. Cancel is focused so a stray Enter loses nothing.
+fn close_dialog(path: &SourcePath) -> Dialog<Choice> {
+    Dialog::new(
+        "UNSAVED CHANGES",
+        vec![
+            format!("{path} has unsaved changes."),
+            "SAVE writes them to the file, then closes it. DISCARD closes it without saving."
+                .to_owned(),
+        ],
+        vec![
+            ("SAVE", Choice::Save),
+            ("DISCARD", Choice::Discard),
+            ("CANCEL", Choice::Cancel),
+        ],
+        2,
+        Some(Choice::Cancel),
+    )
+}
+
+/// Asks whether to overwrite the file of script document `id` in
+/// `conflict` with the document's text or leave both as they are. `saved`,
+/// if any, tells what was saved before the conflict was found. Cancel is
+/// focused so a stray Enter loses nothing.
+pub(super) fn script_conflict_dialog(
+    id: DocumentId,
+    conflict: SourceConflict,
+    saved: Option<String>,
+) -> (Dialog<Choice>, Target) {
+    let SourceConflict { path, kind, disk } = conflict;
+    let (what, replaces) = match kind {
+        SourceConflictKind::Modified => (
+            format!("{path} changed outside Glaux."),
+            "OVERWRITE DISK replaces the file with your edits.",
+        ),
+        SourceConflictKind::Deleted => (
+            format!("{path} was deleted outside Glaux."),
+            "OVERWRITE DISK writes your edits to it again.",
+        ),
+    };
+    let mut lines = vec![what];
+    lines.extend(saved);
+    lines.push("Your unsaved edits are still in memory.".to_owned());
+    lines.push(replaces.to_owned());
+    let dialog = Dialog::new(
+        "FILE CONFLICT",
+        lines,
+        vec![
+            ("OVERWRITE DISK", Choice::Overwrite),
+            ("CANCEL", Choice::Cancel),
+        ],
+        1,
+        Some(Choice::Cancel),
+    );
+    (dialog, Target::Script { id, seen: disk })
+}
+
+/// Asks whether to overwrite the asset files in `conflicts`, discard the
+/// changes to them, or leave both as they are. `saved`, if any, tells what
+/// was saved before the conflict was found. Cancel is focused so a stray
+/// Enter loses nothing.
+pub(super) fn asset_conflict_dialog(
+    conflicts: Vec<Conflict>,
+    saved: Option<String>,
+) -> (Dialog<Choice>, Target) {
+    let mut lines: Vec<String> = conflicts
+        .iter()
+        .map(|conflict| {
+            let asset = conflict.asset();
+            match conflict.kind {
+                ConflictKind::Modified => format!("{asset} changed outside Glaux."),
+                ConflictKind::Deleted => format!("{asset} was deleted outside Glaux."),
+                ConflictKind::Created => format!("A new {asset} appeared outside Glaux."),
+            }
+        })
+        .collect();
+    lines.extend(saved);
+    let (them, files) = match conflicts.as_slice() {
+        [_] => ("it", "the file"),
+        _ => ("them", "these files"),
+    };
+    lines.push("Your unsaved edits are still in memory.".to_owned());
+    lines.push(format!(
+        "OVERWRITE DISK replaces {files} with your edits. DISCARD & RELOAD throws away your unsaved edits to {them} and the undo steps involving {them}."
+    ));
+    let dialog = Dialog::new(
+        "FILE CONFLICT",
+        lines,
+        vec![
+            ("OVERWRITE DISK", Choice::Overwrite),
+            ("DISCARD & RELOAD", Choice::Reload),
+            ("CANCEL", Choice::Cancel),
+        ],
+        2,
+        Some(Choice::Cancel),
+    );
+    let seen = conflicts
+        .into_iter()
+        .map(|conflict| conflict.disk)
+        .collect();
+    (dialog, Target::Assets(seen))
+}
+
+/// Shows `lines` under `title` until dismissed.
+pub(super) fn message_dialog(title: &str, lines: Vec<String>) -> Dialog<Choice> {
+    Dialog::new(
+        title,
+        lines,
+        vec![("OK", Choice::Dismiss)],
+        0,
+        Some(Choice::Dismiss),
+    )
 }
 
 /// Draws frame `frame` of `cursor` with its hotspot on `pointer`, if any.
@@ -699,16 +863,26 @@ impl Workspace {
             );
             let choice = modal.dialog.handle_input(event, &layout)?;
             let modal = self.modal.take()?;
-            return match (choice, modal.conflict) {
-                (Choice::Overwrite, ConflictTarget::Assets(seen)) => {
+            return match (choice, modal.target) {
+                (Choice::Overwrite, Target::Assets(seen)) => {
                     Some(WorkspaceRequest::Overwrite(seen))
                 }
-                (Choice::Overwrite, ConflictTarget::Script { id, seen }) => {
+                (Choice::Overwrite, Target::Script { id, seen }) => {
                     Some(WorkspaceRequest::OverwriteScript { id, seen })
                 }
-                (Choice::Reload, ConflictTarget::Assets(seen)) => Some(WorkspaceRequest::Reload(
+                (Choice::Reload, Target::Assets(seen)) => Some(WorkspaceRequest::Reload(
                     seen.iter().map(|disk| disk.asset).collect(),
                 )),
+                (Choice::Save, Target::CloseScript(id)) => {
+                    Some(WorkspaceRequest::SaveAndCloseScript(id))
+                }
+                (Choice::Discard, Target::CloseScript(id)) => {
+                    if let Some(code) = code {
+                        code.close(id);
+                        self.script_closed(code);
+                    }
+                    None
+                }
                 // Script conflicts offer no reload, and messages neither.
                 _ => None,
             };
@@ -743,15 +917,24 @@ impl Workspace {
     fn code_input(
         &mut self,
         event: InputEvent,
-        code: Option<&mut CodeSession>,
+        mut code: Option<&mut CodeSession>,
     ) -> Option<WorkspaceRequest> {
-        match self.code.handle_input(event, code)? {
+        match self.code.handle_input(event, code.as_deref_mut())? {
             CodeRequest::ListScripts => Some(WorkspaceRequest::ListScripts),
             CodeRequest::Open(path) => Some(WorkspaceRequest::OpenScript(path)),
             CodeRequest::SaveSettings(settings) => {
                 Some(WorkspaceRequest::SaveEditorSettings(settings))
             }
             CodeRequest::Save(id) => Some(WorkspaceRequest::SaveScript(id)),
+            CodeRequest::ConfirmClose(id) => {
+                let document = code.as_deref().and_then(|code| code.document(id))?;
+                self.code.end_drag();
+                self.modal = Some(Modal {
+                    dialog: close_dialog(document.path()),
+                    target: Target::CloseScript(id),
+                });
+                None
+            }
         }
     }
 
@@ -926,39 +1109,15 @@ impl Workspace {
         }
     }
 
-    /// Asks whether to overwrite the script file in `conflict` with the
-    /// document's text or leave both as they are. Cancel is focused so a
-    /// stray Enter loses nothing.
+    /// Shows the tabs left after a script document was closed outside the
+    /// Code view's own input.
+    pub fn script_closed(&mut self, code: &mut CodeSession) {
+        self.code.reveal_active(code);
+    }
+
     fn open_script_conflict(&mut self, id: DocumentId, conflict: SourceConflict) {
-        let SourceConflict { path, kind, disk } = conflict;
-        let (what, replaces) = match kind {
-            SourceConflictKind::Modified => (
-                format!("{path} changed outside Glaux."),
-                "OVERWRITE DISK replaces the file with your edits.",
-            ),
-            SourceConflictKind::Deleted => (
-                format!("{path} was deleted outside Glaux."),
-                "OVERWRITE DISK writes your edits to it again.",
-            ),
-        };
-        let dialog = Dialog::new(
-            "FILE CONFLICT",
-            vec![
-                what,
-                "Your unsaved edits are still in memory.".to_owned(),
-                replaces.to_owned(),
-            ],
-            vec![
-                ("OVERWRITE DISK", Choice::Overwrite),
-                ("CANCEL", Choice::Cancel),
-            ],
-            1,
-            Some(Choice::Cancel),
-        );
-        self.modal = Some(Modal {
-            dialog,
-            conflict: ConflictTarget::Script { id, seen: disk },
-        });
+        let (dialog, target) = script_conflict_dialog(id, conflict, None);
+        self.modal = Some(Modal { dialog, target });
     }
 
     /// Reports how discarding the changes to `assets` and reading their
@@ -1039,51 +1198,9 @@ impl Workspace {
         }
     }
 
-    /// Asks whether to overwrite the files in `conflicts`, discard the
-    /// changes to them, or leave both as they are. `saved`, if any, tells
-    /// what a save wrote before it found the conflict. Cancel is focused so
-    /// a stray Enter loses nothing.
     fn open_conflict(&mut self, conflicts: Vec<Conflict>, saved: Option<String>) {
-        let mut lines: Vec<String> = conflicts
-            .iter()
-            .map(|conflict| {
-                let asset = conflict.asset();
-                match conflict.kind {
-                    ConflictKind::Modified => format!("{asset} changed outside Glaux."),
-                    ConflictKind::Deleted => format!("{asset} was deleted outside Glaux."),
-                    ConflictKind::Created => format!("A new {asset} appeared outside Glaux."),
-                }
-            })
-            .collect();
-        lines.extend(saved);
-        let (them, files) = match conflicts.as_slice() {
-            [_] => ("it", "the file"),
-            _ => ("them", "these files"),
-        };
-        lines.push("Your unsaved edits are still in memory.".to_owned());
-        lines.push(format!(
-            "OVERWRITE DISK replaces {files} with your edits. DISCARD & RELOAD throws away your unsaved edits to {them} and the undo steps involving {them}."
-        ));
-        let dialog = Dialog::new(
-            "FILE CONFLICT",
-            lines,
-            vec![
-                ("OVERWRITE DISK", Choice::Overwrite),
-                ("DISCARD & RELOAD", Choice::Reload),
-                ("CANCEL", Choice::Cancel),
-            ],
-            2,
-            Some(Choice::Cancel),
-        );
-        self.modal = Some(Modal {
-            dialog,
-            conflict: ConflictTarget::Assets(
-                conflicts
-                    .into_iter()
-                    .map(|conflict| conflict.disk)
-                    .collect(),
-            ),
-        });
+        let (dialog, target) = asset_conflict_dialog(conflicts, saved);
+        self.modal = Some(Modal { dialog, target });
     }
 
     fn open_error(&mut self, title: &str, mut lines: Vec<String>) {
@@ -1093,17 +1210,35 @@ impl Workspace {
 
     /// Shows `lines` under `title` until dismissed.
     fn open_message(&mut self, title: &str, lines: Vec<String>) {
-        let dialog = Dialog::new(
-            title,
-            lines,
-            vec![("OK", Choice::Dismiss)],
-            0,
-            Some(Choice::Dismiss),
-        );
         self.modal = Some(Modal {
-            dialog,
-            conflict: ConflictTarget::None,
+            dialog: message_dialog(title, lines),
+            target: Target::None,
         });
+    }
+
+    /// Lays `dialog` out over the views, or over the whole screen when
+    /// `whole_screen`.
+    pub(super) fn dialog_layout(
+        &self,
+        dialog: &Dialog<Choice>,
+        whole_screen: bool,
+    ) -> DialogLayout {
+        let area = if whole_screen {
+            Rect {
+                x: 0,
+                y: 0,
+                width: WIDTH as i32,
+                height: HEIGHT as i32,
+            }
+        } else {
+            self.layout.view_area()
+        };
+        dialog.layout(&self.font, area, self.layout.cell_w, self.layout.cell_h)
+    }
+
+    /// Shows `text` in the status bar for a while.
+    pub fn report(&mut self, text: String) {
+        self.notify(text, PALE);
     }
 
     fn notify(&mut self, text: impl Into<String>, color: u8) {

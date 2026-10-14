@@ -97,6 +97,9 @@ fn a_chime_cut_off_by_the_shell_leaves_nothing_behind() {
         sprites: None,
         code: None,
         host_requests: Default::default(),
+        unsaved: None,
+        exit_requested: false,
+        exiting: false,
     };
     system = system.update(&[]);
     system.audio(&mut psg);

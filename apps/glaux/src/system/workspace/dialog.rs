@@ -99,6 +99,11 @@ impl<A: Copy> Dialog<A> {
     }
 
     #[cfg(test)]
+    pub fn message(&self) -> &[String] {
+        &self.message
+    }
+
+    #[cfg(test)]
     pub fn title(&self) -> &str {
         &self.title
     }

@@ -256,7 +256,9 @@ impl RaylibHost {
         self.pointer.position()
     }
 
-    /// Returns `true` once the user has asked to close the window.
+    /// Whether the user asked to close the window since the previous
+    /// frame. Raylib clears the request on every poll, so the window stays
+    /// open, and asks again on the next request, unless the caller stops.
     pub fn should_close(&self) -> bool {
         self.rl.window_should_close()
     }
