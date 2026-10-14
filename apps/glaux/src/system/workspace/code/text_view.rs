@@ -51,8 +51,19 @@ pub struct TextGeometry {
 impl TextGeometry {
     /// The text view of `layout` for a document of `line_count` lines shown
     /// with `settings`.
+    #[cfg(test)]
     pub fn new(layout: &CodeLayout, line_count: usize, settings: &EditorSettings) -> Self {
-        let area = layout.text;
+        Self::in_area(layout, layout.text, line_count, settings)
+    }
+
+    /// Like [`new`](Self::new), but taking up only `area` of the text
+    /// area, as when a bar covers part of it.
+    pub fn in_area(
+        layout: &CodeLayout,
+        area: Rect,
+        line_count: usize,
+        settings: &EditorSettings,
+    ) -> Self {
         let (cell_w, cell_h) = (layout.metrics.cell_w.max(1), layout.metrics.cell_h.max(1));
         let gutter = settings.line_numbers.then(|| {
             let digits = digits(line_count).max(MIN_DIGITS) as i32;

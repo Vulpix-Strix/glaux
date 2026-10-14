@@ -8,6 +8,43 @@ use serde::{Deserialize, Serialize};
 
 /// Tab sizes the Code view accepts, in columns.
 pub const TAB_SIZES: RangeInclusive<u8> = 1..=8;
+/// Indentation sizes the Code view accepts, in columns.
+pub const INDENT_SIZES: RangeInclusive<u8> = 1..=8;
+
+/// What indentation the Code view inserts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndentStyle {
+    /// Whatever each file already uses: tabs or spaces, and for spaces the
+    /// width of its steps where it shows one.
+    #[default]
+    Detect,
+    Spaces,
+    Tabs,
+}
+
+impl IndentStyle {
+    pub const ALL: [Self; 3] = [Self::Detect, Self::Spaces, Self::Tabs];
+
+    /// The style `step` places away in the order Detect, Spaces, Tabs,
+    /// wrapping around.
+    pub fn stepped(self, step: i8) -> Self {
+        let len = Self::ALL.len() as isize;
+        let at = Self::ALL
+            .iter()
+            .position(|&style| style == self)
+            .unwrap_or(0) as isize;
+        Self::ALL[(at + isize::from(step)).rem_euclid(len) as usize]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Detect => "Detect",
+            Self::Spaces => "Spaces",
+            Self::Tabs => "Tabs",
+        }
+    }
+}
 
 /// The Code view's display preferences.
 ///
@@ -27,6 +64,11 @@ pub struct EditorSettings {
     /// They only change how characters look: every character keeps its
     /// own cells, so the caret and the document are unaffected.
     pub ligatures: bool,
+    pub indent: IndentStyle,
+    /// Columns one indentation step takes with spaces, where the file
+    /// doesn't show its own. Within [`INDENT_SIZES`] unless read from a
+    /// file that says otherwise.
+    pub indent_size: u8,
 }
 
 impl Default for EditorSettings {
@@ -36,6 +78,8 @@ impl Default for EditorSettings {
             tab_size: 4,
             line_numbers: true,
             ligatures: true,
+            indent: IndentStyle::Detect,
+            indent_size: 4,
         }
     }
 }
@@ -47,6 +91,20 @@ impl EditorSettings {
             .tab_size
             .saturating_add_signed(step)
             .clamp(*TAB_SIZES.start(), *TAB_SIZES.end());
+    }
+
+    /// The indentation size `step` sizes away, kept within
+    /// [`INDENT_SIZES`].
+    pub fn step_indent_size(&mut self, step: i8) {
+        self.indent_size = self
+            .indent_size
+            .saturating_add_signed(step)
+            .clamp(*INDENT_SIZES.start(), *INDENT_SIZES.end());
+    }
+
+    /// [`indent_size`](Self::indent_size) as a column count, never zero.
+    pub fn indent_columns(&self) -> usize {
+        usize::from(self.indent_size.max(1))
     }
 
     /// The font substitutions the text is drawn with.

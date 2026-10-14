@@ -1,13 +1,20 @@
 //! The Code view: tabs over the cartridge's open scripts, an editable view
-//! of the active one, and OPEN FILE to open more.
+//! of the active one, OPEN FILE and NEW FILE to open more, a find bar,
+//! GO TO LINE, and context menus.
 //!
 //! The documents and tabs belong to the cartridge and are lent in as a
 //! [`CodeSession`]; the editor keeps only what is on screen around them.
 
+mod actions;
 mod edit;
+mod find;
+mod go_to_line;
 mod layout;
+mod new_file;
 mod picker;
+mod prompt;
 mod render;
+mod searching;
 mod settings;
 mod text_view;
 
@@ -18,13 +25,20 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::machine::TICK_RATE;
 use glaux_machine::system_rom::SystemCursor;
 
+use actions::{CodeAction, file_menu, text_menu};
+use find::{FindBar, FindLayout};
+use go_to_line::GoToLine;
 pub use layout::Metrics;
 use layout::{CodeLayout, StripHit, tab_labels};
+use new_file::{NewFile, NewFileAction};
 use picker::{FilePicker, PickerAction, PickerLayout};
+use prompt::{Prompt, PromptLayout};
 use settings::{SettingsAction, SettingsDialog, SettingsLayout};
 use text_view::TextGeometry;
 
 use super::Rect;
+use super::context_menu::{ContextMenu, MENU_HINT as CONTEXT_MENU_HINT, MenuLayout, MenuOutcome};
+use crate::cartridge::Language;
 use crate::cartridge::source::{ScriptListing, SourcePath};
 use crate::cartridge_fs::FsError;
 use crate::system::code_cursor::{Caret, line_at, word_at};
@@ -52,7 +66,13 @@ const AUTOSCROLL_TICKS: u32 = 4;
 const UNDO_IDLE_TICKS: u32 = TICK_RATE;
 
 /// The status bar hint while nothing covers the view.
-const VIEW_HINT: &str = "Ctrl+S: save  Ctrl+P: open  Ctrl+W: close  Esc: shell";
+const VIEW_HINT: &str = "Ctrl+S: save  Ctrl+F: find  Ctrl+N: new  Esc: shell";
+/// The status bar hint while the find bar has the keys.
+const FIND_HINT: &str = "Enter: next  Up: previous  Tab: field  Esc: close";
+/// The status bar hint while NEW FILE is open.
+const NEW_FILE_HINT: &str = "Type: path  Enter: create  Esc: close";
+/// The status bar hint while GO TO LINE is open.
+const GO_TO_HINT: &str = "Type: line  Enter: go  Esc: close";
 /// The status bar hint while OPEN FILE is open.
 const PICKER_HINT: &str = "Type: filter  Enter: open  Esc: close";
 /// The status bar hint while the list of open tabs is open.
@@ -75,6 +95,18 @@ pub enum CodeRequest {
     /// Ask whether to save this document's unsaved edits before closing
     /// its tab.
     ConfirmClose(DocumentId),
+    /// Put this text on the clipboard.
+    Copy(String),
+    /// Read the clipboard and hand its text to [`CodeEditor::paste`].
+    Paste,
+    /// Open NEW FILE for the cartridge's language; see
+    /// [`CodeEditor::open_new_file`].
+    NewFile,
+    /// Create this empty script and open it; answer with
+    /// [`CodeEditor::script_created`].
+    Create(SourcePath),
+    /// Show this in the status bar for a moment.
+    Notice(String),
 }
 
 /// The list of every open tab, dropped from the strip's right end.
@@ -139,6 +171,15 @@ pub struct CodeEditor {
     picker: Option<FilePicker>,
     /// While open, takes every input.
     menu: Option<TabMenu>,
+    /// While open, takes every input.
+    context_menu: Option<ContextMenu<CodeAction>>,
+    /// While open, takes every input.
+    new_file: Option<NewFile>,
+    /// While open, takes every input.
+    go_to: Option<GoToLine>,
+    /// Docked over the text while open; takes the keys only while one of
+    /// its parts has them.
+    find: Option<FindBar>,
     /// Position in tab order of the tab being dragged along the strip.
     drag: Option<usize>,
     /// Where the pointer last was, which decides what the wheel scrolls.
@@ -165,6 +206,10 @@ impl CodeEditor {
             settings_dialog: None,
             picker: None,
             menu: None,
+            context_menu: None,
+            new_file: None,
+            go_to: None,
+            find: None,
             drag: None,
             pointer: None,
             entry_error: None,
@@ -191,6 +236,7 @@ impl CodeEditor {
         });
         if let Some(session) = session {
             self.autoscroll(session);
+            self.refresh_find(session);
         }
     }
 
@@ -199,10 +245,27 @@ impl CodeEditor {
         (self.blink / BLINK_TICKS).is_multiple_of(2)
     }
 
-    /// Whether EDITOR SETTINGS, OPEN FILE or the list of open tabs is open
-    /// and taking all input.
+    /// Whether a window or menu is open over the view and taking all
+    /// input: EDITOR SETTINGS, OPEN FILE, NEW FILE, GO TO LINE, the list
+    /// of open tabs or a context menu.
     pub fn has_overlay(&self) -> bool {
-        self.settings_dialog.is_some() || self.picker.is_some() || self.menu.is_some()
+        self.settings_dialog.is_some()
+            || self.picker.is_some()
+            || self.menu.is_some()
+            || self.context_menu.is_some()
+            || self.new_file.is_some()
+            || self.go_to.is_some()
+    }
+
+    /// Whether Escape belongs to the view rather than leaving the
+    /// workspace: an overlay is open, or the find bar, which it closes.
+    pub fn claims_break(&self) -> bool {
+        self.has_overlay() || self.find.is_some()
+    }
+
+    /// Whether a part of the find bar has the keys.
+    fn find_focused(&self) -> bool {
+        self.find.as_ref().is_some_and(|bar| bar.focus().is_some())
     }
 
     /// The status bar hint for what is on screen.
@@ -213,9 +276,37 @@ impl CodeEditor {
             PICKER_HINT
         } else if self.menu.is_some() {
             MENU_HINT
+        } else if self.context_menu.is_some() {
+            CONTEXT_MENU_HINT
+        } else if self.new_file.is_some() {
+            NEW_FILE_HINT
+        } else if self.go_to.is_some() {
+            GO_TO_HINT
+        } else if self.find_focused() {
+            FIND_HINT
         } else {
             VIEW_HINT
         }
+    }
+
+    #[cfg(test)]
+    pub fn find(&self) -> Option<&FindBar> {
+        self.find.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn context_menu(&self) -> Option<&ContextMenu<CodeAction>> {
+        self.context_menu.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn new_file(&self) -> Option<&NewFile> {
+        self.new_file.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn go_to(&self) -> Option<&GoToLine> {
+        self.go_to.as_ref()
     }
 
     #[cfg(test)]
@@ -241,7 +332,54 @@ impl CodeEditor {
 
     /// Where the text view sits for `document` with the current settings.
     fn geometry(&self, document: &CodeDocument) -> TextGeometry {
-        TextGeometry::new(&self.layout, document.line_count(), &self.settings)
+        TextGeometry::in_area(
+            &self.layout,
+            self.text_area(),
+            document.line_count(),
+            &self.settings,
+        )
+    }
+
+    /// The find bar's parts, while it is open.
+    fn find_layout(&self) -> Option<FindLayout> {
+        let bar = self.find.as_ref()?;
+        Some(FindLayout::new(
+            self.layout.text,
+            self.layout.metrics.cell_w,
+            self.layout.metrics.cell_h,
+            bar.is_replacing(),
+        ))
+    }
+
+    /// The part of the text area the text takes: all of it, or what the
+    /// find bar leaves below it.
+    fn text_area(&self) -> Rect {
+        let text = self.layout.text;
+        match self.find_layout() {
+            Some(find) => Rect {
+                y: find.panel.bottom(),
+                height: text.bottom() - find.panel.bottom(),
+                ..text
+            },
+            None => text,
+        }
+    }
+
+    /// Where a context menu goes: anywhere over the view.
+    fn menu_layout(&self, menu: &ContextMenu<CodeAction>) -> MenuLayout {
+        let metrics = self.layout.metrics;
+        menu.layout(
+            &self.layout.font,
+            overlay_area(&self.layout),
+            metrics.cell_w,
+            metrics.cell_h,
+        )
+    }
+
+    /// Where `prompt` goes: centred over the view.
+    fn prompt_layout(&self, prompt: &Prompt) -> PromptLayout {
+        let metrics = self.layout.metrics;
+        prompt.layout(overlay_area(&self.layout), metrics.cell_w, metrics.cell_h)
     }
 
     /// Whether a tab or a selection is being dragged, which keeps its
@@ -269,11 +407,38 @@ impl CodeEditor {
         }
         if self.settings_dialog.is_some() {
             let layout = settings_layout(&self.layout);
-            let arrows = layout.minus.contains(at) || layout.plus.contains(at);
-            return hand(arrows || layout.row_at(at).is_some());
+            return hand(layout.arrow_at(at).is_some() || layout.row_at(at).is_some());
         }
         if let Some(picker) = &self.picker {
             return hand(picker.opens_at(at, &picker_layout(&self.layout, picker)));
+        }
+        if let Some(menu) = &self.context_menu {
+            return hand(menu.chooses_at(at, &self.menu_layout(menu)));
+        }
+        let prompt = self
+            .new_file
+            .as_ref()
+            .map(NewFile::prompt)
+            .or(self.go_to.as_ref().map(GoToLine::prompt));
+        if let Some(prompt) = prompt {
+            return if self.prompt_layout(prompt).field.contains(at) {
+                SystemCursor::Text
+            } else {
+                SystemCursor::Arrow
+            };
+        }
+        if let (Some(bar), Some(layout)) = (&self.find, self.find_layout())
+            && layout.panel.contains(at)
+        {
+            return if bar.clickable_at(at, &layout) {
+                SystemCursor::Hand
+            } else if layout.query.contains(at)
+                || (bar.is_replacing() && layout.replacement.contains(at))
+            {
+                SystemCursor::Text
+            } else {
+                SystemCursor::Arrow
+            };
         }
         let Some(session) = session else {
             return hand(self.layout.settings_button().contains(at));
@@ -287,10 +452,40 @@ impl CodeEditor {
         if on_strip != StripHit::None || self.layout.settings_button().contains(at) {
             return SystemCursor::Hand;
         }
-        if session.active_document().is_some() && self.layout.text.contains(at) {
+        if session.active_document().is_some() && self.text_area().contains(at) {
             return SystemCursor::Text;
         }
+        if session.active_document().is_none() && self.empty_action_at(at).is_some() {
+            return SystemCursor::Hand;
+        }
         SystemCursor::Arrow
+    }
+
+    /// The links the empty view offers, and what each does.
+    fn empty_actions(&self) -> [(Rect, &'static str, CodeAction); 2] {
+        let area = self.layout.text;
+        let (cell_w, cell_h) = (self.layout.metrics.cell_w, self.layout.metrics.cell_h);
+        let link = |row: i32, label: &'static str, action| {
+            let rect = Rect {
+                x: area.x + cell_w,
+                y: area.y + row * cell_h,
+                width: self.layout.cells(label) * cell_w,
+                height: cell_h,
+            };
+            (rect, label, action)
+        };
+        [
+            link(2, "New file    Ctrl+N", CodeAction::NewFile),
+            link(3, "Open file   Ctrl+P", CodeAction::OpenFile),
+        ]
+    }
+
+    /// The empty view's link under `at`.
+    fn empty_action_at(&self, at: Point) -> Option<CodeAction> {
+        self.empty_actions()
+            .into_iter()
+            .find(|(rect, ..)| rect.contains(at))
+            .map(|(_, _, action)| action)
     }
 
     /// The rows of the EDITOR SETTINGS window, top to bottom.
@@ -315,6 +510,10 @@ impl CodeEditor {
     pub fn forget(&mut self) {
         self.picker = None;
         self.menu = None;
+        self.context_menu = None;
+        self.new_file = None;
+        self.go_to = None;
+        self.find = None;
         self.end_drag();
         self.last_click = None;
         self.entry_error = None;
@@ -330,6 +529,51 @@ impl CodeEditor {
     pub fn open_picker(&mut self, listing: Result<ScriptListing, FsError>) {
         self.menu = None;
         self.picker = Some(FilePicker::new(listing));
+    }
+
+    /// Opens NEW FILE for a cartridge written in `language`.
+    pub fn open_new_file(&mut self, language: Language) {
+        self.new_file = Some(NewFile::new(language));
+    }
+
+    /// Reports how creating the script NEW FILE asked for went: it closes
+    /// once the script is created and open, and shows why otherwise.
+    pub fn script_created(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => self.new_file = None,
+            Err(message) => {
+                if let Some(dialog) = &mut self.new_file {
+                    dialog.set_failure(message);
+                }
+            }
+        }
+    }
+
+    /// Inserts the clipboard's `text` where the keys are: a field of NEW
+    /// FILE, GO TO LINE or the find bar, or else the active document of
+    /// `session`. `None`, an empty clipboard, inserts nothing.
+    pub fn paste(&mut self, text: Option<String>, session: Option<&mut CodeSession>) {
+        let Some(text) = text else {
+            return;
+        };
+        if let Some(dialog) = &mut self.new_file {
+            dialog.paste(&text);
+            return;
+        }
+        if let Some(dialog) = &mut self.go_to {
+            dialog.paste(&text);
+            return;
+        }
+        let Some(session) = session else {
+            return;
+        };
+        self.refresh_metrics(session);
+        if self.find_focused() {
+            self.paste_into_find(session, &text);
+        } else {
+            self.paste_into_document(session, &text);
+        }
+        self.refresh_find(session);
     }
 
     /// Records why the entry script could not be opened, or that it was.
@@ -420,7 +664,11 @@ impl CodeEditor {
         if (session.tabs().active(), session.tabs().len()) != before {
             self.reveal_active(session);
         }
+        if session.active_document().is_none() {
+            self.find = None;
+        }
         self.refresh_metrics(session);
+        self.refresh_find(session);
         request
     }
 
@@ -457,14 +705,32 @@ impl CodeEditor {
             self.menu_input(event, menu, session);
             return None;
         }
-        if self.edit_input(event, session) {
-            return None;
+        if self.context_menu.is_some() {
+            return self.context_menu_input(event, session);
+        }
+        if self.new_file.is_some() {
+            return self.new_file_input(event);
+        }
+        if self.go_to.is_some() {
+            return self.go_to_input(event, session);
+        }
+        if self.find.is_some()
+            && let Some(request) = self.find_input(event, session)
+        {
+            return request;
+        }
+        if let Some(request) = self.edit_input(event, session) {
+            return request;
         }
         let labels = labels(&self.layout.font, session);
         let scroll = session.tabs().scroll();
         let ids: Vec<_> = session.tabs().ids().collect();
         match event {
             InputEvent::OpenFile => return Some(CodeRequest::ListScripts),
+            InputEvent::NewFile => return Some(CodeRequest::NewFile),
+            InputEvent::Find => self.open_find(session, false),
+            InputEvent::Replace => self.open_find(session, true),
+            InputEvent::GoToLine => self.open_go_to(session),
             InputEvent::Save => return session.tabs().active().map(CodeRequest::Save),
             InputEvent::CloseDocument => {
                 return session
@@ -508,11 +774,25 @@ impl CodeEditor {
                             self.menu = Some(TabMenu { focus });
                         }
                     }
-                    StripHit::None if self.layout.text.contains(at) => {
+                    StripHit::None if session.active_document().is_none() => {
+                        if let Some(action) = self.empty_action_at(at) {
+                            return self.run_action(action, session);
+                        }
+                    }
+                    StripHit::None if self.text_area().contains(at) => {
                         self.press_text(session, at, select);
                     }
                     StripHit::None => {}
                 }
+            }
+            InputEvent::PointerDown {
+                button: PointerButton::Secondary,
+                at,
+                ..
+            } => {
+                self.pointer = Some(at);
+                self.end_drag();
+                self.open_context_menu(session, &labels, at);
             }
             InputEvent::PointerDown {
                 button: PointerButton::Middle,
@@ -595,6 +875,94 @@ impl CodeEditor {
             _ => {}
         }
         None
+    }
+
+    /// Opens the context menu for what a secondary press at `at` lands on:
+    /// a tab or the strip, the empty view, or the active document's text.
+    /// A press in the text outside the selection first moves the caret
+    /// there, so the menu acts where it was opened.
+    fn open_context_menu(&mut self, session: &mut CodeSession, labels: &[String], at: Point) {
+        let tab = match self.layout.strip_hit(labels, session.tabs().scroll(), at) {
+            StripHit::Tab(index) | StripHit::Close(index) => session.tabs().ids().nth(index),
+            StripHit::More => return,
+            StripHit::None if self.layout.strip.contains(at) => None,
+            StripHit::None if session.active_document().is_none() => {
+                if !self.layout.text.contains(at) {
+                    return;
+                }
+                None
+            }
+            StripHit::None => {
+                if !self.text_area().contains(at) {
+                    return;
+                }
+                if let Some((id, byte)) = self.hit_text(session, at) {
+                    let selection = session.tabs().selection(id).unwrap_or_default();
+                    let range = selection.range();
+                    let inside = !selection.is_empty() && range.start <= byte && byte <= range.end;
+                    if !inside && let Some(document) = session.document(id) {
+                        let caret = Selection::collapsed(Caret::at(document, byte));
+                        self.show_selection(session, id, caret, None);
+                    }
+                }
+                self.context_menu = Some(text_menu(session, at));
+                return;
+            }
+        };
+        self.context_menu = Some(file_menu(tab, at));
+    }
+
+    fn context_menu_input(
+        &mut self,
+        event: InputEvent,
+        session: &mut CodeSession,
+    ) -> Option<CodeRequest> {
+        let menu = self.context_menu.as_mut()?;
+        let layout = {
+            let metrics = self.layout.metrics;
+            menu.layout(
+                &self.layout.font,
+                overlay_area(&self.layout),
+                metrics.cell_w,
+                metrics.cell_h,
+            )
+        };
+        match menu.handle_input(event, &layout) {
+            MenuOutcome::Stay => None,
+            MenuOutcome::Close => {
+                self.context_menu = None;
+                None
+            }
+            MenuOutcome::Outside => {
+                self.context_menu = None;
+                // A secondary press elsewhere opens the menu there instead.
+                match event {
+                    InputEvent::PointerDown {
+                        button: PointerButton::Secondary,
+                        ..
+                    } => self.input(event, session),
+                    _ => None,
+                }
+            }
+            MenuOutcome::Run(action) => {
+                self.context_menu = None;
+                self.run_action(action, session)
+            }
+        }
+    }
+
+    fn new_file_input(&mut self, event: InputEvent) -> Option<CodeRequest> {
+        let layout = self.prompt_layout(self.new_file.as_ref()?.prompt());
+        match self.new_file.as_mut()?.handle_input(event, &layout) {
+            NewFileAction::None => None,
+            NewFileAction::Create(path) => Some(CodeRequest::Create(path)),
+            NewFileAction::Close => {
+                self.new_file = None;
+                None
+            }
+            NewFileAction::Copy(text) => Some(CodeRequest::Copy(text)),
+            NewFileAction::Paste => Some(CodeRequest::Paste),
+        }
     }
 
     /// Scrolls the strip when the pointer is over it, and the active

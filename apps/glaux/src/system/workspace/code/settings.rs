@@ -8,7 +8,7 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::draw_text;
 
-use crate::system::editor_settings::EditorSettings;
+use crate::system::editor_settings::{EditorSettings, IndentStyle};
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
     AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells,
@@ -30,15 +30,19 @@ pub enum Row {
     TabSize,
     LineNumbers,
     Ligatures,
+    IndentWith,
+    IndentSize,
     Done,
 }
 
 impl Row {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 7] = [
         Self::WordWrap,
         Self::TabSize,
         Self::LineNumbers,
         Self::Ligatures,
+        Self::IndentWith,
+        Self::IndentSize,
         Self::Done,
     ];
 
@@ -48,7 +52,24 @@ impl Row {
             Self::TabSize => "Tab size",
             Self::LineNumbers => "Show line numbers",
             Self::Ligatures => "Ligatures",
+            Self::IndentWith => "Indent with",
+            Self::IndentSize => "Indent size",
             Self::Done => DONE,
+        }
+    }
+
+    /// Whether the row's value is stepped with arrows rather than toggled.
+    fn is_stepper(self) -> bool {
+        matches!(self, Self::TabSize | Self::IndentWith | Self::IndentSize)
+    }
+
+    /// The row's value as its stepper shows it.
+    fn value(self, settings: &EditorSettings) -> Option<String> {
+        match self {
+            Self::TabSize => Some(settings.tab_size.to_string()),
+            Self::IndentWith => Some(settings.indent.label().to_owned()),
+            Self::IndentSize => Some(settings.indent_size.to_string()),
+            _ => None,
         }
     }
 
@@ -101,10 +122,10 @@ impl SettingsDialog {
     /// Applies `event` to `settings`, the ones the view shows. Every input
     /// is taken, so nothing reaches what lies under the window.
     ///
-    /// Up and Down move between rows. Enter or Space toggles a checkbox,
-    /// Left and Right change the tab size, and Escape or Done closes. A
-    /// primary press toggles a checkbox or steps the tab size with its
-    /// arrows; releasing on Done after pressing it closes.
+    /// Up and Down move between rows. Enter or Space toggles a checkbox or
+    /// steps a value forward, Left and Right step a value, and Escape or
+    /// Done closes. A primary press toggles a checkbox or steps a value
+    /// with its arrows; releasing on Done after pressing it closes.
     pub fn handle_input(
         &mut self,
         event: InputEvent,
@@ -114,17 +135,24 @@ impl SettingsDialog {
         let last = Row::ALL.len() - 1;
         match event {
             InputEvent::Break => return SettingsAction::Close,
-            InputEvent::Up { .. } => self.focus = Row::ALL[self.focus.index().saturating_sub(1)],
-            InputEvent::Down { .. } | InputEvent::Tab => {
+            InputEvent::Up { .. } | InputEvent::Tab { reverse: true } => {
+                self.focus = Row::ALL[self.focus.index().saturating_sub(1)];
+            }
+            InputEvent::Down { .. } | InputEvent::Tab { reverse: false } => {
                 self.focus = Row::ALL[(self.focus.index() + 1).min(last)];
             }
-            InputEvent::Left { .. } if self.focus == Row::TabSize => settings.step_tab_size(-1),
-            InputEvent::Right { .. } if self.focus == Row::TabSize => settings.step_tab_size(1),
+            InputEvent::Left { .. } => step(self.focus, settings, -1),
+            InputEvent::Right { .. } => step(self.focus, settings, 1),
             InputEvent::Enter | InputEvent::Text(' ') => {
                 if self.focus == Row::Done {
                     return SettingsAction::Close;
                 }
                 toggle(self.focus, settings);
+                // Only the indentation style wraps around, so stepping it
+                // on is the one way through its choices without arrows.
+                if self.focus == Row::IndentWith {
+                    step(self.focus, settings, 1);
+                }
             }
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
@@ -132,12 +160,9 @@ impl SettingsDialog {
                 ..
             } => {
                 self.armed = false;
-                if layout.minus.contains(at) {
-                    self.focus = Row::TabSize;
-                    settings.step_tab_size(-1);
-                } else if layout.plus.contains(at) {
-                    self.focus = Row::TabSize;
-                    settings.step_tab_size(1);
+                if let Some((row, direction)) = layout.arrow_at(at) {
+                    self.focus = row;
+                    step(row, settings, direction);
                 } else if let Some(row) = layout.row_at(at) {
                     self.focus = row;
                     self.armed = row == Row::Done;
@@ -166,10 +191,21 @@ impl SettingsDialog {
             .map(|row| LABEL_INDENT + text_cells(row.label()))
             .max()
             .unwrap_or(0);
-        // "Tab size" followed by "< 8 >" two cells after it.
-        let stepper_cells = 5;
+        // A stepper's label followed by "< value >" two cells after it.
+        let widest_value = IndentStyle::ALL
+            .iter()
+            .map(|style| text_cells(style.label()))
+            .max()
+            .unwrap_or(1);
+        let stepper_cells = widest_value + 4;
+        let stepper_label = Row::ALL
+            .iter()
+            .filter(|row| row.is_stepper())
+            .map(|row| text_cells(row.label()))
+            .max()
+            .unwrap_or(0);
         let inner_cells = (label_cells + 1)
-            .max(LABEL_INDENT + text_cells(Row::TabSize.label()) + 2 + stepper_cells)
+            .max(LABEL_INDENT + stepper_label + 2 + stepper_cells)
             .max(text_cells(TITLE));
         let inner_width = (inner_cells * cell_w).min(area.width - 2 * AREA_MARGIN - 2 * PAD);
         let row_height = cell_h + 2;
@@ -198,26 +234,18 @@ impl SettingsDialog {
         };
         let x = window.x + 1 + PAD;
         let top = title_bar.bottom() + PAD;
-        let rows = [0, 1, 2, 3].map(|n| Rect {
+        let rows: [Rect; SETTING_ROWS] = std::array::from_fn(|n| Rect {
             x,
-            y: top + n * row_height,
+            y: top + n as i32 * row_height,
             width: inner_width,
             height: row_height,
         });
-        let tab = rows[1];
-        let arrow = |cells_from_right: i32| Rect {
-            x: tab.right() - cells_from_right * cell_w - 2,
-            y: tab.y,
-            width: cell_w + 2,
-            height: tab.height,
-        };
         let done_width = (text_cells(DONE) + 4) * cell_w;
         SettingsLayout {
             window,
             title_bar,
             rows,
-            minus: arrow(stepper_cells),
-            plus: arrow(1),
+            stepper_cells,
             done: Rect {
                 x: window.x + (width - done_width) / 2,
                 y: rows[SETTING_ROWS - 1].bottom() + cell_h,
@@ -272,14 +300,17 @@ impl SettingsDialog {
                         fill(framebuffer, rect.inset(2), ink);
                     }
                 }
-                Row::TabSize => {
-                    let value = settings.tab_size.to_string();
-                    let value = value.as_str();
-                    draw_text(framebuffer, font, "<", layout.minus.x + 1, text_y, ink);
-                    draw_text(framebuffer, font, ">", layout.plus.x + 1, text_y, ink);
-                    let between = layout.plus.x - layout.minus.right();
-                    let x = layout.minus.right() + (between - text_cells(value) * cell_w) / 2;
-                    draw_text(framebuffer, font, value, x, text_y, ink);
+                Row::TabSize | Row::IndentWith | Row::IndentSize => {
+                    let (Some((minus, plus)), Some(value)) =
+                        (layout.arrows(row), row.value(settings))
+                    else {
+                        continue;
+                    };
+                    draw_text(framebuffer, font, "<", minus.x + 1, text_y, ink);
+                    draw_text(framebuffer, font, ">", plus.x + 1, text_y, ink);
+                    let between = plus.x - minus.right();
+                    let x = minus.right() + (between - text_cells(&value) * cell_w) / 2;
+                    draw_text(framebuffer, font, &value, x, text_y, ink);
                 }
                 Row::Done => {}
             }
@@ -302,7 +333,17 @@ fn toggle(row: Row, settings: &mut EditorSettings) {
         Row::WordWrap => settings.word_wrap = !settings.word_wrap,
         Row::LineNumbers => settings.line_numbers = !settings.line_numbers,
         Row::Ligatures => settings.ligatures = !settings.ligatures,
-        Row::TabSize | Row::Done => {}
+        Row::TabSize | Row::IndentWith | Row::IndentSize | Row::Done => {}
+    }
+}
+
+/// Steps the value on `row`, if it has one, `direction` places on.
+fn step(row: Row, settings: &mut EditorSettings, direction: i8) {
+    match row {
+        Row::TabSize => settings.step_tab_size(direction),
+        Row::IndentWith => settings.indent = settings.indent.stepped(direction),
+        Row::IndentSize => settings.step_indent_size(direction),
+        Row::WordWrap | Row::LineNumbers | Row::Ligatures | Row::Done => {}
     }
 }
 
@@ -311,17 +352,46 @@ fn toggle(row: Row, settings: &mut EditorSettings) {
 pub struct SettingsLayout {
     pub window: Rect,
     pub title_bar: Rect,
-    /// Word wrap, tab size, line numbers and ligatures, top to bottom.
+    /// Every row but Done, top to bottom.
     pub rows: [Rect; SETTING_ROWS],
-    /// The arrows stepping the tab size down and up.
-    pub minus: Rect,
-    pub plus: Rect,
     pub done: Rect,
+    /// Cells a stepper's arrows and value take at its row's right end.
+    stepper_cells: i32,
     cell_w: i32,
     cell_h: i32,
 }
 
 impl SettingsLayout {
+    /// The arrows stepping `row`'s value down and up, if it has one.
+    pub fn arrows(&self, row: Row) -> Option<(Rect, Rect)> {
+        if !row.is_stepper() {
+            return None;
+        }
+        let rect = self.rows[row.index()];
+        let arrow = |cells_from_right: i32| Rect {
+            x: rect.right() - cells_from_right * self.cell_w - 2,
+            y: rect.y,
+            width: self.cell_w + 2,
+            height: rect.height,
+        };
+        Some((arrow(self.stepper_cells), arrow(1)))
+    }
+
+    /// The stepper row whose arrow is under `point`, and the direction it
+    /// steps.
+    pub fn arrow_at(&self, point: Point) -> Option<(Row, i8)> {
+        Row::ALL.into_iter().find_map(|row| {
+            let (minus, plus) = self.arrows(row)?;
+            if minus.contains(point) {
+                Some((row, -1))
+            } else if plus.contains(point) {
+                Some((row, 1))
+            } else {
+                None
+            }
+        })
+    }
+
     /// The row under `point`, Done included.
     pub fn row_at(&self, point: Point) -> Option<Row> {
         if self.done.contains(point) {

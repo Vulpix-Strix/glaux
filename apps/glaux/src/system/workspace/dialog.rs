@@ -126,10 +126,12 @@ impl<A: Copy> Dialog<A> {
     pub fn handle_input(&mut self, event: InputEvent, layout: &DialogLayout) -> Option<A> {
         let count = self.actions.len();
         match event {
-            InputEvent::Up { .. } | InputEvent::Left { .. } => {
+            InputEvent::Up { .. } | InputEvent::Left { .. } | InputEvent::Tab { reverse: true } => {
                 self.focus = (self.focus + count - 1) % count;
             }
-            InputEvent::Down { .. } | InputEvent::Right { .. } | InputEvent::Tab => {
+            InputEvent::Down { .. }
+            | InputEvent::Right { .. }
+            | InputEvent::Tab { reverse: false } => {
                 self.focus = (self.focus + 1) % count;
             }
             InputEvent::Enter => return Some(self.actions[self.focus].1),

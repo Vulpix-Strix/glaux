@@ -130,6 +130,25 @@ impl LoadedCartridge {
             })
     }
 
+    /// Creates an empty script file at `path`, and the directories above it
+    /// that are missing. An existing file is [`FsError::AlreadyExists`] and
+    /// is left as it is.
+    ///
+    /// The file is created as [`replace_source`](Self::replace_source)
+    /// writes, so it is never written through a link leading out of the
+    /// cartridge. Directories created before a failure are kept.
+    pub fn create_source(&self, path: &SourcePath) -> Result<(), FsError> {
+        if let Some((dir, _)) = path.as_str().rsplit_once('/') {
+            self.files.create_dirs(&format!("/{dir}"))?;
+        }
+        self.files
+            .replace_file(&format!("/{path}"), b"", None)
+            .map_err(|err| match err {
+                ReplaceError::Changed(_) => FsError::AlreadyExists(format!("/{path}")),
+                ReplaceError::Fs(err) => err,
+            })
+    }
+
     /// Every `.luau` and `.rhai` file in the cartridge, in any directory.
     ///
     /// Searched as [`CartridgeFs::walk_files`] searches, within depth and

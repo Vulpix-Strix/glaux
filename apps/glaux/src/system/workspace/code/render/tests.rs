@@ -361,7 +361,7 @@ fn modified_tabs_show_a_dot_where_close_is_until_hovered() {
     let (cartridge, mut session) = session_with_text(&fixture, &["a.luau", "b.luau"], "x");
     let (a, b) = (id_of(&session, "a.luau"), id_of(&session, "b.luau"));
     session
-        .edit(a, 0..0, "y", EditKind::Structural)
+        .edit(a, 0..0, "y", EditKind::Structural, None)
         .unwrap()
         .unwrap();
     let labels = labels(&editor.layout().font, &session);
@@ -385,7 +385,7 @@ fn modified_tabs_show_a_dot_where_close_is_until_hovered() {
     // The active tab takes the dot too, and each tab follows its own
     // document: saving one leaves the other marked.
     session
-        .edit(b, 0..0, "y", EditKind::Structural)
+        .edit(b, 0..0, "y", EditKind::Structural, None)
         .unwrap()
         .unwrap();
     session.save(&cartridge, a).unwrap();
@@ -395,7 +395,7 @@ fn modified_tabs_show_a_dot_where_close_is_until_hovered() {
 
     // Text edited back to what was saved is clean again.
     session
-        .edit(b, 0..1, "", EditKind::Structural)
+        .edit(b, 0..1, "", EditKind::Structural, None)
         .unwrap()
         .unwrap();
     let framebuffer = render_at(&editor, &session, None);
@@ -425,4 +425,68 @@ fn the_options_bar_ends_with_the_caret_position_beside_the_settings_button() {
             assert_ne!(framebuffer.pixel(x, y), Some(DIM), "({x}, {y})");
         }
     }
+}
+
+/// How many pixels of `rect` are `color`.
+fn count(framebuffer: &Framebuffer, rect: Rect, color: u8) -> usize {
+    (rect.y..rect.bottom())
+        .flat_map(|y| (rect.x..rect.right()).map(move |x| (x, y)))
+        .filter(|&(x, y)| framebuffer.pixel(x, y) == Some(color))
+        .count()
+}
+
+#[test]
+fn find_matches_are_highlighted_and_the_selected_one_inverted() {
+    let fixture = Fixture::new("code-render-find");
+    let mut editor = editor();
+    let mut session = showing(&fixture, &editor, "ab ab");
+    editor.handle_input(InputEvent::Find, Some(&mut session));
+    for ch in "ab".chars() {
+        editor.handle_input(InputEvent::Text(ch), Some(&mut session));
+    }
+    hide_caret(&mut editor);
+    let framebuffer = render(&editor, &session);
+    let geometry = editor.geometry(session.active_document().unwrap());
+    let rect = |column| {
+        let (x, y) = cell(&geometry, column, 0);
+        Rect {
+            x,
+            y,
+            width: CELL_W,
+            height: CELL_H,
+        }
+    };
+    // The first match is the selection; the second only highlighted; the
+    // space between them neither.
+    assert!(count(&framebuffer, rect(0), TEXT) > count(&framebuffer, rect(0), BACKGROUND));
+    assert_eq!(count(&framebuffer, rect(0), MATCH), 0);
+    assert!(count(&framebuffer, rect(3), MATCH) > 0);
+    assert!(count(&framebuffer, rect(4), MATCH) > 0);
+    assert_eq!(count(&framebuffer, rect(2), MATCH), 0);
+}
+
+#[test]
+fn disabled_menu_items_are_drawn_dim() {
+    let fixture = Fixture::new("code-render-menu");
+    let mut editor = editor();
+    let mut session = showing(&fixture, &editor, "abc");
+    let geometry = editor.geometry(session.active_document().unwrap());
+    let (x, y) = cell(&geometry, 1, 0);
+    editor.handle_input(
+        InputEvent::PointerDown {
+            button: glaux_input::PointerButton::Secondary,
+            at: Point::new(x as u16, y as u16),
+            select: false,
+        },
+        Some(&mut session),
+    );
+    let framebuffer = render(&editor, &session);
+    let menu = editor.context_menu().unwrap();
+    let layout = editor.menu_layout(menu);
+    // Undo is the first row and can't be chosen yet; Paste, the sixth
+    // with its separators, can.
+    let (undo, paste) = (layout.rows[0], layout.rows[5]);
+    assert_eq!(count(&framebuffer, undo, PALE), 0);
+    assert!(count(&framebuffer, undo, IDLE_SHADE) > 0);
+    assert!(count(&framebuffer, paste, PALE) > 0);
 }

@@ -158,7 +158,7 @@ fn arrows_step_the_focused_picker() {
     assert_eq!(editor.hsv().s, start.s + SV_STEP - 4 * SV_STEP);
     assert_eq!(editor.color(), editor.hsv().to_rgb());
 
-    editor.handle_input(InputEvent::Tab, &layout);
+    editor.handle_input(InputEvent::Tab { reverse: false }, &layout);
     assert_eq!(editor.focus(), Control::Hue);
     let h = editor.hsv().h;
     editor.handle_input(InputEvent::Right { select: false }, &layout);
@@ -250,7 +250,7 @@ fn enter_applies_the_exact_color_unless_cancel_is_focused() {
 
     let mut editor = ColorEditor::new(7, target(2, 5), uses(155, &[], 0), OLD);
     for _ in 0..6 {
-        editor.handle_input(InputEvent::Tab, &layout);
+        editor.handle_input(InputEvent::Tab { reverse: false }, &layout);
     }
     assert_eq!(editor.focus(), Control::Cancel);
     assert_eq!(
@@ -265,7 +265,7 @@ fn tab_visits_every_control_and_wraps() {
     for (mut editor, scoped) in [(editor(), false), (shared_editor(), true)] {
         let mut seen = vec![editor.focus()];
         for _ in 0..Control::ORDER.len() {
-            editor.handle_input(InputEvent::Tab, &layout);
+            editor.handle_input(InputEvent::Tab { reverse: false }, &layout);
             seen.push(editor.focus());
         }
         let order: Vec<Control> = Control::ORDER
@@ -548,7 +548,7 @@ fn arrows_switch_the_focused_scope() {
     let layout = layout(false);
     let mut editor = shared_editor();
     while editor.focus() != Control::Scope {
-        editor.handle_input(InputEvent::Tab, &layout);
+        editor.handle_input(InputEvent::Tab { reverse: false }, &layout);
     }
     for (event, scope) in [
         (InputEvent::Up { select: false }, ColorScope::All),

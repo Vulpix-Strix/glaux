@@ -61,6 +61,38 @@ impl LineEditor {
             .map(|anchor| anchor.min(self.cursor)..anchor.max(self.cursor))
     }
 
+    /// Selects the whole line, leaving the cursor at its end.
+    pub(super) fn select_all(&mut self) {
+        self.anchor = None;
+        self.cursor = 0;
+        self.set_cursor(self.chars.len(), true);
+    }
+
+    /// The selected text, `None` when nothing is selected.
+    pub(super) fn selected_text(&self) -> Option<String> {
+        self.selection()
+            .map(|range| self.chars[range].iter().collect())
+    }
+
+    /// Removes the selected text and returns it, `None` when nothing is
+    /// selected.
+    pub(super) fn cut_selection(&mut self) -> Option<String> {
+        let text = self.selected_text()?;
+        self.delete_selection();
+        Some(text)
+    }
+
+    /// Replaces the selection, if any, with `text`, leaving the cursor
+    /// after it. Control characters are dropped, as when typed.
+    pub(super) fn insert_str(&mut self, text: &str) {
+        self.delete_selection();
+        let inserted: Vec<char> = text.chars().filter(|ch| !ch.is_control()).collect();
+        let at = self.cursor;
+        let count = inserted.len();
+        self.chars.splice(at..at, inserted);
+        self.set_cursor(at + count, false);
+    }
+
     /// Applies `event`. Returns the line when it is submitted with Enter,
     /// leaving the editor empty; an empty line is still submitted.
     pub(super) fn apply(&mut self, event: InputEvent) -> Option<String> {
@@ -102,7 +134,7 @@ impl LineEditor {
             | InputEvent::DocumentEnd { .. }
             | InputEvent::PageUp { .. }
             | InputEvent::PageDown { .. }
-            | InputEvent::Tab
+            | InputEvent::Tab { .. }
             | InputEvent::Break
             | InputEvent::ButtonDown(_)
             | InputEvent::ButtonUp(_)
@@ -118,6 +150,13 @@ impl LineEditor {
             | InputEvent::CloseDocument
             | InputEvent::NextDocument
             | InputEvent::PreviousDocument
+            | InputEvent::NewFile
+            | InputEvent::Find
+            | InputEvent::Replace
+            | InputEvent::GoToLine
+            | InputEvent::Copy
+            | InputEvent::Cut
+            | InputEvent::Paste
             | InputEvent::PointerMove(_)
             | InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }

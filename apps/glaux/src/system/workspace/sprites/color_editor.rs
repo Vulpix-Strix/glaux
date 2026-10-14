@@ -118,13 +118,15 @@ impl Control {
         Self::Apply,
     ];
 
-    /// The control after this one, skipping [`Scope`](Self::Scope) unless
-    /// the dialog offers a choice of scope.
-    fn next(self, scoped: bool) -> Self {
+    /// The control after this one, or before it when `reverse`, skipping
+    /// [`Scope`](Self::Scope) unless the dialog offers a choice of scope.
+    fn next(self, scoped: bool, reverse: bool) -> Self {
+        let len = Self::ORDER.len();
         let at = Self::ORDER.iter().position(|&c| c == self).unwrap_or(0);
-        let next = Self::ORDER[(at + 1) % Self::ORDER.len()];
+        let step = if reverse { len - 1 } else { 1 };
+        let next = Self::ORDER[(at + step) % len];
         if next == Self::Scope && !scoped {
-            next.next(scoped)
+            next.next(scoped, reverse)
         } else {
             next
         }
@@ -400,7 +402,9 @@ impl ColorEditor {
         layout: &ColorEditorLayout,
     ) -> Option<ColorOutcome> {
         match event {
-            InputEvent::Tab => self.focus_on(self.focus.next(self.scope.is_some())),
+            InputEvent::Tab { reverse } => {
+                self.focus_on(self.focus.next(self.scope.is_some(), reverse));
+            }
             InputEvent::Enter => {
                 if self.typing.take().is_some() {
                     return None;

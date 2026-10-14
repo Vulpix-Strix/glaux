@@ -42,7 +42,8 @@ impl Editing {
         let Ok(replaced) = self.document.replace(range, &text) else {
             return false;
         };
-        self.history.record(&replaced, &text, kind, self.selection);
+        self.history
+            .record(&replaced, &text, kind, self.selection, None);
         self.selection = Selection::collapsed(Caret::at(&self.document, replaced.range.end));
         true
     }
@@ -91,6 +92,27 @@ impl Editing {
             }
             None => false,
         }
+    }
+
+    /// Applies `edit` as a structural step that leaves `after` selected.
+    fn apply_selecting(&mut self, edit: code_edit::Reselecting) {
+        let replaced = self
+            .document
+            .replace(edit.edit.range, &edit.edit.text)
+            .unwrap();
+        let after = Selection::between(
+            &self.document,
+            edit.anchor,
+            Caret::at(&self.document, edit.caret),
+        );
+        self.history.record(
+            &replaced,
+            &edit.edit.text,
+            EditKind::Structural,
+            self.selection,
+            Some(after),
+        );
+        self.selection = after;
     }
 
     /// Undo steps, counted by undoing them all.
@@ -386,4 +408,30 @@ proptest! {
         while editing.redo() {}
         prop_assert_eq!(editing.text(), edited.as_str());
     }
+}
+
+#[test]
+fn undo_and_redo_restore_the_lines_a_block_indent_selected() {
+    let mut editing = Editing::new("a\nb\nc", 0);
+    editing.select(0, 3);
+    let edit = code_edit::indent_lines(
+        &editing.document,
+        editing.selection,
+        code_edit::IndentUnit::Tab,
+    )
+    .unwrap();
+    editing.apply_selecting(edit);
+    assert_eq!(editing.text(), "\ta\n\tb\nc");
+    let indented = editing.selection;
+    assert_eq!(indented.range(), 0..5);
+    assert!(editing.history.can_undo() && !editing.history.can_redo());
+    editing.undo();
+    assert_eq!(
+        (editing.text(), editing.selection.range()),
+        ("a\nb\nc", 0..3)
+    );
+    assert!(editing.history.can_redo());
+    editing.redo();
+    assert_eq!(editing.text(), "\ta\n\tb\nc");
+    assert_eq!(editing.selection, indented);
 }

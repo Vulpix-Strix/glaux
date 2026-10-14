@@ -319,6 +319,30 @@ fn the_indent_style_is_the_files_and_stays_fixed() {
 }
 
 #[test]
+fn the_indent_width_is_the_most_common_step_of_the_files_spaces() {
+    assert_eq!(doc("if x then\n  y()\nend").indent_width(), Some(2));
+    assert_eq!(
+        doc("a\n    b\n        c\n    d\n  e").indent_width(),
+        Some(4),
+        "steps back out are not steps"
+    );
+    assert_eq!(
+        doc("a\n  b\n\n    c\n").indent_width(),
+        Some(2),
+        "a blank line leaves the comparison to the next line"
+    );
+    assert_eq!(doc("a\n  b\nc\n    d").indent_width(), Some(2), "a tie");
+    assert_eq!(doc("a\r\n   b\r\n").indent_width(), Some(3));
+    assert_eq!(doc("a\n\tb\n\t  c").indent_width(), None, "tab indentation");
+    assert_eq!(doc("a\nb").indent_width(), None);
+    assert_eq!(
+        doc("a\n            b").indent_width(),
+        None,
+        "wider than any step"
+    );
+}
+
+#[test]
 fn the_revision_counts_edits_while_modified_compares_with_the_file() {
     let mut doc = doc("abc");
     assert_eq!((doc.revision(), doc.is_modified()), (0, false));

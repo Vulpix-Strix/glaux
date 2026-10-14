@@ -243,7 +243,7 @@ fn navigation_events_do_not_edit_the_line() {
         &[
             InputEvent::Up { select: false },
             InputEvent::Down { select: false },
-            InputEvent::Tab,
+            InputEvent::Tab { reverse: false },
         ],
     );
     assert_eq!(state(&editor), ("abc".into(), 3, None));
@@ -267,4 +267,36 @@ fn non_ascii_characters_are_single_positions() {
     type_text(&mut editor, "ü");
     assert_eq!(state(&editor), ("üb".into(), 1, None));
     assert_eq!(editor.apply(Enter), Some("üb".into()));
+}
+
+#[test]
+fn select_all_then_cut_empties_the_line_and_returns_it() {
+    let mut editor = typed("aé日");
+    editor.select_all();
+    assert_eq!(state(&editor), ("aé日".into(), 3, Some(0..3)));
+    assert_eq!(editor.cut_selection(), Some("aé日".into()));
+    assert_eq!(state(&editor), (String::new(), 0, None));
+    // Nothing is selected now, so nothing more is cut.
+    assert_eq!(editor.cut_selection(), None);
+}
+
+#[test]
+fn selected_text_leaves_the_line_unchanged() {
+    let mut editor = typed("hello");
+    apply_all(&mut editor, &[SHIFT_LEFT, SHIFT_LEFT]);
+    assert_eq!(editor.selected_text(), Some("lo".into()));
+    assert_eq!(state(&editor), ("hello".into(), 3, Some(3..5)));
+    apply_all(&mut editor, &[END]);
+    assert_eq!(editor.selected_text(), None);
+}
+
+#[test]
+fn insert_str_replaces_the_selection_and_drops_control_characters() {
+    let mut editor = typed("one two");
+    apply_all(&mut editor, &[SHIFT_LEFT, SHIFT_LEFT, SHIFT_LEFT]);
+    editor.insert_str("3\t4\n");
+    assert_eq!(state(&editor), ("one 34".into(), 6, None));
+    apply_all(&mut editor, &[HOME]);
+    editor.insert_str(">");
+    assert_eq!(state(&editor), (">one 34".into(), 1, None));
 }

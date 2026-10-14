@@ -3,6 +3,7 @@ use proptest::prelude::*;
 use super::*;
 use crate::system::code_cursor::Caret;
 use crate::system::code_document::EditError;
+use crate::system::editor_settings::IndentStyle;
 use crate::system::test_font::LAYOUT_FONT;
 use pretty_assertions::assert_eq;
 
@@ -95,7 +96,13 @@ fn edits_replace_a_selection_made_in_either_direction() {
             (backspace(&document, selection), "one  three"),
             (delete(&document, selection), "one  three"),
             (
-                Some(tab(&document, selection, key(4), &LAYOUT_FONT)),
+                Some(tab(
+                    &document,
+                    selection,
+                    IndentUnit::Spaces(4),
+                    key(4),
+                    &LAYOUT_FONT,
+                )),
                 "one      three",
             ),
         ];
@@ -124,30 +131,154 @@ fn control_characters_type_nothing() {
 
 #[test]
 fn tab_fills_spaces_to_the_next_stop_counting_display_columns() {
+    let spaces = |width| IndentUnit::Spaces(width);
     // "✅" takes columns 0-1, so the stop at 4 is 2 spaces away.
     let wide = doc("✅x");
-    assert_eq!(tab(&wide, at(&wide, 3), key(4), &LAYOUT_FONT).text, "  ");
-    // A tab in a space-indented file reaches column 4, so after "a" the
-    // stop at 8 is 3 spaces away.
+    assert_eq!(
+        tab(&wide, at(&wide, 3), spaces(4), key(4), &LAYOUT_FONT).text,
+        "  "
+    );
+    // A tab reaches column 4 when tabs are 4 wide, so after "a" the next
+    // 2-column stop is 1 space away.
     let tabbed = doc("\ta\n  b\n  c");
     assert_eq!(
-        tab(&tabbed, at(&tabbed, 2), key(4), &LAYOUT_FONT).text,
-        "   "
+        tab(&tabbed, at(&tabbed, 2), spaces(2), key(4), &LAYOUT_FONT).text,
+        " "
     );
-    // At a stop, a whole tab's width.
+    // At a stop, a whole step's width, whatever the tab size.
     let plain = doc("abcd");
-    assert_eq!(tab(&plain, at(&plain, 4), key(2), &LAYOUT_FONT).text, "  ");
+    assert_eq!(
+        tab(&plain, at(&plain, 4), spaces(2), key(8), &LAYOUT_FONT).text,
+        "  "
+    );
     // The column is that of the selection's start, whichever end the
     // caret is at.
     let selected = Selection::between(&plain, 4, Caret::at(&plain, 1));
-    assert_eq!(tab(&plain, selected, key(4), &LAYOUT_FONT).text, "   ");
+    assert_eq!(
+        tab(&plain, selected, spaces(4), key(4), &LAYOUT_FONT).text,
+        "   "
+    );
+    let tab_unit = tab(&plain, selected, IndentUnit::Tab, key(4), &LAYOUT_FONT);
+    assert_eq!(tab_unit.text, "\t");
 }
 
 #[test]
-fn tab_inserts_a_tab_in_documents_indented_with_tabs() {
-    let document = doc("if x then\n\ty()\nend");
-    let edit = tab(&document, at(&document, 3), key(4), &LAYOUT_FONT);
-    assert_eq!(edit.text, "\t");
+fn the_indent_unit_follows_the_setting_or_else_the_file() {
+    let tabs = doc("if x then\n\ty()\nend");
+    let two = doc("if x then\n  y()\nend");
+    let unknown = doc("x = 1");
+    let of = |document, style| IndentUnit::of(document, style, 4);
+    assert_eq!(of(&tabs, IndentStyle::Detect), IndentUnit::Tab);
+    assert_eq!(of(&two, IndentStyle::Detect), IndentUnit::Spaces(2));
+    assert_eq!(of(&unknown, IndentStyle::Detect), IndentUnit::Spaces(4));
+    assert_eq!(of(&tabs, IndentStyle::Spaces), IndentUnit::Spaces(4));
+    assert_eq!(of(&two, IndentStyle::Tabs), IndentUnit::Tab);
+}
+
+#[test]
+fn enter_keeps_the_indentation_of_the_line_it_breaks() {
+    let spaces = doc("    local x = 1");
+    assert_eq!(newline(&spaces, at(&spaces, 15)).text, "\n    ");
+    let tabs = doc("\t\tif x then\r\nend");
+    assert_eq!(newline(&tabs, at(&tabs, 11)).text, "\r\n\t\t");
+    // Inside the indentation only what is left of the caret carries over,
+    // so the line keeps its own text where it was.
+    assert_eq!(newline(&spaces, at(&spaces, 2)).text, "\n  ");
+    // Over a selection, the indentation is that of the line it starts on.
+    let lines = doc("  a\n\tb");
+    let selection = Selection::between(&lines, 6, Caret::at(&lines, 3));
+    let edit = newline(&lines, selection);
+    assert_eq!((edit.range, edit.text.as_str()), (3..6, "\n  "));
+    // No indentation, just the line break; a byte order mark is not one.
+    let bom = doc("\u{feff}x");
+    assert_eq!(newline(&bom, at(&bom, 4)).text, "\n");
+}
+
+#[test]
+fn pasted_line_breaks_take_the_documents_line_ending() {
+    let crlf = doc("a\r\nb");
+    let edit = paste(&crlf, at(&crlf, 1), "x\ny\r\nz\rw").unwrap();
+    assert_eq!(edit.text, "x\r\ny\r\nz\r\nw");
+    let lf = doc("ab");
+    let selection = Selection::between(&lf, 0, Caret::at(&lf, 2));
+    assert_eq!(
+        applied(&lf, paste(&lf, selection, "1\r\n\t2")).as_deref(),
+        Some("1\n\t2")
+    );
+    assert_eq!(paste(&lf, at(&lf, 0), ""), None);
+}
+
+/// `edit`'s result and the selection it leaves, as `(anchor, caret)`.
+fn reselected(document: &CodeDocument, edit: Option<Reselecting>) -> (String, usize, usize) {
+    let Reselecting {
+        edit,
+        anchor,
+        caret,
+    } = edit.expect("an edit");
+    (applied(document, Some(edit)).unwrap(), anchor, caret)
+}
+
+#[test]
+fn tab_over_lines_indents_each_non_blank_one_and_keeps_them_selected() {
+    let document = doc("a\n\n  b\nc");
+    // From the start of "a" to inside "b".
+    let selection = Selection::between(&document, 0, Caret::at(&document, 5));
+    assert!(spans_lines(&document, selection));
+    let result = indent_lines(&document, selection, IndentUnit::Spaces(2));
+    assert_eq!(
+        reselected(&document, result),
+        ("  a\n\n    b\nc".into(), 0, 9)
+    );
+    let result = indent_lines(&document, selection, IndentUnit::Tab);
+    assert_eq!(
+        reselected(&document, result),
+        ("\ta\n\n\t  b\nc".into(), 0, 7)
+    );
+}
+
+#[test]
+fn a_selection_ending_at_a_lines_start_leaves_that_line() {
+    // A triple click selects "a" and its line break, caret on the next line.
+    let document = doc("a\r\nb");
+    let selection = Selection::between(&document, 0, Caret::at(&document, 3));
+    let result = indent_lines(&document, selection, IndentUnit::Spaces(4));
+    assert_eq!(reselected(&document, result), ("    a\r\nb".into(), 0, 7));
+}
+
+#[test]
+fn indenting_only_blank_lines_changes_nothing() {
+    let document = doc("\n  \n\t");
+    let selection = Selection::all(&document);
+    assert_eq!(indent_lines(&document, selection, IndentUnit::Tab), None);
+}
+
+#[test]
+fn shift_tab_removes_up_to_one_step_from_each_line() {
+    let document = doc("    a\n  b\nc\n\t\td\n      e");
+    let selection = Selection::all(&document);
+    let result = outdent_lines(&document, selection, IndentUnit::Spaces(4), 4);
+    assert_eq!(
+        reselected(&document, result).0,
+        "a\nb\nc\n\td\n  e",
+        "partial steps go whole, a tab counts as a step"
+    );
+    // With a 2-column tab a step of 4 takes both tabs.
+    let result = outdent_lines(&document, selection, IndentUnit::Spaces(4), 2);
+    assert_eq!(reselected(&document, result).0, "a\nb\nc\nd\n  e");
+    let flat = doc("a\nb");
+    let all = Selection::all(&flat);
+    assert_eq!(outdent_lines(&flat, all, IndentUnit::Tab, 4), None);
+}
+
+#[test]
+fn shift_tab_without_a_selection_outdents_the_caret_line_keeping_its_place() {
+    let document = doc("x\n    foo()");
+    // Caret before "oo".
+    let result = outdent_lines(&document, at(&document, 7), IndentUnit::Spaces(4), 4);
+    assert_eq!(reselected(&document, result), ("x\nfoo()".into(), 3, 3));
+    // A caret inside the removed blanks goes to the line's start.
+    let result = outdent_lines(&document, at(&document, 4), IndentUnit::Spaces(4), 4);
+    assert_eq!(reselected(&document, result), ("x\nfoo()".into(), 2, 2));
 }
 
 /// Characters chosen to hit every awkward case: line endings and lone
@@ -180,28 +311,53 @@ proptest! {
         text in awkward_text(),
         anchor in 0usize..200,
         caret in 0usize..200,
-        steps in prop::collection::vec((0u8..9, 0usize..200), 1..30),
+        steps in prop::collection::vec((0u8..13, 0usize..200), 1..30),
         tab_size in 1usize..8,
     ) {
         let mut document = doc(&text);
         let mut selection = Selection::between(&document, anchor, Caret::at(&document, caret));
+        let unit = IndentUnit::Spaces(tab_size);
         for (step, target) in steps {
+            let reselecting = match step {
+                9 => indent_lines(&document, selection, unit),
+                10 => indent_lines(&document, selection, IndentUnit::Tab),
+                11 => outdent_lines(&document, selection, unit, tab_size),
+                12 => outdent_lines(&document, selection, IndentUnit::Tab, tab_size),
+                _ => None,
+            };
+            if let Some(Reselecting { edit, anchor, caret }) = reselecting {
+                let before = document.clone();
+                match document.replace(edit.range.clone(), &edit.text) {
+                    Ok(_) => {
+                        // The ends are exact positions, never moved to fit.
+                        assert_valid_position(&document, anchor)?;
+                        assert_valid_position(&document, caret)?;
+                        selection = Selection::between(&document, anchor, Caret::at(&document, caret));
+                        prop_assert_eq!(selection.anchor(), anchor);
+                        prop_assert_eq!(selection.caret().byte(), caret);
+                    }
+                    Err(EditError::CreatesBom) => prop_assert_eq!(&document, &before),
+                    Err(err) => prop_assert!(false, "{:?}: {err}", edit.range),
+                }
+                continue;
+            }
             let edit = match step {
                 0 => typed(selection, 'x'),
                 1 => typed(selection, '日'),
                 2 => typed(selection, '✅'),
                 3 => Some(newline(&document, selection)),
-                4 => Some(tab(&document, selection, key(tab_size), &LAYOUT_FONT)),
+                4 => Some(tab(&document, selection, unit, key(tab_size), &LAYOUT_FONT)),
                 5 => backspace(&document, selection),
                 6 => delete(&document, selection),
                 7 => {
                     selection = selection.moved(Caret::at(&document, target), true);
                     None
                 }
-                _ => {
+                8 => {
                     selection = Selection::collapsed(Caret::at(&document, target));
                     None
                 }
+                _ => paste(&document, selection, "p\r\nq\rr"),
             };
             if let Some(Edit { range, text }) = edit {
                 let before = document.clone();

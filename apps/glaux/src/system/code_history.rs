@@ -125,15 +125,17 @@ pub struct EditHistory {
 
 impl EditHistory {
     /// Records the edit `replaced` describes, which inserted `inserted`
-    /// while `before` was selected and left the caret after it, joining
-    /// the newest step when it continues it. Steps that were undone can no
-    /// longer be redone.
+    /// while `before` was selected and left `after` selected, or the caret
+    /// after the inserted text when `after` is `None`, joining the newest
+    /// step when it continues it. Steps that were undone can no longer be
+    /// redone.
     pub fn record(
         &mut self,
         replaced: &Replaced,
         inserted: &str,
         kind: EditKind,
         before: Selection,
+        after: Option<Selection>,
     ) {
         self.redo.clear();
         let step = Step {
@@ -142,7 +144,7 @@ impl EditHistory {
             inserted: inserted.to_owned(),
             kind,
             before: Ends::of(before),
-            after: Ends::collapsed_at(replaced.range.end),
+            after: after.map_or(Ends::collapsed_at(replaced.range.end), Ends::of),
         };
         let sealed = std::mem::replace(&mut self.sealed, false);
         let joined = !sealed && self.undo.back_mut().is_some_and(|last| last.absorb(&step));
@@ -150,6 +152,14 @@ impl EditHistory {
             self.undo.push_back(step);
         }
         self.trim();
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
     }
 
     /// Makes the next edit start a step of its own.

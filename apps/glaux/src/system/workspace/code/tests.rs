@@ -11,6 +11,9 @@ use crate::system::test_font::LAYOUT_FONT;
 use pretty_assertions::assert_eq;
 
 mod editing;
+mod find;
+mod indent;
+mod menus;
 mod selection;
 
 pub(super) fn editor() -> CodeEditor {
@@ -450,6 +453,22 @@ fn feed(editor: &mut CodeEditor, session: &mut CodeSession, events: &[InputEvent
     for &event in events {
         editor.handle_input(event, Some(session));
     }
+}
+
+/// The work each of `events` asks for, in order.
+pub(super) fn requests(
+    editor: &mut CodeEditor,
+    session: &mut CodeSession,
+    events: &[InputEvent],
+) -> Vec<CodeRequest> {
+    events
+        .iter()
+        .filter_map(|&event| editor.handle_input(event, Some(session)))
+        .collect()
+}
+
+pub(super) fn typing(text: &str) -> Vec<InputEvent> {
+    text.chars().map(InputEvent::Text).collect()
 }
 
 #[test]

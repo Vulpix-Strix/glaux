@@ -99,6 +99,43 @@ impl Indent {
     }
 }
 
+/// Widths a space indentation step may have, in columns.
+const INDENT_WIDTHS: std::ops::RangeInclusive<usize> = 1..=8;
+
+/// The columns one indentation step of `text` takes when it indents with
+/// spaces: the most common increase in leading spaces from one non-blank
+/// line to the next, the narrowest on a tie. `None` when no line indents
+/// further than the one before it.
+///
+/// Lines whose indentation holds a tab are skipped, as are blank lines,
+/// which leave the comparison to the next non-blank one.
+fn space_width(text: &str) -> Option<usize> {
+    let mut counts = [0usize; *INDENT_WIDTHS.end() + 1];
+    let mut previous = 0;
+    for line in text.trim_start_matches(BOM).split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let content = line.trim_start_matches([' ', '\t']);
+        if content.is_empty() {
+            continue;
+        }
+        let indent = &line[..line.len() - content.len()];
+        if indent.contains('\t') {
+            continue;
+        }
+        let spaces = indent.len();
+        if let Some(step) = spaces
+            .checked_sub(previous)
+            .filter(|step| INDENT_WIDTHS.contains(step))
+        {
+            counts[step] += 1;
+        }
+        previous = spaces;
+    }
+    INDENT_WIDTHS
+        .filter(|&width| counts[width] > 0)
+        .max_by(|&a, &b| counts[a].cmp(&counts[b]).then(b.cmp(&a)))
+}
+
 /// What a successful [`CodeDocument::replace`] changed: enough to apply
 /// the reverse edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +185,9 @@ pub struct CodeDocument {
     /// Taken from the file when it was read, so it stays the same however
     /// the text is edited.
     indent: Indent,
+    /// Columns of one space indentation step in the file when it was read,
+    /// if it shows one.
+    indent_width: Option<usize>,
     /// Counts successful edits. It never goes back, even when an edit
     /// restores earlier text.
     revision: u64,
@@ -173,6 +213,7 @@ impl CodeDocument {
             origin: Origin { text: text.clone() },
             line_ending: LineEnding::of(&text),
             indent: Indent::of(&text),
+            indent_width: space_width(&text),
             revision: 0,
             text,
         }
@@ -229,6 +270,12 @@ impl CodeDocument {
     /// What indentation inserts: the style the file used when read.
     pub fn indent(&self) -> Indent {
         self.indent
+    }
+
+    /// Columns one space indentation step took in the file when it was
+    /// read, `None` when the file shows no step.
+    pub fn indent_width(&self) -> Option<usize> {
+        self.indent_width
     }
 
     /// Changes whenever the text does, so anything derived from the text

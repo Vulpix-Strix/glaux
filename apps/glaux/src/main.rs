@@ -30,7 +30,7 @@ use glaux_machine::machine::Machine;
 use glaux_machine::psg::{SAMPLE_RATE, SAMPLES_PER_TICK};
 use glaux_video::{HEIGHT, IndexedFrame, WIDTH};
 use platform::SessionKind;
-use system::{CartridgeVideoDefaults, HostRequest, PickedFile, System, SystemInfo};
+use system::{CartridgeVideoDefaults, Clipboard, HostRequest, PickedFile, System, SystemInfo};
 
 /// Window size, as a multiple of the logical resolution, when no saved
 /// state applies.
@@ -204,7 +204,7 @@ fn run(
         let ticks = clock.advance(now - last);
         last = now;
         for _ in 0..ticks {
-            system = system.update(&pending);
+            system = system.update_with(&pending, &mut HostClipboard(&mut host));
             pending.clear();
             serve_host_requests(&mut system, &mut picker, config_dir);
             system.audio(machine.psg_mut());
@@ -228,6 +228,19 @@ fn run(
         }
     }
     Ok(())
+}
+
+/// The desktop clipboard, as the system reads and writes it.
+struct HostClipboard<'a>(&'a mut RaylibHost);
+
+impl Clipboard for HostClipboard<'_> {
+    fn text(&mut self) -> Option<String> {
+        self.0.clipboard_text()
+    }
+
+    fn set_text(&mut self, text: &str) {
+        self.0.set_clipboard_text(text);
+    }
 }
 
 /// Carries out the work the system asked of the host during its last tick.

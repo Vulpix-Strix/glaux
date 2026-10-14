@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 use crate::config_file;
-use crate::system::{EditorSettings, TAB_SIZES};
+use crate::system::{EditorSettings, INDENT_SIZES, TAB_SIZES};
 
 /// File name of the saved settings inside the config directory.
 const FILE_NAME: &str = "editor-settings.json";
@@ -21,7 +21,7 @@ fn path(config_dir: &Path) -> PathBuf {
 /// Loads the saved settings from `config_dir`.
 ///
 /// A missing, unreadable or malformed file is logged and gives the
-/// defaults, and a tab size out of range gives the default tab size, so
+/// defaults, and a tab or indentation size out of range gives its default, so
 /// the file never stops Glaux from starting.
 pub fn load(config_dir: &Path) -> EditorSettings {
     let path = path(config_dir);
@@ -50,6 +50,14 @@ pub fn load(config_dir: &Path) -> EditorSettings {
             "saved tab size is out of range, using the default"
         );
         settings.tab_size = EditorSettings::default().tab_size;
+    }
+    if !INDENT_SIZES.contains(&settings.indent_size) {
+        tracing::warn!(
+            path = %path.display(),
+            indent_size = settings.indent_size,
+            "saved indentation size is out of range, using the default"
+        );
+        settings.indent_size = EditorSettings::default().indent_size;
     }
     tracing::debug!(?settings, "loaded saved editor settings");
     settings

@@ -264,8 +264,14 @@ enum Class {
     Punctuation,
 }
 
+/// Whether `ch` belongs in a word, as word moves, double clicks and
+/// whole-word search all count it.
+pub fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
 fn class(ch: char) -> Class {
-    if ch.is_alphanumeric() || ch == '_' {
+    if is_word_char(ch) {
         Class::Word
     } else if is_blank(ch) {
         Class::Blank

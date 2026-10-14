@@ -9,8 +9,10 @@
 //! modal [`Dialog`].
 
 mod code;
+mod context_menu;
 mod dialog;
 mod sprites;
+mod text_field;
 
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::{BitmapFont, FontMetrics};
@@ -35,7 +37,7 @@ use super::sprite_document::{
 use super::video::CartridgeVideoDefaults;
 use super::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
 use crate::cartridge::source::{ScriptListing, SourcePath};
-use crate::cartridge::{CartridgeError, LoadedCartridge, VideoAsset};
+use crate::cartridge::{CartridgeError, Language, LoadedCartridge, VideoAsset};
 use crate::cartridge_fs::FsError;
 use crate::rom::ICON_SIZE;
 use crate::sprite_import::SheetSource;
@@ -124,6 +126,16 @@ pub enum WorkspaceRequest {
     /// close its tab; answer with [`Workspace::script_saved`] and, if it
     /// closed, [`Workspace::script_closed`].
     SaveAndCloseScript(DocumentId),
+    /// Ask for a new script's path; answer with
+    /// [`Workspace::open_new_script`] and the cartridge's language.
+    NewScript,
+    /// Create this empty script and open it in a tab; answer with
+    /// [`Workspace::script_created`].
+    CreateScript(SourcePath),
+    /// Put this text on the host's clipboard.
+    Copy(String),
+    /// Read the host's clipboard; answer with [`Workspace::paste`].
+    Paste,
 }
 
 /// What a dialog's buttons do.
@@ -926,6 +938,14 @@ impl Workspace {
                 Some(WorkspaceRequest::SaveEditorSettings(settings))
             }
             CodeRequest::Save(id) => Some(WorkspaceRequest::SaveScript(id)),
+            CodeRequest::Copy(text) => Some(WorkspaceRequest::Copy(text)),
+            CodeRequest::Paste => Some(WorkspaceRequest::Paste),
+            CodeRequest::NewFile => Some(WorkspaceRequest::NewScript),
+            CodeRequest::Create(path) => Some(WorkspaceRequest::CreateScript(path)),
+            CodeRequest::Notice(text) => {
+                self.notify(text, PALE);
+                None
+            }
             CodeRequest::ConfirmClose(id) => {
                 let document = code.as_deref().and_then(|code| code.document(id))?;
                 self.code.end_drag();
@@ -958,6 +978,12 @@ impl Workspace {
     /// view's overlays is open and taking all input.
     pub fn has_modal(&self) -> bool {
         self.modal.is_some() || self.sprites.has_dialog() || self.code.has_overlay()
+    }
+
+    /// Whether Escape stays in the workspace, closing what is open there,
+    /// rather than returning to the shell.
+    pub fn claims_break(&self) -> bool {
+        self.has_modal() || (self.tab == Tab::Code && self.code.claims_break())
     }
 
     /// The pointer to show at `at`, with the Code view showing `code`, and
@@ -997,6 +1023,41 @@ impl Workspace {
             }
         };
         (cursor, frame)
+    }
+
+    /// Opens NEW FILE for a cartridge written in `language`.
+    pub fn open_new_script(&mut self, language: Language) {
+        self.code.open_new_file(language);
+    }
+
+    /// Reports how creating `path` in `code` went: the new script's tab
+    /// shows once it is created and open, and NEW FILE says why otherwise.
+    pub fn script_created(
+        &mut self,
+        code: &mut CodeSession,
+        path: &SourcePath,
+        result: Result<(), String>,
+    ) {
+        match &result {
+            Ok(()) => {
+                tracing::info!(file = %path, "script created");
+                self.code.refresh_metrics(code);
+                self.code.reveal_active(code);
+                self.notify(format!("Created {path}"), PALE);
+            }
+            Err(message) => {
+                tracing::debug!(file = %path, error = %message, "script not created");
+            }
+        }
+        self.code.script_created(result);
+    }
+
+    /// Hands the clipboard's `text` to the Code view, which inserts it
+    /// where the keys are.
+    pub fn paste(&mut self, code: &mut CodeSession, text: Option<String>) {
+        if self.tab == Tab::Code {
+            self.code.paste(text, Some(code));
+        }
     }
 
     /// Opens OPEN FILE on the cartridge's scripts, or on why they could

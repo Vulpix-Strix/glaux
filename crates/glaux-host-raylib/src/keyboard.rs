@@ -149,7 +149,7 @@ const EDIT_KEYS: [EditKey; 14] = [
     EditKey {
         key: KeyboardKey::KEY_TAB,
         event: |m| match (m.ctrl, m.shift) {
-            (false, _) => InputEvent::Tab,
+            (false, reverse) => InputEvent::Tab { reverse },
             (true, false) => InputEvent::NextView,
             (true, true) => InputEvent::PreviousView,
         },
@@ -168,7 +168,7 @@ const EDIT_KEYS: [EditKey; 14] = [
 /// press and never repeated. Raylib key codes name physical positions, so on
 /// layouts other than QWERTY the shortcut follows the key where the letter
 /// sits on QWERTY.
-const SHORTCUTS: [(KeyboardKey, KeyEvent); 8] = [
+const SHORTCUTS: [(KeyboardKey, KeyEvent); 15] = [
     (KeyboardKey::KEY_Z, |m| {
         if m.shift {
             InputEvent::Redo
@@ -183,6 +183,13 @@ const SHORTCUTS: [(KeyboardKey, KeyEvent); 8] = [
     (KeyboardKey::KEY_W, |_| InputEvent::CloseDocument),
     (KeyboardKey::KEY_PAGE_DOWN, |_| InputEvent::NextDocument),
     (KeyboardKey::KEY_PAGE_UP, |_| InputEvent::PreviousDocument),
+    (KeyboardKey::KEY_N, |_| InputEvent::NewFile),
+    (KeyboardKey::KEY_F, |_| InputEvent::Find),
+    (KeyboardKey::KEY_H, |_| InputEvent::Replace),
+    (KeyboardKey::KEY_G, |_| InputEvent::GoToLine),
+    (KeyboardKey::KEY_C, |_| InputEvent::Copy),
+    (KeyboardKey::KEY_X, |_| InputEvent::Cut),
+    (KeyboardKey::KEY_V, |_| InputEvent::Paste),
 ];
 
 /// Appends the command events of the shortcuts pressed this frame to `out`.
@@ -549,6 +556,13 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::CloseDocument
                     | InputEvent::NextDocument
                     | InputEvent::PreviousDocument
+                    | InputEvent::NewFile
+                    | InputEvent::Find
+                    | InputEvent::Replace
+                    | InputEvent::GoToLine
+                    | InputEvent::Copy
+                    | InputEvent::Cut
+                    | InputEvent::Paste
             );
         match mode {
             InputMode::Text => !game && !workspace,

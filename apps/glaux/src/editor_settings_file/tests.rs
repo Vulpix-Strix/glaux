@@ -1,5 +1,6 @@
 use super::*;
 use crate::scratch_dir::ScratchDir;
+use crate::system::IndentStyle;
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -10,6 +11,8 @@ fn saved_settings_load_back() {
         tab_size: 2,
         line_numbers: false,
         ligatures: false,
+        indent: IndentStyle::Spaces,
+        indent_size: 3,
     };
     save(&dir.join("nested"), &settings).unwrap();
     assert_eq!(load(&dir.join("nested")), settings);
@@ -31,6 +34,19 @@ fn an_out_of_range_tab_size_falls_back_alone() {
         load(&dir),
         EditorSettings {
             word_wrap: true,
+            ..EditorSettings::default()
+        }
+    );
+}
+
+#[test]
+fn an_out_of_range_indent_size_falls_back_alone() {
+    let dir = ScratchDir::new("editor-settings-indent");
+    fs::write(path(&dir), r#"{ "indent": "tabs", "indent_size": 99 }"#).unwrap();
+    assert_eq!(
+        load(&dir),
+        EditorSettings {
+            indent: IndentStyle::Tabs,
             ..EditorSettings::default()
         }
     );

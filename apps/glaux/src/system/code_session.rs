@@ -12,6 +12,7 @@ pub use tabs::{DocumentTabs, DocumentView};
 use std::collections::HashMap;
 use std::ops::Range;
 
+use super::code_cursor::Caret;
 use super::code_document::{
     CodeDocument, CodeDocumentError, CodeDocuments, CodeSaveError, CodeSaved, DocumentId,
     EditError, Replaced,
@@ -63,24 +64,41 @@ impl CodeSession {
 
     /// Replaces `range` of `id`'s text with `text`, see
     /// [`CodeDocument::replace`], and records it in `id`'s history as a
-    /// `kind` edit made with its tab's current selection. `None` if `id`
-    /// is not open.
+    /// `kind` edit made with its tab's current selection. `after`, given
+    /// as anchor and caret offsets in the edited text, is the selection
+    /// redoing it restores; without it, the caret after the inserted text.
+    /// `None` if `id` is not open.
     pub fn edit(
         &mut self,
         id: DocumentId,
         range: Range<usize>,
         text: &str,
         kind: EditKind,
+        after: Option<(usize, usize)>,
     ) -> Option<Result<Replaced, EditError>> {
-        let result = self.documents.get_mut(id)?.replace(range, text);
+        let document = self.documents.get_mut(id)?;
+        let result = document.replace(range, text);
         if let Ok(replaced) = &result {
             let before = self.tabs.selection(id).unwrap_or_default();
+            let after = after.map(|(anchor, caret)| {
+                Selection::between(document, anchor, Caret::at(document, caret))
+            });
             self.histories
                 .entry(id)
                 .or_default()
-                .record(replaced, text, kind, before);
+                .record(replaced, text, kind, before, after);
         }
         Some(result)
+    }
+
+    /// Whether `id` has an edit to undo.
+    pub fn can_undo(&self, id: DocumentId) -> bool {
+        self.histories.get(&id).is_some_and(EditHistory::can_undo)
+    }
+
+    /// Whether `id` has an undone edit to redo.
+    pub fn can_redo(&self, id: DocumentId) -> bool {
+        self.histories.get(&id).is_some_and(EditHistory::can_redo)
     }
 
     /// Makes `id`'s next edit start an undo step of its own.

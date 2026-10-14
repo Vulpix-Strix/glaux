@@ -137,7 +137,7 @@ fn type_at(session: &mut CodeSession, id: DocumentId, at: usize, text: &str) {
         session.tabs_mut().set_selection(id, selection);
         let typed = ch.to_string();
         session
-            .edit(id, at..at, &typed, EditKind::Typing)
+            .edit(id, at..at, &typed, EditKind::Typing, None)
             .unwrap()
             .unwrap();
         at += typed.len();

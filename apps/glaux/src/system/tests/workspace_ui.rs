@@ -219,7 +219,10 @@ fn clicking_a_tab_selects_it() {
 fn ctrl_tab_cycles_tabs_but_plain_tab_does_not() {
     let fixture = Fixture::new("sys-ws-keys");
     let system = press_break(loaded(&fixture));
-    let system = system.update(&[InputEvent::Tab, InputEvent::Tab]);
+    let system = system.update(&[
+        InputEvent::Tab { reverse: false },
+        InputEvent::Tab { reverse: false },
+    ]);
     assert_eq!(workspace_tab(&system), Tab::Code);
     let system = system.update(&[InputEvent::NextView, InputEvent::NextView]);
     assert_eq!(workspace_tab(&system), Tab::Map);

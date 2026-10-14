@@ -6,10 +6,12 @@
 
 mod audio;
 mod boot;
+mod clipboard;
 mod code_cursor;
 mod code_document;
 mod code_edit;
 mod code_history;
+mod code_search;
 mod code_selection;
 mod code_session;
 mod code_text;
@@ -29,8 +31,11 @@ mod video;
 mod workspace;
 
 pub use boot::Boot;
+pub use clipboard::Clipboard;
 use code_session::CodeSession;
-pub use editor_settings::{EditorSettings, TAB_SIZES};
+#[cfg(test)]
+pub use editor_settings::IndentStyle;
+pub use editor_settings::{EditorSettings, INDENT_SIZES, TAB_SIZES};
 pub use shell::Shell;
 use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
@@ -370,7 +375,10 @@ impl System {
     ///
     /// While the system asks what to do with unsaved edits, its dialog
     /// takes every input instead, and nothing else advances.
-    pub fn update(self, input: &[InputEvent]) -> Self {
+    ///
+    /// Copying and pasting in the workspace read and write `clipboard` as
+    /// their input is handled.
+    pub fn update_with(self, input: &[InputEvent], clipboard: &mut dyn Clipboard) -> Self {
         let Self {
             state,
             info,
@@ -435,6 +443,7 @@ impl System {
                         },
                         ctx.video_defaults,
                         input,
+                        clipboard,
                     );
                     host_requests.extend(requests);
                     state
@@ -467,6 +476,13 @@ impl System {
             exit_requested: false,
             exiting,
         }
+    }
+
+    /// [`update_with`](Self::update_with) on a clipboard that starts
+    /// empty and is dropped afterwards, for tests that don't copy or paste.
+    #[cfg(test)]
+    pub fn update(self, input: &[InputEvent]) -> Self {
+        self.update_with(input, &mut clipboard::MemoryClipboard::default())
     }
 
     /// Takes the oldest work the system asked of the host and the host has
@@ -1034,7 +1050,11 @@ fn open_workspace(
 /// for, returning the work it asks of the host, if any. Break returns to the shell with the cartridge still loaded, unless
 /// a dialog is open, which takes it as Escape. Events after a Break that
 /// leaves are dropped, so nothing meant for the workspace reaches the
-/// shell.
+/// shell. Copies and pastes read and write `clipboard` as they come.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the workspace state is lent in parts the tick hands on separately"
+)]
 fn workspace_tick(
     shell: Box<Shell>,
     cartridge: LoadedCartridge,
@@ -1043,13 +1063,14 @@ fn workspace_tick(
     documents: Documents<'_>,
     video_defaults: &CartridgeVideoDefaults,
     input: &[InputEvent],
+    clipboard: &mut dyn Clipboard,
 ) -> (SystemState, Vec<HostRequest>) {
     let Documents { sprites, code } = documents;
     let code = code.get_or_insert_default();
     workspace.tick(Some(code));
     let mut host_requests = Vec::new();
     for &event in input {
-        if event == InputEvent::Break && !workspace.has_modal() {
+        if event == InputEvent::Break && !workspace.claims_break() {
             workspace.end_stroke(sprites.as_mut());
             tracing::info!("workspace closed");
             let state = SystemState::Shell {
@@ -1098,6 +1119,30 @@ fn workspace_tick(
                 }
                 continue;
             }
+            WorkspaceRequest::NewScript => {
+                workspace.open_new_script(cartridge.manifest().runtime.language);
+                continue;
+            }
+            WorkspaceRequest::CreateScript(path) => {
+                let result = cartridge
+                    .create_source(&path)
+                    .map_err(|err| err.to_string())
+                    .and_then(|()| {
+                        code.open(&cartridge, &path)
+                            .map(drop)
+                            .map_err(|err| err.to_string())
+                    });
+                workspace.script_created(code, &path, result);
+                continue;
+            }
+            WorkspaceRequest::Copy(text) => {
+                clipboard.set_text(&text);
+                continue;
+            }
+            WorkspaceRequest::Paste => {
+                workspace.paste(code, clipboard.text());
+                continue;
+            }
             request => request,
         };
         let Some(document) = sprites.as_mut().filter(|_| video.is_ready()) else {
@@ -1124,7 +1169,11 @@ fn workspace_tick(
             | WorkspaceRequest::SaveEditorSettings(_)
             | WorkspaceRequest::SaveScript(_)
             | WorkspaceRequest::OverwriteScript { .. }
-            | WorkspaceRequest::SaveAndCloseScript(_) => {
+            | WorkspaceRequest::SaveAndCloseScript(_)
+            | WorkspaceRequest::NewScript
+            | WorkspaceRequest::CreateScript(_)
+            | WorkspaceRequest::Copy(_)
+            | WorkspaceRequest::Paste => {
                 unreachable!("code requests are carried out above")
             }
         }

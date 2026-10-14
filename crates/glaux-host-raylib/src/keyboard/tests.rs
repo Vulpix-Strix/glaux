@@ -144,13 +144,8 @@ fn held_ctrl_page_keys_never_page_or_repeat() {
 
 #[test]
 fn editing_keys_ignore_shift() {
-    let keys = [KEY_BACKSPACE, KEY_DELETE, KEY_ENTER, KEY_TAB];
-    let expected = [
-        InputEvent::Backspace,
-        InputEvent::Delete,
-        InputEvent::Enter,
-        InputEvent::Tab,
-    ];
+    let keys = [KEY_BACKSPACE, KEY_DELETE, KEY_ENTER];
+    let expected = [InputEvent::Backspace, InputEvent::Delete, InputEvent::Enter];
     assert_eq!(press(&keys, false), expected);
     assert_eq!(press(&keys, true), expected);
 }
@@ -173,8 +168,11 @@ fn ctrl_tab_switches_views_instead_of_tabbing() {
         );
         out
     };
-    assert_eq!(press_with(false, false), [InputEvent::Tab]);
-    assert_eq!(press_with(true, false), [InputEvent::Tab]);
+    assert_eq!(
+        press_with(false, false),
+        [InputEvent::Tab { reverse: false }]
+    );
+    assert_eq!(press_with(true, false), [InputEvent::Tab { reverse: true }]);
     assert_eq!(press_with(false, true), [InputEvent::NextView]);
     assert_eq!(press_with(true, true), [InputEvent::PreviousView]);
 }
@@ -247,6 +245,17 @@ fn ctrl_shortcuts_become_document_commands() {
         shortcuts(&[KEY_PAGE_UP], false, true),
         [InputEvent::PreviousDocument]
     );
+    assert_eq!(shortcuts(&[KEY_N], false, true), [InputEvent::NewFile]);
+    assert_eq!(shortcuts(&[KEY_F], false, true), [InputEvent::Find]);
+    assert_eq!(shortcuts(&[KEY_H], false, true), [InputEvent::Replace]);
+    assert_eq!(shortcuts(&[KEY_G], false, true), [InputEvent::GoToLine]);
+}
+
+#[test]
+fn ctrl_shortcuts_become_clipboard_commands() {
+    assert_eq!(shortcuts(&[KEY_C], false, true), [InputEvent::Copy]);
+    assert_eq!(shortcuts(&[KEY_X], false, true), [InputEvent::Cut]);
+    assert_eq!(shortcuts(&[KEY_V], false, true), [InputEvent::Paste]);
 }
 
 #[test]
@@ -261,7 +270,14 @@ fn shortcut_keys_without_ctrl_are_not_commands() {
                     KEY_P,
                     KEY_W,
                     KEY_PAGE_UP,
-                    KEY_PAGE_DOWN
+                    KEY_PAGE_DOWN,
+                    KEY_N,
+                    KEY_F,
+                    KEY_H,
+                    KEY_G,
+                    KEY_C,
+                    KEY_X,
+                    KEY_V
                 ],
                 shift,
                 false
@@ -282,6 +298,13 @@ fn editing_commands_are_kept_only_in_workspace_mode() {
         InputEvent::CloseDocument,
         InputEvent::NextDocument,
         InputEvent::PreviousDocument,
+        InputEvent::NewFile,
+        InputEvent::Find,
+        InputEvent::Replace,
+        InputEvent::GoToLine,
+        InputEvent::Copy,
+        InputEvent::Cut,
+        InputEvent::Paste,
     ];
     for (mode, kept) in [
         (InputMode::Text, 0),

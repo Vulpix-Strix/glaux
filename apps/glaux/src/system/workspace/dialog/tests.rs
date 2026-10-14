@@ -68,7 +68,7 @@ fn focus_moves_both_ways_and_wraps() {
     assert_eq!(dialog.focus(), 2);
     for (event, focus) in [
         (InputEvent::Down { select: false }, 0),
-        (InputEvent::Tab, 1),
+        (InputEvent::Tab { reverse: false }, 1),
         (InputEvent::Right { select: false }, 2),
         (InputEvent::Up { select: false }, 1),
         (InputEvent::Left { select: false }, 0),

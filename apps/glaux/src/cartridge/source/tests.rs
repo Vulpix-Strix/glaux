@@ -127,3 +127,26 @@ fn file_names_are_the_last_component() {
         "main.luau"
     );
 }
+
+#[test]
+fn creating_a_script_makes_an_empty_file_and_its_folders() {
+    let fixture = Fixture::new("source-create");
+    let cartridge = cartridge_with(&fixture, &[]);
+    let path = SourcePath::parse("code/enemies/owl.luau").unwrap();
+    assert_eq!(cartridge.create_source(&path), Ok(()));
+    assert_eq!(cartridge.read_source(&path), Ok(Vec::new()));
+    assert!(listed(&cartridge.script_files().unwrap()).contains(&"code/enemies/owl.luau"));
+}
+
+#[test]
+fn creating_an_existing_script_leaves_it_alone() {
+    let fixture = Fixture::new("source-create-exists");
+    let cartridge = cartridge_with(&fixture, &[]);
+    let path = SourcePath::parse("code/main.luau").unwrap();
+    let before = cartridge.read_source(&path).unwrap();
+    assert_eq!(
+        cartridge.create_source(&path),
+        Err(FsError::AlreadyExists("/code/main.luau".into()))
+    );
+    assert_eq!(cartridge.read_source(&path).unwrap(), before);
+}

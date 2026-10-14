@@ -27,6 +27,8 @@ use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 const DIRTY_DOT: i32 = 3;
 /// Marks a file OPEN FILE lists that already has a tab.
 const OPEN_TAG: &str = "open";
+/// The ground of text the find bar matches, outside the selection.
+const MATCH: u8 = HOVER_SHADE;
 
 impl CodeEditor {
     /// Draws the view for `session` below the workspace's tab bar, with
@@ -63,24 +65,49 @@ impl CodeEditor {
                             .selection(id)
                             .unwrap_or_default()
                             .reset(document);
-                        let key = self.geometry(document).metrics_key();
+                        let geometry = self.geometry(document);
+                        let key = geometry.metrics_key();
                         let caret = spot(document, selection.caret().byte(), key, font);
                         let caret_byte = selection.caret().byte();
                         painter.options_bar(document.language(), document.path().as_str(), &caret);
-                        // The caret is hidden while an overlay has the keys.
-                        let lit = self.caret_lit() && !self.has_overlay();
+                        // The caret is hidden while something else has the
+                        // keys.
+                        let lit = self.caret_lit() && !self.has_overlay() && !self.find_focused();
+                        let matches = self
+                            .find
+                            .as_ref()
+                            .map_or(&[][..], |bar| bar.matches_in(document));
                         painter.text_view(
                             document,
+                            &geometry,
                             view,
                             metrics,
                             &self.settings,
                             lit.then_some((&caret, caret_byte)),
                             selection.range(),
+                            matches,
                         );
+                        if let (Some(bar), Some(layout)) = (&self.find, self.find_layout()) {
+                            let current =
+                                matches.iter().position(|found| *found == selection.range());
+                            let lit = self.caret_lit() && !self.has_overlay();
+                            bar.render(
+                                painter.framebuffer,
+                                font,
+                                &layout,
+                                matches.len(),
+                                current,
+                                lit,
+                            );
+                        }
                     }
                     None => {
                         painter.options_bar_empty();
                         painter.empty_state(self.entry_error.as_deref());
+                        for (rect, label, _) in self.empty_actions() {
+                            let lit = hover_pointer.is_some_and(|at| rect.contains(at));
+                            painter.text(label, rect.x, rect.y, if lit { TEXT } else { ACCENT });
+                        }
                     }
                 }
             }
@@ -100,6 +127,18 @@ impl CodeEditor {
         }
         if let Some(picker) = &self.picker {
             painter.picker(picker, session);
+        }
+        if let Some(menu) = &self.context_menu {
+            menu.render(painter.framebuffer, font, &self.menu_layout(menu));
+        }
+        let lit = self.caret_lit();
+        if let Some(dialog) = &self.new_file {
+            let layout = self.prompt_layout(dialog.prompt());
+            dialog.render(painter.framebuffer, font, &layout, lit);
+        }
+        if let Some(dialog) = &self.go_to {
+            let layout = self.prompt_layout(dialog.prompt());
+            dialog.render(painter.framebuffer, font, &layout, lit);
         }
         if let Some(dialog) = &self.settings_dialog {
             let layout = settings_layout(&self.layout);
@@ -328,16 +367,28 @@ impl Painter<'_> {
     /// Only the rows shown are laid out. `metrics` that don't describe this
     /// view leave the indicators and the caret out rather than being
     /// measured again here.
+    /// The text of `document` in `geometry`, with `selected` inverted and
+    /// each of `matches`, sorted and apart, on a highlight.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each is one part of the view drawn"
+    )]
     fn text_view(
         &mut self,
         document: &CodeDocument,
+        geometry: &TextGeometry,
         view: DocumentView,
         metrics: Option<&TextMetrics>,
         settings: &EditorSettings,
         caret: Option<(&Spot, usize)>,
         selected: Range<usize>,
+        matches: &[Range<usize>],
     ) {
-        let geometry = TextGeometry::new(self.layout, document.line_count(), settings);
+        let geometry = *geometry;
+        let found = |byte: usize| {
+            let at = matches.partition_point(|found| found.end <= byte);
+            matches.get(at).is_some_and(|found| found.contains(&byte))
+        };
         let metrics = metrics.filter(|metrics| metrics.describes(document, geometry.metrics_key()));
         let view = metrics.map_or(view, |metrics| geometry.clamp(view, metrics));
         let (cell_w, cell_h) = (self.cell_w(), self.cell_h());
@@ -394,8 +445,15 @@ impl Painter<'_> {
                     continue;
                 }
                 let is_selected = selected.contains(&cell.byte);
-                if is_selected && let Some(rect) = cell_rect(cell.column, cell.width) {
-                    self.fill(rect, TEXT);
+                let ground = if is_selected {
+                    Some(TEXT)
+                } else if found(cell.byte) {
+                    Some(MATCH)
+                } else {
+                    None
+                };
+                if let (Some(ground), Some(rect)) = (ground, cell_rect(cell.column, cell.width)) {
+                    self.fill(rect, ground);
                 }
                 // Glyphs cut by either edge of the viewport are left out.
                 if cell.column < first || cell.column + cell.width > end {
@@ -512,8 +570,9 @@ impl Painter<'_> {
         let x = area.x + self.cell_w();
         let mut y = area.y + self.cell_h();
         self.text("No file open.", x, y, TEXT);
-        y += self.cell_h();
-        self.text("Ctrl+P: open a script", x, y, DIM);
+        // The links to create and open files take the next two rows; see
+        // `CodeEditor::empty_actions`.
+        y += 2 * self.cell_h();
         if let Some(error) = entry_error {
             y += 2 * self.cell_h();
             self.text("The entry script could not be opened:", x, y, TEXT);

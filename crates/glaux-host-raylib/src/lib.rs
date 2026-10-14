@@ -1,6 +1,7 @@
 //! Raylib-based host for Glaux.
 
 mod audio;
+mod clipboard;
 mod crt;
 mod keyboard;
 mod pointer;
@@ -254,6 +255,16 @@ impl RaylibHost {
     /// the frame, except during a press, when it is clamped to the frame.
     pub fn pointer_position(&self) -> Option<Point> {
         self.pointer.position()
+    }
+
+    /// The desktop clipboard's text, `None` when it holds no text.
+    pub fn clipboard_text(&self) -> Option<String> {
+        clipboard::text(&self.rl)
+    }
+
+    /// Puts `text` on the desktop clipboard.
+    pub fn set_clipboard_text(&mut self, text: &str) {
+        clipboard::set_text(&mut self.rl, text);
     }
 
     /// Whether the user asked to close the window since the previous

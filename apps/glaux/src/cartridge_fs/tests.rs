@@ -583,6 +583,27 @@ fn walking_reports_directories_below_the_depth_limit() {
 }
 
 #[test]
+fn creating_directories_makes_every_missing_level_and_keeps_existing_ones() {
+    let fixture = Fixture::new("create-dirs");
+    let root = fixture.root();
+    fs::create_dir(root.join("code")).unwrap();
+    fs::write(root.join("code/keep.luau"), "x").unwrap();
+    let fs = fixture.open();
+    assert_eq!(fs.create_dirs("/code/enemies/bosses"), Ok(()));
+    assert!(root.join("code/enemies/bosses").is_dir());
+    assert_eq!(fs.create_dirs("code/enemies"), Ok(()), "already there");
+    assert_eq!(
+        fs::read_to_string(root.join("code/keep.luau")).unwrap(),
+        "x"
+    );
+    assert_eq!(
+        fs.create_dirs("/code/keep.luau/inner"),
+        Err(FsError::NotADirectory("/code/keep.luau".into()))
+    );
+    assert!(!root.join("code/keep.luau/inner").exists());
+}
+
+#[test]
 fn walking_unavailable_storage_fails() {
     let fixture = Fixture::new("walk-gone");
     let fs = fixture.open();
@@ -595,6 +616,29 @@ mod symlinks {
     use super::*;
     use pretty_assertions::assert_eq;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn creating_directories_never_follows_a_link_out_of_the_root() {
+        let fixture = Fixture::new("create-dirs-link");
+        let root = fixture.root();
+        symlink(fixture.outside(), root.join("out")).unwrap();
+        symlink("missing", root.join("dangling")).unwrap();
+        fs::create_dir(root.join("inside")).unwrap();
+        symlink("inside", root.join("alias")).unwrap();
+        let fs = fixture.open();
+        assert_eq!(
+            fs.create_dirs("/out/new"),
+            Err(FsError::Unwritable("/out".into()))
+        );
+        assert_eq!(
+            fs.create_dirs("/dangling"),
+            Err(FsError::Unwritable("/dangling".into()))
+        );
+        assert_eq!(host_names(&fixture.outside()), ["secret"]);
+        // A link inside the root is followed like any directory.
+        assert_eq!(fs.create_dirs("/alias/deep"), Ok(()));
+        assert!(root.join("inside/deep").is_dir());
+    }
 
     #[test]
     fn creation_never_replaces_a_link() {

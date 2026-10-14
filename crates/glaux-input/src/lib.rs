@@ -66,8 +66,14 @@ pub enum InputEvent {
     Down {
         select: bool,
     },
-    /// Request completion of the word being typed.
-    Tab,
+    /// The Tab key. What it does is up to the context: complete the word
+    /// being typed, indent, or move focus to the next control.
+    ///
+    /// `reverse` is set when the key should act backward (typically Shift
+    /// held): outdent, or move focus to the previous control.
+    Tab {
+        reverse: bool,
+    },
     /// Pause the running program and return to the system, or leave the
     /// pause screen.
     Break,
@@ -102,6 +108,21 @@ pub enum InputEvent {
     NextDocument,
     /// Switch to the previous open document (Ctrl+PageUp on desktop).
     PreviousDocument,
+    /// Ask to create a new file (Ctrl+N on desktop).
+    NewFile,
+    /// Search the open document (Ctrl+F on desktop).
+    Find,
+    /// Search the open document and replace matches (Ctrl+H on desktop).
+    Replace,
+    /// Ask for a line of the open document to move to (Ctrl+G on desktop).
+    GoToLine,
+    /// Put the selection on the clipboard (Ctrl+C on desktop).
+    Copy,
+    /// Put the selection on the clipboard and delete it (Ctrl+X on
+    /// desktop).
+    Cut,
+    /// Insert the clipboard's text (Ctrl+V on desktop).
+    Paste,
     /// The logical pixel under the pointer changed. `None` means the pointer
     /// is outside the logical viewport and no button is captured.
     ///

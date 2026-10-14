@@ -189,6 +189,13 @@ impl Shell {
                 | InputEvent::CloseDocument
                 | InputEvent::NextDocument
                 | InputEvent::PreviousDocument
+                | InputEvent::NewFile
+                | InputEvent::Find
+                | InputEvent::Replace
+                | InputEvent::GoToLine
+                | InputEvent::Copy
+                | InputEvent::Cut
+                | InputEvent::Paste
         ) && !event.is_pointer()
         {
             self.blink = 0;
@@ -205,7 +212,7 @@ impl Shell {
                     self.editor.set_text(line);
                 }
             }
-            InputEvent::Tab => self.complete_command(),
+            InputEvent::Tab { .. } => self.complete_command(),
             InputEvent::Enter => {
                 if let Some(line) = self.editor.apply(event) {
                     return self.submit(&line, slot);
@@ -251,6 +258,13 @@ impl Shell {
             | InputEvent::CloseDocument
             | InputEvent::NextDocument
             | InputEvent::PreviousDocument
+            | InputEvent::NewFile
+            | InputEvent::Find
+            | InputEvent::Replace
+            | InputEvent::GoToLine
+            | InputEvent::Copy
+            | InputEvent::Cut
+            | InputEvent::Paste
             | InputEvent::PointerMove(_)
             | InputEvent::PointerDown { .. }
             | InputEvent::PointerUp { .. }

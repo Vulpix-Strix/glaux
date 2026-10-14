@@ -11,10 +11,6 @@ fn text(session: &CodeSession) -> &str {
     session.active_document().unwrap().text()
 }
 
-fn typing(text: &str) -> Vec<InputEvent> {
-    text.chars().map(InputEvent::Text).collect()
-}
-
 fn view(session: &CodeSession) -> DocumentView {
     let id = session.tabs().active().unwrap();
     *session.tabs().view(id).unwrap()
@@ -72,7 +68,11 @@ fn editing_keys_replace_a_selection_made_either_way() {
         &[InputEvent::DocumentStart { select: false }],
     );
     feed(&mut editor, &mut session, &[select(right); 5]);
-    feed(&mut editor, &mut session, &[InputEvent::Tab]);
+    feed(
+        &mut editor,
+        &mut session,
+        &[InputEvent::Tab { reverse: false }],
+    );
     assert_eq!((text(&session), caret(&session)), ("     X", 4));
 
     feed(&mut editor, &mut session, &[select(left); 2]);
@@ -285,7 +285,7 @@ fn overlays_keep_editing_keys_from_the_text() {
         InputEvent::Text('z'),
         InputEvent::Backspace,
         InputEvent::Delete,
-        InputEvent::Tab,
+        InputEvent::Tab { reverse: false },
     ];
     let untouched = |session: &CodeSession| {
         session

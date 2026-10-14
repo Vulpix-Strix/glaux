@@ -4,7 +4,9 @@ use crate::cartridge_fs::fixture::Fixture;
 use pretty_assertions::assert_eq;
 use semver::Version;
 
-use InputEvent::{Backspace, Enter, Tab};
+use InputEvent::{Backspace, Enter};
+
+const TAB: InputEvent = InputEvent::Tab { reverse: false };
 
 const UP: InputEvent = InputEvent::Up { select: false };
 const DOWN: InputEvent = InputEvent::Down { select: false };
@@ -708,7 +710,7 @@ fn submitting_resets_history_navigation() {
 #[test]
 fn tab_completes_a_unique_command() {
     let mut shell = shell_with(&typed("HE"));
-    send(&mut shell, &[Tab]);
+    send(&mut shell, &[TAB]);
     assert_eq!(shell.editor.text(), "help ");
     assert_eq!(shell.editor.cursor(), 5);
 }
@@ -719,7 +721,7 @@ fn tab_replaces_only_the_name_under_the_cursor() {
     events.extend([InputEvent::Home { select: false }]);
     events.extend([InputEvent::Right { select: false }; 2]);
     let mut shell = shell_with(&events);
-    send(&mut shell, &[Tab]);
+    send(&mut shell, &[TAB]);
     assert_eq!(shell.editor.text(), "help foo");
     assert_eq!(shell.editor.cursor(), 4);
 }
@@ -729,7 +731,7 @@ fn tab_on_arguments_or_without_match_does_nothing() {
     for line in ["help ", "xyz"] {
         let mut shell = shell_with(&typed(line));
         let before = shell.clone();
-        send(&mut shell, &[Tab]);
+        send(&mut shell, &[TAB]);
         assert_eq!(shell, before, "{line:?}");
     }
 }
@@ -737,7 +739,7 @@ fn tab_on_arguments_or_without_match_does_nothing() {
 #[test]
 fn tab_on_empty_line_lists_every_command() {
     let mut shell = new_shell();
-    send(&mut shell, &[Tab]);
+    send(&mut shell, &[TAB]);
     assert_eq!(
         entries(&shell),
         [

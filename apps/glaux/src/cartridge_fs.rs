@@ -453,6 +453,53 @@ impl CartridgeFs {
         fs::read(&file).map_err(|err| io_failure(err, &target))
     }
 
+    /// Creates the directory at `path`, absolute or relative to the
+    /// current directory, and every missing directory above it. Directories
+    /// that already exist are kept.
+    ///
+    /// Names reached through symlinks are followed inside the root only: a
+    /// name held by a link leading out of the root or nowhere is
+    /// [`FsError::Unwritable`], and a file in the way is
+    /// [`FsError::NotADirectory`].
+    pub fn create_dirs(&self, path: &str) -> Result<(), FsError> {
+        let target = self.resolve(path)?;
+        for depth in 1..=target.len() {
+            let components = &target[..depth];
+            match self.locate(components) {
+                Ok((_, EntryKind::Directory)) => continue,
+                Ok((_, EntryKind::File)) => {
+                    return Err(FsError::NotADirectory(virtual_path(components)));
+                }
+                Err(Lookup::Io(err)) => return Err(io_failure(err, components)),
+                Err(Lookup::Missing) => {}
+            }
+            let (name, parent) = components
+                .split_last()
+                .expect("depth starts at 1, so there is a last component");
+            if name.starts_with(STAGING_PREFIX) {
+                return Err(FsError::Unwritable(virtual_path(components)));
+            }
+            let dest = self.directory(parent)?.join(name);
+            // Something unreachable holds the name: a dangling link or one
+            // leading out of the root.
+            match fs::symlink_metadata(&dest) {
+                Ok(_) => return Err(FsError::Unwritable(virtual_path(components))),
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
+                Err(err) => return Err(io_failure(err, components)),
+            }
+            match fs::create_dir(&dest) {
+                Ok(()) => {}
+                // Created meanwhile by someone else; checked again below.
+                Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
+                Err(err) => return Err(write_failure(err, components)),
+            }
+            if !matches!(self.locate(components), Ok((_, EntryKind::Directory))) {
+                return Err(FsError::NotADirectory(virtual_path(components)));
+            }
+        }
+        Ok(())
+    }
+
     /// Replaces the regular file at `path`, absolute or relative to the
     /// current directory, with `contents`, provided it still holds
     /// `expected` (`None`: provided it does not exist).
