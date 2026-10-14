@@ -242,6 +242,12 @@ impl Runtime {
         Ok(())
     }
 
+    /// The engine, for tests that inspect what the runtime registered.
+    #[cfg(test)]
+    pub(crate) fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
     /// The commands recorded by the last `draw()` that completed, in call
     /// order. Empty until one does.
     pub fn frame(&self) -> &[DrawCommand] {

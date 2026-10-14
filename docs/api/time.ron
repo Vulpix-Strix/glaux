@@ -1,0 +1,17 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/time/frame",
+        kind: Function,
+        luau: (name: "frame"),
+        rhai: (name: "frame", returns: Int),
+        returns: Number,
+    ),
+    (
+        id: "api/time/t",
+        kind: Function,
+        luau: (name: "t"),
+        rhai: (name: "t"),
+        returns: Number,
+    ),
+]

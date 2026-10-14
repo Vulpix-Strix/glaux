@@ -74,10 +74,15 @@ pub fn sprite_pixel(workspace: &Workspace, x: i32, y: i32) -> Point {
     )
 }
 
+/// The tab names the interface shows in English.
+pub fn english_labels() -> TabLabels {
+    TabLabels::new(&crate::ui_text::translator())
+}
+
 /// The leftmost column the cartridge name may use.
 pub fn name_start(metrics: FontMetrics) -> i32 {
     let layout = Layout::new(metrics);
-    WIDTH as i32 - NAME_PAD - layout.name_cells() as i32 * layout.cell_w
+    WIDTH as i32 - NAME_PAD - layout.name_cells(&english_labels()) as i32 * layout.cell_w
 }
 
 /// Where the sprite editor's palette button is.

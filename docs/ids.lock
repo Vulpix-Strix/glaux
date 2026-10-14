@@ -1,0 +1,32 @@
+# Published documentation ids, one per line.
+#
+# An id listed here is part of Glaux's public documentation. It keeps
+# resolving in every later release, so do not delete or rename a page that
+# has an entry. `mise run docs-update-ids` adds new ids and never removes one.
+# Retiring an id is a deliberate edit of this file in a reviewed change.
+api/audio/env
+api/audio/gate
+api/audio/index
+api/audio/tone
+api/graphics/cls
+api/graphics/pset
+api/graphics/rectfill
+api/graphics/spr
+api/graphics/text
+api/index
+api/input/btn
+api/input/btnp
+api/input/buttons
+api/input/key
+api/input/keyp
+api/input/keys
+api/logging/debug
+api/logging/index
+api/logging/info
+api/logging/trace
+api/logging/warn
+api/modules/import
+api/modules/require
+api/time/frame
+api/time/t
+guide/index

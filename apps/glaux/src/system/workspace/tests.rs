@@ -61,11 +61,14 @@ fn gaps_and_the_view_below_the_bar_hit_no_tab() {
 #[test]
 fn every_hint_fits_between_the_tabs_and_the_name() {
     let layout = layout();
+    let labels = tests_support::english_labels();
     let [.., (_, last)] = layout.tabs();
     assert!(layout.hint_x() > last.right());
-    let name_start = WIDTH as i32 - NAME_PAD - layout.name_cells() as i32 * layout.cell_w;
+    let name_start = WIDTH as i32
+        - NAME_PAD
+        - layout.name_cells(&tests_support::english_labels()) as i32 * layout.cell_w;
     for tab in Tab::ALL {
-        let end = layout.hint_x() + text_width(&LAYOUT_FONT, tab.label());
+        let end = layout.hint_x() + text_width(&LAYOUT_FONT, labels.get(tab));
         assert!(end + NAME_GAP <= name_start, "{tab:?}");
     }
 }

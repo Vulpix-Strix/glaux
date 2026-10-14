@@ -34,6 +34,12 @@ raylib = "6"
 mlua = { version = "0.12", features = ["luau"] }
 rhai = "1.26"
 
+comrak = { version = "0.56", default-features = false }
+rust-embed = { version = "8.13", default-features = false, features = ["debug-embed"] }
+fluent-bundle = "0.16"
+fluent-syntax = "0.12"
+unic-langid = "0.9"
+
 tree-sitter = "0.27"
 tree-sitter-language = "0.1"
 tree-sitter-luau = "1.2"
@@ -52,6 +58,8 @@ glaux-luau = { path = "crates/glaux-luau" }
 glaux-script = { path = "crates/glaux-script" }
 glaux-rhai = { path = "crates/glaux-rhai" }
 glaux-syntax = { path = "crates/glaux-syntax" }
+glaux-i18n = { path = "crates/glaux-i18n" }
+glaux-docs = { path = "crates/glaux-docs" }
 
 [profile.dev]
 opt-level = 0

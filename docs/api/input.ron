@@ -1,0 +1,49 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/input/buttons",
+        kind: ConstantGroup,
+        luau: (name: "Button"),
+        rhai: (name: "Button"),
+        source: "glaux_input::Button",
+    ),
+    (
+        id: "api/input/keys",
+        kind: ConstantGroup,
+        luau: (name: "Key"),
+        rhai: (name: "Key"),
+        source: "glaux_input::Key",
+    ),
+    (
+        id: "api/input/btn",
+        kind: Function,
+        luau: (name: "btn"),
+        rhai: (name: "btn"),
+        params: [(name: "button", ty: Button)],
+        returns: Bool,
+    ),
+    (
+        id: "api/input/btnp",
+        kind: Function,
+        luau: (name: "btnp"),
+        rhai: (name: "btnp"),
+        params: [(name: "button", ty: Button)],
+        returns: Bool,
+    ),
+    (
+        id: "api/input/key",
+        kind: Function,
+        luau: (name: "key"),
+        rhai: (name: "key"),
+        params: [(name: "key", ty: Key)],
+        returns: Bool,
+    ),
+    (
+        id: "api/input/keyp",
+        kind: Function,
+        luau: (name: "keyp"),
+        rhai: (name: "keyp"),
+        params: [(name: "key", ty: Key)],
+        returns: Bool,
+    ),
+]

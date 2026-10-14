@@ -26,6 +26,17 @@ run = "cargo mutants --jobs 2"
 [tasks.clippy]
 run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
 
+[tasks.docs-check]
+description = "Validate documentation, API catalog, ids, links and UI catalogs, then run the checks that need a script runtime or the system font"
+run = [
+  "cargo run --quiet -p glaux-docs --bin glaux-docs -- check",
+  "cargo nextest run --no-tests=warn -p glaux-luau -p glaux-rhai -p glaux -E 'test(/catalog_consistency|docs_glyphs|ui_glyphs/)'",
+]
+
+[tasks.docs-update-ids]
+description = "Add the ids of new documentation pages to docs/ids.lock. Published ids are never removed"
+run = "cargo run --quiet -p glaux-docs --bin glaux-docs -- update-ids"
+
 [tasks.glaux]
 run = "cargo run -p glaux"
 

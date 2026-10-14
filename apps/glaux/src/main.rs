@@ -14,6 +14,7 @@ mod scratch_dir;
 mod sprite_import;
 mod system;
 mod tooling;
+mod ui_text;
 
 use std::env::consts::{ARCH, OS};
 use std::path::Path;

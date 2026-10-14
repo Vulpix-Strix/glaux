@@ -16,4 +16,5 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+glaux-docs.workspace = true
 pretty_assertions.workspace = true

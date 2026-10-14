@@ -1,0 +1,16 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/modules/require",
+        kind: Function,
+        luau: (name: "require"),
+        params: [(name: "name", ty: Text)],
+        returns: Any,
+    ),
+    (
+        id: "api/modules/import",
+        kind: Keyword,
+        rhai: (name: "import"),
+        params: [(name: "name", ty: Text)],
+    ),
+]

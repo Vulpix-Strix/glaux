@@ -14,6 +14,7 @@ mod dialog;
 mod sprites;
 mod text_field;
 
+use glaux_i18n::Translator;
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::{BitmapFont, FontMetrics};
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
@@ -220,13 +221,14 @@ pub enum Tab {
 impl Tab {
     pub const ALL: [Self; 5] = [Self::Code, Self::Sprites, Self::Map, Self::Sfx, Self::Music];
 
-    pub fn label(self) -> &'static str {
+    /// The id of the message holding the tab's name.
+    pub fn message_id(self) -> &'static str {
         match self {
-            Self::Code => "Code",
-            Self::Sprites => "Sprites",
-            Self::Map => "Map",
-            Self::Sfx => "SFX",
-            Self::Music => "Music",
+            Self::Code => "tab-code",
+            Self::Sprites => "tab-sprites",
+            Self::Map => "tab-map",
+            Self::Sfx => "tab-sfx",
+            Self::Music => "tab-music",
         }
     }
 
@@ -402,15 +404,35 @@ impl Layout {
     }
 
     /// Cells available to the cartridge name, right of the longest hint.
-    fn name_cells(self) -> usize {
-        let longest = Tab::ALL
-            .iter()
-            .map(|tab| i32::try_from(tab.label().chars().count()).unwrap_or(0) * self.cell_w)
-            .max()
-            .unwrap_or(0);
+    fn name_cells(self, labels: &TabLabels) -> usize {
+        let longest = i32::try_from(labels.longest_cells()).unwrap_or(0) * self.cell_w;
         let start = self.hint_x() + longest + NAME_GAP;
         let space = WIDTH as i32 - NAME_PAD - start;
         usize::try_from(space / self.cell_w.max(1)).unwrap_or(0)
+    }
+}
+
+/// The tabs' names in the interface language, resolved once because the
+/// language does not change while the workspace exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabLabels([String; Tab::ALL.len()]);
+
+impl TabLabels {
+    pub fn new(text: &Translator) -> Self {
+        Self(Tab::ALL.map(|tab| text.get(tab.message_id()).into_owned()))
+    }
+
+    pub fn get(&self, tab: Tab) -> &str {
+        &self.0[tab.index()]
+    }
+
+    /// The width in cells of the longest name.
+    fn longest_cells(&self) -> usize {
+        self.0
+            .iter()
+            .map(|label| label.chars().count())
+            .max()
+            .unwrap_or(0)
     }
 }
 
@@ -828,6 +850,7 @@ pub struct Workspace {
     /// The system font, which measures the text the views lay out.
     font: BitmapFont,
     tab: Tab,
+    tab_labels: TabLabels,
     code: CodeEditor,
     sprites: SpriteEditor,
     /// While open, the dialog takes every input and the views take none.
@@ -849,6 +872,7 @@ impl Workspace {
             layout,
             font: font.clone(),
             tab: Tab::default(),
+            tab_labels: TabLabels::new(&crate::ui_text::translator()),
             code: CodeEditor::new(
                 layout.code_metrics(),
                 font.clone(),
@@ -1565,14 +1589,14 @@ impl Workspace {
         draw_text(
             framebuffer,
             font,
-            hint.label(),
+            self.tab_labels.get(hint),
             layout.hint_x(),
             layout.text_y(),
             color,
         );
 
         let name = &cartridge.manifest().cartridge.name;
-        if let Some(name) = fit_name(font, name, layout.name_cells()) {
+        if let Some(name) = fit_name(font, name, layout.name_cells(&self.tab_labels)) {
             let x = WIDTH as i32 - NAME_PAD - text_width(font, &name);
             draw_text(framebuffer, font, &name, x, layout.text_y(), PALE);
         }
@@ -1604,7 +1628,15 @@ impl Workspace {
         let Layout { cell_w, cell_h } = self.layout;
         let x = cell_w;
         let mut y = self.layout.bar_height() + cell_h;
-        draw_text_scaled(framebuffer, font, self.tab.label(), x, y, 2, ACCENT);
+        draw_text_scaled(
+            framebuffer,
+            font,
+            self.tab_labels.get(self.tab),
+            x,
+            y,
+            2,
+            ACCENT,
+        );
         y += 3 * cell_h;
         for (text, color) in [
             (self.tab.purpose(), TEXT),

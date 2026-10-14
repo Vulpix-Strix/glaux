@@ -1,0 +1,62 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/graphics/cls",
+        kind: Function,
+        luau: (name: "cls"),
+        rhai: (name: "cls"),
+        params: [(name: "color", ty: Int)],
+    ),
+    (
+        id: "api/graphics/pset",
+        kind: Function,
+        luau: (name: "pset"),
+        rhai: (name: "pset"),
+        params: [
+            (name: "x", ty: Number),
+            (name: "y", ty: Number),
+            (name: "color", ty: Int),
+        ],
+    ),
+    (
+        id: "api/graphics/rectfill",
+        kind: Function,
+        luau: (name: "rectfill"),
+        rhai: (name: "rectfill"),
+        params: [
+            (name: "x", ty: Number),
+            (name: "y", ty: Number),
+            (name: "width", ty: Int),
+            (name: "height", ty: Int),
+            (name: "color", ty: Int),
+        ],
+    ),
+    (
+        id: "api/graphics/text",
+        kind: Function,
+        luau: (name: "print"),
+        rhai: (name: "text"),
+        params: [
+            (name: "value", ty: Any),
+            (name: "x", ty: Number),
+            (name: "y", ty: Number),
+            (name: "color", ty: Int),
+        ],
+    ),
+    (
+        id: "api/graphics/spr",
+        kind: Function,
+        luau: (name: "spr"),
+        rhai: (name: "spr"),
+        params: [
+            (name: "tile", ty: Int),
+            (name: "x", ty: Number),
+            (name: "y", ty: Number),
+            (name: "w", ty: Int, optional: true),
+            (name: "h", ty: Int, optional: true),
+            (name: "flip_x", ty: Bool, optional: true),
+            (name: "flip_y", ty: Bool, optional: true),
+            (name: "palette", ty: Int, optional: true),
+        ],
+    ),
+]

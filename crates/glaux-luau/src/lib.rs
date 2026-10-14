@@ -66,6 +66,9 @@
 //!   changes only the oscillator. `gate(channel, true)` opens the gate, or
 //!   retriggers it if already open, and `gate(channel, false)` releases it.
 //!
+//! The same API is described, with parameters and examples, in the
+//! repository's `docs/api/` catalog and `docs/en/api/` pages.
+//!
 //! [`InputState`]: glaux_input::InputState
 //! [`Key`]: glaux_input::Key
 //! [`ModuleSource`]: glaux_modules::ModuleSource

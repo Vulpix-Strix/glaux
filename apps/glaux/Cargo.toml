@@ -23,6 +23,7 @@ glaux-machine.workspace = true
 glaux-modules.workspace = true
 glaux-video.workspace = true
 glaux-host-raylib.workspace = true
+glaux-i18n.workspace = true
 glaux-input.workspace = true
 glaux-luau.workspace = true
 glaux-script.workspace = true
@@ -49,5 +50,6 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+glaux-docs.workspace = true
 pretty_assertions.workspace = true
 proptest.workspace = true

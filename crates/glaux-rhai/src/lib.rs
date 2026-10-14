@@ -104,6 +104,9 @@
 //!
 //! Names starting with `__glaux_` are reserved.
 //!
+//! The same API is described, with parameters and examples, in the
+//! repository's `docs/api/` catalog and `docs/en/api/` pages.
+//!
 //! [`InputState`]: glaux_input::InputState
 //! [`Key`]: glaux_input::Key
 //! [`ModuleSource`]: glaux_modules::ModuleSource

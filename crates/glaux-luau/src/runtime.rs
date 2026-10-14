@@ -170,6 +170,12 @@ impl Runtime {
         Ok(())
     }
 
+    /// The VM, for tests that inspect what the runtime installed.
+    #[cfg(test)]
+    pub(crate) fn lua(&self) -> &Lua {
+        &self.lua
+    }
+
     /// The commands recorded by the last `draw()` that completed, in call
     /// order. Empty until one does.
     pub fn frame(&self) -> &[DrawCommand] {

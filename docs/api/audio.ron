@@ -1,0 +1,41 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/audio/index",
+        kind: Namespace,
+        luau: (name: "audio"),
+        rhai: (name: "audio"),
+    ),
+    (
+        id: "api/audio/tone",
+        kind: Function,
+        luau: (path: ["audio"], name: "tone"),
+        rhai: (path: ["audio"], name: "tone"),
+        params: [
+            (name: "channel", ty: Int),
+            (name: "frequency", ty: Int),
+            (name: "volume", ty: Int),
+            (name: "waveform", ty: Waveform),
+        ],
+    ),
+    (
+        id: "api/audio/env",
+        kind: Function,
+        luau: (path: ["audio"], name: "env"),
+        rhai: (path: ["audio"], name: "env"),
+        params: [
+            (name: "channel", ty: Int),
+            (name: "attack_ms", ty: Int),
+            (name: "decay_ms", ty: Int),
+            (name: "sustain", ty: Int),
+            (name: "release_ms", ty: Int),
+        ],
+    ),
+    (
+        id: "api/audio/gate",
+        kind: Function,
+        luau: (path: ["audio"], name: "gate"),
+        rhai: (path: ["audio"], name: "gate"),
+        params: [(name: "channel", ty: Int), (name: "enabled", ty: Bool)],
+    ),
+]

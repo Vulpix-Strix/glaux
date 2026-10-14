@@ -16,4 +16,6 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+glaux-docs.workspace = true
+rhai = { workspace = true, features = ["metadata"] }
 pretty_assertions.workspace = true

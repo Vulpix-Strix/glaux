@@ -1,0 +1,36 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/logging/index",
+        kind: Namespace,
+        luau: (name: "log"),
+        rhai: (name: "log"),
+    ),
+    (
+        id: "api/logging/trace",
+        kind: Function,
+        luau: (path: ["log"], name: "trace"),
+        rhai: (path: ["log"], name: "trace"),
+        params: [(name: "value", ty: Any)],
+    ),
+    (
+        id: "api/logging/debug",
+        kind: Function,
+        luau: (path: ["log"], name: "debug"),
+        params: [(name: "value", ty: Any)],
+    ),
+    (
+        id: "api/logging/info",
+        kind: Function,
+        luau: (path: ["log"], name: "info"),
+        rhai: (path: ["log"], name: "info"),
+        params: [(name: "value", ty: Any)],
+    ),
+    (
+        id: "api/logging/warn",
+        kind: Function,
+        luau: (path: ["log"], name: "warn"),
+        rhai: (path: ["log"], name: "warn"),
+        params: [(name: "value", ty: Any)],
+    ),
+]
