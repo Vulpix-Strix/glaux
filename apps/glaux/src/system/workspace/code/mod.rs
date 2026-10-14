@@ -661,6 +661,9 @@ impl CodeEditor {
     /// left alone.
     pub fn refresh_metrics(&self, session: &mut CodeSession) {
         let ids: Vec<DocumentId> = session.tabs().ids().collect();
+        for &id in &ids {
+            self.refresh_syntax(session, id);
+        }
         for id in ids {
             let Some(document) = session.document(id) else {
                 continue;
@@ -686,6 +689,18 @@ impl CodeEditor {
             session.tabs_mut().set_selection(id, selection);
             session.tabs_mut().set_metrics(id, metrics);
         }
+    }
+
+    /// Highlights the lines of `id` the view shows, from where it is scrolled.
+    /// A wrapped line takes at least one row, so the rows shown bound the
+    /// lines shown.
+    fn refresh_syntax(&self, session: &mut CodeSession, id: DocumentId) {
+        let Some(document) = session.document(id) else {
+            return;
+        };
+        let rows = self.geometry(document).rows;
+        let top = session.tabs().view(id).map_or(0, |view| view.top_line);
+        session.refresh_syntax(id, top..top + rows);
     }
 
     /// Applies `event` to `session` and returns the work it calls for, if

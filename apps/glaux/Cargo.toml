@@ -27,6 +27,7 @@ glaux-input.workspace = true
 glaux-luau.workspace = true
 glaux-script.workspace = true
 glaux-rhai.workspace = true
+glaux-syntax.workspace = true
 rfd.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -19,6 +19,7 @@ use super::code_document::{
 };
 use super::code_history::{EditHistory, EditKind};
 use super::code_selection::Selection;
+use super::code_syntax::DocumentSyntax;
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge_fs::FsError;
@@ -31,6 +32,8 @@ pub struct CodeSession {
     /// Each open document's undo and redo steps, kept across tab switches
     /// and saves and dropped when it closes.
     histories: HashMap<DocumentId, EditHistory>,
+    /// Each open document's highlighting, dropped when it closes.
+    syntax: HashMap<DocumentId, DocumentSyntax>,
     /// Whether the entry script was opened, or tried, on the first visit
     /// to the Code view. Never reset, so closing every tab stays closed.
     entry_requested: bool,
@@ -56,11 +59,38 @@ impl CodeSession {
         let closed = self.tabs.close(id);
         self.documents.close(id);
         self.histories.remove(&id);
+        self.syntax.remove(&id);
         closed
     }
 
     pub fn document(&self, id: DocumentId) -> Option<&CodeDocument> {
         self.documents.get(id)
+    }
+
+    /// Brings `id`'s highlighting up to date for `lines`, the lines shown,
+    /// parsing again only if the text changed. Does nothing if `id` is not
+    /// open.
+    pub fn refresh_syntax(&mut self, id: DocumentId, lines: Range<usize>) {
+        let Some(document) = self.documents.get(id) else {
+            return;
+        };
+        let last = document.line_count().saturating_sub(1);
+        let start = document
+            .line_range(lines.start.min(last))
+            .map_or(0, |range| range.start);
+        let end = document
+            .line_range(lines.end.saturating_sub(1).min(last))
+            .map_or(0, |range| range.end);
+        self.syntax
+            .entry(id)
+            .or_insert_with(|| DocumentSyntax::new(document.language()))
+            .refresh(document, start..end.max(start));
+    }
+
+    /// The highlight spans of the lines last given to
+    /// [`refresh_syntax`](Self::refresh_syntax), sorted and apart.
+    pub fn syntax_spans(&self, id: DocumentId) -> &[glaux_syntax::Span] {
+        self.syntax.get(&id).map_or(&[], DocumentSyntax::spans)
     }
 
     /// Replaces `range` of `id`'s text with `text`, see

@@ -34,6 +34,11 @@ raylib = "6"
 mlua = { version = "0.12", features = ["luau"] }
 rhai = "1.26"
 
+tree-sitter = "0.27"
+tree-sitter-language = "0.1"
+tree-sitter-luau = "1.2"
+cc = "1.2"
+
 pretty_assertions = "1"
 proptest = { version = "1", default-features = false, features = ["std"] }
 
@@ -46,6 +51,7 @@ glaux-host-raylib = { path = "crates/glaux-host-raylib" }
 glaux-luau = { path = "crates/glaux-luau" }
 glaux-script = { path = "crates/glaux-script" }
 glaux-rhai = { path = "crates/glaux-rhai" }
+glaux-syntax = { path = "crates/glaux-syntax" }
 
 [profile.dev]
 opt-level = 0

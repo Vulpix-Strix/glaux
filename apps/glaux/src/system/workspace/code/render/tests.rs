@@ -1,6 +1,7 @@
 use glaux_input::InputEvent;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::system_rom::SystemRom;
+use glaux_syntax::SyntaxKind;
 use glaux_video::draw::clear;
 use pretty_assertions::assert_eq;
 
@@ -10,6 +11,7 @@ use crate::cartridge_fs::fixture::Fixture;
 use crate::system::code_history::EditKind;
 use crate::system::shell::BLINK_TICKS;
 
+mod highlight;
 mod selection;
 
 const CELL_W: i32 = 6;
@@ -54,12 +56,33 @@ fn cell(geometry: &TextGeometry, column: i32, row: i32) -> (i32, i32) {
     )
 }
 
-/// Which pixels of the cell whose top-left is `at` are `color`.
-fn ink(framebuffer: &Framebuffer, at: (i32, i32), color: u8) -> Vec<bool> {
+/// Whether `pixel` is a color script text is drawn in: plain `TEXT` or a
+/// syntax color. Comments share `DIM` with the dim fallback glyphs, so `DIM` is
+/// left out and tests of it look for `DIM` directly.
+fn is_text_ink(pixel: u8) -> bool {
+    pixel == TEXT
+        || SyntaxKind::ALL
+            .iter()
+            .any(|&kind| syntax_theme::color(kind) == pixel && pixel != DIM)
+}
+
+/// Which pixels of the cell whose top-left is `at` satisfy `is_ink`.
+fn ink_where(framebuffer: &Framebuffer, at: (i32, i32), is_ink: impl Fn(u8) -> bool) -> Vec<bool> {
     (0..CELL_H)
         .flat_map(|dy| (0..CELL_W).map(move |dx| (at.0 + dx, at.1 + dy)))
-        .map(|(x, y)| framebuffer.pixel(x, y) == Some(color))
+        .map(|(x, y)| framebuffer.pixel(x, y).is_some_and(&is_ink))
         .collect()
+}
+
+/// Which pixels of the cell whose top-left is `at` are `color`. Asking for
+/// `TEXT` counts every text color, so tests of glyph shapes don't depend on
+/// what the scripts they draw happen to contain.
+fn ink(framebuffer: &Framebuffer, at: (i32, i32), color: u8) -> Vec<bool> {
+    if color == TEXT {
+        ink_where(framebuffer, at, is_text_ink)
+    } else {
+        ink_where(framebuffer, at, |pixel| pixel == color)
+    }
 }
 
 /// The pixels the system font sets in a cell for `ch`.
@@ -138,7 +161,7 @@ fn text_never_draws_outside_its_viewport() {
         let mut inked = 0;
         for y in area.y..area.bottom() {
             for x in area.x..area.right() {
-                if framebuffer.pixel(x, y) == Some(TEXT) {
+                if framebuffer.pixel(x, y).is_some_and(is_text_ink) {
                     inked += 1;
                     assert!(
                         geometry.viewport.contains_xy(x, y),

@@ -23,7 +23,15 @@ fn row_ink(
     color: u8,
 ) -> Vec<Vec<bool>> {
     (0..count)
-        .map(|column| ink(framebuffer, cell(geometry, column, 0), color))
+        .map(|column| {
+            let at = cell(geometry, column, 0);
+            if color == TEXT {
+                // A comment in the text draws in `DIM`.
+                ink_where(framebuffer, at, |pixel| is_text_ink(pixel) || pixel == DIM)
+            } else {
+                ink(framebuffer, at, color)
+            }
+        })
         .collect()
 }
 

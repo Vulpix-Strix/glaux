@@ -6,6 +6,7 @@ use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::system_rom::{SystemIcon, SystemUi};
+use glaux_syntax::Span;
 use glaux_video::draw::{draw_glyph, draw_ink_image, draw_text, fill_rect, pixel};
 
 use super::layout::{
@@ -19,6 +20,7 @@ use crate::system::code_document::CodeDocument;
 use crate::system::code_session::{CodeSession, DocumentView};
 use crate::system::code_text::{Spot, TextMetrics, spot, visual_rows};
 use crate::system::editor_settings::EditorSettings;
+use crate::system::syntax_theme;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
@@ -86,6 +88,7 @@ impl CodeEditor {
                             lit.then_some((&caret, caret_byte)),
                             selection.range(),
                             matches,
+                            session.syntax_spans(id),
                         );
                         if let (Some(bar), Some(layout)) = (&self.find, self.find_layout()) {
                             let current =
@@ -387,11 +390,19 @@ impl Painter<'_> {
         caret: Option<(&Spot, usize)>,
         selected: Range<usize>,
         matches: &[Range<usize>],
+        syntax: &[Span],
     ) {
         let geometry = *geometry;
         let found = |byte: usize| {
             let at = matches.partition_point(|found| found.end <= byte);
             matches.get(at).is_some_and(|found| found.contains(&byte))
+        };
+        let syntax_color = |byte: usize| {
+            let at = syntax.partition_point(|span| span.range.end <= byte);
+            syntax
+                .get(at)
+                .filter(|span| span.range.contains(&byte))
+                .map(|span| syntax_theme::color(span.kind))
         };
         let metrics = metrics.filter(|metrics| metrics.describes(document, geometry.metrics_key()));
         let view = metrics.map_or(view, |metrics| geometry.clamp(view, metrics));
@@ -469,8 +480,11 @@ impl Painter<'_> {
                 let own = self.font.glyph_id(cell.ch).is_some();
                 let (ink, missing) = if is_selected {
                     (BACKGROUND, BACKGROUND)
-                } else {
+                } else if found(cell.byte) {
+                    // Syntax colors are not meant for the match highlight.
                     (TEXT, DIM)
+                } else {
+                    (syntax_color(cell.byte).unwrap_or(TEXT), DIM)
                 };
                 let glyph = match glyph {
                     Some(glyph) if own => Some((glyph, ink)),

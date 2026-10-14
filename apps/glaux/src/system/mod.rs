@@ -15,6 +15,7 @@ mod code_history;
 mod code_search;
 mod code_selection;
 mod code_session;
+mod code_syntax;
 mod code_text;
 mod editor_settings;
 mod line_editor;
@@ -23,6 +24,7 @@ mod running;
 mod sfx;
 mod shell;
 mod sprite_document;
+mod syntax_theme;
 #[cfg(test)]
 mod test_font;
 #[cfg(test)]
