@@ -2,6 +2,10 @@
 
 Everything a cartridge script can call, in Luau and in Rhai. The two languages share the same functions with a few differences in spelling, which each page notes.
 
+## Lifecycle
+
+The callbacks a cartridge defines and Glaux calls: [boot](glaux://api/lifecycle/boot) once at the start, then [tick](glaux://api/lifecycle/tick) and [draw](glaux://api/lifecycle/draw) 60 times a second. They are not functions Glaux provides, so a script defines them as globals in Luau and as public functions in Rhai. See [The game loop](glaux://guide/game-loop).
+
 ## Drawing
 
 [cls](glaux://api/graphics/cls), [pset](glaux://api/graphics/pset), [rectfill](glaux://api/graphics/rectfill), [text](glaux://api/graphics/text) and [spr](glaux://api/graphics/spr). Drawing functions may only be called during `draw()`.
@@ -28,3 +32,4 @@ The [audio](glaux://api/audio/index) functions: [tone](glaux://api/audio/tone), 
 | `require("game.enemies")`             | `import "game.enemies" as enemies;`   |
 | `log.debug(...)`                      | no `log::debug`; use `debug(value)`   |
 | scripts keep state in globals         | callbacks keep state in `this`        |
+| `local function tick()` is not found  | `private fn tick()` is an error       |

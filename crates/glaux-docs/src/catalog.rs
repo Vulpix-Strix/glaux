@@ -18,6 +18,19 @@
 //! types and return types are maintained by hand and nothing verifies
 //! them.** Neither does Luau arity. Review them against the runtime when
 //! changing an API.
+//!
+//! Callbacks are the exception to "names exist in the runtime". The script
+//! defines them, so the runtime tests instead check that they are not
+//! installed and that the catalog lists exactly the callbacks the runtimes
+//! call.
+//!
+//! # Consumers
+//!
+//! An editor can build completion, signatures and snippets from the catalog
+//! alone. A function or callback is declared as `name(params)` with the
+//! parameters of [`ApiEntry::params`], spelled as [`ApiEntry::binding`] says
+//! for the language being edited. A callback's declaration is
+//! `function name() end` in Luau and `fn name() {}` in Rhai.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -76,6 +89,13 @@ pub enum Kind {
     /// Syntax rather than a registered function, such as Rhai's `import`.
     /// Not looked up in the runtime.
     Keyword,
+    /// A function the script defines and Glaux calls, such as `tick`. The
+    /// runtimes never register it, so it is not looked up there either.
+    ///
+    /// A callback is a global of both languages that takes no parameters and
+    /// returns nothing. Its entry therefore has no `path`, no `params` and no
+    /// `returns`, and it names the same function in Luau and in Rhai.
+    Callback,
 }
 
 /// The type of a parameter or result, as scripts see it.
@@ -388,6 +408,9 @@ impl RawEntry {
                 }
             }
         }
+        if self.kind == Kind::Callback {
+            self.check_callback()?;
+        }
         let callable = matches!(self.kind, Kind::Function | Kind::Keyword);
         if !callable && (!self.params.is_empty() || self.returns.is_some()) {
             return Err(definition(
@@ -425,6 +448,30 @@ impl RawEntry {
                 )));
             }
             optional_seen |= param.optional;
+        }
+        Ok(())
+    }
+}
+
+impl RawEntry {
+    /// A callback is a plain global that both languages call by one name.
+    fn check_callback(&self) -> Result<(), Problem> {
+        let definition = |message: &str| Problem::new("catalog-definition", message);
+        let (Some(luau), Some(rhai)) = (&self.luau, &self.rhai) else {
+            return Err(definition(
+                "a callback needs both a luau and a rhai binding",
+            ));
+        };
+        if luau.name != rhai.name {
+            return Err(definition(
+                "a callback has the same name in luau and in rhai",
+            ));
+        }
+        if !luau.path.is_empty() || !rhai.path.is_empty() {
+            return Err(definition("a callback is a global and has no path"));
+        }
+        if luau.returns.is_some() || rhai.returns.is_some() {
+            return Err(definition("a callback returns nothing"));
         }
         Ok(())
     }

@@ -198,6 +198,36 @@ fn rejects_invalid_definitions() {
 }
 
 #[test]
+fn rejects_invalid_callbacks() {
+    let cases = [
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"))"#,
+        r#"(id: "api/a/x", kind: Callback, rhai: (name: "x"))"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "y"))"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (path: ["a"], name: "x"), rhai: (name: "x"))"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "x", returns: Int))"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "x"), params: [(name: "p", ty: Int)])"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "x"), returns: Int)"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "x"), source: "glaux_input::Key")"#,
+    ];
+    for case in cases {
+        assert_eq!(single("a", case), ["catalog-definition"], "{case}");
+    }
+}
+
+#[test]
+fn a_callback_is_a_global_with_one_name_and_no_signature() {
+    let source = r#"#![enable(implicit_some)]
+[(id: "api/lifecycle/tick", kind: Callback, luau: (name: "tick"), rhai: (name: "tick"))]"#;
+    let (catalog, diagnostics) = merge(&[("api/lifecycle.ron", source)]);
+    assert_eq!(diagnostics, []);
+    let entry = catalog.lookup(ScriptLanguage::Rhai, &[], "tick").unwrap();
+    assert_eq!(entry.kind(), Kind::Callback);
+    assert_eq!(entry.params(), []);
+    assert_eq!(entry.returns(ScriptLanguage::Luau), None);
+    assert!(catalog.lookup(ScriptLanguage::Luau, &[], "tick").is_some());
+}
+
+#[test]
 fn a_constant_group_with_a_source_is_valid() {
     let entry = r#"(id: "api/a/key", kind: ConstantGroup, luau: (name: "Key"), source: "glaux_input::Key")"#;
     assert_eq!(single("a", entry), Vec::<&str>::new());

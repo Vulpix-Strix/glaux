@@ -20,6 +20,9 @@ api/input/buttons
 api/input/key
 api/input/keyp
 api/input/keys
+api/lifecycle/boot
+api/lifecycle/draw
+api/lifecycle/tick
 api/logging/debug
 api/logging/index
 api/logging/info
@@ -29,4 +32,6 @@ api/modules/import
 api/modules/require
 api/time/frame
 api/time/t
+guide/game-loop
+guide/getting-started
 guide/index

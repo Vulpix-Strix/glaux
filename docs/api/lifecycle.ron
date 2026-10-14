@@ -1,0 +1,21 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/lifecycle/boot",
+        kind: Callback,
+        luau: (name: "boot"),
+        rhai: (name: "boot"),
+    ),
+    (
+        id: "api/lifecycle/tick",
+        kind: Callback,
+        luau: (name: "tick"),
+        rhai: (name: "tick"),
+    ),
+    (
+        id: "api/lifecycle/draw",
+        kind: Callback,
+        luau: (name: "draw"),
+        rhai: (name: "draw"),
+    ),
+]

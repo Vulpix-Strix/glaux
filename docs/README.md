@@ -23,7 +23,7 @@ A page's id is its path below the language directory without `.md`, and its link
 
 ## The API catalog
 
-`api/*.ron` lists the names, parameters and return types of the script API. It is maintained by hand. Tests in `glaux-luau` and `glaux-rhai` check that the names exist, that nothing undocumented is installed, and, for Rhai, the arities. Parameter names, types and return types are not verified, so review them against the runtime when an API changes. See the `glaux_docs::catalog` module documentation.
+`api/*.ron` lists the names, parameters and return types of the script API. It is maintained by hand. Tests in `glaux-luau` and `glaux-rhai` check that the names exist, that nothing undocumented is installed, and, for Rhai, the arities. A `Callback` entry, such as `boot`, describes a function the script defines and Glaux calls. It must exist in both languages under one name, and the tests check that the runtimes do not install it and that the catalog lists exactly the callbacks they call. Parameter names, types and return types are not verified, so review them against the runtime when an API changes. See the `glaux_docs::catalog` module documentation.
 
 An entry's id is `api/<category>/<name>` and must match its file name. Every entry needs a page with the same id.
 

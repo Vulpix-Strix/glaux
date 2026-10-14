@@ -149,3 +149,27 @@ fn arity_counting_handles_nested_types_and_no_parameters() {
     assert_eq!(arity("_: (), _: &mut X, _: Y) -> Z"), 3);
     assert_eq!(arity("_, _, _, _)"), 4);
 }
+
+#[test]
+fn callbacks_are_documented_but_never_registered() {
+    let library = Library::embedded();
+    let documented: BTreeSet<&str> = library
+        .api()
+        .entries_for(LANGUAGE)
+        .filter(|entry| entry.kind() == Kind::Callback)
+        .map(|entry| entry.binding(LANGUAGE).unwrap().name.as_str())
+        .collect();
+    let called: BTreeSet<&str> = [Phase::Boot, Phase::Tick, Phase::Draw]
+        .into_iter()
+        .filter_map(Phase::callback)
+        .collect();
+    assert_eq!(documented, called);
+
+    let registered = registered();
+    for name in called {
+        assert!(
+            !registered.contains_key(name),
+            "the runtime registers {name}"
+        );
+    }
+}

@@ -156,6 +156,13 @@ fn draw_errors_name_the_draw_phase() {
 }
 
 #[test]
+fn local_functions_are_not_callbacks() {
+    let mut runtime = started(r#"local function tick() log.info("tick") end"#);
+    runtime.tick(NO_INPUT).unwrap();
+    assert!(texts(runtime.take_output()).is_empty());
+}
+
+#[test]
 fn non_function_callbacks_are_errors() {
     let failure = start_failure("boot = 3");
     assert_eq!(failure.error.phase, Phase::Boot);

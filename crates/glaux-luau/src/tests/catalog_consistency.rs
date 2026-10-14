@@ -42,7 +42,7 @@ fn every_catalog_entry_exists_with_the_documented_kind() {
     let runtime = started("");
     let library = Library::embedded();
     for entry in library.api().entries_for(LANGUAGE) {
-        if entry.kind() == Kind::Keyword {
+        if matches!(entry.kind(), Kind::Keyword | Kind::Callback) {
             continue;
         }
         let binding = entry.binding(LANGUAGE).unwrap();
@@ -140,5 +140,28 @@ fn the_api_documented_for_luau_is_the_api_scripts_see() {
             });
             assert!(!found, "{} is Rhai only but Luau has it", entry.id());
         }
+    }
+}
+
+#[test]
+fn callbacks_are_documented_but_never_installed() {
+    let runtime = started("");
+    let library = Library::embedded();
+    let documented: BTreeSet<&str> = library
+        .api()
+        .entries_for(LANGUAGE)
+        .filter(|entry| entry.kind() == Kind::Callback)
+        .map(|entry| entry.binding(LANGUAGE).unwrap().name.as_str())
+        .collect();
+    let called: BTreeSet<&str> = [Phase::Boot, Phase::Tick, Phase::Draw]
+        .into_iter()
+        .filter_map(Phase::callback)
+        .collect();
+    assert_eq!(documented, called);
+
+    let globals = runtime.lua().globals();
+    for name in called {
+        let value: Value = globals.raw_get(name).unwrap();
+        assert!(matches!(value, Value::Nil), "the runtime installs {name}");
     }
 }
