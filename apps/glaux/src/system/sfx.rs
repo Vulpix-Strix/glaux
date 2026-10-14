@@ -7,7 +7,7 @@ use glaux_machine::system_rom::{SystemSfx, SystemSounds};
 
 use super::audio;
 
-/// The System ROM's sound: one effect at a time, written into audio
+/// The System ROM's sound. It plays one effect at a time, writing into audio
 /// registers of its own that the shell and cartridges never share.
 #[derive(Debug, Clone)]
 pub struct SystemSound {
@@ -65,7 +65,7 @@ impl SystemSound {
     }
 
     /// Writes the registers into `psg`. `fresh` means `psg` was just reset
-    /// for the System ROM; it is also reset here if the registers were
+    /// for the System ROM. It is also reset here if the registers were
     /// replaced since the last apply.
     pub fn apply(&mut self, psg: &mut Psg, fresh: bool) {
         let restart = std::mem::take(&mut self.restart);

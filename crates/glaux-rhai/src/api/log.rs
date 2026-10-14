@@ -1,10 +1,10 @@
 //! The `log` module: `log::trace`, `log::info` and `log::warn`. Each takes
-//! one value and records it as a [`LogEntry`]; several values are combined
+//! one value and records it as a [`LogEntry`]. Several values are combined
 //! with string interpolation, as in ``log::info(`x = ${x}`)``.
 //!
-//! There is no `log::debug`: `debug` is a Rhai keyword, which no function
-//! name may be, even inside a module. Rhai's own `debug(value)` records at
-//! debug level instead.
+//! There is no `log::debug`. `debug` is a Rhai keyword, and no function name
+//! may be a keyword, even inside a module. Rhai's own `debug(value)` records
+//! at debug level instead.
 
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -3,7 +3,7 @@
 //! A line is a sequence of words separated by whitespace. A word is made of
 //! unquoted text and `'…'` or `"…"` segments, concatenated: `a"b c"` is the
 //! single word `ab c`. Inside quotes, `\\` is a backslash and a backslash
-//! before the enclosing quote is that quote; any other backslash is kept as
+//! before the enclosing quote is that quote. Any other backslash is kept as
 //! written. Outside quotes a backslash is an ordinary character.
 
 use std::iter::Peekable;
@@ -19,7 +19,7 @@ pub(super) struct Invocation<'a> {
     /// whitespace, for commands that interpret their arguments themselves.
     pub(super) raw_args: &'a str,
     /// The command's valueless flags found among the words, by name
-    /// without the leading `--`. The parser leaves this empty; commands
+    /// without the leading `--`. The parser leaves this empty. Commands
     /// that take flags have them moved here out of `args`.
     pub(super) flags: Vec<&'static str>,
 }
@@ -50,7 +50,7 @@ pub(super) type Options<'a> = Vec<(&'static str, &'a str)>;
 pub(super) struct Positional<'a> {
     pub(super) word: &'a str,
     /// Index in [`Split::options`] of the option given most recently before
-    /// this word, if any. In `--name My Game`, `Game` follows `--name`: when
+    /// this word, if any. In `--name My Game`, `Game` follows `--name`. When
     /// a command gets more positional words than it takes, such words are
     /// likely the rest of a value with spaces that was not quoted.
     pub(super) after: Option<usize>,
@@ -65,7 +65,7 @@ pub(super) struct Split<'a> {
 
 /// Separates `args` into positional arguments and the `known` options, each
 /// written `--name value` or `--name=value`. Option names are matched
-/// exactly; every option takes a value and may be given once.
+/// exactly. Every option takes a value and may be given once.
 ///
 /// Works on unquoted words, so `--name "Space Adventure"` has the value
 /// `Space Adventure`, and a word that starts with `--` is always an option,

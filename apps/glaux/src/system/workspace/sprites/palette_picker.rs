@@ -1,5 +1,5 @@
-//! The SELECT PALETTE dialog. Chooses the object palette bank one tile is
-//! drawn with, showing every bank's colors and the tile drawn through each.
+//! The SELECT PALETTE dialog chooses the object palette bank one tile is
+//! drawn with. It shows every bank's colors and the tile drawn through each.
 
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
@@ -33,7 +33,7 @@ const ROW_HEIGHT: i32 = PREVIEW + 2;
 /// A color swatch and the space before the next one.
 const SWATCH_WIDTH: i32 = 8;
 const SWATCH_PITCH: i32 = SWATCH_WIDTH + 1;
-/// Swatch height; the row keeps three pixels above and below it.
+/// Swatch height. The row keeps three pixels above and below it.
 const SWATCH_HEIGHT: i32 = ROW_HEIGHT - 6;
 /// Visible colors per bank: every local but the transparent 0.
 const SWATCHES: i32 = OBJ_PALETTE_COLORS as i32 - 1;
@@ -97,7 +97,7 @@ impl PalettePicker {
     ///
     /// Up and Down move the pending choice, wrapping around, and `0`–`7`
     /// choose a bank directly. A primary press on a row chooses it. Enter
-    /// applies and Escape cancels; a press and release on the same button
+    /// applies and Escape cancels. A press and release on the same button
     /// does what it says.
     pub fn handle_input(
         &mut self,
@@ -301,7 +301,7 @@ impl PickerLayout {
             PAD + cell_h + SECTION_GAP + rows_height + SECTION_GAP + button_height + PAD;
         let width = row_width + 2 * PAD + 2;
         let height = 1 + title_height + body_height + 1;
-        // The system font fits the area, as the layout tests check; a taller
+        // The system font fits the area, as the layout tests check. A taller
         // one would only push the window's bottom past it, never its title
         // above it.
         let window = Rect {

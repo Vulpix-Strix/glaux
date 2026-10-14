@@ -25,7 +25,7 @@ pub fn coordinate(n: f64) -> Result<i32, String> {
 }
 
 /// A size in pixels: a positive integer. `what` names the size in the
-/// error. Values past `i32::MAX` saturate, as coordinates do; the result is
+/// error. Values past `i32::MAX` saturate, as coordinates do. The result is
 /// always at least 1.
 pub fn size(n: f64, what: &str) -> Result<i32, String> {
     if n.fract() == 0.0 && n >= 1.0 {

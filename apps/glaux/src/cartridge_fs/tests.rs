@@ -841,7 +841,7 @@ mod symlinks {
         let _mode = Mode::set(&path, 0o444, 0o644);
         let fs = fixture.open();
         // The directory stays writable, so a rename could replace the
-        // file; the read-only flag alone keeps it.
+        // file. The read-only flag alone keeps it.
         assert_eq!(
             fs.replace_file("tools/data", b"new", Some(b"old")),
             Err(ReplaceError::Fs(FsError::ReadOnly("/tools/data".into())))
@@ -1031,7 +1031,7 @@ mod removing_and_moving {
 
     #[test]
     fn a_name_that_appears_during_the_move_is_not_replaced() {
-        // `rename_file` looks before it moves; the primitive itself must
+        // `rename_file` looks before it moves. The primitive itself must
         // still refuse when the name is taken in between.
         let fixture = Fixture::new("move-race");
         write(&fixture, "tools/a.luau", "a");

@@ -1,8 +1,8 @@
-//! What the editing keys do to a code document: each works out the one
+//! What the editing keys do to a code document. Each works out the one
 //! replacement it makes, which [`CodeDocument::replace`] then applies.
 //!
 //! Ranges come from selections and caret moves, so their ends are always
-//! valid caret positions; see [`code_cursor`](super::code_cursor).
+//! valid caret positions. See [`code_cursor`](super::code_cursor).
 
 use std::ops::Range;
 
@@ -52,7 +52,7 @@ pub enum IndentUnit {
 impl IndentUnit {
     /// The unit `style` asks for in `document`. Detecting follows the
     /// style the file was read with and, for spaces, the width of its
-    /// steps; `size` columns of spaces stand in where the setting or the
+    /// steps. `size` columns of spaces stand in where the setting or the
     /// file names no width.
     pub fn of(document: &CodeDocument, style: IndentStyle, size: usize) -> Self {
         let size = size.max(1);
@@ -206,7 +206,7 @@ pub fn indent_lines(
 /// One `unit` less at the start of every line the selection touches, or
 /// of the caret's line when nothing is selected, keeping the selection on
 /// the same text. A line gives up leading blanks up to the unit's columns,
-/// with a tab taking `tab_size`; lines without any are left alone. `None`
+/// with a tab taking `tab_size`. Lines without any are left alone. `None`
 /// when no line has any.
 pub fn outdent_lines(
     document: &CodeDocument,
@@ -234,11 +234,11 @@ pub fn outdent_lines(
     })
 }
 
-/// Rewrites the start of each line `selection` touches with `change`,
-/// which gets the line's content and gives how many bytes to remove from
+/// Rewrites the start of each line `selection` touches with `change`.
+/// `change` gets the line's content and gives how many bytes to remove from
 /// its start and what to insert there, or `None` to leave it. The edit
-/// spans from the first touched line's start to the last one's end; the
-/// selection's ends follow the text they were on, an end at a changed
+/// spans from the first touched line's start to the last one's end. The
+/// selection's ends follow the text they were on, with an end at a changed
 /// line's start staying before what is inserted there.
 ///
 /// A selection ending at the very start of a line doesn't touch it.

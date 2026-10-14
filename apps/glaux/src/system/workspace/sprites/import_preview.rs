@@ -1,8 +1,8 @@
-//! The IMPORT SPRITES dialog. Shows a PNG spritesheet converted to G1 as it
-//! will land in the object-tile grid, tells what replacing the sprites with
-//! it changes, and imports it when confirmed.
+//! The IMPORT SPRITES dialog shows a PNG spritesheet converted to G1 as it
+//! will land in the object-tile grid. It tells what replacing the sprites
+//! with it changes, and imports it when confirmed.
 //!
-//! The conversion is the one `glaux import sprites` runs; this dialog only
+//! The conversion is the one `glaux import sprites` runs. This dialog only
 //! shows its result and hands it to the document as one edit.
 
 use glaux_input::{InputEvent, Point, PointerButton};
@@ -210,7 +210,7 @@ impl ImportPreview {
     ///
     /// Up, Down and the wheel scroll a sheet taller than the preview. `t`
     /// switches the transparency setting and converts again. Enter imports
-    /// and Escape cancels; a press and release on the same button does
+    /// and Escape cancels. A press and release on the same button does
     /// what it says.
     pub fn handle_input(
         &mut self,
@@ -573,7 +573,7 @@ impl ImportLayout {
         let main_bottom = notes_y - SECTION_GAP;
         // The preview shows whole tile rows inside its frame.
         let tile = OBJ_TILE_HEIGHT as i32;
-        // At least one row, however little room a font leaves; the layout
+        // At least one row, however little room a font leaves. The layout
         // tests check the system font leaves room for more.
         let preview_height = ((main_bottom - main_top - 2) / tile * tile).max(tile);
         let preview = Rect {

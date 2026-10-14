@@ -8,7 +8,7 @@ use rhai::{Engine, FLOAT, INT};
 
 /// Registers `frame` and `t`.
 pub(crate) fn install(engine: &mut Engine, counter: &Rc<Cell<u64>>) {
-    // Saturates instead of wrapping; no run reaches `INT::MAX` ticks.
+    // Saturates instead of wrapping, though no run reaches `INT::MAX` ticks.
     let ticks = Rc::clone(counter);
     engine.register_fn("frame", move || -> INT {
         INT::try_from(ticks.get()).unwrap_or(INT::MAX)

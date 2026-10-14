@@ -38,7 +38,7 @@ fn measure(document: &CodeDocument, wrap_columns: Option<usize>) -> TextMetrics 
 
 #[test]
 fn left_and_right_step_over_whole_characters_and_line_endings() {
-    // a é 日 🦀 take 1, 2, 3 and 4 bytes; the CRLF is one step.
+    // a é 日 🦀 take 1, 2, 3 and 4 bytes. The CRLF is one step.
     let document = doc("aé日🦀\r\nb");
     assert_eq!(
         walk(&document, 0, 7, |caret| caret.right(&document)),
@@ -163,7 +163,7 @@ fn vertical_moves_cross_double_width_characters_by_their_columns() {
     let down = |caret: Caret| caret.vertical(&document, 1, &metrics, &LAYOUT_FONT);
     // Column 1 is the right half of the first "✅": its nearer edge is the
     // start of the second. Column 3 is the right half of the second, so the
-    // line's end; the next line still gets column 3.
+    // line's end. The next line still gets column 3.
     assert_eq!(down(Caret::at(&document, 1)).byte(), 8);
     let middle = down(Caret::at(&document, 3));
     assert_eq!(middle.byte(), 11);
@@ -297,7 +297,7 @@ fn a_word_is_the_run_of_one_kind_of_character_at_a_position() {
 
 #[test]
 fn words_hold_whole_multibyte_and_wide_characters() {
-    // é is 2 bytes, 日本 are 3 each and two cells wide; ✅ is punctuation.
+    // é is 2 bytes, 日本 are 3 each and two cells wide. ✅ is punctuation.
     let document = doc("é日本 ✅✅x");
     assert_eq!(word_at(&document, 2), 0..8);
     // Inside 日: the start of the character.

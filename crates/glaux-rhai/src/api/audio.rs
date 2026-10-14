@@ -1,4 +1,4 @@
-//! The `audio` module: `audio::tone`, `audio::env` and `audio::gate`.
+//! The `audio` module, with `audio::tone`, `audio::env` and `audio::gate`.
 
 use std::cell::RefCell;
 use std::rc::Rc;

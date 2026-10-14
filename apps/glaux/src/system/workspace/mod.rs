@@ -1,8 +1,8 @@
-//! The editor workspace: a tab bar over one view per cartridge resource.
+//! The editor workspace is a tab bar over one view per cartridge resource.
 //!
 //! The workspace works on the loaded cartridge without starting it. The
 //! system lends it the cartridge and the documents the editors change for
-//! each tick and frame; the workspace keeps only its own UI state, so the
+//! each tick and frame. The workspace keeps only its own UI state, so the
 //! selected tab and each editor's view survive tab switches and trips to the
 //! shell. File work the editors ask for goes back to the system as a
 //! [`WorkspaceRequest`], and its outcome comes back as a brief notice or a
@@ -52,7 +52,7 @@ pub use sprites::SpriteSource;
 use sprites::{SpriteEditor, SpriteRequest};
 
 /// Entries of the workspace's frame palette that keep the system palette's
-/// colors. Every UI color index is below it; the cartridge's object colors
+/// colors. Every UI color index is below it. The cartridge's object colors
 /// are placed after it.
 const SYSTEM_COLORS: usize = 32;
 
@@ -105,50 +105,50 @@ pub enum WorkspaceRequest {
     /// [`Workspace::file_dialog_closed`] answers it, or Escape stops the
     /// wait.
     PickSpritesheet,
-    /// List the cartridge's scripts for OPEN FILE; answer with
+    /// List the cartridge's scripts for OPEN FILE. Answer with
     /// [`Workspace::scripts_listed`].
     ListScripts,
-    /// Open this script in a tab, or show its tab if it has one; answer
+    /// Open this script in a tab, or show its tab if it has one. Answer
     /// with [`Workspace::script_opened`].
     OpenScript(SourcePath),
     /// Keep the Code view's settings for the next launch.
     SaveEditorSettings(EditorSettings),
-    /// Write this script document to its file; answer with
+    /// Write this script document to its file. Answer with
     /// [`Workspace::script_saved`].
     SaveScript(DocumentId),
     /// Write this script document over its file, which changed outside
-    /// Glaux, provided it still holds `seen` (`None`: is still absent);
-    /// answer with [`Workspace::script_saved`].
+    /// Glaux, provided it still holds `seen` (`None` means it is still
+    /// absent). Answer with [`Workspace::script_saved`].
     OverwriteScript {
         id: DocumentId,
         seen: Option<Vec<u8>>,
     },
     /// Write this script document to its file and, once it is written,
-    /// close its tab; answer with [`Workspace::script_saved`] and, if it
+    /// close its tab. Answer with [`Workspace::script_saved`] and, if it
     /// closed, [`Workspace::script_closed`].
     SaveAndCloseScript(DocumentId),
-    /// Ask for a new script's path; answer with
+    /// Ask for a new script's path. Answer with
     /// [`Workspace::open_new_script`] and the cartridge's language.
     NewScript,
-    /// Create this empty script and open it in a tab; answer with
+    /// Create this empty script and open it in a tab. Answer with
     /// [`Workspace::script_created`].
     CreateScript(SourcePath),
-    /// Read the state of this script's file for DELETE SCRIPT; answer with
+    /// Read the state of this script's file for DELETE SCRIPT. Answer with
     /// [`Workspace::delete_prompt`].
     PrepareDelete(DocumentId),
     /// Delete this script's file and close its tab, provided the file still
-    /// holds `seen` (`None`: is still absent); answer with
+    /// holds `seen` (`None` means it is still absent). Answer with
     /// [`Workspace::script_deleted`].
     DeleteScript {
         id: DocumentId,
         seen: Option<Vec<u8>>,
     },
-    /// Move this script's file to this path; answer with
+    /// Move this script's file to this path. Answer with
     /// [`Workspace::script_renamed`].
     RenameScript { id: DocumentId, to: SourcePath },
     /// Put this text on the host's clipboard.
     Copy(String),
-    /// Read the host's clipboard; answer with [`Workspace::paste`].
+    /// Read the host's clipboard. Answer with [`Workspace::paste`].
     Paste,
 }
 
@@ -183,7 +183,7 @@ pub(super) enum Target {
     None,
     /// Asset files of the sprite document.
     Assets(Vec<DiskAsset>),
-    /// The file of one script document, holding `seen` (`None`: absent).
+    /// The file of one script document, holding `seen` (`None` means absent).
     Script {
         id: DocumentId,
         seen: Option<Vec<u8>>,
@@ -191,7 +191,7 @@ pub(super) enum Target {
     /// The tab of a script document with unsaved edits.
     CloseScript(DocumentId),
     /// The file of a script document to delete, holding `seen` when the
-    /// dialog was shown (`None`: absent).
+    /// dialog was shown (`None` means absent).
     DeleteScript {
         id: DocumentId,
         seen: Option<Vec<u8>>,
@@ -592,7 +592,7 @@ fn close_dialog(path: &SourcePath) -> Dialog<Choice> {
 /// Asks whether to delete the file at `path` of script document `id`.
 /// `modified` is whether the document has unsaved edits, `external`
 /// whether the file changed outside Glaux, and `seen` what the file holds
-/// (`None`: nothing, it is gone). Cancel is focused so a stray Enter
+/// (`None` when it is gone). Cancel is focused so a stray Enter
 /// deletes nothing.
 fn delete_dialog(
     id: DocumentId,
@@ -863,7 +863,7 @@ impl Workspace {
     }
 
     /// Prepares to show `document` in the workspace's frame palette. It
-    /// holds until the document's palettes change; see
+    /// holds until the document's palettes change. See
     /// [`refresh_video`](Self::refresh_video).
     pub fn prepare_video(&self, document: &SpriteDocument) -> WorkspaceVideo {
         let video = document.video();
@@ -930,7 +930,7 @@ impl Workspace {
     /// Code view change `code`, and returns the file work it calls for, if
     /// any.
     ///
-    /// While a dialog is open it takes every event, Escape included; so
+    /// While a dialog is open it takes every event, Escape included. So
     /// do the sprite editor's own dialogs and the Code view's overlays.
     /// Otherwise Ctrl+Tab and Ctrl+Shift+Tab cycle the tabs, a primary
     /// press on a tab selects it, and everything else goes to the open
@@ -1173,7 +1173,7 @@ impl Workspace {
     }
 
     /// Reports how deleting the file of script document `id` went. The
-    /// tab closed if it was deleted; otherwise a message says why not.
+    /// tab closed if it was deleted. Otherwise a message says why not.
     pub fn script_deleted(
         &mut self,
         code: &mut CodeSession,
@@ -1326,7 +1326,7 @@ impl Workspace {
 
     /// Reports how saving script document `id`, or overwriting its file
     /// after a conflict, went. A conflict asks whether to overwrite the
-    /// file; the edits stay in memory whatever happened.
+    /// file. The edits stay in memory whatever happened.
     pub fn script_saved(&mut self, id: DocumentId, result: Result<CodeSaved, CodeSaveError>) {
         match result {
             Ok(CodeSaved::Written { path, bytes }) => {
@@ -1499,7 +1499,7 @@ impl Workspace {
     /// Draws the tab bar and the selected view for `cartridge`, whose
     /// sprites the editor shows from `sprites` and whose scripts the Code
     /// view shows from `code`, with what is under `pointer` highlighted.
-    /// The pointer itself is not drawn; see [`draw_cursor`].
+    /// The pointer itself is not drawn. See [`draw_cursor`].
     #[expect(
         clippy::too_many_arguments,
         reason = "each argument is a separate source the frame is drawn from"

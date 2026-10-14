@@ -574,7 +574,7 @@ impl Painter<'_> {
         let x = area.x + self.cell_w();
         let mut y = area.y + self.cell_h();
         self.text("No file open.", x, y, TEXT);
-        // The links to create and open files take the next two rows; see
+        // The links to create and open files take the next two rows. See
         // `CodeEditor::empty_actions`.
         y += 2 * self.cell_h();
         if let Some(error) = entry_error {

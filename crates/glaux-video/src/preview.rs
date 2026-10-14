@@ -104,7 +104,7 @@ impl ObjPreviewPalette {
         self.slots[usize::from(master)]
     }
 
-    /// Frame index for every master index; masters no bank refers to map
+    /// Frame index for every master index. Masters no bank refers to map
     /// to 0. Every master a tile pixel can resolve to is referenced.
     pub fn slots(&self) -> &[u8; PALETTE_LEN] {
         &self.table

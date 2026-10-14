@@ -42,7 +42,7 @@ impl CrtPass {
     pub(crate) fn load(rl: &mut RaylibHandle, thread: &RaylibThread) -> Result<Self, CrtError> {
         let mut shader = rl.load_shader_from_memory(thread, None, Some(SHADER_SOURCE));
         // A failed compile leaves program id 0, which raylib reports as
-        // invalid; it does not silently substitute the default shader.
+        // invalid. It does not silently substitute the default shader.
         if !shader.is_shader_valid() {
             return Err(CrtError::InvalidShader);
         }
@@ -68,7 +68,7 @@ impl CrtPass {
 
     /// Draws `frame` through the CRT shader into the render target.
     ///
-    /// Must run outside `begin_drawing`; the target is shown afterwards with
+    /// Must run outside `begin_drawing`. The target is shown afterwards with
     /// [`draw`](Self::draw).
     pub(crate) fn render(
         &mut self,
@@ -103,7 +103,7 @@ impl CrtPass {
     }
 }
 
-/// Render target size: the logical resolution times [`CRT_SCALE`].
+/// Render target size, which is the logical resolution times [`CRT_SCALE`].
 fn target_size() -> (u32, u32) {
     (WIDTH as u32 * CRT_SCALE, HEIGHT as u32 * CRT_SCALE)
 }

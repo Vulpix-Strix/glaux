@@ -1,4 +1,4 @@
-//! The sprite editor: draws on the loaded cartridge's object tiles in
+//! The sprite editor draws on the loaded cartridge's object tiles in
 //! memory, chooses the palette each tile is drawn with, undoes and redoes
 //! those edits, and asks for them to be saved.
 
@@ -325,11 +325,11 @@ impl SpriteEditor {
     /// anything.
     ///
     /// A press on the canvas uses the selected tool there, and the pencil,
-    /// eraser and eyedropper keep acting along a drag until its release;
-    /// each drag or fill is one undoable edit. A click elsewhere selects a
+    /// eraser and eyedropper keep acting along a drag until its release.
+    /// Each drag or fill is one undoable edit. A click elsewhere selects a
     /// sheet tile, a palette color, a tool or an options button, or asks to
     /// save. The wheel scrolls the sheet's rows, and Shift with the wheel
-    /// pans its columns. Arrow keys move the selection; `p`, `e`, `i` and
+    /// pans its columns. Arrow keys move the selection. `p`, `e`, `i` and
     /// `f` pick a tool, `g` toggles the grid, `a` Advanced mode, and `+`
     /// and `-` zoom the sheet. Undo, redo and save first end any drag, so
     /// it counts as one finished edit.
@@ -470,7 +470,7 @@ impl SpriteEditor {
                 })
             }
             Some(EditorDialog::Import(preview)) => {
-                // The preview is only opened on a document; without one
+                // The preview is only opened on a document. Without one
                 // there is nothing to convert against or replace.
                 let outcome = match document.as_deref() {
                     Some(document) => {
@@ -594,7 +594,7 @@ impl SpriteEditor {
     /// Uses the tool at tile pixel `at`, starting a drag if the tool keeps
     /// acting while dragged.
     fn press(&mut self, document: &mut SpriteDocument, at: (i32, i32)) {
-        // A fill records itself as one edit; a drag's edit stays open
+        // A fill records itself as one edit. A drag's edit stays open
         // until the stroke ends.
         if matches!(self.tool, ToolSlot::Pencil | ToolSlot::Eraser) {
             document.begin_edit();
@@ -666,7 +666,7 @@ impl SpriteEditor {
         self.sheet.reveal(self.selected, self.layout().visible);
     }
 
-    /// Advanced mode changes the sheet's height; the sheet keeps its
+    /// Advanced mode changes the sheet's height. The sheet keeps its
     /// scroll position as far as the new height allows.
     fn toggle_advanced(&mut self) {
         self.advanced = !self.advanced;

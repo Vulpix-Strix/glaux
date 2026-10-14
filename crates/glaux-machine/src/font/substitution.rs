@@ -1,5 +1,5 @@
-//! Glyph substitutions: the small subset of OpenType GSUB that fixed-cell
-//! fonts need, applied to one glyph per character.
+//! Glyph substitutions, a small subset of OpenType GSUB that fixed-cell
+//! fonts need. They are applied to one glyph per character.
 //!
 //! Every substitution replaces glyphs one for one with glyphs of the same
 //! width, so it changes how text looks but never which cells its characters
@@ -114,7 +114,7 @@ impl ContextRule {
 }
 
 /// One step of a font's substitutions. A lookup runs only when the
-/// [`Features`] being drawn with contain its `feature`; an empty `feature`
+/// [`Features`] being drawn with contain its `feature`. An empty `feature`
 /// always runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lookup {

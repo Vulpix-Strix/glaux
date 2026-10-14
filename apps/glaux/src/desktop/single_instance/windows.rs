@@ -93,9 +93,9 @@ impl Drop for Owner {
 pub(super) fn claim(launch: &SecondaryLaunch, launches: Sender<SecondaryLaunch>) -> Claim<Owner> {
     let name = mutex_name();
     // SAFETY: `name` is a NUL-terminated UTF-16 string that outlives the
-    // call; null security attributes request the defaults.
+    // call, and null security attributes request the defaults.
     let mutex = unsafe { CreateMutexW(ptr::null(), 0, name.as_ptr()) };
-    // SAFETY: GetLastError has no preconditions; it is read right after
+    // SAFETY: GetLastError has no preconditions. It is read right after
     // CreateMutexW on the same thread.
     let error = unsafe { GetLastError() };
     if mutex.is_null() {
@@ -240,7 +240,7 @@ fn run_listener(ready: &mpsc::SyncSender<anyhow::Result<isize>>) {
         return;
     }
 
-    // SAFETY: the class is registered above; a message-only window takes no
+    // SAFETY: the class is registered above, and a message-only window takes no
     // menu or creation parameter.
     let window = unsafe {
         CreateWindowExW(
@@ -267,7 +267,7 @@ fn run_listener(ready: &mpsc::SyncSender<anyhow::Result<isize>>) {
     } else {
         let _ = ready.send(Ok(window as isize));
         let mut message = MSG::default();
-        // SAFETY: `message` is a valid MSG to fill; GetMessageW returns 0
+        // SAFETY: `message` is a valid MSG to fill. GetMessageW returns 0
         // after WM_QUIT and -1 on error, both of which end the loop.
         while unsafe { GetMessageW(&mut message, ptr::null_mut(), 0, 0) } > 0 {
             // SAFETY: `message` was filled by GetMessageW.

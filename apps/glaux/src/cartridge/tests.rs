@@ -143,7 +143,7 @@ fn only_format_1_is_supported() {
         mochi_with("format: 1,", "format: 2,"),
         Err(CartridgeError::UnsupportedFormat(2))
     );
-    // Another format may have another shape: the format is still what
+    // Another format may have another shape. The format is still what
     // gets reported.
     assert_eq!(
         manifest("(format: 0, title: \"Pong\")"),

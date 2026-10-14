@@ -1,6 +1,6 @@
 //! Host-independent input events for Glaux system software.
 //!
-//! Hosts translate their native keyboard handling into these events; the
+//! Hosts translate their native keyboard handling into these events. The
 //! system never sees host key codes or keyboard state.
 //!
 //! Four kinds of input stay separate: typed text and editing events for the
@@ -159,15 +159,15 @@ pub enum InputEvent {
     /// captured presses started. Buttons still held are not reported again
     /// until they are released and pressed anew.
     PointerCancel,
-    /// The scroll wheel moved by whole notches; positive is away from the
+    /// The scroll wheel moved by whole notches. Positive is away from the
     /// user. Hosts report at most one wheel event per host frame.
     Wheel {
         delta: i8,
     },
     /// Sideways scrolling by whole notches, from a horizontal wheel or the
-    /// wheel turned while Shift is held; positive is toward the left, as
-    /// Shift with the wheel turned away from the user. Hosts report at most
-    /// one horizontal wheel event per host frame.
+    /// wheel turned while Shift is held. Positive is toward the left, the
+    /// direction Shift plus a wheel turned away from the user gives. Hosts
+    /// report at most one horizontal wheel event per host frame.
     WheelHorizontal {
         delta: i8,
     },
@@ -216,8 +216,8 @@ impl PointerButton {
 /// Which kind of input the active system context consumes.
 ///
 /// Hosts emit only the events of the current mode, plus
-/// [`InputEvent::Break`] in every mode, so one physical key never acts as a
-/// game input and an editing key at the same time, and pointer input exists
+/// [`InputEvent::Break`] in every mode. This way one physical key never acts
+/// as a game input and an editing key at the same time. Pointer input exists
 /// only in [`Workspace`](Self::Workspace).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum InputMode {

@@ -1,7 +1,7 @@
-//! NEW FILE: creates a script under the cartridge's `code/` folder.
+//! NEW FILE creates a script under the cartridge's `code/` folder.
 //!
-//! The user types the path below `code/` without an extension; the
-//! cartridge's language, from its manifest, decides the extension.
+//! The user types the path below `code/` without an extension. The language
+//! named in the cartridge's manifest decides the extension.
 
 use glaux_input::InputEvent;
 use glaux_machine::font::BitmapFont;
@@ -59,7 +59,7 @@ impl NewFile {
         self.failure = None;
     }
 
-    /// Shows why creating the file failed; the window stays open.
+    /// Shows why creating the file failed. The window stays open.
     pub fn set_failure(&mut self, message: String) {
         self.failure = Some(message);
     }

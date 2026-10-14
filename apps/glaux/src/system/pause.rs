@@ -1,10 +1,10 @@
-//! The system's pause screen: a paused cartridge's last frame, darkened,
-//! under a pause indicator drawn by Glaux itself.
+//! The pause screen shows a paused cartridge's last frame, darkened, under
+//! a pause indicator drawn by Glaux itself.
 //!
 //! The overlay is composed into the same indexed framebuffer as the frozen
 //! cartridge frame, which is presented with the cartridge's own master
 //! palette. The overlay's colors are system palette colors, so each is drawn
-//! with the index of the nearest color in the cartridge palette; a cartridge
+//! with the index of the nearest color in the cartridge palette. A cartridge
 //! palette without anything close to them shows the indicator approximately.
 
 use glaux_machine::framebuffer::{Framebuffer, WIDTH};

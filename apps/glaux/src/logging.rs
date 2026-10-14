@@ -1,4 +1,4 @@
-//! Stderr plus one log file per session in Glaux's data
+//! Logging to stderr and to one log file per session in Glaux's data
 //! directory.
 
 use std::fs::{self, File, OpenOptions};
@@ -20,7 +20,7 @@ const MAX_SESSIONS: usize = 10;
 const SESSION_PREFIX: &str = "glaux-";
 const SESSION_SUFFIX: &str = ".log";
 
-/// Keeps the file writer alive; dropping it flushes the queued events.
+/// Keeps the file writer alive. Dropping it flushes the queued events.
 ///
 /// The file writer is non-blocking with a bounded queue, so events can be
 /// dropped under heavy load.
@@ -28,11 +28,11 @@ pub struct Logging {
     _file_guard: Option<WorkerGuard>,
 }
 
-/// Installs the global subscriber: INFO and above to stderr, DEBUG and above
-/// to a new session file under `<data_dir>/logs`. `RUST_LOG` overrides both
-/// levels.
+/// Installs the global subscriber. INFO and above go to stderr, and DEBUG
+/// and above go to a new session file under `<data_dir>/logs`. `RUST_LOG`
+/// overrides both levels.
 ///
-/// Failing to set up the file only disables file logging; stderr logging
+/// Failing to set up the file only disables file logging. Stderr logging
 /// always works.
 pub fn init(data_dir: Option<&Path>) -> Logging {
     let file = data_dir
@@ -109,7 +109,7 @@ fn filter(default: LevelFilter) -> EnvFilter {
 #[derive(Debug)]
 struct SessionFile {
     file: File,
-    /// Old session logs that could not be removed; not fatal.
+    /// Old session logs that could not be removed. This is not fatal.
     pruning_errors: Vec<anyhow::Error>,
 }
 
@@ -215,7 +215,7 @@ fn is_session_log(name: &str) -> bool {
 /// File name of the session log started at `now`:
 /// `glaux-YYYY-MM-DDTHH-MM-SSZ.log`, in UTC.
 fn session_log_name(now: SystemTime) -> String {
-    // Times before the epoch only happen with a broken clock; clamp them.
+    // Times before the epoch only happen with a broken clock, so clamp them.
     let secs = now
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());

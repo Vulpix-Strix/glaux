@@ -3,7 +3,7 @@
 //!
 //! A [`Runtime`] owns one engine and one compiled script for the whole time
 //! a cartridge runs. Starting it runs the script's top level once and calls
-//! its optional `boot()`; each [`Runtime::tick`] takes that tick's
+//! its optional `boot()`. Each [`Runtime::tick`] takes that tick's
 //! [`InputState`] and calls the optional `tick()` and then `draw()`. All
 //! three callbacks take no parameters.
 //!
@@ -23,7 +23,7 @@
 //! `this` is bound only in those callbacks and in functions they call as
 //! methods (`this.step()`). Functions of an imported module are called
 //! through the module's namespace, never as methods of `this`, so they
-//! cannot reach it: using `this` there is an error. Pass them the state they
+//! cannot reach it. Using `this` there is an error. Pass them the state they
 //! need and store what they return, as in
 //! `this.player = player::step(this.player);`. Object maps are passed by
 //! value, so a module function's changes to its argument are lost unless it
@@ -36,7 +36,7 @@
 //! - `import "name" as alias;`, which loads a cartridge module through the
 //!   [`ModuleSource`] given to [`Runtime::start`]. `name` is a
 //!   [`ModuleName`], as in `import "game.enemies" as enemies;` for
-//!   `code/game/enemies.rhai`; nothing else, such as host paths, can be
+//!   `code/game/enemies.rhai`. Nothing else, such as host paths, can be
 //!   named. A module's top level runs at most once per runtime and its
 //!   functions and exported variables are cached for every later `import`.
 //!   A module that failed fails the same way on every later `import`, and
@@ -46,7 +46,7 @@
 //! - `log::trace(value)`, `log::info(value)` and `log::warn(value)`, which
 //!   record [`LogEntry`]s in any phase, and Rhai's own `print(value)` and
 //!   `debug(value)`, which record at info and debug level. `debug` is a
-//!   Rhai keyword, so there is no `log::debug`; `debug` uses Rhai's debug
+//!   Rhai keyword, so there is no `log::debug`. `debug` uses Rhai's debug
 //!   formatting, so strings appear quoted;
 //! - `cls(color)`, `pset(x, y, color)`, `rectfill(x, y, width, height,
 //!   color)`, `text(value, x, y, color)` and
@@ -92,14 +92,14 @@
 //! Rhai also bounds the depth of function calls and expressions and the size
 //! of each single string, array and object map, counting nested arrays' and
 //! maps' entries. These bound one value each, not the memory a script holds
-//! in total: an array of strings may hold many times the string limit. Rhai
+//! in total. An array of strings may hold many times the string limit. Rhai
 //! checks a value when it is passed to or returned from a function, not when
 //! an index assignment grows it, so the runtime also checks `this` after
 //! every callback. A local value grown only by index assignment within one
 //! call is bounded only by that call's budget.
 //!
 //! Errors are located as `script:line: message`. Rhai 1.26 raises some
-//! errors without a position, among them size errors found on `this`; those
+//! errors without a position, among them size errors found on `this`. Those
 //! name the script only.
 //!
 //! Names starting with `__glaux_` are reserved.

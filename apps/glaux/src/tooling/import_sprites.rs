@@ -1,9 +1,9 @@
-//! `glaux import sprites`: turns a PNG spritesheet into a cartridge's OBJ
+//! `glaux import sprites` turns a PNG spritesheet into a cartridge's OBJ
 //! tiles, tile attributes, object palettes and master-palette colors,
 //! keeping every color exactly as drawn.
 //!
-//! One import replaces the cartridge's whole sprite set; see
-//! [`import_publish`](import_publish) for how it avoids overwriting
+//! One import replaces the cartridge's whole sprite set. See
+//! [`import_publish`] for how it avoids overwriting
 //! files it did not write.
 
 use std::fs;
@@ -21,7 +21,7 @@ use crate::sprite_import::{FitSummary, SheetSource};
 #[derive(Debug, Clone, Default)]
 pub(super) struct ImportOptions {
     pub(super) input: PathBuf,
-    /// The cartridge directory; the PNG's directory when `None`.
+    /// The cartridge directory, or the PNG's directory when `None`.
     pub(super) cartridge: Option<PathBuf>,
     /// The sprite-group sidecar; `<png stem>.sprites.ron` next to the PNG,
     /// if it exists, when `None`.

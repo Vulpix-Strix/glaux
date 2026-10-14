@@ -193,7 +193,7 @@ const SHORTCUTS: [(KeyboardKey, KeyEvent); 15] = [
 ];
 
 /// Appends the command events of the shortcuts pressed this frame to `out`.
-/// Shortcuts need Ctrl; without it the same keys only type.
+/// Shortcuts need Ctrl. Without it the same keys only type.
 pub(crate) fn shortcut_events(
     pressed: impl Fn(KeyboardKey) -> bool,
     modifiers: Modifiers,
@@ -326,7 +326,7 @@ impl TextKeys {
         out: &mut Vec<InputEvent>,
     ) {
         // Any new non-modifier key ends the current repeat, as on desktop
-        // systems; it starts a new one only if it typed something.
+        // systems. It starts a new one only if it typed something.
         let new_key = pressed
             .iter()
             .rev()
@@ -349,7 +349,7 @@ impl TextKeys {
             return;
         };
         // No key went down this frame, so copies of the held character are
-        // the platform's own repeats; drop them so ours are the only ones.
+        // the platform's own repeats. Drop them so ours are the only ones.
         let ch = held.ch;
         out.extend(
             chars
@@ -532,8 +532,8 @@ impl GameKeys {
 }
 
 /// Drops the events `mode` does not consume. [`InputEvent::Break`] is kept
-/// in every mode; view switching, editing and document commands and pointer
-/// events only in [`InputMode::Workspace`].
+/// in every mode. View switching, editing and document commands and pointer
+/// events are kept only in [`InputMode::Workspace`].
 pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
     events.retain(|event| {
         let game = matches!(

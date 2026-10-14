@@ -1,4 +1,4 @@
-//! GO TO LINE: moves the caret to a line typed by number.
+//! GO TO LINE moves the caret to a line typed by number.
 
 use glaux_input::InputEvent;
 use glaux_machine::font::BitmapFont;

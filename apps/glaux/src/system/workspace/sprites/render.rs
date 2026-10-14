@@ -1,4 +1,4 @@
-//! Drawing the sprite editor. UI parts use system palette indices; tile
+//! Drawing the sprite editor. UI parts use system palette indices. Tile
 //! pixels use the frame indices [`ObjPreviewPalette`] gives their master
 //! colors, so they show the cartridge's exact colors.
 //!

@@ -12,11 +12,11 @@ pub const LEN: usize = WIDTH * HEIGHT;
 ///
 /// Pixels are stored row-major: the byte for `(x, y)` is at `y * WIDTH + x`.
 ///
-/// Coordinates are signed. Coordinates outside the framebuffer are clipped:
-/// reads return `None` and writes are ignored.
+/// Coordinates are signed. Reads outside the framebuffer return `None` and
+/// writes are ignored.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Framebuffer {
-    // Boxed to keep 76 800 bytes off the stack; the array type keeps the
+    // Boxed to keep 76 800 bytes off the stack. The array type keeps the
     // length fixed.
     pixels: Box<[u8; LEN]>,
 }

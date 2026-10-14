@@ -1,4 +1,4 @@
-//! The `audio` table: `audio.tone`, `audio.env` and `audio.gate`.
+//! The `audio` table, with `audio.tone`, `audio.env` and `audio.gate`.
 
 use std::cell::RefCell;
 use std::rc::Rc;

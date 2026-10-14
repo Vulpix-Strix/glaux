@@ -67,7 +67,7 @@ impl CodeSession {
     /// [`CodeDocument::replace`], and records it in `id`'s history as a
     /// `kind` edit made with its tab's current selection. `after`, given
     /// as anchor and caret offsets in the edited text, is the selection
-    /// redoing it restores; without it, the caret after the inserted text.
+    /// redoing it restores. Without it, the caret after the inserted text.
     /// `None` if `id` is not open.
     pub fn edit(
         &mut self,
@@ -126,7 +126,7 @@ impl CodeSession {
     }
 
     /// The selection an undo or redo of `id` left, or, when the history
-    /// no longer matched the text, nothing: the history is dropped rather
+    /// no longer matched the text, nothing. The history is dropped rather
     /// than replayed against text it does not describe.
     fn applied(
         &mut self,
@@ -143,7 +143,7 @@ impl CodeSession {
         }
     }
 
-    /// Writes `id`'s text to its file; see [`CodeDocuments::save`]. The
+    /// Writes `id`'s text to its file. See [`CodeDocuments::save`]. The
     /// next edit starts a new undo step, so undo returns exactly to the
     /// saved text.
     pub fn save(
@@ -156,7 +156,7 @@ impl CodeSession {
     }
 
     /// Writes `id`'s text over a file that changed outside Glaux, provided
-    /// it still holds `seen`; see [`CodeDocuments::overwrite`].
+    /// it still holds `seen`. See [`CodeDocuments::overwrite`].
     pub fn overwrite(
         &mut self,
         cartridge: &LoadedCartridge,
@@ -206,7 +206,7 @@ impl CodeSession {
         }
         cartridge.rename_source(&from, to)?;
         if let Err(err) = self.documents.rename(id, to) {
-            // Checked above, so this is not expected; keep disk and tab
+            // Checked above, so this is not expected. Keep disk and tab
             // together anyway.
             tracing::warn!(error = %err, "document refused a move after its file moved, moving the file back");
             if let Err(undo) = cartridge.rename_source(to, &from) {
@@ -217,7 +217,7 @@ impl CodeSession {
         Ok(())
     }
 
-    /// How `id`'s file compares with its baseline; see
+    /// How `id`'s file compares with its baseline. See
     /// [`CodeDocuments::disk_state`].
     pub fn disk_state(
         &self,

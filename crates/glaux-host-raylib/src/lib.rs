@@ -118,11 +118,11 @@ impl RaylibHost {
             .vsync()
             .build();
         rl.set_window_min_size(width, height);
-        // Esc is Glaux's break key; raylib would otherwise close the window.
+        // Esc is Glaux's break key. Raylib would otherwise close the window.
         rl.set_exit_key(None);
         // The system draws its own pointer into the frame. GLFW's hidden
         // mode only hides the cursor while it is over this window's client
-        // area; unlike the disabled mode it never locks or captures it, so
+        // area. Unlike the disabled mode it never locks or captures it, so
         // the desktop pointer stays usable everywhere else.
         rl.hide_cursor();
 
@@ -214,7 +214,7 @@ impl RaylibHost {
 
     /// The window's client-area position in the global desktop space.
     ///
-    /// Only meaningful where the platform reports window positions; Wayland
+    /// Only meaningful where the platform reports window positions. Wayland
     /// does not, and the value there never changes.
     pub fn window_position(&self) -> (i32, i32) {
         let position = self.rl.get_window_position();
@@ -308,7 +308,7 @@ impl RaylibHost {
     /// Raylib polls the platform when a frame ends, so calling this right
     /// after [`present`](Self::present) yields the input for that frame.
     /// Typed characters and editing keys come from separate raylib queues,
-    /// so their relative order within one frame is lost; text is reported
+    /// so their relative order within one frame is lost. Text is reported
     /// before editing keys. Held editing keys auto-repeat, except Enter.
     ///
     /// Every translator runs whatever the mode, so their held-key state

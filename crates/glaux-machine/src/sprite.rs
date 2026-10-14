@@ -25,7 +25,7 @@ pub const OBJ_GRID_ROWS: usize = OBJ_TILE_CAPACITY / OBJ_GRID_COLUMNS;
 /// on the object-tile grid.
 ///
 /// `None` means the position falls past the right edge of `first`'s grid
-/// row or below the last grid row: compositions never wrap across rows.
+/// row or below the last grid row. Compositions never wrap across rows.
 pub fn obj_grid_tile(first: usize, column: usize, row: usize) -> Option<usize> {
     let grid_column = (first % OBJ_GRID_COLUMNS).checked_add(column)?;
     let grid_row = (first / OBJ_GRID_COLUMNS).checked_add(row)?;
@@ -99,7 +99,7 @@ impl ObjTileBank {
     /// replaced.
     ///
     /// `None` means the tile index, local coordinate or palette index
-    /// (above 15) is invalid; nothing is written then.
+    /// (above 15) is invalid. Nothing is written then.
     pub fn set_pixel(&mut self, tile_index: usize, x: usize, y: usize, index: u8) -> Option<u8> {
         if index > 0x0f {
             return None;
@@ -162,7 +162,7 @@ impl ObjTileAttributes {
         }
     }
 
-    /// Loads attributes for the first `bytes.len()` tiles; the remaining
+    /// Loads attributes for the first `bytes.len()` tiles. The remaining
     /// tiles default to OBP0.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ObjTileAttributesError> {
         if bytes.len() > OBJ_TILE_ATTRIBUTES_BYTES {
@@ -182,7 +182,7 @@ impl ObjTileAttributes {
         Ok(attributes)
     }
 
-    /// The default palette bank of `tile`; OBP0 for tiles past the bank.
+    /// The default palette bank of `tile`, or OBP0 for tiles past the bank.
     pub fn bank(&self, tile: usize) -> ObjBank {
         self.bytes
             .get(tile)
@@ -191,7 +191,7 @@ impl ObjTileAttributes {
     }
 
     /// Makes `bank` the default palette bank of `tile` and returns the bank
-    /// it replaced. `None` means `tile` is past the bank; nothing is written
+    /// it replaced. `None` means `tile` is past the bank. Nothing is written
     /// then.
     pub fn set_bank(&mut self, tile: usize, bank: ObjBank) -> Option<ObjBank> {
         let previous = self.bank(tile);
@@ -294,7 +294,7 @@ pub const OBJ_SHEET_MAX_HEIGHT: usize = OBJ_GRID_ROWS * OBJ_TILE_HEIGHT;
 /// [`OBJ_SHEET_MAX_WIDTH`]x[`OBJ_SHEET_MAX_HEIGHT`], and `pixels` must
 /// contain exactly `width * height` palette indices. The sheet tile at
 /// `(tile_x, tile_y)` becomes object tile `tile_y * OBJ_GRID_COLUMNS +
-/// tile_x`; each sheet row is padded with transparent tiles to a whole grid
+/// tile_x`. Each sheet row is padded with transparent tiles to a whole grid
 /// row, so the output always holds whole grid rows. Within a tile, the left
 /// pixel occupies the high nibble.
 pub fn encode_obj_tiles(

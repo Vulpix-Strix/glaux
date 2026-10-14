@@ -54,8 +54,8 @@ impl Drop for Owner {
         {
             tracing::warn!("single-instance listener panicked");
         }
-        // Another process may have replaced a socket it believed stale;
-        // only remove the file this owner created.
+        // Another process may have replaced a socket it believed stale.
+        // Only remove the file this owner created.
         if file_identity(&self.path).is_ok_and(|identity| identity == self.identity)
             && let Err(err) = fs::remove_file(&self.path)
         {

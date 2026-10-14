@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use glaux_script::LogLevel;
 
-/// Most entries kept; pushing another drops the oldest.
+/// Most entries kept. Pushing another drops the oldest.
 pub(super) const SCROLLBACK_LIMIT: usize = 1024;
 
 /// One logical line of shell output, before it is wrapped and positioned.

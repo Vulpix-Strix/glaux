@@ -5,7 +5,7 @@ use glaux_machine::sprite::{OBJ_TILE_BYTES, OBJ_TILE_CAPACITY, ObjTileAttributes
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
 
-/// `None` when both frames hold the same pixels; otherwise how many pixels
+/// `None` when both frames hold the same pixels, and otherwise how many pixels
 /// differ and the first few as `(x, y): actual != expected`.
 ///
 /// `assert_eq!` on framebuffers formats 76 800 bytes per side and

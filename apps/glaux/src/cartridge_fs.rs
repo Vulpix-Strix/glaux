@@ -58,7 +58,7 @@ pub struct WalkLimits {
 /// A part of the tree a [`Walk`] did not search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkGap {
-    /// More files matched than this limit; the walk stopped there.
+    /// More files matched than this limit, so the walk stopped there.
     FileLimit(usize),
     /// This directory lies below the depth limit and was not searched.
     TooDeep(String),
@@ -136,7 +136,7 @@ impl From<FsError> for ReplaceError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CartridgeStorage {
     Available(CartridgeFs),
-    /// The cartridge directory could not be opened; the cause was logged.
+    /// The cartridge directory could not be opened. The cause was logged.
     Unavailable,
 }
 
@@ -144,7 +144,7 @@ impl CartridgeStorage {
     /// Opens the cartridge directory in `data_dir`.
     ///
     /// Without a data directory, or when opening fails, logs the cause and
-    /// returns [`CartridgeStorage::Unavailable`]: the system runs without
+    /// returns [`CartridgeStorage::Unavailable`]. The system runs without
     /// cartridge storage rather than failing to start.
     pub fn open(data_dir: Option<&Path>) -> Self {
         let opened = data_dir
@@ -309,7 +309,7 @@ impl CartridgeFs {
     }
 
     /// The directory at `path`, absolute or relative to the current
-    /// directory, as a filesystem of its own: returns the directory's virtual
+    /// directory, as a filesystem of its own. Returns the directory's virtual
     /// path here and a navigation state at `/` rooted at it.
     ///
     /// The new root is the directory's canonical host path, so every lookup
@@ -489,7 +489,7 @@ impl CartridgeFs {
             }
             match fs::create_dir(&dest) {
                 Ok(()) => {}
-                // Created meanwhile by someone else; checked again below.
+                // Created meanwhile by someone else. Checked again below.
                 Err(err) if err.kind() == ErrorKind::AlreadyExists => {}
                 Err(err) => return Err(write_failure(err, components)),
             }
@@ -502,7 +502,7 @@ impl CartridgeFs {
 
     /// Replaces the regular file at `path`, absolute or relative to the
     /// current directory, with `contents`, provided it still holds
-    /// `expected` (`None`: provided it does not exist).
+    /// `expected`, where `None` means the file must not exist.
     ///
     /// The file is written in full to a hidden staging file beside it,
     /// synced, and renamed over it, so `path` holds either its old contents
@@ -624,7 +624,7 @@ impl CartridgeFs {
     /// Nothing is ever replaced. If anything holds the name `to`, including
     /// a dangling symlink or one leading out of the root, or gets it while
     /// the move runs, the result is [`FsError::AlreadyExists`] and `from`
-    /// is untouched. Neither end is followed through a symlink; `from` must
+    /// is untouched. Neither end is followed through a symlink. `from` must
     /// be a regular file itself.
     ///
     /// The move is one atomic no-replace rename where the platform has one
@@ -635,7 +635,7 @@ impl CartridgeFs {
     /// new name followed by removal of the old one stands in. That fallback
     /// is not atomic: both names exist for an instant. If removing the old
     /// name fails, the new one is removed again and the move fails with
-    /// the file where it was; only if that cleanup fails too are both names
+    /// the file where it was. Only if that cleanup fails too are both names
     /// left, and the error says so. The fallback never overwrites either.
     pub fn rename_file(&self, from: &str, to: &str) -> Result<(), FsError> {
         let source = self.resolve(from)?;
@@ -649,7 +649,7 @@ impl CartridgeFs {
         }
         self.create_dirs(&virtual_path(parent))?;
         let dest = self.directory(parent)?.join(name);
-        // Reported before attempting anything, for a clear error; the
+        // Reported before attempting anything, for a clear error. The
         // no-replace move below is what actually guarantees it.
         match fs::symlink_metadata(&dest) {
             Ok(_) => return Err(FsError::AlreadyExists(virtual_path(&target))),
@@ -822,7 +822,7 @@ impl CartridgeFs {
     /// Walks down from the root with `symlink_metadata`, so every directory
     /// reached is a real directory inside the root. A symlink's target is
     /// normalized lexically and must lie inside the root before anything at
-    /// it is inspected; the walk then restarts from the root along the
+    /// it is inspected. The walk then restarts from the root along the
     /// target. Targets outside the root, dangling links and link cycles are
     /// [`Lookup::Missing`].
     fn locate(&self, components: &[String]) -> Result<(PathBuf, EntryKind), Lookup> {
@@ -1066,7 +1066,7 @@ fn move_no_replace(from: &Path, to: &Path) -> Result<(), MoveError> {
     match rename_no_replace(from, to) {
         Err(err) if matches!(err.kind(), ErrorKind::Unsupported | ErrorKind::InvalidInput) => {
             // The filesystem rejects the no-replace flag. Linking never
-            // replaces either, so the guarantee holds; atomicity does not.
+            // replaces either, so the guarantee holds, but atomicity does not.
             tracing::debug!(error = %err, "no-replace rename unsupported, linking instead");
             link_then_unlink(from, to)
         }
@@ -1134,7 +1134,7 @@ fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// Other Unix systems have no portable no-replace rename; the caller falls
+/// Other Unix systems have no portable no-replace rename, so the caller falls
 /// back to linking.
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 fn rename_no_replace(_from: &Path, _to: &Path) -> io::Result<()> {

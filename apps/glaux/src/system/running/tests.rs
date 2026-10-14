@@ -307,7 +307,7 @@ fn imported_examples_resolve_every_png_pixel_to_its_color() {
 /// object-tile validation, in both its Luau original
 /// (`examples/signal-lost`) and its Rhai port (`examples/signal-lost-rhai`).
 /// Behavior assertions look at drawn text and command counts rather than
-/// sprite tiles or coordinates; the lockstep test holds the port to every
+/// sprite tiles or coordinates. The lockstep test holds the port to every
 /// command, sound and log line of the original.
 mod signal_lost {
     use std::path::{Path, PathBuf};
@@ -324,7 +324,7 @@ mod signal_lost {
     const EXAMPLES: [&str; 2] = [LUAU, RHAI];
 
     /// Ticks after starting a run after which an idle knight must have
-    /// fallen; about two minutes of play.
+    /// fallen. That is about two minutes of play.
     const IDLE_DEATH_LIMIT: usize = 7200;
 
     fn examples_dir() -> PathBuf {
@@ -563,7 +563,7 @@ mod signal_lost {
     }
 
     /// A log entry as the lockstep test compares it. Rhai's `debug` shows
-    /// strings quoted where Luau's `log.debug` does not; the quotes are the
+    /// strings quoted where Luau's `log.debug` does not. The quotes are the
     /// only difference the port is allowed.
     fn comparable(entries: Vec<LogEntry>, unquote_debug: bool) -> Vec<(LogLevel, String)> {
         entries
@@ -585,7 +585,7 @@ mod signal_lost {
     /// Buttons held on tick `n` of a scripted session that walks a new
     /// direction every 20 ticks, taps A every other tick so the aim follows
     /// the walk, and dashes every 97 ticks. Tuned on the original so the
-    /// first run reaches the ogre waves before the knight falls; the A taps
+    /// first run reaches the ogre waves before the knight falls. The A taps
     /// also restart each run once the game-over lock ends.
     fn scripted_buttons(n: usize) -> Vec<Button> {
         const DIRECTIONS: [&[Button]; 8] = [

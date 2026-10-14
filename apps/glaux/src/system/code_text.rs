@@ -109,7 +109,7 @@ pub struct RowStart {
 /// (the content of the line starting at byte `line_start`) is folded to
 /// `width` columns. `None` when the rest of the line fits on that row.
 ///
-/// A row folds after the last blank that fits, so words stay whole; a word
+/// A row folds after the last blank that fits, so words stay whole. A word
 /// wider than the row is cut at its edge. Blanks at a fold stay at the end
 /// of the row they follow, even past its edge.
 pub fn next_row(
@@ -310,7 +310,7 @@ impl VisualRow<'_> {
     }
 
     /// The document position on this row nearest the left edge of column
-    /// `column` of its line; see [`byte_near`](Self::byte_near).
+    /// `column` of its line. See [`byte_near`](Self::byte_near).
     pub fn byte_near_column(&self, column: usize, columns: Columns<'_>) -> usize {
         self.byte_near(column.saturating_mul(2), columns)
     }
@@ -366,7 +366,7 @@ pub struct Spot {
 
 /// Where position `byte` of `document` shows when the view is laid out
 /// with `key` and `font`. `byte` must be a character boundary within a
-/// line's content; a position where a line folds shows at the start of the
+/// line's content. A position where a line folds shows at the start of the
 /// next row.
 pub fn spot(document: &CodeDocument, byte: usize, key: MetricsKey, font: &BitmapFont) -> Spot {
     let columns = key.columns(font);

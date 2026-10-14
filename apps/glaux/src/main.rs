@@ -115,7 +115,7 @@ fn run(
 
     let mut machine = Machine::new(rom::load()?);
     // The system draws into the machine's framebuffer with data from the
-    // machine's ROM; a one-time copy of the ROM avoids borrowing both at once.
+    // machine's ROM. A one-time copy of the ROM avoids borrowing both at once.
     let rom = machine.system_rom().clone();
     let mut system = System::new(
         SystemInfo {

@@ -1,9 +1,9 @@
-//! The Code view: tabs over the cartridge's open scripts, an editable view
-//! of the active one, OPEN FILE and NEW FILE to open more, a find bar,
+//! The Code view shows tabs over the cartridge's open scripts, an editable
+//! view of the active one, OPEN FILE and NEW FILE to open more, a find bar,
 //! GO TO LINE, and context menus.
 //!
 //! The documents and tabs belong to the cartridge and are lent in as a
-//! [`CodeSession`]; the editor keeps only what is on screen around them.
+//! [`CodeSession`]. The editor keeps only what is on screen around them.
 
 mod actions;
 mod edit;
@@ -87,7 +87,7 @@ const SETTINGS_HINT: &str = "Up/Down: pick  Enter: toggle  Esc: close";
 /// File work the Code view asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodeRequest {
-    /// List the cartridge's scripts for OPEN FILE; see
+    /// List the cartridge's scripts for OPEN FILE. See
     /// [`CodeEditor::open_picker`].
     ListScripts,
     /// Open this script in a tab, or show its tab if it has one.
@@ -103,15 +103,15 @@ pub enum CodeRequest {
     Copy(String),
     /// Read the clipboard and hand its text to [`CodeEditor::paste`].
     Paste,
-    /// Open NEW FILE for the cartridge's language; see
+    /// Open NEW FILE for the cartridge's language. See
     /// [`CodeEditor::open_new_file`].
     NewFile,
-    /// Create this empty script and open it; answer with
+    /// Create this empty script and open it. Answer with
     /// [`CodeEditor::script_created`].
     Create(SourcePath),
     /// Ask whether to delete this document's file.
     DeleteScript(DocumentId),
-    /// Move this document's file to this path; answer with
+    /// Move this document's file to this path. Answer with
     /// [`CodeEditor::script_renamed`].
     Rename { id: DocumentId, to: SourcePath },
     /// Show this in the status bar for a moment.
@@ -188,7 +188,7 @@ pub struct CodeEditor {
     rename: Option<RenameScript>,
     /// While open, takes every input.
     go_to: Option<GoToLine>,
-    /// Docked over the text while open; takes the keys only while one of
+    /// Docked over the text while open. It takes the keys only while one of
     /// its parts has them.
     find: Option<FindBar>,
     /// Position in tab order of the tab being dragged along the strip.
@@ -261,8 +261,8 @@ impl CodeEditor {
     }
 
     /// Whether a window or menu is open over the view and taking all
-    /// input: EDITOR SETTINGS, OPEN FILE, NEW FILE, RENAME SCRIPT, GO TO LINE, the list
-    /// of open tabs or a context menu.
+    /// input: EDITOR SETTINGS, OPEN FILE, NEW FILE, RENAME SCRIPT, GO TO
+    /// LINE, the list of open tabs or a context menu.
     pub fn has_overlay(&self) -> bool {
         self.settings_dialog.is_some()
             || self.picker.is_some()
@@ -604,8 +604,8 @@ impl CodeEditor {
     }
 
     /// Inserts the clipboard's `text` where the keys are: a field of NEW
-    /// FILE, RENAME SCRIPT, GO TO LINE or the find bar, or else the active document of
-    /// `session`. `None`, an empty clipboard, inserts nothing.
+    /// FILE, RENAME SCRIPT, GO TO LINE or the find bar, or else the active
+    /// document of `session`. `None`, an empty clipboard, inserts nothing.
     pub fn paste(&mut self, text: Option<String>, session: Option<&mut CodeSession>) {
         let Some(text) = text else {
             return;
@@ -1096,7 +1096,7 @@ impl CodeEditor {
     /// Moves the active document's caret with `motion`, after scrolling
     /// its view `scroll` rows, then scrolls as little as it takes to show
     /// the caret. With `select` the selection follows the caret from its
-    /// anchor; without it the selection is dropped, or, for moves that
+    /// anchor. Without it the selection is dropped, or, for moves that
     /// have an `edge`, collapsed to that end. Does nothing until its
     /// measurements describe the view.
     fn move_caret(
@@ -1195,7 +1195,7 @@ impl CodeEditor {
                 Selection::between(document, pressed.start, Caret::at(document, pressed.end));
             (pressed.clone(), selection)
         };
-        // A click shows where it landed; a word or line that more clicks
+        // A click shows where it landed. A word or line that more clicks
         // select may end past the view, which then stays put.
         let view = if unit == Unit::Character {
             self.revealing(session, id, selection.caret())

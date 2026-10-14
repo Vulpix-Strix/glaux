@@ -65,8 +65,8 @@ impl Meter {
 
 /// A live Luau VM running one cartridge script.
 ///
-/// After any call returns an error the runtime must be dropped: the script
-/// may have been interrupted halfway through updating its own state.
+/// After any call returns an error the runtime must be dropped, since the
+/// script may have been interrupted halfway through updating its own state.
 pub struct Runtime {
     lua: Lua,
     output: Rc<RefCell<Vec<LogEntry>>>,
@@ -97,7 +97,8 @@ impl Runtime {
     /// keeps for its whole life.
     ///
     /// `chunk_name` is shown verbatim in error locations, as in
-    /// `main.luau:3: boom`. `source` must be Luau text; bytecode is rejected.
+    /// `main.luau:3: boom`. `source` must be Luau text, and bytecode is
+    /// rejected.
     pub fn start(
         chunk_name: &str,
         source: &[u8],
@@ -151,10 +152,10 @@ impl Runtime {
     /// callbacks, and keep reporting it until the next tick.
     ///
     /// A `draw()` that returns normally replaces [`frame`](Self::frame) with
-    /// the commands it recorded; one that fails leaves the previous frame.
+    /// the commands it recorded. One that fails leaves the previous frame.
     ///
     /// A successful call advances the logical time read by `frame()` and
-    /// `t()`; a failed one does not.
+    /// `t()`. A failed one does not.
     pub fn tick(&mut self, input: InputState) -> Result<(), RuntimeError> {
         self.input.set(input);
         self.callback(Phase::Tick)?;
@@ -181,7 +182,7 @@ impl Runtime {
     }
 
     /// The audio the script has written. It persists for the life of the
-    /// VM; whoever applies it commits the writes it has applied.
+    /// VM. Whoever applies it commits the writes it has applied.
     pub fn audio_mut(&mut self) -> RefMut<'_, AudioState> {
         self.audio.borrow_mut()
     }
@@ -236,8 +237,8 @@ impl Runtime {
     }
 
     /// Runs `body` with a fresh budget, reporting exhaustion over whatever
-    /// `body` returned: a script may have caught the limit error with `pcall`
-    /// and finished normally.
+    /// `body` returned, because a script may have caught the limit error with
+    /// `pcall` and finished normally.
     fn call<T>(
         &self,
         phase: Phase,

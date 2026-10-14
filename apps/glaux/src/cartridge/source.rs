@@ -127,9 +127,9 @@ impl LoadedCartridge {
     }
 
     /// Replaces the script file at `path` with `bytes`, provided it still
-    /// holds `expected` (`None`: provided it is absent).
+    /// holds `expected`, where `None` means the file must be absent.
     ///
-    /// See [`CartridgeFs::replace_file`]: the file is replaced whole or not
+    /// See [`CartridgeFs::replace_file`]. The file is replaced whole or not
     /// at all, a read-only file is never replaced, and names reached
     /// through symlinks leading out of the cartridge are never written.
     ///
@@ -173,12 +173,12 @@ impl LoadedCartridge {
     }
 
     /// Deletes the script file at `path`, provided it still holds exactly
-    /// `expected` (`None`: provided it is absent, in which case there is
-    /// nothing to delete). A file that vanished meanwhile is as good as
+    /// `expected`, where `None` means the file must be absent and there is
+    /// nothing to delete. A file that vanished meanwhile is as good as
     /// deleted. The entry script is never deleted, and directories above
     /// the file are kept.
     ///
-    /// See [`CartridgeFs::remove_file`]: a link is never followed. No
+    /// See [`CartridgeFs::remove_file`]. A link is never followed. No
     /// portable primitive compares and unlinks in one step, so a write
     /// landing between the comparison and the removal is deleted with the
     /// file.
@@ -208,7 +208,7 @@ impl LoadedCartridge {
     /// above `to` that are missing. The entry script never moves, and
     /// neither does a file to a path of another language.
     ///
-    /// See [`CartridgeFs::rename_file`]: nothing at `to` is ever replaced,
+    /// See [`CartridgeFs::rename_file`]. Nothing at `to` is ever replaced,
     /// and a link is never followed.
     ///
     /// [`CartridgeFs::rename_file`]: crate::cartridge_fs::CartridgeFs::rename_file
@@ -233,7 +233,7 @@ impl LoadedCartridge {
     /// Every `.luau` and `.rhai` file in the cartridge, in any directory.
     ///
     /// Searched as [`CartridgeFs::walk_files`] searches, within depth and
-    /// file limits; whatever was not searched is reported in
+    /// file limits. Whatever was not searched is reported in
     /// [`ScriptListing::gaps`]. Fails only when the cartridge directory
     /// itself cannot be listed.
     ///

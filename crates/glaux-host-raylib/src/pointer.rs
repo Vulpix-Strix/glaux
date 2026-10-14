@@ -20,7 +20,7 @@ use super::fit_4_3;
 /// The CRT barrel distortion, as `CURVATURE` in `shaders/crt.fs`.
 ///
 /// Pointer hit-testing under the CRT presentation depends on this matching
-/// the shader exactly; change both together.
+/// the shader exactly. Change both together.
 pub(crate) const CRT_CURVATURE: (f32, f32) = (0.025, 0.035);
 
 /// Maps window positions to logical pixels for one window size and
@@ -106,10 +106,10 @@ pub(crate) struct PointerFrame {
     pub(crate) curved: bool,
     /// Each button of [`PointerButton::ALL`], in that order.
     pub(crate) buttons: [ButtonFrame; 3],
-    /// Wheel movement this frame, in notches; positive is away from the
+    /// Wheel movement this frame, in notches. Positive is away from the
     /// user.
     pub(crate) wheel: f32,
-    /// Horizontal wheel movement this frame, in notches; positive is
+    /// Horizontal wheel movement this frame, in notches. Positive is
     /// toward the left.
     pub(crate) wheel_x: f32,
     /// Whether Shift is held, which turns the vertical wheel sideways and
@@ -150,7 +150,7 @@ impl PointerTracker {
     /// disabled, nothing is reported.
     ///
     /// A frame without focus ends every capture with one
-    /// [`InputEvent::PointerCancel`] instead of releases; buttons held then
+    /// [`InputEvent::PointerCancel`] instead of releases. Buttons held then
     /// are ignored until released.
     pub(crate) fn events(&mut self, frame: PointerFrame, enabled: bool, out: &mut Vec<InputEvent>) {
         if enabled != self.enabled {

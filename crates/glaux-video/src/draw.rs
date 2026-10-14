@@ -1,6 +1,6 @@
 //! Drawing primitives over the logical framebuffer.
 //!
-//! All primitives clip to the framebuffer: anything that falls outside it is
+//! All primitives clip to the framebuffer. Anything that falls outside it is
 //! silently dropped.
 
 use glaux_machine::font::{BitmapFont, GlyphId};
@@ -15,7 +15,7 @@ pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
     framebuffer.clear(color);
 }
 
-/// Writes one pixel; positions outside the framebuffer are ignored.
+/// Writes one pixel. Positions outside the framebuffer are ignored.
 pub fn pixel(framebuffer: &mut Framebuffer, x: i32, y: i32, color: u8) {
     framebuffer.set_pixel(x, y, color);
 }
@@ -74,7 +74,7 @@ pub fn draw_obj_tile(framebuffer: &mut Framebuffer, vram: &ObjVram, tile: usize,
 ///
 /// Tiles are placed at 8-pixel offsets. Block positions that fall outside
 /// the grid (see [`obj_grid_tile`]) are skipped. Tile-local index 0 is
-/// transparent; every other local index is written as the master index its
+/// transparent. Every other local index is written as the master index its
 /// tile's bank maps it to. The bank is chosen per tile by
 /// [`ObjPaletteChoice`]. The tile bank itself is never modified.
 pub fn draw_obj_sprite(framebuffer: &mut Framebuffer, vram: &ObjVram, sprite: &ObjSprite) {
@@ -199,7 +199,7 @@ pub fn remap(framebuffer: &mut Framebuffer, table: &[u8; PALETTE_LEN]) {
 
 /// Fills the `width`×`height` rectangle whose top-left corner is `(x, y)`.
 ///
-/// Non-positive sizes draw nothing; the parts outside the framebuffer are
+/// Non-positive sizes draw nothing, and anything outside the framebuffer is
 /// clipped.
 pub fn fill_rect(
     framebuffer: &mut Framebuffer,
@@ -209,7 +209,7 @@ pub fn fill_rect(
     height: i32,
     color: u8,
 ) {
-    // Clip in i64 so that `x + width` cannot overflow; every bound then lies
+    // Clip in i64 so that `x + width` cannot overflow. Every bound then lies
     // in `0..=WIDTH` or `0..=HEIGHT`.
     let clip = |start: i32, size: i32, limit: usize| {
         let end = (i64::from(start) + i64::from(size)).clamp(0, limit as i64) as usize;
@@ -231,13 +231,13 @@ pub fn fill_rect(
 /// Draws `text` with `font`, with `(x, y)` as the top-left corner of the
 /// first character cell.
 ///
-/// - Only set glyph bits are written; the rest of each cell keeps whatever
+/// - Only set glyph bits are written, and the rest of each cell keeps whatever
 ///   was already in the framebuffer.
 /// - Each character advances the pen by the cells it takes in `font`
 ///   ([`BitmapFont::cells`]), so a double-width glyph takes two.
 /// - `'\n'` returns the pen to `x` and moves it down by `cell_height`.
 /// - Characters without a glyph of their own draw the font's fallback
-///   glyph; other control characters, such as `'\r'` and `'\t'`, leave
+///   glyph. Other control characters, such as `'\r'` and `'\t'`, leave
 ///   their cell empty but still advance the pen.
 /// - No substitutions apply: every character draws its own glyph.
 pub fn draw_text(
@@ -271,7 +271,7 @@ pub fn draw_text_scaled(
     let scale64 = i64::from(scale);
 
     // The pen is tracked in i64 so that advancing it near i32::MAX cannot
-    // overflow; pixels that no longer fit in i32 are off-screen anyway.
+    // overflow. Pixels that no longer fit in i32 are off-screen anyway.
     let (mut pen_x, mut pen_y) = (i64::from(x), i64::from(y));
 
     for ch in text.chars() {
@@ -360,7 +360,7 @@ pub fn draw_ink_image(
             if slot == 0 {
                 continue;
             }
-            // Images are a few pixels across, so offsets fit in i32; pixels
+            // Images are a few pixels across, so offsets fit in i32. Pixels
             // pushed past i32 by an extreme origin are off-screen anyway.
             let px = i64::from(x) + ix as i64;
             let py = i64::from(y) + iy as i64;

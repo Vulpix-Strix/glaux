@@ -1,7 +1,7 @@
-//! EDITOR SETTINGS: the window choosing how the Code view shows text.
+//! EDITOR SETTINGS is the window for choosing how the Code view shows text.
 //!
 //! Each choice applies the moment it is made, so the view behind shows its
-//! effect; closing the window keeps whatever was chosen.
+//! effect. Closing the window keeps whatever was chosen.
 
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
@@ -125,7 +125,7 @@ impl SettingsDialog {
     /// Up and Down move between rows. Enter or Space toggles a checkbox or
     /// steps a value forward, Left and Right step a value, and Escape or
     /// Done closes. A primary press toggles a checkbox or steps a value
-    /// with its arrows; releasing on Done after pressing it closes.
+    /// with its arrows. Releasing on Done after pressing it closes.
     pub fn handle_input(
         &mut self,
         event: InputEvent,

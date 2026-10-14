@@ -1,4 +1,4 @@
-//! Sound effects: timed register and gate writes played into an
+//! Sound effects are timed register and gate writes played into an
 //! [`AudioState`].
 //!
 //! An [`Sfx`] is an ordered list of [`SfxStep`]s, each scheduled at a tick
@@ -119,7 +119,7 @@ impl SfxPlayer {
     /// advances one tick. The player becomes inactive once its last step
     /// has been applied. Does nothing while inactive.
     ///
-    /// A write that `audio` rejects stops the player and is returned; steps
+    /// A write that `audio` rejects stops the player and is returned. Steps
     /// before it on this tick have already been applied.
     pub fn tick(&mut self, audio: &mut AudioState) -> Result<(), AudioError> {
         let Some(playback) = &mut self.playing else {

@@ -118,7 +118,7 @@ fn positions_supported(session: SessionKind) -> bool {
 /// Where to put a window opened with `saved` state in `session`.
 ///
 /// The saved position is used only where the session supports positions
-/// and the window would be reachable on one of `monitors`; otherwise the
+/// and the window would be reachable on one of `monitors`. Otherwise the
 /// session's usual placement applies.
 pub fn plan(
     session: SessionKind,
@@ -216,7 +216,7 @@ impl WindowTracker {
     /// Records `snapshot`.
     ///
     /// Size and position only change while the window is in its normal
-    /// state; a minimized window changes nothing.
+    /// state. A minimized window changes nothing.
     pub fn observe(&mut self, snapshot: WindowSnapshot) {
         if snapshot.minimized {
             return;

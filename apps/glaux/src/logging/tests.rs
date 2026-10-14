@@ -88,7 +88,7 @@ fn file_logging_fails_softly_when_the_directory_cannot_be_created() {
 
     let err = result.unwrap_err();
     assert!(format!("{err:#}").contains("failed to create"), "{err:#}");
-    // The fallback is stderr-only logging; `init` does not propagate this.
+    // The fallback is stderr-only logging. `init` does not propagate this.
 }
 
 #[test]

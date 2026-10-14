@@ -1,5 +1,5 @@
-//! Modal dialogs: a framed window drawn over the workspace that takes every
-//! input until one of its actions is chosen.
+//! Modal dialogs are framed windows drawn over the workspace. While one is
+//! open, it takes every input until the user chooses an action.
 //!
 //! Windows are drawn the way the system's fictional hardware would: square,
 //! pixel-aligned rectangles with a solid title bar, a thin border and a
@@ -34,7 +34,7 @@ const BUTTON_INDENT: i32 = 2;
 /// Space between stacked buttons.
 const BUTTON_GAP: i32 = 3;
 
-/// A modal dialog: a title, a message, and the actions that close it. `A`
+/// A modal dialog with a title, a message, and the actions that close it. `A`
 /// is what choosing an action yields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dialog<A> {
@@ -72,7 +72,7 @@ impl<A: Copy> Dialog<A> {
     ///
     /// # Panics
     ///
-    /// If `actions` is empty or `focus` is not one of them: a dialog that
+    /// If `actions` is empty or `focus` is not one of them. A dialog that
     /// cannot be closed is a programming error.
     pub fn new(
         title: impl Into<String>,

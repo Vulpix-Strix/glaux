@@ -1,5 +1,5 @@
 //! The Rhai side of cartridge modules: `import`, its per-runtime cache and
-//! cycle detection. Module bytes come from a [`ModuleSource`]; this file
+//! cycle detection. Module bytes come from a [`ModuleSource`], and this file
 //! knows nothing about where they are stored.
 
 use std::cell::RefCell;
@@ -19,7 +19,7 @@ const MODULE_EXTENSION: &str = "rhai";
 /// Load state of one module, keyed by its path in [`Modules`].
 #[derive(Debug)]
 enum ModuleState {
-    /// Its top-level code is running; importing it now is a cycle.
+    /// Its top-level code is running, so importing it now is a cycle.
     Loading,
     Loaded(Shared<Module>),
     Failed(ScriptError),

@@ -15,8 +15,8 @@ const STEP: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
 /// ticks.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TickClock {
-    /// Time not yet consumed by a tick; always shorter than one step after
-    /// [`advance`](Self::advance) returns.
+    /// Time not yet consumed by a tick. It is always shorter than one step
+    /// after [`advance`](Self::advance) returns.
     accumulated: Duration,
 }
 
@@ -28,7 +28,7 @@ impl TickClock {
     /// Adds `elapsed` host time and returns how many ticks are now due, at
     /// most [`MAX_CATCH_UP`].
     ///
-    /// Only the sub-tick remainder carries over; whole ticks beyond the cap
+    /// Only the sub-tick remainder carries over. Whole ticks beyond the cap
     /// are discarded so the tick phase is kept without a catch-up burst.
     pub fn advance(&mut self, elapsed: Duration) -> u32 {
         let total = self.accumulated.saturating_add(elapsed);

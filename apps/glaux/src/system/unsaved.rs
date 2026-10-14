@@ -2,10 +2,10 @@
 //! quitting Glaux, or a shell command that replaces the cartridge.
 //!
 //! One dialog lists every unsaved script and the graphics. SAVE ALL saves
-//! them one file at a time, each save complete on its own: a save that
-//! fails stops the run, keeps whatever was already written, and the action
-//! that asked does not go ahead. A file changed outside Glaux is settled
-//! in the same dialog, after which saving carries on.
+//! them one file at a time, each save complete on its own. A save that
+//! fails stops the run and keeps whatever was already written, and the
+//! action that asked does not go ahead. A file changed outside Glaux is
+//! settled in the same dialog, after which saving carries on.
 
 use std::collections::VecDeque;
 
@@ -65,7 +65,7 @@ enum Stage {
     Ask,
     /// What to do about a file that changed outside Glaux.
     Conflict(Target),
-    /// Nothing; it tells why saving stopped.
+    /// Nothing. It tells why saving stopped.
     Failed,
 }
 

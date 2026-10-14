@@ -1,5 +1,5 @@
-//! New cartridges: the rules a new cartridge's metadata must follow, the
-//! manifest written for it, and the starter scene it begins with.
+//! Creates new cartridges. This covers the rules their metadata must follow,
+//! the manifest written for them, and the starter scene they begin with.
 
 use semver::Version;
 

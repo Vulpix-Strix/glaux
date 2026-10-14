@@ -2,7 +2,7 @@
 //!
 //! Cartridge runtimes write into an [`AudioState`] in cartridge units: Hz,
 //! volume and sustain steps, and envelope times in milliseconds. Whoever owns
-//! the sound hardware reads it back and applies it; this crate knows nothing
+//! the sound hardware reads it back and applies it. This crate knows nothing
 //! about synthesis.
 //!
 //! Each channel has two kinds of state:
@@ -26,7 +26,7 @@ pub const MAX_FREQUENCY: u16 = 24_000;
 /// Loudest channel volume. Volume 0 is silent.
 pub const MAX_VOLUME: u8 = 15;
 
-/// Highest sustain level: sustain at this value holds the envelope at full
+/// Highest sustain level. Sustain at this value holds the envelope at full
 /// level.
 pub const MAX_SUSTAIN: u8 = 15;
 

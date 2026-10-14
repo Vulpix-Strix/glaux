@@ -1,7 +1,7 @@
 //! Framebuffer equality for tests, with a bounded failure report.
 //!
 //! `assert_eq!` on two framebuffers formats all 76 800 bytes of each side,
-//! and `pretty_assertions` then diffs those listings; with many tests
+//! and `pretty_assertions` then diffs those listings. With many tests
 //! failing at once that can exhaust memory. These helpers compare the bytes
 //! directly and report only a count and the first few differences.
 
@@ -12,7 +12,7 @@ use glaux_machine::framebuffer::{Framebuffer, LEN, WIDTH};
 /// Differences reported by [`differences`] before it only counts.
 const SHOWN: usize = 5;
 
-/// `None` when both frames hold the same pixels; otherwise how many pixels
+/// `None` when both frames hold the same pixels, and otherwise how many pixels
 /// differ and the first few as `(x, y): actual != expected`.
 pub(crate) fn differences(actual: &Framebuffer, expected: &Framebuffer) -> Option<String> {
     let mut count = 0;

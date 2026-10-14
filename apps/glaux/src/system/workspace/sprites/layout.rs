@@ -139,18 +139,18 @@ pub struct SpriteLayout {
     pub zoom_out: Rect,
     pub zoom_label: Rect,
     pub zoom_in: Rect,
-    /// Saves the changes; the left half of the row under the canvas
+    /// Saves the changes. This is the left half of the row under the canvas
     /// caption.
     pub save_button: Rect,
-    /// Imports a spritesheet; the right half of that row.
+    /// Imports a spritesheet. This is the right half of that row.
     pub import_button: Rect,
-    /// Opens the palette picker; under that row, as wide as the canvas.
+    /// Opens the palette picker. It sits under that row, as wide as the canvas.
     pub palette_button: Rect,
     /// Tops of the palette panel's rows, the swatch row's first.
     pub swatch_y: i32,
     /// The 16 local color cells, by local index.
     pub swatches: [Rect; OBJ_PALETTE_COLORS],
-    /// The 8 bank cells; only shown and hit in Advanced mode.
+    /// The 8 bank cells. They are only shown and hit in Advanced mode.
     pub banks: [Rect; OBJ_PALETTE_BANKS],
     /// Tops of the OBP, Master and selection rows in Advanced mode.
     pub bank_y: i32,

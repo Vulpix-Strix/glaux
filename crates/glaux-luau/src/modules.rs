@@ -1,5 +1,5 @@
 //! The Luau side of cartridge modules: `require`, its per-runtime cache and
-//! cycle detection. Module bytes come from a [`ModuleSource`]; this file
+//! cycle detection. Module bytes come from a [`ModuleSource`], and this file
 //! knows nothing about where they are stored.
 
 use std::cell::RefCell;
@@ -20,7 +20,7 @@ const MODULE_EXTENSION: &str = "luau";
 /// Load state of one module, keyed by its path in [`Modules`].
 #[derive(Debug)]
 pub(crate) enum ModuleState {
-    /// Its top-level code is running; requiring it now is a cycle.
+    /// Its top-level code is running, so requiring it now is a cycle.
     Loading,
     Loaded(Value),
     Failed(mlua::Error),

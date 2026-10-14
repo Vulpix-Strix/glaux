@@ -1,6 +1,6 @@
 //! Cartridge code modules, independent of any scripting runtime.
 //!
-//! A script names a module with a logical [`ModuleName`]; the runtime turns
+//! A script names a module with a logical [`ModuleName`]. The runtime turns
 //! it into a cartridge-relative [`ModulePath`] below [`MODULE_ROOT`] and asks
 //! a [`ModuleSource`] for its bytes. The source decides where those bytes
 //! come from (a development directory, a packed cartridge, ...), so runtimes
@@ -18,8 +18,8 @@
 //! `..`, no drive or stream markers and no uppercase, so every name resolves
 //! below [`MODULE_ROOT`] and every module file has exactly one name, even on
 //! case-insensitive hosts. A name whose last segment is a source extension,
-//! such as `player.luau` or `player.rhai`, is rejected: names never carry an
-//! extension.
+//! such as `player.luau` or `player.rhai`, is rejected, since names never
+//! carry an extension.
 
 use std::fmt;
 
@@ -146,7 +146,7 @@ pub enum ModuleLoadError {
 /// Supplies module source bytes by cartridge-relative path.
 ///
 /// Implementations must confine lookups to the cartridge's [`MODULE_ROOT`]
-/// directory: a module file must not resolve, through links or otherwise, to
+/// directory. A module file must not resolve, through links or otherwise, to
 /// anything outside it.
 pub trait ModuleSource {
     fn load(&self, path: &ModulePath) -> Result<Vec<u8>, ModuleLoadError>;

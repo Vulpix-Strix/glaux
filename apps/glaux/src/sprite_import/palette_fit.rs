@@ -16,7 +16,7 @@ use glaux_machine::sprite::{
 use serde::Deserialize;
 
 /// First master-palette entry the importer allocates. Entries below it keep
-/// the colors the cartridge already gives them; entries from it up are
+/// the colors the cartridge already gives them. Entries from it up are
 /// rebuilt by every import.
 pub(crate) const CART_COLOR_START: usize = 32;
 
@@ -175,7 +175,7 @@ pub(crate) struct FitInput<'a> {
     pub(crate) sheet: &'a Sheet,
     pub(crate) groups: &'a [SpriteGroup],
     /// The cartridge's current master palette. Entries below
-    /// [`CART_COLOR_START`] are kept; the rest are rebuilt.
+    /// [`CART_COLOR_START`] are kept. The rest are rebuilt.
     pub(crate) current: &'a Palette,
     /// The System ROM palette, which the rebuilt entries start from.
     pub(crate) rom_palette: &'a Palette,
@@ -224,13 +224,14 @@ struct Unit {
 /// Assigns every opaque color of the sheet a master entry and every tile a
 /// bank, and encodes the result.
 ///
-/// Colors are matched exactly: a color already among the kept master
-/// entries reuses the lowest such entry; the others take consecutive entries
-/// from [`CART_COLOR_START`] in the order they first appear, row by row.
+/// Colors are matched exactly. A color already among the kept master
+/// entries reuses the lowest such entry, and the others take consecutive
+/// entries from [`CART_COLOR_START`] in the order they first appear, row by
+/// row.
 ///
-/// Banks are packed from units, largest color set first: each unit joins
-/// the bank it adds the fewest colors to without exceeding 15, ties going
-/// to the lowest bank, or opens a new bank. Within a bank, colors take
+/// Banks are packed from units, largest color set first. Each unit joins
+/// the bank it adds the fewest colors to without exceeding 15, with ties
+/// going to the lowest bank, or opens a new bank. Within a bank, colors take
 /// local indices from 1 in the order they join it.
 pub(crate) fn fit(input: &FitInput) -> Result<Fitted, FitError> {
     let sheet = input.sheet;

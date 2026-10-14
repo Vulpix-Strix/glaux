@@ -10,8 +10,8 @@ pub const NAME: &str = "GLAUX";
 /// Hardware generation within the family.
 pub const GENERATION: &str = "G1";
 
-/// Logical ticks per second. The system and, later, cartridges advance
-/// exactly once per tick regardless of how often the host presents frames.
+/// Logical ticks per second. The system and cartridges advance exactly once
+/// per tick, regardless of how often the host presents frames.
 pub const TICK_RATE: u32 = 60;
 
 /// its framebuffer and the System ROM it was built with.

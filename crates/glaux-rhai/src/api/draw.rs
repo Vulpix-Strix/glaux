@@ -89,7 +89,7 @@ pub(crate) fn install(engine: &mut Engine, pending_frame: &PendingFrame) {
 }
 
 /// Registers `spr(tile, x, y, [w, h, flip_x, flip_y, palette])` for every
-/// argument count from 3 to 8. Rhai has no optional parameters; a missing
+/// argument count from 3 to 8. Rhai has no optional parameters. A missing
 /// argument behaves as `()`, which also selects the default when given.
 fn install_spr(engine: &mut Engine, pending_frame: &PendingFrame) {
     let p = Rc::clone(pending_frame);

@@ -1,6 +1,6 @@
-//! RENAME SCRIPT: moves a script to another path under `code/`.
+//! RENAME SCRIPT moves a script to another path under `code/`.
 //!
-//! The user edits the path below `code/` without an extension; the script
+//! The user edits the path below `code/` without an extension. The script
 //! keeps the language, and so the extension, it already has.
 
 use glaux_input::InputEvent;
@@ -71,7 +71,7 @@ impl RenameScript {
         self.failure = None;
     }
 
-    /// Shows why moving the file failed; the window stays open.
+    /// Shows why moving the file failed. The window stays open.
     pub fn set_failure(&mut self, message: String) {
         self.failure = Some(message);
     }

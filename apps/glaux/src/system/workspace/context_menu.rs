@@ -1,5 +1,6 @@
-//! Context menus: a list of actions opened at the pointer by a secondary
-//! press, taking every input until one is chosen or the menu is dismissed.
+//! A context menu is a list of actions opened at the pointer by a secondary
+//! press. It takes every input until an action is chosen or the menu is
+//! dismissed.
 //!
 //! The menu knows nothing of what its actions do. Each view builds the
 //! entries that fit what was pressed on, with what is unavailable
@@ -74,10 +75,10 @@ pub enum MenuOutcome<A> {
     Stay,
     /// Close the menu and carry out `A`.
     Run(A),
-    /// Close the menu: Escape was pressed.
+    /// Close the menu because Escape was pressed.
     Close,
-    /// Close the menu: a pointer button was pressed outside it. The press
-    /// is the view's to act on or ignore.
+    /// Close the menu because a pointer button was pressed outside it. The
+    /// press is the view's to act on or ignore.
     Outside,
 }
 

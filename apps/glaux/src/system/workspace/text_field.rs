@@ -1,6 +1,6 @@
 //! A one-line text field for the workspace's windows and bars.
 //!
-//! The field is the only thing that reads keys while it has focus: it
+//! The field is the only thing that reads keys while it has focus. It
 //! takes the keys that edit a line, the clipboard commands and Select All,
 //! and hands everything else back to the window it sits in. That keeps a
 //! command from acting on the field and on the document behind it at once.
@@ -26,7 +26,7 @@ pub enum FieldInput {
     /// Ask for the clipboard's text, to hand back with
     /// [`TextField::paste`].
     Paste,
-    /// Not a field input; the window holding the field decides.
+    /// Not a field input, so the window holding the field decides.
     Unhandled,
 }
 
@@ -115,7 +115,7 @@ impl TextField {
 
     /// Applies `event` if it is a field input.
     ///
-    /// Undo and Redo are taken and do nothing: a field keeps no history,
+    /// Undo and Redo are taken and do nothing. A field keeps no history,
     /// and they must not reach the document behind it.
     pub fn handle_input(&mut self, event: InputEvent) -> FieldInput {
         match event {

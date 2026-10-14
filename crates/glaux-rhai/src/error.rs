@@ -73,7 +73,7 @@ pub(crate) fn script_error(err: &EvalAltResult, source: &str) -> ScriptError {
             // reduced to its innermost frame above.
             let text = other.to_string();
             let first = text.lines().next().unwrap_or_default();
-            // Rhai ends the line with `(line N, position M)`; the location
+            // Rhai ends the line with `(line N, position M)`. The location
             // goes in front instead, as `source:N:`.
             let message = if position.is_none() {
                 first

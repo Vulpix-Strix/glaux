@@ -167,7 +167,7 @@ impl CodeEditor {
     }
 
     /// Replaces the selected match with the replacement and shows the next
-    /// one; with no match selected, only shows the next one.
+    /// one. With no match selected, it only shows the next one.
     fn replace_one(&mut self, session: &mut CodeSession) {
         let Some((id, matches, selection)) = self.matches(session) else {
             return;

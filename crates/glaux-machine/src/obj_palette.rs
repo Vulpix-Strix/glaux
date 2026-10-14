@@ -58,8 +58,7 @@ pub struct ObjPalettes {
 impl ObjPalettes {
     /// Bank `n` maps local index `i` to master index `16 * n + i`.
     ///
-    /// Bank 0 is therefore the identity, which is how object tiles resolved
-    /// before palette banks existed.
+    /// Bank 0 is therefore the identity mapping.
     pub fn linear() -> Self {
         let mut bytes = [0; OBJ_PALETTES_BYTES];
         for (offset, byte) in bytes.iter_mut().enumerate() {
@@ -101,7 +100,7 @@ impl ObjPalettes {
     /// master it mapped to before.
     ///
     /// `None` means `local` is the reserved transparent index 0 or not a
-    /// 4 bpp value; nothing is written then.
+    /// 4 bpp value. Nothing is written then.
     pub fn set(&mut self, bank: ObjBank, local: u8, master: u8) -> Option<u8> {
         let previous = self.resolve(bank, local)?;
         self.bytes[usize::from(bank.get()) * OBJ_PALETTE_COLORS + usize::from(local)] = master;

@@ -87,7 +87,7 @@ struct ImportSpriteArgs {
     /// Cartridge directory to import into [default: the PNG's directory].
     #[arg(long)]
     cartridge: Option<PathBuf>,
-    /// Sprite-group file [default: <PNG name>.sprites.ron next to the PNG, if present].
+    /// Sprite-group file (default: `<PNG name>.sprites.ron` next to the PNG, if present).
     #[arg(long)]
     groups: Option<PathBuf>,
     /// Treat this opaque color, as RRGGBB, as transparent.

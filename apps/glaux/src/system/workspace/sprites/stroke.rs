@@ -1,7 +1,7 @@
 //! Pointer drags as unbroken lines of tile pixels.
 //!
 //! The host reports at most one pointer move per frame, so a fast drag
-//! jumps several pixels between moves; joining consecutive positions with
+//! jumps several pixels between moves. Joining consecutive positions with
 //! a line leaves no gaps.
 
 /// The pixels of the line from `from` to `to`, both included, in order.

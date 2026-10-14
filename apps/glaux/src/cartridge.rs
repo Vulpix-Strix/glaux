@@ -2,7 +2,7 @@
 //! and the entry script it names, plus optional binary assets: `sprites.bin`,
 //! `objattr.bin`, `obp.bin` and `palette.bin`.
 //!
-//! Loading only validates the cartridge; its entry script runs only when
+//! Loading only validates the cartridge. Its entry script runs only when
 //! asked to, through [`LoadedCartridge::entry_source`].
 
 use std::path::Path;
@@ -17,7 +17,7 @@ use crate::cartridge_fs::{CartridgeFs, CartridgeStorage, FsError, ReplaceError};
 /// Path of the manifest from the cartridge root.
 const MANIFEST: &str = "/cartridge.ron";
 
-/// Path of the manifest used before `cartridge.ron`. It is never read; its
+/// Path of the manifest used before `cartridge.ron`. It is never read. Its
 /// presence only turns a missing-manifest error into a migration hint.
 const LEGACY_MANIFEST: &str = "/cart.json";
 
@@ -321,7 +321,7 @@ impl TryFrom<ManifestFile> for CartridgeManifest {
 
 /// Translates a RON error into a Glaux one. Schema violations surface through
 /// serde's standard `missing_field`, `unknown_field` and `unknown_variant`
-/// errors; `outer` names the Rust type being deserialized, which maps back to
+/// errors. `outer` names the Rust type being deserialized, which maps back to
 /// a manifest section.
 fn manifest_error(err: ron::error::SpannedError) -> CartridgeError {
     use ron::Error;
@@ -526,8 +526,8 @@ impl LoadedCartridge {
     }
 
     /// Replaces the file of `asset` with `bytes`, provided it still holds
-    /// `expected` (`None`: provided it is absent). See
-    /// [`CartridgeFs::replace_file`]: the file is replaced whole or not at
+    /// `expected`, where `None` means the file must be absent. See
+    /// [`CartridgeFs::replace_file`]. The file is replaced whole or not at
     /// all, and a read-only file is never replaced.
     pub fn replace_asset(
         &self,

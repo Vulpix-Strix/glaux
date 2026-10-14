@@ -1,7 +1,7 @@
 //! The host's native file dialog, shown beside the Glaux window without
 //! holding up its loop where the platform allows.
 //!
-//! The dialog belongs to the host: what it returns is a host path, which
+//! The dialog belongs to the host. What it returns is a host path, which
 //! only the system's import reads. Cartridges never reach it.
 
 use std::path::{Path, PathBuf};
@@ -26,7 +26,7 @@ impl FilePicker {
     /// answered.
     ///
     /// On macOS the dialog must run on the main thread, so this returns
-    /// once it closes; the panel keeps the window's events flowing
+    /// once it closes. The panel keeps the window's events flowing
     /// meanwhile. Elsewhere it runs on a thread of its own, so the window
     /// keeps redrawing and answering the compositor while it is open.
     pub fn open_png(&mut self, directory: &Path) -> bool {
@@ -43,8 +43,8 @@ impl FilePicker {
             let _ = answer.send(dialog.pick_file());
         } else {
             std::thread::spawn(move || {
-                // The picker may be gone by the time the user answers; the
-                // answer is then simply dropped.
+                // The picker may be gone by the time the user answers, in
+                // which case the answer is simply dropped.
                 let _ = answer.send(dialog.pick_file());
             });
         }

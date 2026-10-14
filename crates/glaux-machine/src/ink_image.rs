@@ -1,7 +1,7 @@
 //! Small System ROM images drawn with caller-chosen colors.
 //!
-//! Each pixel holds an ink slot instead of a palette index: slot 0 is
-//! transparent and slots `1..=INK_SLOTS` are resolved to palette indices
+//! Each pixel holds an ink slot instead of a palette index. Slot 0 is
+//! transparent, and slots `1..=INK_SLOTS` are resolved to palette indices
 //! when the image is drawn, so one image can be shown in several color
 //! states.
 

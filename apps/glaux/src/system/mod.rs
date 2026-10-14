@@ -1,5 +1,6 @@
-//! System software: the boot sequence, the shell that follows it, the
-//! editor workspace beside it, and the cartridge runtime the shell starts.
+//! System software, made of the boot sequence, the shell that follows it,
+//! the editor workspace beside it, and the cartridge runtime the shell
+//! starts.
 //!
 //! The system advances one step per logical tick and redraws the whole
 //! framebuffer from its current state on every frame.
@@ -147,7 +148,7 @@ fn identity_line(rom_version: &Version) -> String {
     format!("{NAME} {GENERATION}  SYSTEM ROM {rom_version}")
 }
 
-/// Work the system asks of the host, outside the machine: see
+/// Work the system asks of the host, outside the machine. See
 /// [`System::take_host_request`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostRequest {
@@ -203,7 +204,7 @@ pub struct System {
     workspace: Workspace,
     /// The loaded cartridge's video state as the editors changed it. When
     /// present it always belongs to the cartridge that is loaded, running
-    /// or paused: it is dropped whenever that cartridge is replaced or
+    /// or paused. It is dropped whenever that cartridge is replaced or
     /// unloaded, which the shell refuses while it holds unsaved edits.
     sprites: Option<SpriteDocument>,
     /// The loaded cartridge's open scripts and the Code view's tabs over
@@ -219,7 +220,7 @@ pub struct System {
     /// Quitting was asked for with unsaved edits, and the next update asks
     /// about them.
     exit_requested: bool,
-    /// Quitting was confirmed; see [`exit_confirmed`](Self::exit_confirmed).
+    /// Quitting was confirmed. See [`exit_confirmed`](Self::exit_confirmed).
     exiting: bool,
 }
 
@@ -276,7 +277,7 @@ impl System {
     }
 
     /// Asks to quit Glaux, as closing the window does. Without unsaved
-    /// edits quitting is confirmed at once; with them, the next update
+    /// edits quitting is confirmed at once. With them, the next update
     /// asks whether to save them, pausing a running cartridge first. A
     /// request while that question is open is ignored.
     pub fn request_exit(&mut self) {
@@ -338,7 +339,7 @@ impl System {
     /// pointer-driven state, shows it.
     ///
     /// Call on a copy of the frame drawn by [`render`](Self::render), once
-    /// per presented frame: the pointer then follows the host at its
+    /// per presented frame. The pointer then follows the host at its
     /// refresh rate rather than the tick rate, and never ends up in the
     /// machine's framebuffer.
     pub fn draw_cursor(
@@ -369,8 +370,8 @@ impl System {
     /// Input is ignored during the boot sequence. In the shell,
     /// [`InputEvent::Break`] opens the workspace on the loaded cartridge,
     /// and in the workspace it returns to the shell. While a cartridge runs,
-    /// Break pauses it and button events reach its `btn` and `btnp`;
-    /// anything else is ignored. On the pause screen, Break resumes the
+    /// Break pauses it and button events reach its `btn` and `btnp`.
+    /// Anything else is ignored. On the pause screen, Break resumes the
     /// cartridge and Enter opens the shell with it still paused.
     ///
     /// While the system asks what to do with unsaved edits, its dialog
@@ -486,8 +487,8 @@ impl System {
     }
 
     /// Takes the oldest work the system asked of the host and the host has
-    /// not taken yet, if any. Call it after every [`update`](Self::update)
-    /// until it returns `None`.
+    /// not taken yet, if any. Call it after every
+    /// [`update_with`](Self::update_with) until it returns `None`.
     pub fn take_host_request(&mut self) -> Option<HostRequest> {
         self.host_requests.pop_front()
     }
@@ -549,8 +550,8 @@ impl System {
     /// the PSG's gate differs, so writing the same state every tick neither
     /// retriggers nor restarts an envelope.
     ///
-    /// Call once after each [`update`](Self::update): a cartridge's envelope
-    /// and gate writes reach the PSG once each.
+    /// Call once after each [`update_with`](Self::update_with): a cartridge's
+    /// envelope and gate writes reach the PSG once each.
     pub fn audio(&mut self, psg: &mut Psg) {
         let source = match &self.state {
             SystemState::Shell { .. }
@@ -728,7 +729,7 @@ fn shell_audio(shell: &Shell, psg: &mut Psg) {
 /// edits, which the question takes instead.
 ///
 /// Replacing or unloading the cartridge drops its documents, once the new
-/// cartridge has loaded or the old one is unloaded; a `load` that fails
+/// cartridge has loaded or the old one is unloaded. A `load` that fails
 /// keeps them. While they hold unsaved edits, the shell asks first unless
 /// told to discard them.
 fn shell_tick(
@@ -858,7 +859,7 @@ fn shell_request(
 
 /// Asks what to do with unsaved edits before quitting, or confirms
 /// quitting at once without any. A running cartridge is paused and the
-/// question asked over the shell, so cancelling loses nothing; an
+/// question asked over the shell, so cancelling loses nothing. An
 /// unfinished sprite stroke is ended first so its edit is saved whole.
 fn guard_exit(state: SystemState, ctx: &mut Context<'_>, exiting: &mut bool) -> SystemState {
     if ctx.unsaved.is_some() {
@@ -1010,7 +1011,7 @@ fn discard_documents(
 ///
 /// A document kept from an earlier visit is brought up to date with the
 /// files without losing unsaved changes or, for assets whose files are
-/// unchanged, their undo history; see [`SpriteDocument::reopen`]. Without
+/// unchanged, their undo history. See [`SpriteDocument::reopen`]. Without
 /// one, the video assets are read afresh.
 ///
 /// The Code view's session is kept from earlier visits, or started, and the
@@ -1047,10 +1048,11 @@ fn open_workspace(
 }
 
 /// Feeds `input` to the workspace and carries out the file work it asks
-/// for, returning the work it asks of the host, if any. Break returns to the shell with the cartridge still loaded, unless
-/// a dialog is open, which takes it as Escape. Events after a Break that
-/// leaves are dropped, so nothing meant for the workspace reaches the
-/// shell. Copies and pastes read and write `clipboard` as they come.
+/// for, returning the work it asks of the host, if any. Break returns to
+/// the shell with the cartridge still loaded, unless a dialog is open,
+/// which takes it as Escape. Events after a Break that leaves are dropped,
+/// so nothing meant for the workspace reaches the shell. Copies and pastes
+/// read and write `clipboard` as they come.
 #[expect(
     clippy::too_many_arguments,
     reason = "the workspace state is lent in parts the tick hands on separately"
@@ -1225,7 +1227,7 @@ fn workspace_tick(
 }
 
 /// Opens the cartridge's entry script in `code` the first time the Code
-/// view shows, and never again: a session whose tabs were all closed stays
+/// view shows, and never again. A session whose tabs were all closed stays
 /// empty.
 fn open_entry_once(workspace: &mut Workspace, code: &mut CodeSession, cartridge: &LoadedCartridge) {
     if workspace.tab() != Tab::Code || !code.take_entry_request() {
@@ -1386,7 +1388,7 @@ fn paused_shell_tick(
 
 /// Continues the paused cartridge with its VM as it was. Its buttons start
 /// released, so nothing pressed or held around the pause reaches it as a
-/// press; it is first ticked on the next update.
+/// press. It is first ticked on the next update.
 fn resume(mut shell: Box<Shell>, mut running: RunningCartridge) -> SystemState {
     running.reset_input();
     let identity = cartridge_identity(running.cartridge().manifest());

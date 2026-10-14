@@ -10,7 +10,7 @@
 //! - `require(name)`, which loads a cartridge module through the
 //!   [`ModuleSource`] given to [`Runtime::start`]. `name` is a
 //!   [`ModuleName`], as in `require("game.enemies")` for
-//!   `code/game/enemies.luau`; nothing else, such as host paths, can be
+//!   `code/game/enemies.luau`. Nothing else, such as host paths, can be
 //!   named. A module runs at most once per runtime, in the same VM and with
 //!   the same globals as the entry chunk, and its first return value (`true`
 //!   if it returns nothing) is cached and returned to every later `require`.
@@ -22,21 +22,22 @@
 //!   which record [`LogEntry`]s in any phase;
 //! - `cls(color)`, `pset(x, y, color)`, `rectfill(x, y, width, height,
 //!   color)`, `print(text, x, y, color)` and
-//!   `spr(tile, x, y, [w, h, flip_x, flip_y])`,
+//!   `spr(tile, x, y, [w, h, flip_x, flip_y, palette])`,
 //!   which record [`DrawCommand`]s and may only be called during `draw()`.
 //!   `rectfill` is a filled rectangle primitive: `(x, y)` is its top-left
 //!   corner and `width` and `height` are positive integer sizes in pixels,
 //!   not end coordinates. Like every drawing function it is clipped to the
 //!   screen, and like `cls` it costs one draw unit however large it is.
-//!   `spr` draws a `w`x`h` block of 8x8 object
-//!   tiles (default 1x1) taken from the 16-column object-tile grid, with
-//!   `tile` at its top-left; the block may not run past the grid's right or
-//!   bottom edge. `flip_x` and `flip_y` are optional booleans (default
-//!   `false`) that mirror the whole composed block: `flip_x` reverses both
-//!   the order of its tile columns and the pixels within each tile, and
-//!   `flip_y` does the same for rows. Flipping does not change a sprite's
-//!   draw cost. Transparent index 0 is skipped and indices 1 through 15
-//!   currently map directly to framebuffer indices;
+//!   `spr` draws a `w`x`h` block of 8x8 object tiles (default 1x1) taken
+//!   from the 16-column object-tile grid, with `tile` at its top-left. The
+//!   block may not run past the grid's right or bottom edge. `flip_x` and
+//!   `flip_y` are optional booleans (default `false`) that mirror the whole
+//!   composed block: `flip_x` reverses both the order of its tile columns
+//!   and the pixels within each tile, and `flip_y` does the same for rows.
+//!   Flipping does not change a sprite's draw cost. `palette` is an optional
+//!   object palette bank that every tile of the block is drawn through. When
+//!   it is omitted or `nil`, each tile uses its default bank. Transparent
+//!   index 0 is skipped;
 //! - `Button` and `Key`, read-only tables of opaque constants: the virtual
 //!   G1 buttons (`Button.Up`, `Button.Down`, `Button.Left`, `Button.Right`,
 //!   `Button.A`, `Button.B`) and physical keyboard keys (`Key.A`, `Key.Num0`,
@@ -62,7 +63,7 @@
 //!   Hz, volume and sustain run from `0` to `15`, envelope times are in
 //!   milliseconds, and `waveform` is `"square"`, `"triangle"`, `"saw"` or
 //!   `"noise"`. Every number must be an integer within its range. `tone`
-//!   changes only the oscillator; `gate(channel, true)` opens the gate, or
+//!   changes only the oscillator. `gate(channel, true)` opens the gate, or
 //!   retriggers it if already open, and `gate(channel, false)` releases it.
 //!
 //! [`InputState`]: glaux_input::InputState

@@ -1,4 +1,5 @@
-//! OPEN FILE: every script of the cartridge in one list, narrowed by typing.
+//! OPEN FILE shows every script of the cartridge in one list that typing
+//! narrows.
 
 use glaux_input::{InputEvent, Point, PointerButton};
 
@@ -225,7 +226,7 @@ pub struct PickerLayout {
     pub title_bar: Rect,
     /// The filter line.
     pub filter: Rect,
-    /// The first file row; the others follow one cell row apart.
+    /// The first file row. The others follow one cell row apart.
     pub list: Rect,
     /// File rows shown: [`LIST_ROWS`], or fewer where the area is too short
     /// to hold them with every note.

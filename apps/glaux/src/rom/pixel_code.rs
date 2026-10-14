@@ -1,8 +1,8 @@
-//! The system font: Pixel Code's glyph atlases decoded cell by cell, and
+//! The system font is Pixel Code's glyph atlases decoded cell by cell, plus
 //! the OpenType features of its build ported to font [`Lookup`]s.
 //!
 //! Upstream compiles the same PNGs into outline fonts with
-//! `src/build_from_images.py`; the slot rules here follow that script, and
+//! `src/build_from_images.py`. The slot rules here follow that script, and
 //! the lookups follow the `.fea` files kept beside the atlases in
 //! `rom/font/pixel-code/features/`. See `rom/font/README.md` for the pinned
 //! revision and how the files were renamed.
@@ -90,7 +90,7 @@ const ATLASES: [Atlas; 24] = [
 /// Dingbats drawn at twice the resolution, upstream's source for those its
 /// 1× dingbat atlas leaves blank. Most use half-pixel detail a 6×12 cell
 /// cannot show, so each pixel takes ink where any of its four half-pixels
-/// has some: thin strokes stay visible at the cost of some boldness.
+/// has some. Thin strokes stay visible at the cost of some boldness.
 const DOUBLE_RESOLUTION: Atlas = atlas!(0x2700, 0x27BF, "2700-27BF@2X.png");
 
 /// The glyph for characters the font lacks, also mapped to U+0000 and
@@ -446,7 +446,7 @@ fn set(glyphs: impl IntoIterator<Item = GlyphId>) -> GlyphSet {
 
 /// The generated `liga` feature: one lookup per ligature length, longest
 /// first, as upstream's sorted rules compile to. Ligatures that only form
-/// between spaces are chained rules upstream; their bound gives the same
+/// between spaces are chained rules upstream. Their bound gives the same
 /// match.
 fn ligature_lookups(g: &Glyphs<'_>) -> anyhow::Result<Vec<Lookup>> {
     let space = g.ch(' ')?;

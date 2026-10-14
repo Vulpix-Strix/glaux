@@ -1,4 +1,4 @@
-//! Audio output: plays mono signed 16-bit samples through raylib.
+//! Plays mono signed 16-bit samples through raylib.
 
 use std::collections::VecDeque;
 
@@ -64,7 +64,7 @@ impl AudioDevice {
 
 /// A playing stream fed from a queue of samples.
 ///
-/// The producer [`queue`](Self::queue)s samples at its own pace; the device
+/// The producer [`queue`](Self::queue)s samples at its own pace. The device
 /// takes them as it plays when [`pump`](Self::pump) runs. Gaps play as
 /// silence and excess is dropped oldest-first.
 pub struct AudioOutput<'a> {
@@ -84,8 +84,8 @@ impl AudioOutput<'_> {
 
     /// Refills every device buffer that has finished playing.
     ///
-    /// Call at least once per host frame; a device buffer lasts
-    /// [`STREAM_BUFFER_FRAMES`] samples.
+    /// Call at least once per host frame, since a device buffer lasts
+    /// `STREAM_BUFFER_FRAMES` (1024) samples.
     pub fn pump(&mut self) -> Result<(), AudioError> {
         while self.stream.is_processed() {
             let padded = self.queue.fill(&mut self.block);

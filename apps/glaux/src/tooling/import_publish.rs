@@ -6,7 +6,7 @@
 //! and publishes through a staging directory: outputs are written and
 //! synced there, a `COMMIT` marker is synced last, and only then are the
 //! files renamed into place. An import interrupted after `COMMIT` is
-//! finished by the next one; one interrupted before it is discarded.
+//! finished by the next one. One interrupted before it is discarded.
 //!
 //! Each rename replaces one file atomically, so every asset is always
 //! wholly old or wholly new. The set as a whole is not: between the first
@@ -112,7 +112,7 @@ fn owned_bytes<'a>(name: &str, bytes: &'a [u8]) -> &'a [u8] {
     }
 }
 
-/// 64-bit FNV-1a. Detects edits to imported files; it is not a defense
+/// 64-bit FNV-1a. Detects edits to imported files. It is not a defense
 /// against deliberate collisions.
 fn fnv1a64(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
@@ -209,7 +209,7 @@ pub(super) fn recover(cartridge: &Path) -> anyhow::Result<Recovery> {
 /// Stages `outputs` and the record text, commits them, and renames them
 /// into `cartridge`.
 ///
-/// Call [`recover`] first: an existing staging directory is an error.
+/// Call [`recover`] first, since an existing staging directory is an error.
 pub(super) fn publish(
     cartridge: &Path,
     outputs: &[(&str, Vec<u8>)],

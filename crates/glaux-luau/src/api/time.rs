@@ -10,7 +10,7 @@ use mlua::Lua;
 pub(crate) fn install(lua: &Lua, counter: &Rc<Cell<u64>>) -> mlua::Result<()> {
     let globals = lua.globals();
 
-    // Returned as doubles because Luau numbers are doubles; tick counts
+    // Returned as doubles because Luau numbers are doubles. Tick counts
     // stay exact far beyond any realistic run length.
     let ticks = Rc::clone(counter);
     let frame = lua.create_function(move |_, ()| Ok(ticks.get() as f64))?;

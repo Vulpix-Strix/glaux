@@ -26,7 +26,7 @@ pub(super) const READY_FRAME: u32 = HEADER_FRAME + 80;
 pub(super) const FINISH_FRAME: u32 = HEADER_FRAME + 140;
 
 // Intro timeline, in frames from the start of the boot. The intro is one
-// stage; these only shape what it draws.
+// stage. These only shape what it draws.
 const BEAM_START: u32 = 2;
 const BAND_START: u32 = 8;
 const GLOW_START: u32 = 14;
@@ -44,7 +44,7 @@ const RAMP_STEP_FRAMES: u32 = 2;
 /// Bright-to-dark steps of the screen glow after the tube opens.
 const GLOW_RAMP: [u8; 4] = [14, 13, 12, BACKGROUND];
 
-// Dark-to-bright steps of each intro element; the last entry is the color
+// Dark-to-bright steps of each intro element. The last entry is the color
 // held once the element is fully lit.
 const LOGO_RAMP: [u8; 5] = [12, 13, 14, 15, TEXT];
 const GENERATION_RAMP: [u8; 5] = [12, 20, 19, ACCENT, ACCENT];
@@ -171,7 +171,7 @@ enum IntroView {
     Identity { step: usize },
 }
 
-/// The intro view for boot frame `frame`; every frame from
+/// The intro view for boot frame `frame`. Every frame from
 /// [`LOGO_END`] on is dark, ready for the diagnostic screen.
 fn intro_view(frame: u32) -> IntroView {
     // `steps` frames spread evenly from 1/steps to the full `extent`.
@@ -258,7 +258,7 @@ pub(super) fn render_intro(
     }
 }
 
-/// Edges of the set pixels of some text, relative to where it is drawn;
+/// Edges of the set pixels of some text, relative to where it is drawn.
 /// `right` and `bottom` are exclusive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct InkBounds {

@@ -1,4 +1,4 @@
-//! The system shell: a command line over a scrollback of earlier output.
+//! The system shell is a command line over a scrollback of earlier output.
 
 mod commands;
 mod completion;
@@ -26,7 +26,7 @@ use scrollback::{Entry, Scrollback};
 
 /// A diagnostic tone the shell holds on one PSG channel.
 ///
-/// Set with the TONE command as system bring-up tooling; it is not how
+/// Set with the TONE command as system bring-up tooling. It is not how
 /// cartridges produce sound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tone {
@@ -41,7 +41,7 @@ pub struct Tone {
 /// oscillator set with TONE, the envelope set with ENV and the gate set with
 /// GATE.
 ///
-/// This is system bring-up tooling; it is not how cartridges produce sound.
+/// This is system bring-up tooling. It is not how cartridges produce sound.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Voice {
     /// `None` mutes the channel.
@@ -81,7 +81,7 @@ pub enum ShellRequest {
     Stop,
     /// Ask what to do with the loaded cartridge's unsaved edits before
     /// `action`, the command as typed, which would drop them. `line` runs
-    /// it without asking again; see [`Shell::run_confirmed`].
+    /// it without asking again. See [`Shell::run_confirmed`].
     ConfirmUnsaved { action: String, line: String },
 }
 
@@ -160,7 +160,7 @@ impl Shell {
         self.voices
     }
 
-    /// Applies `event`: edits the command line, navigates history,
+    /// Applies `event`. It edits the command line, navigates history,
     /// completes the command name, or runs the line on Enter.
     ///
     /// `slot` is the cartridge the system currently holds. A command that
@@ -242,7 +242,7 @@ impl Shell {
             | InputEvent::DocumentEnd { .. }
             | InputEvent::PageUp { .. }
             | InputEvent::PageDown { .. } => {}
-            // Game buttons and keys belong to a running cartridge; views and
+            // Game buttons and keys belong to a running cartridge. Views and
             // the pointer belong to the workspace.
             InputEvent::ButtonDown(_)
             | InputEvent::ButtonUp(_)
@@ -446,7 +446,7 @@ impl Shell {
         let editor_rows = flow.end / columns + 1;
 
         // Only the newest entries that can still reach the screen are laid
-        // out; the scrollback may hold far more than fits.
+        // out. The scrollback may hold far more than fits.
         let mut used = editor_rows;
         let mut visible = Vec::new();
         for entry in self.scrollback.iter().rev() {
@@ -459,7 +459,7 @@ impl Shell {
             visible.push((shown, flow));
         }
 
-        // Negative when the content overflows: those rows are cut below.
+        // Negative when the content overflows. Those rows are cut below.
         let mut row = -(used.saturating_sub(rows) as i32);
         let mut lines = Vec::new();
         for (shown, entry_flow) in visible.into_iter().rev() {

@@ -274,7 +274,7 @@ fn downscale<T: Copy + PartialEq>(
 }
 
 /// Maps each pixel to the ink slot `table` gives its color. Fully
-/// transparent pixels are slot 0; partial transparency and colors missing
+/// transparent pixels are slot 0. Partial transparency and colors missing
 /// from `table` are errors.
 fn inks(width: usize, rgba: &[[u8; 4]], table: &[(u32, u8)]) -> anyhow::Result<Vec<u8>> {
     rgba.iter()

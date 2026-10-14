@@ -78,8 +78,8 @@ impl CodeEditor {
         );
     }
 
-    /// Tab and Shift+Tab: a selection holding a line break indents or
-    /// outdents each line it touches, keeping them selected; otherwise Tab
+    /// Tab and Shift+Tab. A selection holding a line break indents or
+    /// outdents each line it touches, keeping them selected. Otherwise Tab
     /// inserts indentation and Shift+Tab outdents the caret's line.
     fn indent(&mut self, session: &mut CodeSession, reverse: bool) {
         let Some(document) = session.active_document() else {
@@ -185,7 +185,7 @@ impl CodeEditor {
         let replaced = match session.edit(id, range, &text, kind, after) {
             Some(Ok(replaced)) => replaced,
             // Deleting up to a U+FEFF at the start is the one refusal a
-            // user can cause; any other means a range was worked out wrong.
+            // user can cause. Any other means a range was worked out wrong.
             Some(Err(err @ EditError::CreatesBom)) => {
                 tracing::debug!(error = %err, "code edit refused");
                 return false;

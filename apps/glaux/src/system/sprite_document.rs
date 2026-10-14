@@ -22,14 +22,14 @@ pub const HISTORY_LIMIT: usize = 256;
 /// Changes the undo and redo steps may hold together, about 1 MiB. Older
 /// edits are forgotten first while there are more, but the newest edit is
 /// always kept whatever its size. Editor strokes and fills stay inside one
-/// tile, so they hold at most 64 changes; replacing every asset at once, as
+/// tile, so they hold at most 64 changes. Replacing every asset at once, as
 /// importing a spritesheet does, holds at most about 67,000, which fits
 /// within this alone. How many earlier edits survive such a replacement
 /// depends on their size.
 pub const HISTORY_CHANGE_LIMIT: usize = 131_072;
 
 /// The order saving writes assets in. It is fixed so that saves are
-/// reproducible; it does not keep the files consistent with each other if
+/// reproducible. It does not keep the files consistent with each other if
 /// a save stops partway.
 const SAVE_ORDER: [VideoAsset; 4] = [
     VideoAsset::MasterPalette,
@@ -131,7 +131,7 @@ pub enum Saved {
     /// These files were written, in this order: every asset with unsaved
     /// changes.
     Written(Vec<SavedFile>),
-    /// The document already matched its baseline; nothing was written.
+    /// The document already matched its baseline. Nothing was written.
     NothingToSave,
 }
 
@@ -139,10 +139,10 @@ pub enum Saved {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SaveFailure {
     /// These files changed outside Glaux. A conflict found before writing
-    /// lists every such file; one found while writing lists that file.
+    /// lists every such file. One found while writing lists that file.
     #[error("{} changed outside Glaux", file_list(.0.iter().map(Conflict::asset)))]
     Conflict(Vec<Conflict>),
-    /// Reading or writing a file failed; that file is unchanged on disk.
+    /// Reading or writing a file failed. That file is unchanged on disk.
     #[error(transparent)]
     Cartridge(CartridgeError),
 }
@@ -376,7 +376,7 @@ enum Change {
     MasterColor { index: u8, before: Rgb, after: Rgb },
 }
 
-// The history stores many changes; keep each one as small as a pixel's.
+// The history stores many changes. Keep each one as small as a pixel's.
 const _: () = assert!(size_of::<Change>() <= 8);
 
 impl Change {
@@ -537,12 +537,12 @@ impl History {
 /// Every asset is editable: object tiles, their attributes, the object
 /// palette banks and the master palette. The document remembers what each
 /// asset's file held when it was read or last saved, so it knows exactly
-/// which assets differ from their files: restoring every changed value, by
+/// which assets differ from their files. Restoring every changed value, by
 /// hand or by undo, leaves an asset unmodified again.
 ///
 /// Changes are grouped into edits between [`begin_edit`](Self::begin_edit)
 /// and [`end_edit`](Self::end_edit), each undone and redone whole, whatever
-/// assets it involves. Saving keeps the history; reading an asset from disk
+/// assets it involves. Saving keeps the history. Reading an asset from disk
 /// again drops the steps involving it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpriteDocument {
@@ -643,7 +643,7 @@ impl SpriteDocument {
         !self.history.redo.is_empty()
     }
 
-    /// One tile-local palette index; `None` for an invalid tile or pixel.
+    /// One tile-local palette index, or `None` for an invalid tile or pixel.
     pub fn pixel(&self, tile: usize, x: usize, y: usize) -> Option<u8> {
         self.tiles().pixel(tile, x, y)
     }
@@ -663,7 +663,7 @@ impl SpriteDocument {
     }
 
     /// Writes local index `index` to one pixel. Returns whether the pixel
-    /// changed; invalid positions and indices above 15 change nothing.
+    /// changed. Invalid positions and indices above 15 change nothing.
     ///
     /// Outside an open edit, the write is an edit of its own.
     pub fn set_pixel(&mut self, tile: usize, x: usize, y: usize, index: u8) -> bool {
@@ -682,7 +682,7 @@ impl SpriteDocument {
     }
 
     /// Makes `bank` the default object palette bank of `tile`. Returns
-    /// whether it changed; tiles past the bank change nothing.
+    /// whether it changed. Tiles past the bank change nothing.
     ///
     /// Outside an open edit, the write is an edit of its own.
     pub fn set_tile_bank(&mut self, tile: usize, bank: ObjBank) -> bool {
@@ -699,7 +699,7 @@ impl SpriteDocument {
     }
 
     /// Maps `local` in object palette `bank` to master index `master`.
-    /// Returns whether the mapping changed; the transparent local 0 and
+    /// Returns whether the mapping changed. The transparent local 0 and
     /// locals above 15 change nothing.
     ///
     /// Outside an open edit, the write is an edit of its own.
@@ -779,7 +779,7 @@ impl SpriteDocument {
     }
 
     /// Makes the color `target` shows `color`, as far as `scope` reaches.
-    /// Returns whether anything changed; the transparent local 0, locals
+    /// Returns whether anything changed. The transparent local 0, locals
     /// above 15 and the color already shown change nothing.
     ///
     /// [`ColorScope::Palette`] may change both the object palettes and the
@@ -861,8 +861,8 @@ impl SpriteDocument {
     /// the object palette banks and the master palette. Returns whether
     /// anything changed.
     ///
-    /// The replacement is one edit of its own, undone and redone whole;
-    /// any edit still open is closed first. Only values that differ are
+    /// The replacement is one edit of its own, undone and redone whole.
+    /// Any edit still open is closed first. Only values that differ are
     /// recorded, so replacing with the current state leaves no history.
     pub fn replace_video(&mut self, new: &CartridgeVideo) -> bool {
         self.begin_edit();
@@ -979,14 +979,14 @@ impl SpriteDocument {
     ///
     /// Every file to write is checked first, and a conflict or read error
     /// there writes nothing. The files are then replaced one at a time, in
-    /// a fixed order; each saved asset becomes its new baseline at once.
-    /// The first failure stops the save, reporting what was written: the
+    /// a fixed order, and each saved asset becomes its new baseline at once.
+    /// The first failure stops the save and reports what was written. The
     /// assets after it keep their unsaved changes, and saving again writes
     /// only those. The history is kept either way.
     ///
     /// Each replacement compares its file once more just before it takes
     /// effect, so a change made after the first check is a conflict for
-    /// that file. No lock is taken: a change in the instant between that
+    /// that file. No lock is taken, so a change in the instant between that
     /// last comparison and the replacement is overwritten.
     pub fn save(&mut self, cartridge: &LoadedCartridge) -> Result<Saved, SaveError> {
         self.write_files(cartridge, &[])
@@ -1004,7 +1004,7 @@ impl SpriteDocument {
     }
 
     /// Discards the changes to `assets` and the history steps involving
-    /// them, and reads their files again; an absent file reads as the
+    /// them, and reads their files again. An absent file reads as the
     /// asset's default. The other assets keep their changes. On error the
     /// document is unchanged.
     pub fn reload(
@@ -1038,7 +1038,7 @@ impl SpriteDocument {
     /// - file unchanged: the asset and its history are kept.
     /// - file changed, asset unmodified: the asset is read again, and the
     ///   history steps involving it are dropped.
-    /// - file changed under unsaved changes: the asset is not touched; the
+    /// - file changed under unsaved changes: the asset is not touched, and the
     ///   conflict is returned for the user to settle.
     ///
     /// When a file can't be read, or a changed file to read again is

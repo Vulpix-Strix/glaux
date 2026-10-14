@@ -133,10 +133,9 @@ impl Caret {
     /// keeping the column it had when vertical moves began.
     ///
     /// `metrics` must describe `document` as the view lays it out with
-    /// `font`. Moving
-    /// up from the first row goes to the document's start, and down from
-    /// the last row to its end; a move that would pass either stops on
-    /// that row.
+    /// `font`. Moving up from the first row goes to the document's start,
+    /// and down from the last row to its end. A move that would pass either
+    /// stops on that row.
     pub fn vertical(
         self,
         document: &CodeDocument,

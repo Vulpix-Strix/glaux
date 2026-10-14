@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-/// Most commands kept; submitting another drops the oldest.
+/// Most commands kept. Submitting another drops the oldest.
 pub(super) const HISTORY_LIMIT: usize = 256;
 
 /// Bounded list of submitted commands with an Up/Down navigation cursor.
@@ -13,7 +13,7 @@ pub(super) const HISTORY_LIMIT: usize = 256;
 pub(super) struct History {
     /// Oldest first.
     entries: VecDeque<String>,
-    /// Index into `entries` of the recalled line; `None` when not
+    /// Index into `entries` of the recalled line, or `None` when not
     /// navigating.
     cursor: Option<usize>,
     /// The line being edited when navigation began, restored when stepping

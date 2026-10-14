@@ -1,8 +1,8 @@
-//! The find bar: a search of the active document docked above its text,
-//! with replacing on demand.
+//! The find bar searches the active document and sits docked above its
+//! text. It can also replace matches on demand.
 //!
 //! The bar stays open while the text has the keys, so matches keep
-//! showing as the text is edited. Searching is literal; see
+//! showing as the text is edited. Searching is literal. See
 //! [`code_search`](crate::system::code_search).
 
 use std::ops::Range;
@@ -41,7 +41,7 @@ pub enum FindFocus {
 pub enum FindAction {
     /// Nothing for the view to do.
     None,
-    /// The input is not the bar's; the view handles it.
+    /// The input is not the bar's, so the view handles it.
     Unhandled,
     /// The query or the options changed: show the match nearest the
     /// selection's start.
@@ -280,7 +280,7 @@ impl FindBar {
     }
 
     /// Draws the bar. `current` is the position among `matches` of the
-    /// one selected, if any; `lit` shows the focused field's cursor.
+    /// one selected, if any. `lit` shows the focused field's cursor.
     pub fn render(
         &self,
         framebuffer: &mut Framebuffer,

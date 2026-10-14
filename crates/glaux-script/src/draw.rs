@@ -44,7 +44,7 @@ pub enum DrawCommand {
     /// grid, `tile` at its top-left, with `(x, y)` as its top-left corner.
     /// The block is validated to fit the grid. `flip_x` and `flip_y` mirror
     /// the whole composed block, not each tile in place. `palette` is the
-    /// object palette bank for every tile of the block; `None` lets each
+    /// object palette bank for every tile of the block, or `None` to let each
     /// tile use its default bank.
     Sprite {
         tile: u16,
@@ -71,7 +71,7 @@ impl DrawCommand {
     pub fn cost(&self) -> usize {
         match self {
             Self::Text { text, .. } => text.chars().count().max(1).saturating_mul(TEXT_CHAR_COST),
-            // Grid-sized blocks cannot overflow; if one did, its cost must
+            // Grid-sized blocks cannot overflow. If one did, its cost must
             // still exceed the limit rather than wrap below it.
             Self::Sprite { width, height, .. } => usize::from(*width)
                 .checked_mul(usize::from(*height))

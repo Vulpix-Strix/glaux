@@ -63,9 +63,9 @@ pub(super) struct Command {
     pub(super) aliases: &'static [&'static str],
     pub(super) usage: &'static str,
     pub(super) description: &'static str,
-    /// Fewest positional arguments accepted; fewer is a usage error.
+    /// Fewest positional arguments accepted. Fewer is a usage error.
     min_args: usize,
-    /// Most positional arguments accepted; more is a usage error.
+    /// Most positional arguments accepted. More is a usage error.
     max_args: usize,
     handler: Handler,
     /// Whether the one argument is a path, so extra words are most likely
@@ -162,7 +162,7 @@ pub(super) static COMMANDS: &[Command] = &[
         usage: NEW_USAGE,
         description: "Create a new cartridge",
         min_args: 1,
-        // `new` explains extra words itself; see `explain_new_words`.
+        // `new` explains extra words itself. See `explain_new_words`.
         max_args: usize::MAX,
         handler: new,
         takes_path: false,
@@ -270,7 +270,7 @@ const TONE_USAGE: &str = "tone <ch> <hz> [<vol> [<wave>]] | tone [<ch>] off";
 
 const TONE_OFF_USAGE: &str = "tone [<ch>] off";
 
-/// A, D and R are milliseconds; S uses the PSG's 0-15 sustain scale.
+/// A, D and R are milliseconds, and S uses the PSG's 0-15 sustain scale.
 const ENV_USAGE: &str = "env <ch> <a> <d> <s> <r>";
 
 const GATE_USAGE: &str = "gate <ch> on|off";
@@ -290,7 +290,7 @@ const NOT_LOADED_ERROR: &str = "No cartridge loaded";
 /// Asks the system what to do with the unsaved edits first when the
 /// command in `invocation` would replace a loaded cartridge holding them
 /// and `--discard` was not given. Returns whether it asked, in which case
-/// the command does nothing yet: the system runs it again with
+/// the command does nothing yet. The system runs it again with
 /// `--discard` once the edits are saved or the user discards them.
 fn confirm_unsaved(invocation: &Invocation<'_>, ctx: &mut Context<'_>) -> bool {
     let CartridgeSlot::Loaded { unsaved: true, .. } = ctx.slot else {

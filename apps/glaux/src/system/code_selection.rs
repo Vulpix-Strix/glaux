@@ -1,8 +1,8 @@
-//! The selected text of a code document: a fixed anchor and the caret,
-//! which is the end that moves.
+//! The selected text of a code document, made of a fixed anchor and the
+//! caret, which is the end that moves.
 //!
 //! Both ends are caret positions, so a selection always starts and ends on
-//! character boundaries within lines' content or at a line's start; see
+//! character boundaries within lines' content or at a line's start. See
 //! [`code_cursor`](super::code_cursor).
 
 use std::ops::Range;
@@ -65,7 +65,7 @@ impl Selection {
 
     /// The selection with its caret moved to `caret`. With `select` the
     /// anchor stays, so the selection grows or shrinks toward the caret
-    /// from either side; without it nothing stays selected.
+    /// from either side. Without it nothing stays selected.
     pub fn moved(self, caret: Caret, select: bool) -> Self {
         if select {
             Self { caret, ..self }

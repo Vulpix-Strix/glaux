@@ -21,7 +21,7 @@ const _: () = assert!(
     "a tick must span a whole number of samples"
 );
 
-// The limits cartridges see are part of the cartridge audio contract; the
+// The limits cartridges see are part of the cartridge audio contract. The
 // PSG takes them from there rather than defining its own.
 pub use glaux_audio::{CHANNELS, MAX_FREQUENCY, MAX_SUSTAIN, MAX_VOLUME};
 
@@ -56,7 +56,7 @@ pub const ENVELOPE_FULL: u32 = 1 << 16;
 /// [`MAX_ENVELOPE_MS`](glaux_audio::MAX_ENVELOPE_MS) converted to samples.
 pub const MAX_ENVELOPE_SAMPLES: u32 = glaux_audio::MAX_ENVELOPE_MS * SAMPLES_PER_MS;
 
-/// Noise register state after reset. Any nonzero value works; zero would
+/// Noise register state after reset. Any nonzero value works. Zero would
 /// lock the register.
 const LFSR_SEED: u16 = 0x7FFF;
 
@@ -72,16 +72,16 @@ pub enum Waveform {
     /// Linear ramp from the low peak to the high peak over the period.
     Saw,
     /// Pseudo-random high/low levels from a 15-bit LFSR, which shifts once
-    /// per period: the channel frequency is the shift rate.
+    /// per period, so the channel frequency is the shift rate.
     Noise,
 }
 
 /// Envelope parameters for one channel.
 ///
-/// The envelope is linear and constant-rate: `attack`, `decay` and
+/// The envelope is linear and constant-rate. `attack`, `decay` and
 /// `release` are each the number of samples a ramp takes to cross the full
-/// range from 0 to [`ENVELOPE_FULL`]. A ramp that starts or ends partway takes
-/// proportionally fewer samples, so decay lasts about
+/// range from 0 to [`ENVELOPE_FULL`]. A ramp that starts or ends partway
+/// takes proportionally fewer samples, so decay lasts about
 /// `decay * (MAX_SUSTAIN - sustain) / MAX_SUSTAIN` samples and a release from
 /// level `L` about `release * L / ENVELOPE_FULL`. A duration of 0 completes
 /// the stage at once.
@@ -91,7 +91,7 @@ pub struct Adsr {
     pub attack: u32,
     /// Samples from full level to 0, up to [`MAX_ENVELOPE_SAMPLES`].
     pub decay: u32,
-    /// Level held while the gate stays on, from 0 to [`MAX_SUSTAIN`]; sustain
+    /// Level held while the gate stays on, from 0 to [`MAX_SUSTAIN`]. Sustain
     /// at [`MAX_SUSTAIN`] holds [`ENVELOPE_FULL`].
     pub sustain: u8,
     /// Samples from full level to 0, up to [`MAX_ENVELOPE_SAMPLES`].
@@ -264,7 +264,7 @@ pub struct Channel {
     waveform: Waveform,
     frequency: u16,
     volume: u8,
-    /// Position within the current period; one full period spans the whole
+    /// Position within the current period. One full period spans the whole
     /// `u32` range.
     phase: u32,
     /// 15-bit noise register. It shifts each time the phase wraps while the
@@ -299,9 +299,9 @@ impl Channel {
         self.waveform = waveform;
     }
 
-    /// Frequency in Hz: waveform periods per second, or for
-    /// [`Waveform::Noise`] noise-register shifts per second. 0 silences the
-    /// channel and holds its phase.
+    /// Frequency in Hz. This is waveform periods per second, or
+    /// noise-register shifts per second for [`Waveform::Noise`]. 0 silences
+    /// the channel and holds its phase.
     pub fn frequency(&self) -> u16 {
         self.frequency
     }
@@ -330,7 +330,7 @@ impl Channel {
     /// Sets the envelope parameters, clamping each to its range.
     ///
     /// The envelope keeps its stage and level, but a stage the new
-    /// parameters have already completed ends at once: for example, lowering
+    /// parameters have already completed ends at once. For example, lowering
     /// the sustain below the level a decay has reached moves to Sustain at
     /// the new sustain level, and a release of 0 ends a release. Writing the
     /// parameters already set changes nothing.
@@ -338,21 +338,21 @@ impl Channel {
         self.envelope.set_adsr(adsr);
     }
 
-    /// Opens the gate: the envelope attacks from its current level, even if
+    /// Opens the gate. The envelope attacks from its current level, even if
     /// the gate was already open. The oscillator phase is kept.
     pub fn gate_on(&mut self) {
         self.envelope.gate_on();
     }
 
-    /// Closes the gate: the envelope releases from its current level. Does
+    /// Closes the gate. The envelope releases from its current level. Does
     /// nothing while the gate is already closed. The oscillator phase is
     /// kept.
     pub fn gate_off(&mut self) {
         self.envelope.gate_off();
     }
 
-    /// Whether the gate is open: the envelope is in Attack, Decay or
-    /// Sustain.
+    /// Whether the gate is open, which is the case while the envelope is in
+    /// Attack, Decay or Sustain.
     pub fn gate(&self) -> bool {
         self.envelope.gate()
     }

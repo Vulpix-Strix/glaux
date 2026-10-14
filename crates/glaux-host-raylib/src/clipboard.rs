@@ -21,7 +21,7 @@ pub(crate) fn text(_rl: &RaylibHandle) -> Option<String> {
         return None;
     }
     // SAFETY: GLFW returns a NUL-terminated string it owns, valid until the
-    // next clipboard call; it is copied out before anything else runs.
+    // next clipboard call, and it is copied out before anything else runs.
     let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
     Some(String::from_utf8_lossy(bytes).into_owned())
 }

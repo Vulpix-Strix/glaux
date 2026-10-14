@@ -4,7 +4,7 @@
 //!
 //! This is the conversion only: reading the PNG and its sprite-group
 //! sidecar, and fitting it to a palette. Where the result goes is up to the
-//! caller: `glaux import sprites` publishes it into a cartridge's files,
+//! caller. `glaux import sprites` publishes it into a cartridge's files,
 //! and the sprite editor makes it an edit of its document.
 
 mod decode;

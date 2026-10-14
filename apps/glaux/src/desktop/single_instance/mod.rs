@@ -67,9 +67,9 @@ impl SecondaryLaunch {
 
 /// How this process should proceed after looking for a running instance.
 pub enum Startup {
-    /// No other instance is running; this process continues as Glaux.
+    /// No other instance is running, so this process continues as Glaux.
     Primary(PrimaryInstance),
-    /// The launch was handed to the running instance; exit successfully.
+    /// The launch was handed to the running instance. Exit successfully.
     Forwarded,
     /// An instance is running but the launch could not be handed to it.
     /// Starting a second instance anyway would break single-instance
@@ -97,7 +97,7 @@ impl PrimaryInstance {
 
 /// The outcome of one backend's attempt to claim the instance.
 enum Claim<O> {
-    /// This process owns the instance; dropping `O` releases it.
+    /// This process owns the instance. Dropping `O` releases it.
     Owner(O),
     /// The launch was handed to the running owner.
     Forwarded,
@@ -120,7 +120,7 @@ impl<O: 'static> Claim<O> {
 
 /// Becomes the primary instance or hands `launch` to the one running.
 ///
-/// Failing to set up any exclusivity mechanism is not fatal: the process
+/// Failing to set up any exclusivity mechanism is not fatal. The process
 /// becomes a primary with [`PrimaryInstance::degraded`] set.
 pub fn start(launch: &SecondaryLaunch) -> Startup {
     let (sender, launches) = mpsc::channel();

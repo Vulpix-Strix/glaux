@@ -1,7 +1,7 @@
-//! The EDIT COLOR dialog. Changes one visible color of a tile's palette by
-//! eye, with a saturation/value field and a hue strip, or exactly, as hex
-//! or RGB, previewing the tile with the proposed color before anything is
-//! applied.
+//! The EDIT COLOR dialog changes one visible color of a tile's palette,
+//! either by eye with a saturation/value field and a hue strip, or exactly
+//! as hex or RGB. It previews the tile with the proposed color before
+//! anything is applied.
 
 pub mod hsv;
 
@@ -261,7 +261,7 @@ pub struct ColorEditor {
     /// colors that leave them undefined, which `rgb` cannot.
     hsv: Hsv,
     /// The chosen scope, `None` when there is no choice to make because no
-    /// other palette shows the master; applying then changes the master.
+    /// other palette shows the master. Applying then changes the master.
     scope: Option<ColorScope>,
     focus: Control,
     /// Text typed into the focused field, while unconfirmed.
@@ -391,11 +391,11 @@ impl ColorEditor {
     /// Pressing the field or the hue strip picks there, and dragging keeps
     /// picking, clamped to its edges, until the release. Tab moves the
     /// focus. Arrows step the focused picker, Up and Down the focused RGB
-    /// channel, and any arrow switches the focused scope choice; a press on
-    /// a scope row chooses it. Typing into a field changes the color as soon as the
-    /// text is valid. Enter confirms the text being typed, or else chooses
-    /// the focused button, APPLY unless CANCEL is focused. Escape restores
-    /// the color the typing began from, or else cancels.
+    /// channel, and any arrow switches the focused scope choice. A press on
+    /// a scope row chooses it. Typing into a field changes the color as soon
+    /// as the text is valid. Enter confirms the text being typed, or else
+    /// chooses the focused button, APPLY unless CANCEL is focused. Escape
+    /// restores the color the typing began from, or else cancels.
     pub fn handle_input(
         &mut self,
         event: InputEvent,
@@ -902,7 +902,7 @@ pub fn impact_lines(
     };
 
     if !uses.is_shared() {
-        // The count only sees stored banks; code may draw more tiles with
+        // The count only sees stored banks. Code may draw more tiles with
         // this palette, so no count is shown as "only this tile".
         let first = if uses.tiles == 0 {
             "Changes it in every tile that uses it.".to_owned()
@@ -1016,9 +1016,9 @@ fn other_tiles(count: usize) -> String {
     }
 }
 
-/// What changing `master` itself means beyond the document: code may draw
-/// any master index directly, and every frame starts cleared to master 0;
-/// the document sees neither.
+/// What changing `master` itself means beyond the document. Code may draw
+/// any master index directly, and every frame starts cleared to master 0.
+/// The document sees neither.
 fn code_note(master: u8, advanced: bool) -> String {
     match (advanced, master) {
         (false, 0) => "Game background; code may use it too.".to_owned(),
@@ -1119,7 +1119,7 @@ impl ColorEditorLayout {
             + PAD;
         let width = inner_width + 2 * PAD + 2;
         let height = 1 + title_height + body_height + 1;
-        // The system font fits the area, as the layout tests check; a taller
+        // The system font fits the area, as the layout tests check. A taller
         // one would only push the window's bottom past it, never its title
         // above it.
         let window = Rect {

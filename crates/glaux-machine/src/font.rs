@@ -2,7 +2,7 @@
 //!
 //! Every glyph spans one or two character cells across and exactly one cell
 //! down, and is drawn from the top-left corner of its first cell. Glyphs are
-//! stored as one `u16` per row: only the low `width` bits of a row are used,
+//! stored as one `u16` per row. Only the low `width` bits of a row are used,
 //! and bit `width - 1` is the leftmost column.
 //!
 //! A font maps characters to glyphs, may name a fallback glyph for the
@@ -118,7 +118,7 @@ pub struct BitmapFont {
 struct FontData {
     metrics: FontMetrics,
     glyphs: Vec<GlyphEntry>,
-    /// Every glyph's rows, back to back; each glyph holds exactly
+    /// Every glyph's rows, back to back. Each glyph holds exactly
     /// `cell_height` rows that fit in its width.
     rows: Vec<u16>,
     ascii: [Option<GlyphId>; 128],
@@ -253,7 +253,7 @@ impl BitmapFont {
         })
     }
 
-    /// The glyph `ch` maps to, if any; the fallback is not considered.
+    /// The glyph `ch` maps to, if any. The fallback is not considered.
     pub fn glyph_id(&self, ch: char) -> Option<GlyphId> {
         match self.data.ascii.get(ch as usize) {
             Some(&slot) => slot,
@@ -332,7 +332,7 @@ pub struct Glyph<'a> {
 }
 
 impl<'a> Glyph<'a> {
-    /// Rows from top to bottom; bit `width - 1` is the leftmost column.
+    /// Rows from top to bottom, where bit `width - 1` is the leftmost column.
     pub fn rows(&self) -> &'a [u16] {
         self.rows
     }

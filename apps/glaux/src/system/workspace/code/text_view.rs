@@ -56,8 +56,9 @@ impl TextGeometry {
         Self::in_area(layout, layout.text, line_count, settings)
     }
 
-    /// Like [`new`](Self::new), but taking up only `area` of the text
-    /// area, as when a bar covers part of it.
+    /// The text view of `layout` for a document of `line_count` lines shown
+    /// with `settings`, taking up only `area` of the text area, as when a
+    /// bar covers part of it.
     pub fn in_area(
         layout: &CodeLayout,
         area: Rect,
@@ -228,9 +229,9 @@ impl TextGeometry {
 
     /// The document position nearest `point` in `view`: on the row under
     /// it, at the character edge closest to it. Points left of the text,
-    /// over the gutter, pick the row's first column shown; points below the last row,
-    /// the document's end. `None` while `metrics` doesn't describe this
-    /// view as `font` draws it.
+    /// over the gutter, pick the row's first column shown. Points below the
+    /// last row pick the document's end. `None` while `metrics` doesn't
+    /// describe this view as `font` draws it.
     pub fn hit(
         &self,
         view: DocumentView,

@@ -16,7 +16,7 @@ use crate::cartridge_fs::FsError;
 /// Identifies one open document within its [`CodeDocuments`].
 ///
 /// Ids are never reused by the store that issued them, so a file closed and
-/// opened again gets a new one. They mean nothing to any other store: a new
+/// opened again gets a new one. They mean nothing to any other store. A new
 /// store issues the same ids again, so references to documents must be
 /// dropped together with the store that holds them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -268,12 +268,12 @@ impl CodeDocument {
         &self.origin
     }
 
-    /// The line ending new lines get: the one the file used when read.
+    /// The line ending new lines get, which is the one the file used when read.
     pub fn line_ending(&self) -> LineEnding {
         self.line_ending
     }
 
-    /// What indentation inserts: the style the file used when read.
+    /// What indentation inserts, which is the style the file used when read.
     pub fn indent(&self) -> Indent {
         self.indent
     }
@@ -301,7 +301,7 @@ impl CodeDocument {
     /// Both ends of `range` must be character boundaries outside the byte
     /// order mark and not between a `\r` and its `\n`, and the edit must
     /// not give a text without a byte order mark one. Otherwise nothing
-    /// changes. `text` is inserted exactly as given; callers choose its
+    /// changes. `text` is inserted exactly as given. Callers choose its
     /// line endings.
     pub fn replace(&mut self, range: Range<usize>, text: &str) -> Result<Replaced, EditError> {
         self.check(&range, text)?;
@@ -392,7 +392,7 @@ pub struct SourceConflict {
 pub enum CodeSaved {
     /// The text was written to `path` as `bytes` bytes.
     Written { path: SourcePath, bytes: usize },
-    /// The text already matched the file as last read or saved; nothing
+    /// The text already matched the file as last read or saved. Nothing
     /// was read or written.
     NothingToSave(SourcePath),
 }
@@ -548,13 +548,13 @@ impl CodeDocuments {
     ///
     /// The text is written byte for byte, so its byte order mark, line
     /// endings and final newline, or lack of one, are kept. The file is
-    /// replaced whole or not at all; see
+    /// replaced whole or not at all. See
     /// [`LoadedCartridge::replace_source`]. Only a successful write makes
     /// the text the document's new baseline.
     ///
     /// The file is compared before anything is written and once more just
-    /// before it is replaced; a change seen either time is a
-    /// [`CodeSaveError::Conflict`]. No lock is taken: a change in the
+    /// before it is replaced. A change seen either time is a
+    /// [`CodeSaveError::Conflict`]. No lock is taken, so a change in the
     /// instant between that last comparison and the replacement is
     /// overwritten.
     pub fn save(
@@ -566,8 +566,8 @@ impl CodeDocuments {
     }
 
     /// Like [`save`](Self::save), but writes over a file that changed
-    /// outside Glaux, provided it still holds exactly `seen` (`None`:
-    /// provided it is still absent). A further change is another conflict.
+    /// outside Glaux, provided it still holds exactly `seen` (`None` means
+    /// it must still be absent). A further change is another conflict.
     pub fn overwrite(
         &mut self,
         cartridge: &LoadedCartridge,

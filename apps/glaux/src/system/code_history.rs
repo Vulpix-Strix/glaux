@@ -172,7 +172,7 @@ impl EditHistory {
     ///
     /// Steps are reversed in exactly the opposite order they were made, so
     /// `document` must hold the text the newest step left. A refused
-    /// replacement means it does not; the step is then dropped and the
+    /// replacement means it does not. The step is then dropped and the
     /// error returned.
     pub fn undo(&mut self, document: &mut CodeDocument) -> Option<Result<Selection, EditError>> {
         let step = self.undo.pop_back()?;

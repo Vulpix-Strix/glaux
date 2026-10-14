@@ -8,7 +8,7 @@ use glaux_input::InputEvent;
 ///
 /// Text is stored as `char`s, so every position is a character index and
 /// any position in `0..=len` is a valid UTF-8 boundary. Each `char` is one
-/// logical position; grapheme clusters are not merged.
+/// logical position. Grapheme clusters are not merged.
 ///
 /// Invariants:
 /// - `cursor <= chars.len()` and `anchor <= chars.len()`;
@@ -17,7 +17,7 @@ use glaux_input::InputEvent;
 pub(super) struct LineEditor {
     chars: Vec<char>,
     cursor: usize,
-    /// The fixed end of the selection; the cursor is the moving end.
+    /// The fixed end of the selection. The cursor is the moving end.
     anchor: Option<usize>,
 }
 
@@ -94,7 +94,7 @@ impl LineEditor {
     }
 
     /// Applies `event`. Returns the line when it is submitted with Enter,
-    /// leaving the editor empty; an empty line is still submitted.
+    /// leaving the editor empty. An empty line is still submitted.
     pub(super) fn apply(&mut self, event: InputEvent) -> Option<String> {
         match event {
             InputEvent::Text(ch) => self.insert(ch),
@@ -168,7 +168,7 @@ impl LineEditor {
     }
 
     /// Moves the cursor to `pos`, clamped to the line. With `select`, the
-    /// selection is anchored at the old cursor if there was none; without
+    /// selection is anchored at the old cursor if there was none. Without
     /// it, any selection is dropped.
     ///
     /// Every cursor change goes through here so the anchor invariant holds.
