@@ -170,7 +170,7 @@ pub fn complete(request: &Request<'_>, api: &ApiCatalog, syntax: &Highlighter) -
     completions
 }
 
-fn grammar(language: ScriptLanguage) -> Grammar {
+pub(crate) fn grammar(language: ScriptLanguage) -> Grammar {
     match language {
         ScriptLanguage::Luau => Grammar::Luau,
         ScriptLanguage::Rhai => Grammar::Rhai,

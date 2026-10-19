@@ -1,6 +1,7 @@
-//! Code completion for Glaux scripts.
+//! Code completion and signature help for Glaux scripts.
 //!
-//! [`complete`] suggests what can be written at the caret, using the text, the API
+//! [`complete`] suggests what can be written at the caret, and [`signature_help`]
+//! describes the call the caret is typing arguments for. Both use the text, the API
 //! catalog and the parse tree from [`glaux_syntax`]. The engine has no user interface
 //! and keeps nothing between requests, so the editor decides when to ask and what to
 //! do with the answer.
@@ -31,6 +32,7 @@ mod complete;
 mod context;
 mod lexical;
 mod resolve;
+mod signature;
 
 pub use complete::{
     Candidate, CandidateKind, Completions, Doc, Insertion, MAX_CANDIDATES, Origin, Request,
@@ -38,3 +40,4 @@ pub use complete::{
 };
 pub use context::{Context, Position, Separator, context};
 pub use resolve::{Resolved, constant_members, resolve};
+pub use signature::{ParamInfo, Signature, SignatureHelp, SignatureRequest, signature_help};

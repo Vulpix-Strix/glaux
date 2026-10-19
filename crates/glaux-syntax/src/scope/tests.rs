@@ -248,6 +248,43 @@ fn rhai_global_functions_exclude_private_ones() {
 }
 
 #[test]
+fn rhai_functions_with_one_name_are_overloads_in_source_order() {
+    let (h, _) = parse(
+        Grammar::Rhai,
+        "fn f(a) {}\nfn g() {}\nprivate fn f(a, b) {}\nfn f(a, b, c) {}|",
+    );
+    let params: Vec<_> = h.overloads("f").into_iter().map(|d| d.params).collect();
+    assert_eq!(params, [vec!["a"], vec!["a", "b"], vec!["a", "b", "c"]]);
+    assert!(h.overloads("f").iter().all(|d| d.kind == Function));
+    assert_eq!(h.overloads("g").len(), 1);
+    assert_eq!(h.overloads("missing"), []);
+}
+
+#[test]
+fn rhai_overloads_point_at_the_name_in_each_declaration() {
+    let text = "fn f(a) {}\nfn f(a, b) {}";
+    let (h, _) = parse(Grammar::Rhai, &format!("{text}|"));
+    let starts: Vec<_> = h.overloads("f").into_iter().map(|d| d.declared).collect();
+    assert_eq!(starts, [3..4, 14..15]);
+}
+
+#[test]
+fn rhai_overloads_ignore_nested_and_commented_functions() {
+    let (h, _) = parse(
+        Grammar::Rhai,
+        "// fn f(a) {}\nfn h() { let f = 1; }\nfn f(a, b) {}|",
+    );
+    let params: Vec<_> = h.overloads("f").into_iter().map(|d| d.params).collect();
+    assert_eq!(params, [vec!["a", "b"]]);
+}
+
+#[test]
+fn luau_has_no_overloads() {
+    let (h, _) = parse(Grammar::Luau, "function f(a) end\nfunction f(a, b) end|");
+    assert_eq!(h.overloads("f"), []);
+}
+
+#[test]
 fn declaration_names_are_recognised() {
     for (grammar, marked) in [
         (Grammar::Luau, "local co|"),

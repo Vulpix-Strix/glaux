@@ -263,6 +263,7 @@ impl Shell {
             | InputEvent::Replace
             | InputEvent::GoToLine
             | InputEvent::Complete
+            | InputEvent::SignatureHelp
             | InputEvent::Copy
             | InputEvent::Cut
             | InputEvent::Paste

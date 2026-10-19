@@ -141,7 +141,7 @@ fn api_panel(candidate: &Candidate, id: &DocId, source: &PanelSource<'_>) -> Opt
     Some(panel)
 }
 
-fn type_name(ty: ValueType) -> &'static str {
+pub fn type_name(ty: ValueType) -> &'static str {
     match ty {
         ValueType::Number => "number",
         ValueType::Int => "int",

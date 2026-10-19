@@ -14,6 +14,7 @@ use crate::system::shell::BLINK_TICKS;
 mod completion;
 mod highlight;
 mod selection;
+mod signature;
 
 const CELL_W: i32 = 6;
 const CELL_H: i32 = 12;

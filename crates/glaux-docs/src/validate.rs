@@ -232,12 +232,13 @@ fn check_catalog_pages(
             continue;
         };
         let expected: Vec<&str> = entry.params().iter().map(|p| p.name.as_str()).collect();
-        if let Some(documented) = page.parameter_names()
-            && documented
+        if let Some(rows) = page.parameters()
+            && rows
                 .iter()
-                .map(String::as_str)
+                .map(|row| row.name.as_str())
                 .ne(expected.iter().copied())
         {
+            let documented: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
             diagnostics.push(Diagnostic::warning(
                 "parameters-drift",
                 page_location(page),

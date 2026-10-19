@@ -13,11 +13,13 @@ mod go_to_line;
 mod layout;
 mod new_file;
 mod picker;
+mod popup;
 mod prompt;
 mod rename;
 mod render;
 mod searching;
 mod settings;
+mod signature;
 mod text_view;
 
 use std::ops::Range;
@@ -38,6 +40,7 @@ use picker::{FilePicker, PickerAction, PickerLayout};
 use prompt::{Prompt, PromptLayout};
 use rename::{RenameAction, RenameScript};
 use settings::{SettingsAction, SettingsDialog, SettingsLayout};
+use signature::{Dismissed, SIGNATURE_HINT, SignaturePopup};
 use text_view::TextGeometry;
 
 use super::Rect;
@@ -196,6 +199,11 @@ pub struct CodeEditor {
     /// Listed under the word being typed while open. It takes only the
     /// keys that pick, accept or dismiss a suggestion.
     completion: Option<CompletionPopup>,
+    /// Over the line of the call being typed while open. It takes only
+    /// Escape.
+    signature: Option<SignaturePopup>,
+    /// The call whose popup Escape closed.
+    signature_dismissed: Option<Dismissed>,
     /// Position in tab order of the tab being dragged along the strip.
     drag: Option<usize>,
     /// Where the pointer last was, which decides what the wheel scrolls.
@@ -230,6 +238,8 @@ impl CodeEditor {
             go_to: None,
             find: None,
             completion: None,
+            signature: None,
+            signature_dismissed: None,
             drag: None,
             pointer: None,
             entry_error: None,
@@ -280,10 +290,13 @@ impl CodeEditor {
     }
 
     /// Whether Escape belongs to the view rather than leaving the
-    /// workspace: an overlay is open, or the find bar or the list of
-    /// suggestions, which it closes.
+    /// workspace: an overlay is open, or the find bar, the list of
+    /// suggestions or the signature, which it closes.
     pub fn claims_break(&self) -> bool {
-        self.has_overlay() || self.find.is_some() || self.completion.is_some()
+        self.has_overlay()
+            || self.find.is_some()
+            || self.completion.is_some()
+            || self.signature.is_some()
     }
 
     /// Whether a part of the find bar has the keys.
@@ -311,6 +324,8 @@ impl CodeEditor {
             COMPLETION_HINT
         } else if self.find_focused() {
             FIND_HINT
+        } else if self.signature.is_some() {
+            SIGNATURE_HINT
         } else {
             VIEW_HINT
         }
@@ -324,6 +339,11 @@ impl CodeEditor {
     #[cfg(test)]
     pub fn completion(&self) -> Option<&CompletionPopup> {
         self.completion.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn signature(&self) -> Option<&SignaturePopup> {
+        self.signature.as_ref()
     }
 
     #[cfg(test)]
@@ -569,6 +589,8 @@ impl CodeEditor {
         self.go_to = None;
         self.find = None;
         self.completion = None;
+        self.signature = None;
+        self.signature_dismissed = None;
         self.end_drag();
         self.last_click = None;
         self.entry_error = None;
@@ -743,6 +765,7 @@ impl CodeEditor {
         {
             self.settings_dialog = Some(SettingsDialog::new(self.settings));
             self.completion = None;
+            self.signature = None;
             self.drag = None;
             return None;
         }
@@ -762,6 +785,7 @@ impl CodeEditor {
         self.refresh_find(session);
         self.sync_completion(session);
         self.request_completion(event, was_open, revision, session);
+        self.update_signature(event, revision, session);
         request
     }
 
@@ -816,6 +840,9 @@ impl CodeEditor {
         if self.find.is_some()
             && let Some(request) = self.find_input(event, session)
         {
+            return request;
+        }
+        if let Some(request) = self.signature_input(event) {
             return request;
         }
         if let Some(request) = self.edit_input(event, session) {

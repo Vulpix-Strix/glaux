@@ -56,6 +56,16 @@ pub struct ImageRef {
     pub line: usize,
 }
 
+/// One row of a page's `Parameters` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParameterRow {
+    /// The first column, the parameter's name.
+    pub name: String,
+    /// The second column, what the parameter takes. Empty when the table has
+    /// only one column.
+    pub meaning: String,
+}
+
 /// A run of text a reader would see: prose, inline code, code block lines
 /// and image alt text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +87,7 @@ pub struct Page {
     images: Vec<ImageRef>,
     text_runs: Vec<TextRun>,
     html_lines: Vec<usize>,
-    parameter_names: Option<Vec<String>>,
+    parameters: Option<Vec<ParameterRow>>,
 }
 
 impl Page {
@@ -95,7 +105,7 @@ impl Page {
             images: Vec::new(),
             text_runs: Vec::new(),
             html_lines: Vec::new(),
-            parameter_names: None,
+            parameters: None,
             source: String::new(),
         };
         page.scan(root, source.lines().count().max(1));
@@ -150,10 +160,10 @@ impl Page {
         &self.html_lines
     }
 
-    /// The first column of the table under a level 2 `Parameters` heading,
-    /// or `None` when the page has no such table.
-    pub fn parameter_names(&self) -> Option<&[String]> {
-        self.parameter_names.as_deref()
+    /// The rows of the table under a level 2 `Parameters` heading, or `None`
+    /// when the page has no such table.
+    pub fn parameters(&self) -> Option<&[ParameterRow]> {
+        self.parameters.as_deref()
     }
 
     fn scan<'a>(&mut self, root: &'a AstNode<'a>, total_lines: usize) {
@@ -203,7 +213,7 @@ impl Page {
             .find(|(level, ..)| *level == 1)
             .map(|(_, title, _)| title.clone());
         self.outline = build_outline(&headings, total_lines);
-        self.parameter_names = parameter_names(root, &self.outline);
+        self.parameters = parameters(root, &self.outline);
     }
 
     fn push_text(&mut self, line: usize, text: &str) {
@@ -280,7 +290,7 @@ fn build_outline(headings: &[(u8, String, usize)], total_lines: usize) -> Vec<Se
     sections
 }
 
-fn parameter_names<'a>(root: &'a AstNode<'a>, outline: &[Section]) -> Option<Vec<String>> {
+fn parameters<'a>(root: &'a AstNode<'a>, outline: &[Section]) -> Option<Vec<ParameterRow>> {
     let section = outline
         .iter()
         .find(|section| section.level == 2 && section.title == PARAMETERS_HEADING)?;
@@ -289,13 +299,17 @@ fn parameter_names<'a>(root: &'a AstNode<'a>, outline: &[Section]) -> Option<Vec
         matches!(data.value, NodeValue::Table(_))
             && section.lines.contains(&data.sourcepos.start.line)
     })?;
-    let names = table
+    let rows = table
         .children()
         .filter(|row| matches!(row.data().value, NodeValue::TableRow(false)))
-        .filter_map(|row| row.children().next())
-        .map(|cell| inline_text(cell))
+        .filter_map(|row| {
+            let mut cells = row.children();
+            let name = inline_text(cells.next()?);
+            let meaning = cells.next().map(inline_text).unwrap_or_default();
+            Some(ParameterRow { name, meaning })
+        })
         .collect();
-    Some(names)
+    Some(rows)
 }
 
 #[cfg(test)]
@@ -423,22 +437,44 @@ mod tests {
     }
 
     #[test]
-    fn parameters_table_names_are_read_from_the_first_column() {
+    fn parameters_table_rows_hold_the_first_two_columns() {
         let page = page(
-            "# T\n\n## Parameters\n\n| Name | Meaning |\n|---|---|\n| `x` | Column |\n| `y` | Row |\n\n## Other\n\n| `z` | no |\n|---|---|\n",
+            "# T\n\n## Parameters\n\n| Name | Meaning |\n|---|---|\n| `x` | Column, from `0` |\n| `y` | Row |\n\n## Other\n\n| `z` | no |\n|---|---|\n",
         );
         assert_eq!(
-            page.parameter_names(),
-            Some(&["x".to_owned(), "y".to_owned()][..])
+            page.parameters(),
+            Some(
+                &[
+                    ParameterRow {
+                        name: "x".to_owned(),
+                        meaning: "Column, from 0".to_owned()
+                    },
+                    ParameterRow {
+                        name: "y".to_owned(),
+                        meaning: "Row".to_owned()
+                    },
+                ][..]
+            )
         );
     }
 
     #[test]
-    fn page_without_a_parameters_table_has_no_parameter_names() {
+    fn a_one_column_parameters_table_has_empty_meanings() {
+        let page = page("# T\n\n## Parameters\n\n| Name |\n|---|\n| `x` |\n");
         assert_eq!(
-            page("# T\n\n## Parameters\n\nNone.\n").parameter_names(),
-            None
+            page.parameters(),
+            Some(
+                &[ParameterRow {
+                    name: "x".to_owned(),
+                    meaning: String::new()
+                }][..]
+            )
         );
-        assert_eq!(page("# T\n").parameter_names(), None);
+    }
+
+    #[test]
+    fn page_without_a_parameters_table_has_no_parameters() {
+        assert_eq!(page("# T\n\n## Parameters\n\nNone.\n").parameters(), None);
+        assert_eq!(page("# T\n").parameters(), None);
     }
 }

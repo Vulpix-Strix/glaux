@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use glaux_docs::{ApiCatalog, ScriptLanguage};
-use glaux_sense::{Completions, Request, Trigger};
+use glaux_sense::{Completions, Request, SignatureHelp, SignatureRequest, Trigger};
 
 use super::code_cursor::Caret;
 use super::code_document::{
@@ -116,10 +116,7 @@ impl CodeSession {
             .or_insert_with(|| DocumentSyntax::new(document.language()))
             .parsed(document)?;
         let request = Request {
-            language: match document.language() {
-                Language::Luau => ScriptLanguage::Luau,
-                Language::Rhai => ScriptLanguage::Rhai,
-            },
+            language: script_language(document.language()),
             text: document.text(),
             caret,
             revision: document.revision(),
@@ -128,6 +125,32 @@ impl CodeSession {
             indent,
         };
         Some(glaux_sense::complete(&request, api, highlighter))
+    }
+
+    /// The call `id`'s caret at `caret` is typing arguments for, answered
+    /// from the text as it is now, unsaved edits included. The answer
+    /// carries the document's revision so it can be told apart from a later
+    /// text. `None` if `id` is not open, its syntax is unavailable or the
+    /// caret is not in a call to a function the engine knows.
+    pub fn signature_help(
+        &mut self,
+        id: DocumentId,
+        caret: usize,
+        api: &ApiCatalog,
+    ) -> Option<SignatureHelp> {
+        let document = self.documents.get(id)?;
+        let highlighter = self
+            .syntax
+            .entry(id)
+            .or_insert_with(|| DocumentSyntax::new(document.language()))
+            .parsed(document)?;
+        let request = SignatureRequest {
+            language: script_language(document.language()),
+            text: document.text(),
+            caret,
+            revision: document.revision(),
+        };
+        glaux_sense::signature_help(&request, api, highlighter)
     }
 
     /// Replaces `range` of `id`'s text with `text`, see
@@ -342,6 +365,13 @@ pub enum MoveScriptError {
     Missing(SourcePath),
     #[error(transparent)]
     File(#[from] SourceEditError),
+}
+
+fn script_language(language: Language) -> ScriptLanguage {
+    match language {
+        Language::Luau => ScriptLanguage::Luau,
+        Language::Rhai => ScriptLanguage::Rhai,
+    }
 }
 
 #[cfg(test)]

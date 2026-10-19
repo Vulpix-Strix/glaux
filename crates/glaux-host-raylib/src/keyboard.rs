@@ -187,7 +187,13 @@ const SHORTCUTS: [(KeyboardKey, KeyEvent); 16] = [
     (KeyboardKey::KEY_F, |_| InputEvent::Find),
     (KeyboardKey::KEY_H, |_| InputEvent::Replace),
     (KeyboardKey::KEY_G, |_| InputEvent::GoToLine),
-    (KeyboardKey::KEY_SPACE, |_| InputEvent::Complete),
+    (KeyboardKey::KEY_SPACE, |m| {
+        if m.shift {
+            InputEvent::SignatureHelp
+        } else {
+            InputEvent::Complete
+        }
+    }),
     (KeyboardKey::KEY_C, |_| InputEvent::Copy),
     (KeyboardKey::KEY_X, |_| InputEvent::Cut),
     (KeyboardKey::KEY_V, |_| InputEvent::Paste),
@@ -562,6 +568,7 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::Replace
                     | InputEvent::GoToLine
                     | InputEvent::Complete
+                    | InputEvent::SignatureHelp
                     | InputEvent::Copy
                     | InputEvent::Cut
                     | InputEvent::Paste

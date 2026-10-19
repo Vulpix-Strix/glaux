@@ -119,6 +119,9 @@ pub enum InputEvent {
     /// Ask for suggestions to finish the word at the caret, even before
     /// anything is typed (Ctrl+Space on desktop).
     Complete,
+    /// Ask for the signature of the call the caret is writing arguments
+    /// for (Ctrl+Shift+Space on desktop).
+    SignatureHelp,
     /// Put the selection on the clipboard (Ctrl+C on desktop).
     Copy,
     /// Put the selection on the clipboard and delete it (Ctrl+X on

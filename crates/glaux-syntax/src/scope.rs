@@ -121,6 +121,36 @@ impl Highlighter {
     }
 }
 
+impl Highlighter {
+    /// Every top-level function called `name`, in source order.
+    ///
+    /// Rhai allows several functions with one name when their parameter counts differ,
+    /// and [`Highlighter::definitions_at`] keeps only one of them. Luau has no overloads,
+    /// so the result is always empty there.
+    pub fn overloads(&self, name: &str) -> Vec<Definition> {
+        let Some((root, source)) = self.parsed() else {
+            return Vec::new();
+        };
+        if self.grammar() != Grammar::Rhai {
+            return Vec::new();
+        }
+        fields(root)
+            .into_iter()
+            .filter_map(|(child, _)| {
+                let core = statement_core(child);
+                let declared = rhai_fn_name(core).filter(|_| core.kind() == "ExprFn")?;
+                (text(source, declared) == name).then(|| Definition {
+                    name: name.to_owned(),
+                    kind: DefinitionKind::Function,
+                    declared: declared.byte_range(),
+                    visible_from: 0,
+                    params: rhai_params_of(core, source),
+                })
+            })
+            .collect()
+    }
+}
+
 struct Scopes<'a> {
     grammar: Grammar,
     source: &'a str,

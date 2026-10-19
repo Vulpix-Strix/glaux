@@ -17,4 +17,4 @@ pub use diagnostic::{Diagnostic, Severity};
 pub use id::{DocId, DocIdError, URI_SCHEME};
 pub use ids_lock::{IdsLock, IdsLockError};
 pub use library::{Library, Resolved};
-pub use page::{ImageRef, LinkRef, Page, Scope, Section, TextRun};
+pub use page::{ImageRef, LinkRef, Page, ParameterRow, Scope, Section, TextRun};

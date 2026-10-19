@@ -91,6 +91,18 @@ impl CodeEditor {
                             session.syntax_spans(id),
                         );
                         if let (Some(popup), Some(layout)) =
+                            (&self.signature, self.signature_layout(session))
+                            && !self.has_overlay()
+                        {
+                            popup.render(
+                                painter.framebuffer,
+                                font,
+                                self.layout.metrics.cell_w,
+                                self.layout.metrics.cell_h,
+                                &layout,
+                            );
+                        }
+                        if let (Some(popup), Some(layout)) =
                             (&self.completion, self.completion_layout(session))
                             && !self.has_overlay()
                         {

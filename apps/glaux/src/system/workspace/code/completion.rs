@@ -5,23 +5,22 @@ mod layout;
 mod panel;
 mod render;
 
-use std::sync::OnceLock;
-
-use glaux_docs::{Library, ScriptLanguage};
-use glaux_i18n::FallbackChain;
+use glaux_docs::ScriptLanguage;
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_sense::{CandidateKind, Completions, Insertion, Trigger};
 use glaux_syntax::SyntaxKind;
 
 use super::CodeEditor;
+use super::popup::Place;
 use crate::cartridge::Language;
 use crate::system::code_document::{CodeDocument, DocumentId};
 use crate::system::code_edit::{Edit, IndentUnit};
 use crate::system::code_history::EditKind;
 use crate::system::code_session::CodeSession;
 use crate::system::code_text::spot;
-use layout::{CompletionLayout, Place, VISIBLE_ROWS};
-pub(super) use panel::DocPanel;
+use crate::system::docs;
+use layout::{CompletionLayout, VISIBLE_ROWS};
+pub(super) use panel::{DocPanel, type_name};
 use panel::{PanelSource, panel_for};
 
 /// The status bar hint while suggestions are listed.
@@ -262,18 +261,6 @@ fn marker(kind: CandidateKind) -> (char, SyntaxKind) {
     }
 }
 
-/// The embedded documentation, parsed the first time suggestions need it.
-fn library() -> &'static Library {
-    static LIBRARY: OnceLock<Library> = OnceLock::new();
-    LIBRARY.get_or_init(Library::embedded)
-}
-
-/// The languages the documentation is read in, in order of preference.
-fn docs_chain() -> &'static FallbackChain {
-    static CHAIN: OnceLock<FallbackChain> = OnceLock::new();
-    CHAIN.get_or_init(|| crate::ui_text::translator().chain().clone())
-}
-
 /// Whether `ch` can be part of an identifier.
 fn is_word(ch: char) -> bool {
     ch == '_' || ch.is_alphanumeric()
@@ -345,7 +332,7 @@ impl CodeEditor {
             self.settings.indent_columns(),
         );
         let Some(completions) =
-            session.completions(id, caret, trigger, &unit.text(), library().api())
+            session.completions(id, caret, trigger, &unit.text(), docs::library().api())
         else {
             return;
         };
@@ -357,13 +344,13 @@ impl CodeEditor {
             Language::Rhai => ScriptLanguage::Rhai,
         };
         let summary = |id: &glaux_docs::DocId| {
-            let page = library().page(id, docs_chain())?.page;
+            let page = docs::library().page(id, docs::chain())?.page;
             page.summary().map(str::to_owned)
         };
         let line_of = |byte: usize| document.line_of(byte) + 1;
         let source = PanelSource {
             language,
-            api: library().api(),
+            api: docs::library().api(),
             summary: &summary,
             line_of: &line_of,
         };

@@ -253,6 +253,14 @@ fn ctrl_shortcuts_become_document_commands() {
 }
 
 #[test]
+fn ctrl_shift_space_asks_for_the_signature_instead_of_suggestions() {
+    assert_eq!(
+        shortcuts(&[KEY_SPACE], true, true),
+        [InputEvent::SignatureHelp]
+    );
+}
+
+#[test]
 fn ctrl_shortcuts_become_clipboard_commands() {
     assert_eq!(shortcuts(&[KEY_C], false, true), [InputEvent::Copy]);
     assert_eq!(shortcuts(&[KEY_X], false, true), [InputEvent::Cut]);
@@ -305,6 +313,7 @@ fn editing_commands_are_kept_only_in_workspace_mode() {
         InputEvent::Replace,
         InputEvent::GoToLine,
         InputEvent::Complete,
+        InputEvent::SignatureHelp,
         InputEvent::Copy,
         InputEvent::Cut,
         InputEvent::Paste,

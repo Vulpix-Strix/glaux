@@ -17,6 +17,7 @@ mod code_selection;
 mod code_session;
 mod code_syntax;
 mod code_text;
+mod docs;
 mod editor_settings;
 mod line_editor;
 mod pause;

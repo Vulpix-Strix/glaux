@@ -1,9 +1,9 @@
 //! Where the suggestion list and its documentation panel sit.
 
-use glaux_machine::font::BitmapFont;
 use glaux_sense::Candidate;
 
 use super::panel::DocPanel;
+use crate::system::workspace::code::popup::{Place, SHADOW};
 use crate::system::workspace::code::text_view::thumb;
 use crate::system::workspace::{Rect, wrap};
 
@@ -11,8 +11,6 @@ use crate::system::workspace::{Rect, wrap};
 pub const VISIBLE_ROWS: usize = 8;
 /// Narrowest the list gets, borders included.
 const MIN_LIST_WIDTH: i32 = 96;
-/// Space the hard shadow takes right of and below a box.
-pub const SHADOW: i32 = 2;
 /// Space between the list and its panel, which the list's shadow fills.
 const GAP: i32 = 2;
 /// Thickness of the list's scroll indicator.
@@ -36,16 +34,6 @@ const PANEL_PAD_Y: i32 = 3;
 /// Lines of summary and of parameters the panel shows.
 const SUMMARY_LINES: usize = 4;
 const PARAM_LINES: usize = 3;
-
-/// What the layout is drawn with and where it may go.
-#[derive(Clone, Copy)]
-pub struct Place<'a> {
-    pub font: &'a BitmapFont,
-    /// Everything the list and panel may cover.
-    pub area: Rect,
-    pub cell_w: i32,
-    pub cell_h: i32,
-}
 
 /// One line of the panel and where its top sits.
 #[derive(Debug, Clone, PartialEq, Eq)]

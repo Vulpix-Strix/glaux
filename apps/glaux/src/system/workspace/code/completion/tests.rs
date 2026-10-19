@@ -210,7 +210,7 @@ fn accepting_a_declaration_puts_the_caret_inside_its_body() {
 #[test]
 fn clicking_a_row_picks_and_accepts_it_and_clicking_elsewhere_dismisses() {
     let layout = CompletionLayout::new(
-        layout::Place {
+        Place {
             font: &crate::system::test_font::LAYOUT_FONT,
             area: layout_area(),
             cell_w: 6,
@@ -244,7 +244,7 @@ fn clicking_a_row_picks_and_accepts_it_and_clicking_elsewhere_dismisses() {
 #[test]
 fn the_wheel_scrolls_the_list_under_the_pointer_and_dismisses_elsewhere() {
     let layout = CompletionLayout::new(
-        layout::Place {
+        Place {
             font: &crate::system::test_font::LAYOUT_FONT,
             area: layout_area(),
             cell_w: 6,

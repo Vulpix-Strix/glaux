@@ -3,15 +3,14 @@
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
-use glaux_video::draw::{draw_text, fill_rect};
 
 use super::layout::{
     CompletionLayout, MARKER_GAP, PANEL_PAD_X, PanelLayout, PanelLine, ROW_PAD_LEFT, ROW_PAD_RIGHT,
-    SHADOW,
 };
 use super::panel::DocPanel;
 use super::{CompletionPopup, marker};
 use crate::system::syntax_theme;
+use crate::system::workspace::code::popup::Canvas;
 use crate::system::workspace::{BAR, HOVER_SHADE, Rect, take_cells};
 use crate::system::{BACKGROUND, DIM, PALE, TEXT};
 
@@ -78,44 +77,7 @@ impl CompletionPopup {
     }
 }
 
-/// A frame being drawn, with the font and the cell width the text is
-/// measured by.
-struct Canvas<'a> {
-    framebuffer: &'a mut Framebuffer,
-    font: &'a BitmapFont,
-    cell_w: i32,
-}
-
 impl Canvas<'_> {
-    fn fill(&mut self, rect: Rect, color: u8) {
-        fill_rect(
-            self.framebuffer,
-            rect.x,
-            rect.y,
-            rect.width,
-            rect.height,
-            color,
-        );
-    }
-
-    fn text(&mut self, text: &str, x: i32, y: i32, color: u8) {
-        draw_text(self.framebuffer, self.font, text, x, y, color);
-    }
-
-    /// An empty box with a border and a hard shadow.
-    fn frame(&mut self, rect: Rect) {
-        self.fill(
-            Rect {
-                x: rect.x + SHADOW,
-                y: rect.y + SHADOW,
-                ..rect
-            },
-            BAR,
-        );
-        self.fill(rect, DIM);
-        self.fill(rect.inset(1), BACKGROUND);
-    }
-
     fn panel(&mut self, panel: &DocPanel, layout: &PanelLayout) {
         let window = layout.window;
         self.frame(window);

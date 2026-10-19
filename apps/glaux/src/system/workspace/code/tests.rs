@@ -17,6 +17,7 @@ mod find;
 mod indent;
 mod menus;
 mod selection;
+mod signature;
 
 pub(super) fn editor() -> CodeEditor {
     CodeEditor::new(
