@@ -60,6 +60,7 @@ glaux-rhai = { path = "crates/glaux-rhai" }
 glaux-syntax = { path = "crates/glaux-syntax" }
 glaux-i18n = { path = "crates/glaux-i18n" }
 glaux-docs = { path = "crates/glaux-docs" }
+glaux-sense = { path = "crates/glaux-sense" }
 
 [profile.dev]
 opt-level = 0

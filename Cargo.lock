@@ -970,6 +970,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "glaux-sense"
+version = "0.1.0"
+dependencies = [
+ "glaux-docs",
+ "glaux-input",
+ "glaux-syntax",
+ "pretty_assertions",
+ "proptest",
+]
+
+[[package]]
 name = "glaux-syntax"
 version = "0.1.0"
 dependencies = [

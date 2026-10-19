@@ -34,4 +34,31 @@ impl Grammar {
             Grammar::Rhai => include_str!("../queries/rhai.scm"),
         }
     }
+
+    /// The reserved words, as the highlight query styles them.
+    pub fn keywords(self) -> &'static [&'static str] {
+        match self {
+            Grammar::Luau => &[
+                "and", "break", "continue", "do", "else", "elseif", "end", "export", "for",
+                "function", "if", "in", "local", "not", "or", "repeat", "return", "then", "type",
+                "until", "while",
+            ],
+            Grammar::Rhai => &[
+                "as", "break", "catch", "const", "continue", "do", "else", "export", "fn", "for",
+                "if", "import", "in", "let", "loop", "private", "return", "switch", "throw", "try",
+                "until", "while",
+            ],
+        }
+    }
+
+    /// The literals written as words, as the highlight query styles them.
+    pub fn literals(self) -> &'static [&'static str] {
+        match self {
+            Grammar::Luau => &["false", "nil", "true"],
+            Grammar::Rhai => &["false", "true"],
+        }
+    }
 }
+
+#[cfg(test)]
+mod tests;

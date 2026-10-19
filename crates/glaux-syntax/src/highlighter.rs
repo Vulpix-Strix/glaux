@@ -1,7 +1,9 @@
 use std::ops::Range;
 
 use thiserror::Error;
-use tree_sitter::{LanguageError, Parser, Query, QueryCursor, QueryError, StreamingIterator, Tree};
+use tree_sitter::{
+    LanguageError, Node, Parser, Query, QueryCursor, QueryError, StreamingIterator, Tree,
+};
 
 use crate::edit;
 use crate::grammar::Grammar;
@@ -71,6 +73,18 @@ impl Highlighter {
         self.source.clear();
         self.source.push_str(text);
         self.tree = self.parser.parse(text, self.tree.as_ref());
+    }
+
+    /// Whether the current tree was parsed from exactly `text`.
+    pub fn is_parsed(&self, text: &str) -> bool {
+        self.tree.is_some() && self.source == text
+    }
+
+    /// The tree root and the text it came from, for crate-internal queries.
+    pub(crate) fn parsed(&self) -> Option<(Node<'_>, &str)> {
+        self.tree
+            .as_ref()
+            .map(|tree| (tree.root_node(), self.source.as_str()))
     }
 
     /// Highlight spans inside `window`, sorted by position and never overlapping.
