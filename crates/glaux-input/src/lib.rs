@@ -116,6 +116,9 @@ pub enum InputEvent {
     Replace,
     /// Ask for a line of the open document to move to (Ctrl+G on desktop).
     GoToLine,
+    /// Ask for suggestions to finish the word at the caret, even before
+    /// anything is typed (Ctrl+Space on desktop).
+    Complete,
     /// Put the selection on the clipboard (Ctrl+C on desktop).
     Copy,
     /// Put the selection on the clipboard and delete it (Ctrl+X on

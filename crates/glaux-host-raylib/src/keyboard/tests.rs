@@ -249,6 +249,7 @@ fn ctrl_shortcuts_become_document_commands() {
     assert_eq!(shortcuts(&[KEY_F], false, true), [InputEvent::Find]);
     assert_eq!(shortcuts(&[KEY_H], false, true), [InputEvent::Replace]);
     assert_eq!(shortcuts(&[KEY_G], false, true), [InputEvent::GoToLine]);
+    assert_eq!(shortcuts(&[KEY_SPACE], false, true), [InputEvent::Complete]);
 }
 
 #[test]
@@ -275,6 +276,7 @@ fn shortcut_keys_without_ctrl_are_not_commands() {
                     KEY_F,
                     KEY_H,
                     KEY_G,
+                    KEY_SPACE,
                     KEY_C,
                     KEY_X,
                     KEY_V
@@ -302,6 +304,7 @@ fn editing_commands_are_kept_only_in_workspace_mode() {
         InputEvent::Find,
         InputEvent::Replace,
         InputEvent::GoToLine,
+        InputEvent::Complete,
         InputEvent::Copy,
         InputEvent::Cut,
         InputEvent::Paste,
