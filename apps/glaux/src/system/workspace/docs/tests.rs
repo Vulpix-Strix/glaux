@@ -1030,7 +1030,10 @@ fn the_status_bar_names_the_link_under_the_pointer() {
     assert_eq!(case.browser.hovered_target(Point::new(1, 100)), None);
     case.send(InputEvent::Find);
     assert_eq!(case.browser.hovered_target(case.link_point(0)), None);
-    assert_eq!(case.browser.hint(), SEARCH_HINT);
+    assert_eq!(
+        case.browser.hint(),
+        "Type: query  Tab: filter  Enter: open  Esc: close"
+    );
 }
 
 #[test]

@@ -1,5 +1,6 @@
 //! Drawing the suggestion list and its panel.
 
+use glaux_i18n::Arg;
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -13,6 +14,7 @@ use crate::system::syntax_theme;
 use crate::system::workspace::code::popup::Canvas;
 use crate::system::workspace::{BAR, HOVER_SHADE, Rect, take_cells};
 use crate::system::{BACKGROUND, DIM, PALE, TEXT};
+use crate::ui_text;
 
 /// Space between the two keys named in the panel's foot.
 const FOOT_GAP: i32 = 8;
@@ -118,11 +120,27 @@ impl Canvas<'_> {
         self.fill(foot, BAR);
         let mut x = foot.x + PANEL_PAD_X;
         let y = foot.y + 2;
-        for (key, action) in [("Tab", ": pick"), ("Esc", ": close")] {
-            self.text(key, x, y, PALE);
-            x += i32::try_from(self.font.text_cells(key)).unwrap_or(0) * self.cell_w;
-            self.text(action, x, y, DIM);
-            x += i32::try_from(self.font.text_cells(action)).unwrap_or(0) * self.cell_w + FOOT_GAP;
+        let instructions = [
+            (
+                "Tab",
+                ui_text::get_with("code-completion-pick", &[("key", Arg::Text("Tab"))]),
+            ),
+            (
+                "Esc",
+                ui_text::get_with("code-completion-close", &[("key", Arg::Text("Esc"))]),
+            ),
+        ];
+        for (key, instruction) in instructions {
+            let (before, key, after) = instruction
+                .find(key)
+                .map_or((instruction.as_str(), "", ""), |at| {
+                    (&instruction[..at], key, &instruction[at + key.len()..])
+                });
+            for (text, ink) in [(before, DIM), (key, PALE), (after, DIM)] {
+                self.text(text, x, y, ink);
+                x += i32::try_from(self.font.text_cells(text)).unwrap_or(0) * self.cell_w;
+            }
+            x += FOOT_GAP;
         }
     }
 }

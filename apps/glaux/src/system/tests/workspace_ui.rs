@@ -17,15 +17,21 @@ fn break_without_a_cartridge_explains_how_to_get_one() {
     let fixture = Fixture::new("sys-ws-empty");
     let system = press_break(shell_with_cartridge(&fixture, ""));
     assert_eq!(loaded_name(&system), None);
-    assert_eq!(transcript(&system).last().unwrap(), NO_CARTRIDGE_HINT);
-    assert!(NO_CARTRIDGE_HINT.len() <= text_columns(6));
+    assert_eq!(
+        transcript(&system).last().unwrap(),
+        "Nothing to edit. Try 'new <id>' or 'load <path>'."
+    );
+    assert!("Nothing to edit. Try 'new <id>' or 'load <path>'.".len() <= text_columns(6));
     assert_eq!(system.input_mode(), InputMode::Text);
     // Input after the hint in the same tick still reaches the shell.
     let mut input = vec![InputEvent::Break];
     input.extend("pwd".chars().map(InputEvent::Text));
     input.push(InputEvent::Enter);
     let system = system.update(&input);
-    assert_eq!(after(&system, NO_CARTRIDGE_HINT), ["> pwd", "/"]);
+    assert_eq!(
+        after(&system, "Nothing to edit. Try 'new <id>' or 'load <path>'."),
+        ["> pwd", "/"]
+    );
 }
 
 #[test]

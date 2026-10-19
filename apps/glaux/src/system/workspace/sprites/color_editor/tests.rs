@@ -480,7 +480,7 @@ fn the_widest_heading_fits_beside_the_title() {
     let heading = heading(target(7, 15), &uses(255, &[], 0), true);
     assert_eq!(heading, "OBP7 LF  Master $FF (255)");
     let layout = layout(true);
-    let used = (cells(TITLE) + 2 + cells(&heading)) * METRICS.cell_w + 2 * PAD;
+    let used = (cells("EDIT COLOR") + 2 + cells(&heading)) * METRICS.cell_w + 2 * PAD;
     assert!(
         used <= layout.title_bar.width,
         "{used} of {}",

@@ -1,6 +1,7 @@
 //! Built-in shell commands.
 
 use glaux_audio::MAX_ENVELOPE_MS;
+use glaux_i18n::Arg;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME, TICK_RATE};
 use glaux_machine::palette::PALETTE_LEN;
@@ -15,6 +16,7 @@ use super::{CartridgeSlot, LoadOrigin, ShellRequest, Tone, Voice};
 use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::{CartridgeStorage, EntryKind};
 use crate::cartridge_template::{self, CreateError, NewCartridge};
+use crate::ui_text;
 
 /// What a command can see and change while it runs.
 pub(super) struct Context<'a> {
@@ -41,14 +43,20 @@ impl Context<'_> {
     /// Reports `problem` followed by `usage` as the way to fix it.
     fn usage_error(&mut self, problem: impl Into<String>, usage: &str) {
         self.error(problem);
-        self.output(format!("Usage: {usage}"));
+        self.output(ui_text::get_with(
+            "shell-usage",
+            &[("usage", Arg::Text(usage))],
+        ));
     }
 
     /// Reports `problem` followed by `command` as the line that was most
     /// likely meant.
     fn suggest(&mut self, problem: impl Into<String>, command: impl std::fmt::Display) {
         self.error(problem);
-        self.output(format!("Try: {command}"));
+        self.output(ui_text::get_with(
+            "shell-try",
+            &[("command", Arg::Text(&command.to_string()))],
+        ));
     }
 }
 
@@ -62,7 +70,7 @@ pub(super) struct Command {
     /// Other names that run the command, matched like `name`.
     pub(super) aliases: &'static [&'static str],
     pub(super) usage: &'static str,
-    pub(super) description: &'static str,
+    pub(super) description_id: &'static str,
     /// Fewest positional arguments accepted. Fewer is a usage error.
     min_args: usize,
     /// Most positional arguments accepted. More is a usage error.
@@ -83,7 +91,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "help",
         aliases: &["?"],
         usage: "help [<command>]",
-        description: "Show available commands",
+        description_id: "shell-show-available-commands",
         min_args: 0,
         max_args: 1,
         handler: help,
@@ -94,7 +102,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "clear",
         aliases: &["cls"],
         usage: "clear",
-        description: "Clear the console",
+        description_id: "shell-clear-the-console",
         min_args: 0,
         max_args: 0,
         handler: clear,
@@ -105,7 +113,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "info",
         aliases: &[],
         usage: "info",
-        description: "Show system information",
+        description_id: "shell-show-system-information",
         min_args: 0,
         max_args: 0,
         handler: info,
@@ -116,7 +124,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "version",
         aliases: &["ver"],
         usage: "version",
-        description: "Show the System ROM version",
+        description_id: "shell-show-the-system-rom-version",
         min_args: 0,
         max_args: 0,
         handler: version,
@@ -127,7 +135,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "pwd",
         aliases: &[],
         usage: "pwd",
-        description: "Show the current directory",
+        description_id: "shell-show-the-current-directory",
         min_args: 0,
         max_args: 0,
         handler: pwd,
@@ -138,7 +146,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "ls",
         aliases: &["dir"],
         usage: "ls [<path>]",
-        description: "List a directory",
+        description_id: "shell-list-a-directory",
         min_args: 0,
         max_args: 1,
         handler: ls,
@@ -149,7 +157,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "cd",
         aliases: &[],
         usage: "cd [<path>]",
-        description: "Change the current directory",
+        description_id: "shell-change-the-current-directory",
         min_args: 0,
         max_args: 1,
         handler: cd,
@@ -160,7 +168,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "new",
         aliases: &[],
         usage: NEW_USAGE,
-        description: "Create a new cartridge",
+        description_id: "shell-create-a-new-cartridge",
         min_args: 1,
         // `new` explains extra words itself. See `explain_new_words`.
         max_args: usize::MAX,
@@ -172,7 +180,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "load",
         aliases: &[],
         usage: "load <path> [--discard]",
-        description: "Load a cartridge",
+        description_id: "shell-load-a-cartridge",
         min_args: 1,
         max_args: 1,
         handler: load,
@@ -183,7 +191,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "unload",
         aliases: &[],
         usage: "unload [--discard]",
-        description: "Unload the loaded cartridge",
+        description_id: "shell-unload-the-loaded-cartridge",
         min_args: 0,
         max_args: 0,
         handler: unload,
@@ -194,7 +202,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "run",
         aliases: &[],
         usage: "run",
-        description: "Run the loaded cartridge",
+        description_id: "shell-run-the-loaded-cartridge",
         min_args: 0,
         max_args: 0,
         handler: run,
@@ -205,7 +213,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "resume",
         aliases: &[],
         usage: "resume",
-        description: "Resume the paused cartridge",
+        description_id: "shell-resume-the-paused-cartridge",
         min_args: 0,
         max_args: 0,
         handler: resume,
@@ -216,7 +224,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "stop",
         aliases: &[],
         usage: "stop",
-        description: "Stop the paused cartridge",
+        description_id: "shell-stop-the-paused-cartridge",
         min_args: 0,
         max_args: 0,
         handler: stop,
@@ -227,7 +235,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "tone",
         aliases: &[],
         usage: TONE_USAGE,
-        description: "Play a test tone",
+        description_id: "shell-play-a-test-tone",
         min_args: 1,
         max_args: 4,
         handler: tone,
@@ -238,7 +246,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "env",
         aliases: &[],
         usage: ENV_USAGE,
-        description: "Set a channel envelope",
+        description_id: "shell-set-a-channel-envelope",
         min_args: 5,
         max_args: 5,
         handler: env,
@@ -249,7 +257,7 @@ pub(super) static COMMANDS: &[Command] = &[
         name: "gate",
         aliases: &[],
         usage: GATE_USAGE,
-        description: "Open or close a channel gate",
+        description_id: "shell-open-or-close-a-channel-gate",
         min_args: 2,
         max_args: 2,
         handler: gate,
@@ -279,13 +287,19 @@ const GATE_USAGE: &str = "gate <ch> on|off";
 const DEFAULT_TONE_VOLUME: u8 = 8;
 
 /// Reported by commands that would replace or restart a paused cartridge.
-const PAUSED_ERROR: &str = "Cartridge paused: resume or stop it first";
+fn paused_error() -> String {
+    ui_text::get("shell-cartridge-paused-resume-or-stop-it-first")
+}
 
 /// Reported by commands that act on a paused cartridge when there is none.
-const NOT_PAUSED_ERROR: &str = "No paused cartridge";
+fn not_paused_error() -> String {
+    ui_text::get("shell-no-paused-cartridge")
+}
 
 /// Reported by commands that act on the loaded cartridge when there is none.
-const NOT_LOADED_ERROR: &str = "No cartridge loaded";
+fn not_loaded_error() -> String {
+    ui_text::get("shell-no-cartridge-loaded")
+}
 
 /// Asks the system what to do with the unsaved edits first when the
 /// command in `invocation` would replace a loaded cartridge holding them
@@ -377,15 +391,18 @@ fn missing_argument(usage: &str, given: usize) -> String {
         .filter(|token| token.starts_with('<'))
         .nth(given)
         .map_or_else(
-            || "Missing an argument".into(),
-            |name| format!("Missing {name}"),
+            || ui_text::get("shell-missing-an-argument"),
+            |name| ui_text::get_with("shell-missing", &[("name", Arg::Text(name))]),
         )
 }
 
 /// Explains why `invocation` has more arguments than `command` takes.
 fn too_many_arguments(command: &Command, invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     if command.max_args == 0 {
-        ctx.error(format!("{} doesn't take any arguments", command.name));
+        ctx.error(ui_text::get_with(
+            "shell-doesn-t-take-any-arguments",
+            &[("value", Arg::Text(command.name))],
+        ));
         return;
     }
     // Quotes already typed make the intended split unclear, so only an
@@ -404,20 +421,20 @@ fn too_many_arguments(command: &Command, invocation: &Invocation<'_>, ctx: &mut 
             .map(|flag| format!(" --{flag}"))
             .collect();
         ctx.suggest(
-            "Paths with spaces need quotes",
+            ui_text::get("shell-paths-with-spaces-need-quotes"),
             format!("{}{flags} {}", command.name, quote(&path)),
         );
         return;
     }
-    ctx.usage_error("Too many arguments", command.usage);
+    ctx.usage_error(ui_text::get("shell-too-many-arguments"), command.usage);
 }
 
 fn unknown_command(name: &str) -> String {
-    format!("Unknown command: {name}")
+    ui_text::get_with("shell-unknown-command", &[("name", Arg::Text(name))])
 }
 
 fn usage(usage: &str) -> String {
-    format!("Usage: {usage}")
+    ui_text::get_with("shell-usage", &[("usage", Arg::Text(usage))])
 }
 
 fn help(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
@@ -427,16 +444,23 @@ fn help(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
             return;
         };
         ctx.output(usage(command.usage));
-        ctx.output(command.description);
+        ctx.output(ui_text::get(command.description_id));
         if !command.aliases.is_empty() {
-            ctx.output(format!("Aliases: {}", command.aliases.join(" ")));
+            ctx.output(ui_text::get_with(
+                "shell-aliases",
+                &[("value", Arg::Text(&(command.aliases.join(" ").to_string())))],
+            ));
         }
         return;
     }
 
     let width = COMMANDS.iter().map(|c| c.name.len()).max().unwrap_or(0) + 2;
     for command in COMMANDS {
-        ctx.output(format!("{:<width$}{}", command.name, command.description));
+        ctx.output(format!(
+            "{:<width$}{}",
+            command.name,
+            ui_text::get(command.description_id)
+        ));
     }
 }
 
@@ -448,24 +472,53 @@ fn clear(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 /// cartridge, a loaded one or a paused one. RUNTIME names the runtime the
 /// cartridge is written for.
 fn info(_: &Invocation<'_>, ctx: &mut Context<'_>) {
-    let (runtime, cartridge, state) = match ctx.slot {
-        CartridgeSlot::Empty => ("NONE", "NONE".into(), "IDLE"),
-        CartridgeSlot::Loaded { cartridge, .. } => {
-            ("LUAU", cartridge_identity(cartridge.manifest()), "LOADED")
-        }
-        CartridgeSlot::Paused(paused) => ("LUAU", cartridge_identity(paused.manifest()), "PAUSED"),
-    };
-    let rows = [
-        ("MACHINE", format!("{NAME} {GENERATION}")),
-        ("SYSTEM ROM", ctx.info.rom_version.to_string()),
-        (
-            "DISPLAY",
-            format!("{WIDTH}x{HEIGHT} INDEXED, {PALETTE_LEN} COLORS"),
+    let (runtime, cartridge, state): (&str, String, &str) = match ctx.slot {
+        CartridgeSlot::Empty => (
+            &ui_text::get("shell-none"),
+            ui_text::get("shell-none"),
+            &ui_text::get("shell-idle"),
         ),
-        ("TICK RATE", format!("{TICK_RATE} HZ")),
-        ("RUNTIME", runtime.into()),
-        ("CARTRIDGE", cartridge),
-        ("STATE", state.into()),
+        CartridgeSlot::Loaded { cartridge, .. } => (
+            "LUAU",
+            cartridge_identity(cartridge.manifest()),
+            &ui_text::get("shell-loaded"),
+        ),
+        CartridgeSlot::Paused(paused) => (
+            "LUAU",
+            cartridge_identity(paused.manifest()),
+            &ui_text::get("shell-paused"),
+        ),
+    };
+    let rows: [(&str, String); 7] = [
+        (
+            &ui_text::get("shell-machine"),
+            format!("{NAME} {GENERATION}"),
+        ),
+        (
+            &ui_text::get("shell-system-rom"),
+            ctx.info.rom_version.to_string(),
+        ),
+        (
+            &ui_text::get("shell-display"),
+            ui_text::get_with(
+                "shell-display-description",
+                &[
+                    ("width", Arg::Text(&WIDTH.to_string())),
+                    ("height", Arg::Text(&HEIGHT.to_string())),
+                    ("colors", Arg::Text(&PALETTE_LEN.to_string())),
+                ],
+            ),
+        ),
+        (
+            &ui_text::get("shell-tick-rate"),
+            ui_text::get_with(
+                "shell-tick-frequency",
+                &[("rate", Arg::Text(&TICK_RATE.to_string()))],
+            ),
+        ),
+        (&ui_text::get("shell-runtime"), runtime.into()),
+        (&ui_text::get("shell-cartridge"), cartridge),
+        (&ui_text::get("shell-state"), state.into()),
     ];
     let width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0) + 2;
     for (label, value) in rows {
@@ -486,7 +539,7 @@ fn version(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 fn pwd(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.cartridges.cwd() {
         Ok(cwd) => ctx.output(cwd),
-        Err(err) => ctx.error(err.to_string()),
+        Err(err) => ctx.error(crate::system::ui_errors::fs(&err)),
     }
 }
 
@@ -504,7 +557,7 @@ fn ls(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
                 }
             }
         }
-        Err(err) => ctx.error(err.to_string()),
+        Err(err) => ctx.error(crate::system::ui_errors::fs(&err)),
     }
 }
 
@@ -512,7 +565,7 @@ fn ls(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
 fn cd(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let path = invocation.args.first().map_or("/", String::as_str);
     if let Err(err) = ctx.cartridges.change_dir(path) {
-        ctx.error(err.to_string());
+        ctx.error(crate::system::ui_errors::fs(&err));
     }
 }
 
@@ -522,7 +575,7 @@ fn cd(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
 /// cartridge is paused.
 fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     if matches!(ctx.slot, CartridgeSlot::Paused(_)) {
-        ctx.error(PAUSED_ERROR);
+        ctx.error(paused_error());
         return;
     }
     if confirm_unsaved(invocation, ctx) {
@@ -531,9 +584,11 @@ fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let split = match split_options(&invocation.args, NEW_OPTIONS) {
         Ok(split) => split,
         Err(err) => {
-            ctx.error(err.to_string());
+            ctx.error(super::errors::option(&err));
             if let OptionError::Unknown(_) = err {
-                ctx.output("Options: --name, --version, --author, --lang, --discard");
+                ctx.output(ui_text::get(
+                    "shell-options-name-version-author-lang-discard",
+                ));
             }
             return;
         }
@@ -541,7 +596,10 @@ fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let (id, after) = match split.positional[..] {
         [] => {
             let options = owned_options(&split);
-            ctx.suggest("Missing <id>", new_line("my-game", &options));
+            ctx.suggest(
+                ui_text::get("shell-missing-id"),
+                new_line("my-game", &options),
+            );
             return;
         }
         [id] => (id.word, id.after),
@@ -584,20 +642,23 @@ fn new(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
                 .and_then(|(_, name)| cartridge_template::suggest_id(name))
                 .unwrap_or_else(|| "my-game".into());
             ctx.suggest(
-                "Values with spaces need quotes",
+                ui_text::get("shell-values-with-spaces-need-quotes"),
                 new_line(&suggested, &options),
             );
         }
         Err(err @ CreateError::InvalidId(_)) => {
-            ctx.error(err.to_string());
+            ctx.error(super::errors::create(&err));
             if let Some(suggested) = cartridge_template::suggest_id(id) {
-                ctx.output(format!(
-                    "Try: {}",
-                    new_line(&suggested, &owned_options(&split))
+                ctx.output(ui_text::get_with(
+                    "shell-try",
+                    &[(
+                        "command",
+                        Arg::Text(&(new_line(&suggested, &owned_options(&split)))),
+                    )],
                 ));
             }
         }
-        Err(err) => ctx.error(err.to_string()),
+        Err(err) => ctx.error(super::errors::create(&err)),
     }
 }
 
@@ -635,7 +696,7 @@ fn explain_new_words(split: &Split<'_>, ctx: &mut Context<'_>) {
             }
         }
         ctx.suggest(
-            "Values with spaces need quotes",
+            ui_text::get("shell-values-with-spaces-need-quotes"),
             new_line(words[0].word, &options),
         );
         return;
@@ -653,14 +714,14 @@ fn explain_new_words(split: &Split<'_>, ctx: &mut Context<'_>) {
                 options.push(("name", typed));
             }
             ctx.suggest(
-                "The id must be one word, without spaces",
+                ui_text::get("shell-the-id-must-be-one-word-without-spaces"),
                 new_line(&id, &options),
             );
             return;
         }
     }
     ctx.usage_error(
-        "Too many arguments; values with spaces need quotes",
+        ui_text::get("shell-too-many-arguments-values-with-spaces-need-quotes"),
         NEW_USAGE,
     );
 }
@@ -671,7 +732,7 @@ fn explain_new_words(split: &Split<'_>, ctx: &mut Context<'_>) {
 /// `<path>` while a cartridge is paused.
 fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     if matches!(ctx.slot, CartridgeSlot::Paused(_)) {
-        ctx.error(PAUSED_ERROR);
+        ctx.error(paused_error());
         return;
     }
     if confirm_unsaved(invocation, ctx) {
@@ -685,7 +746,7 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
                 origin: LoadOrigin::Existing,
             });
         }
-        Err(err) => ctx.error(err.to_string()),
+        Err(err) => ctx.error(crate::system::ui_errors::cartridge(&err)),
     }
 }
 
@@ -693,13 +754,13 @@ fn load(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
 /// its edits are unsaved, unless `--discard` is given.
 fn unload(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
-        CartridgeSlot::Empty => ctx.error(NOT_LOADED_ERROR),
+        CartridgeSlot::Empty => ctx.error(not_loaded_error()),
         CartridgeSlot::Loaded { .. } => {
             if !confirm_unsaved(invocation, ctx) {
                 *ctx.request = Some(ShellRequest::Unload);
             }
         }
-        CartridgeSlot::Paused(_) => ctx.error(PAUSED_ERROR),
+        CartridgeSlot::Paused(_) => ctx.error(paused_error()),
     }
 }
 
@@ -707,9 +768,9 @@ fn unload(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
 /// never restarted.
 fn run(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
-        CartridgeSlot::Empty => ctx.error(NOT_LOADED_ERROR),
+        CartridgeSlot::Empty => ctx.error(not_loaded_error()),
         CartridgeSlot::Loaded { .. } => *ctx.request = Some(ShellRequest::Run),
-        CartridgeSlot::Paused(_) => ctx.error(PAUSED_ERROR),
+        CartridgeSlot::Paused(_) => ctx.error(paused_error()),
     }
 }
 
@@ -717,7 +778,7 @@ fn run(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 fn resume(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
         CartridgeSlot::Paused(_) => *ctx.request = Some(ShellRequest::Resume),
-        CartridgeSlot::Empty | CartridgeSlot::Loaded { .. } => ctx.error(NOT_PAUSED_ERROR),
+        CartridgeSlot::Empty | CartridgeSlot::Loaded { .. } => ctx.error(not_paused_error()),
     }
 }
 
@@ -725,7 +786,7 @@ fn resume(_: &Invocation<'_>, ctx: &mut Context<'_>) {
 fn stop(_: &Invocation<'_>, ctx: &mut Context<'_>) {
     match ctx.slot {
         CartridgeSlot::Paused(_) => *ctx.request = Some(ShellRequest::Stop),
-        CartridgeSlot::Empty | CartridgeSlot::Loaded { .. } => ctx.error(NOT_PAUSED_ERROR),
+        CartridgeSlot::Empty | CartridgeSlot::Loaded { .. } => ctx.error(not_paused_error()),
     }
 }
 
@@ -757,7 +818,10 @@ fn parse_channel(arg: &str, ctx: &mut Context<'_>) -> Option<usize> {
         .ok()
         .filter(|channel| *channel < CHANNELS);
     if channel.is_none() {
-        ctx.error(format!("Channel must be 0-{}", CHANNELS - 1));
+        ctx.error(ui_text::get_with(
+            "shell-channel-must-be-0",
+            &[("value", Arg::Text(&(CHANNELS - 1).to_string()))],
+        ));
     }
     channel
 }
@@ -771,11 +835,14 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         match &args[1..] {
             [] => {}
             [channel] => {
-                ctx.suggest("The channel goes before off", format!("tone {channel} off"));
+                ctx.suggest(
+                    ui_text::get("shell-the-channel-goes-before-off"),
+                    format!("tone {channel} off"),
+                );
                 return;
             }
             _ => {
-                ctx.usage_error("Too many arguments", TONE_OFF_USAGE);
+                ctx.usage_error(ui_text::get("shell-too-many-arguments"), TONE_OFF_USAGE);
                 return;
             }
         }
@@ -790,12 +857,12 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         return;
     };
     let Some(arg) = args.get(1) else {
-        ctx.usage_error("Missing <hz>", TONE_USAGE);
+        ctx.usage_error(ui_text::get("shell-missing-hz"), TONE_USAGE);
         return;
     };
     if arg.eq_ignore_ascii_case("off") {
         if args.len() > 2 {
-            ctx.usage_error("Too many arguments", TONE_OFF_USAGE);
+            ctx.usage_error(ui_text::get("shell-too-many-arguments"), TONE_OFF_USAGE);
             return;
         }
         let voice = &mut ctx.voices[channel];
@@ -809,7 +876,10 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         .ok()
         .filter(|hz| (1..=MAX_FREQUENCY).contains(hz))
     else {
-        ctx.error(format!("Frequency must be 1-{MAX_FREQUENCY} Hz"));
+        ctx.error(ui_text::get_with(
+            "shell-frequency-must-be-1-hz",
+            &[("MAX-FREQUENCY", Arg::Text(&MAX_FREQUENCY.to_string()))],
+        ));
         return;
     };
     let volume = match args.get(2) {
@@ -817,7 +887,10 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         Some(arg) => match arg.parse::<u8>().ok().filter(|v| *v <= MAX_VOLUME) {
             Some(volume) => volume,
             None => {
-                ctx.error(format!("Volume must be 0-{MAX_VOLUME}"));
+                ctx.error(ui_text::get_with(
+                    "shell-volume-must-be-0",
+                    &[("MAX-VOLUME", Arg::Text(&MAX_VOLUME.to_string()))],
+                ));
                 return;
             }
         },
@@ -827,7 +900,9 @@ fn tone(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         Some(arg) => match parse_waveform(arg) {
             Some(waveform) => waveform,
             None => {
-                ctx.error("Wave must be square, triangle, saw or noise");
+                ctx.error(ui_text::get(
+                    "shell-wave-must-be-square-triangle-saw-or-noise",
+                ));
                 return;
             }
         },
@@ -855,11 +930,17 @@ fn env(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
     let (Some(attack), Some(decay), Some(release)) =
         (parse_ms(&args[1]), parse_ms(&args[2]), parse_ms(&args[4]))
     else {
-        ctx.error(format!("Time must be 0-{MAX_ENVELOPE_MS} ms"));
+        ctx.error(ui_text::get_with(
+            "shell-time-must-be-0-ms",
+            &[("MAX-ENVELOPE-MS", Arg::Text(&MAX_ENVELOPE_MS.to_string()))],
+        ));
         return;
     };
     let Some(sustain) = args[3].parse::<u8>().ok().filter(|s| *s <= MAX_SUSTAIN) else {
-        ctx.error(format!("Sustain must be 0-{MAX_SUSTAIN}"));
+        ctx.error(ui_text::get_with(
+            "shell-sustain-must-be-0",
+            &[("MAX-SUSTAIN", Arg::Text(&MAX_SUSTAIN.to_string()))],
+        ));
         return;
     };
     ctx.voices[channel].adsr = Adsr {
@@ -885,7 +966,10 @@ fn gate(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
         false
     } else {
         ctx.suggest(
-            format!("Gate must be on or off, not {}", args[1]),
+            ui_text::get_with(
+                "shell-gate-must-be-on-or-off-not",
+                &[("value", Arg::Text(&(args[1]).to_string()))],
+            ),
             format!("gate {channel} on"),
         );
         return;

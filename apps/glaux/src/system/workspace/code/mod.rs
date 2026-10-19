@@ -30,7 +30,7 @@ use glaux_machine::machine::TICK_RATE;
 use glaux_machine::system_rom::SystemCursor;
 
 use actions::{CodeAction, TabTarget, file_menu, text_menu};
-use completion::{COMPLETION_HINT, CompletionPopup};
+use completion::{CompletionPopup, completion_hint};
 use find::{FindBar, FindLayout};
 use go_to_line::GoToLine;
 pub use layout::Metrics;
@@ -40,11 +40,11 @@ use picker::{FilePicker, PickerAction, PickerLayout};
 use prompt::{Prompt, PromptLayout};
 use rename::{RenameAction, RenameScript};
 use settings::{SettingsAction, SettingsDialog, SettingsLayout};
-use signature::{Dismissed, SIGNATURE_HINT, SignaturePopup};
+use signature::{Dismissed, SignaturePopup, signature_hint};
 use text_view::TextGeometry;
 
 use super::Rect;
-use super::context_menu::{ContextMenu, MENU_HINT as CONTEXT_MENU_HINT, MenuLayout, MenuOutcome};
+use super::context_menu::{ContextMenu, MenuLayout, MenuOutcome, menu_hint as context_menu_hint};
 use crate::cartridge::Language;
 use crate::cartridge::source::{ScriptListing, SourcePath};
 use crate::cartridge_fs::FsError;
@@ -55,6 +55,7 @@ use crate::system::code_session::{CodeSession, DocumentView};
 use crate::system::code_text::{TextMetrics, spot};
 use crate::system::editor_settings::EditorSettings;
 use crate::system::shell::BLINK_TICKS;
+use crate::ui_text;
 
 /// Rows the text moves per wheel notch.
 const WHEEL_LINES: isize = 3;
@@ -73,21 +74,37 @@ const AUTOSCROLL_TICKS: u32 = 4;
 const UNDO_IDLE_TICKS: u32 = TICK_RATE;
 
 /// The status bar hint while nothing covers the view.
-const VIEW_HINT: &str = "Ctrl+S: save  Ctrl+F: find  Ctrl+N: new  Esc: shell";
+fn view_hint() -> String {
+    ui_text::get("code-ctrl-s-save-ctrl-f-find-ctrl-n-new-esc-shell")
+}
 /// The status bar hint while the find bar has the keys.
-const FIND_HINT: &str = "Enter: next  Up: previous  Tab: field  Esc: close";
+fn find_hint() -> String {
+    ui_text::get("code-enter-next-up-previous-tab-field-esc-close")
+}
 /// The status bar hint while NEW FILE is open.
-const NEW_FILE_HINT: &str = "Type: path  Enter: create  Esc: close";
+fn new_file_hint() -> String {
+    ui_text::get("code-type-path-enter-create-esc-close")
+}
 /// The status bar hint while RENAME SCRIPT is open.
-const RENAME_HINT: &str = "Type: path  Enter: move  Esc: close";
+fn rename_hint() -> String {
+    ui_text::get("code-type-path-enter-move-esc-close")
+}
 /// The status bar hint while GO TO LINE is open.
-const GO_TO_HINT: &str = "Type: line  Enter: go  Esc: close";
+fn go_to_hint() -> String {
+    ui_text::get("code-type-line-enter-go-esc-close")
+}
 /// The status bar hint while OPEN FILE is open.
-const PICKER_HINT: &str = "Type: filter  Enter: open  Esc: close";
+fn picker_hint() -> String {
+    ui_text::get("code-type-filter-enter-open-esc-close")
+}
 /// The status bar hint while the list of open tabs is open.
-const MENU_HINT: &str = "Up/Down: pick  Enter: show  Esc: close";
+fn menu_hint() -> String {
+    ui_text::get("code-up-down-pick-enter-show-esc-close")
+}
 /// The status bar hint while EDITOR SETTINGS is open.
-const SETTINGS_HINT: &str = "Up/Down: pick  Enter: toggle  Esc: close";
+fn settings_hint() -> String {
+    ui_text::get("code-up-down-pick-enter-toggle-esc-close")
+}
 
 /// File work the Code view asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,29 +322,29 @@ impl CodeEditor {
     }
 
     /// The status bar hint for what is on screen.
-    pub fn hint(&self) -> &'static str {
+    pub fn hint(&self) -> String {
         if self.settings_dialog.is_some() {
-            SETTINGS_HINT
+            settings_hint()
         } else if self.picker.is_some() {
-            PICKER_HINT
+            picker_hint()
         } else if self.menu.is_some() {
-            MENU_HINT
+            menu_hint()
         } else if self.context_menu.is_some() {
-            CONTEXT_MENU_HINT
+            context_menu_hint()
         } else if self.new_file.is_some() {
-            NEW_FILE_HINT
+            new_file_hint()
         } else if self.rename.is_some() {
-            RENAME_HINT
+            rename_hint()
         } else if self.go_to.is_some() {
-            GO_TO_HINT
+            go_to_hint()
         } else if self.completion.is_some() {
-            COMPLETION_HINT
+            completion_hint()
         } else if self.find_focused() {
-            FIND_HINT
+            find_hint()
         } else if self.signature.is_some() {
-            SIGNATURE_HINT
+            signature_hint()
         } else {
-            VIEW_HINT
+            view_hint()
         }
     }
 
@@ -354,13 +371,13 @@ impl CodeEditor {
     /// The label and whether it can be chosen of each item of the open
     /// context menu, separators left out.
     #[cfg(test)]
-    pub fn menu_items(&self) -> Vec<(&'static str, bool)> {
+    pub fn menu_items(&self) -> Vec<(&str, bool)> {
         use crate::system::workspace::context_menu::MenuEntry;
         self.context_menu
             .iter()
             .flat_map(ContextMenu::entries)
-            .filter_map(|entry| match *entry {
-                MenuEntry::Item { label, enabled, .. } => Some((label, enabled)),
+            .filter_map(|entry| match entry {
+                MenuEntry::Item { label, enabled, .. } => Some((label.as_str(), *enabled)),
                 MenuEntry::Separator => None,
             })
             .collect()
@@ -535,21 +552,25 @@ impl CodeEditor {
     }
 
     /// The links the empty view offers, and what each does.
-    fn empty_actions(&self) -> [(Rect, &'static str, CodeAction); 2] {
+    fn empty_actions(&self) -> [(Rect, String, CodeAction); 2] {
         let area = self.layout.text;
         let (cell_w, cell_h) = (self.layout.metrics.cell_w, self.layout.metrics.cell_h);
-        let link = |row: i32, label: &'static str, action| {
+        let link = |row: i32, label: String, action| {
             let rect = Rect {
                 x: area.x + cell_w,
                 y: area.y + row * cell_h,
-                width: self.layout.cells(label) * cell_w,
+                width: self.layout.cells(&label) * cell_w,
                 height: cell_h,
             };
             (rect, label, action)
         };
         [
-            link(2, "New file    Ctrl+N", CodeAction::NewFile),
-            link(3, "Open file   Ctrl+P", CodeAction::OpenFile),
+            link(2, ui_text::get("code-new-file-ctrl-n"), CodeAction::NewFile),
+            link(
+                3,
+                ui_text::get("code-open-file-ctrl-p"),
+                CodeAction::OpenFile,
+            ),
         ]
     }
 

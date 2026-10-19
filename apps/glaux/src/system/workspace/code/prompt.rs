@@ -36,7 +36,7 @@ pub enum PromptInput {
 /// before the field, and the field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prompt {
-    title: &'static str,
+    title: String,
     label: String,
     prefix: &'static str,
     field: TextField,
@@ -57,9 +57,9 @@ pub struct PromptLayout {
 }
 
 impl Prompt {
-    pub fn new(title: &'static str, label: String, prefix: &'static str, field: TextField) -> Self {
+    pub fn new(title: &str, label: String, prefix: &'static str, field: TextField) -> Self {
         Self {
-            title,
+            title: title.to_owned(),
             label,
             prefix,
             field,
@@ -150,7 +150,7 @@ impl Prompt {
             font,
             layout.window,
             layout.title_bar,
-            self.title,
+            &self.title,
             layout.cell_w,
         );
         let clip = |text: &str| {

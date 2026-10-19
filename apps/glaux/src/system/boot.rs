@@ -4,6 +4,7 @@
 //! Boot frames are machine ticks, so the sequence lasts the same wall-clock
 //! time at any host refresh rate.
 
+use glaux_i18n::Arg;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
@@ -12,6 +13,7 @@ use glaux_video::draw::{clear, draw_text_scaled, fill_rect};
 use semver::Version;
 
 use super::{ACCENT, BACKGROUND, DIM, Line, OK, TEXT, identity_line};
+use crate::ui_text;
 
 /// Ticks spent on the power-on intro before the diagnostic screen.
 pub(super) const INTRO_FRAMES: u32 = 96;
@@ -59,7 +61,9 @@ const LOGO_TOP: i32 = 70;
 /// Unscaled space between the inked rows of the identity screen.
 const IDENTITY_ROW_GAP: i32 = 6;
 
-const OBJ_DETAIL: &str = "128 ENTRIES";
+fn obj_detail() -> String {
+    ui_text::get("boot-128-entries")
+}
 const AUDIO_DETAIL: &str = "4CH PSG";
 
 /// Column where the `OK` of every status line starts.
@@ -135,23 +139,33 @@ pub(super) fn lines(stage: BootStage, rom: &SystemRom) -> Vec<Line> {
         Line::new(0, 1, rom.copyright(), DIM),
     ];
 
-    let video = format!("{WIDTH}x{HEIGHT} INDEXED");
-    let checks = [
-        (BootStage::Video, "VIDEO", video.as_str()),
-        (BootStage::Obj, "OBJ", OBJ_DETAIL),
-        (BootStage::Audio, "AUDIO", AUDIO_DETAIL),
+    let video = ui_text::get_with(
+        "boot-display-description",
+        &[
+            ("width", Arg::Text(&WIDTH.to_string())),
+            ("height", Arg::Text(&HEIGHT.to_string())),
+        ],
+    );
+    let checks: [(BootStage, &str, &str); 3] = [
+        (
+            BootStage::Video,
+            &ui_text::get("boot-video"),
+            video.as_str(),
+        ),
+        (BootStage::Obj, "OBJ", &obj_detail()),
+        (BootStage::Audio, &ui_text::get("boot-audio"), AUDIO_DETAIL),
     ];
     for (row, (shown_at, label, detail)) in (3..).zip(checks) {
         if stage >= shown_at {
             let text = status_line(label, detail);
-            let dots_end = text.len() - "OK".len();
+            let dots_end = text.len() - ui_text::get("boot-ok").len();
             lines.push(Line::new(0, row, &text[..dots_end], TEXT));
-            lines.push(Line::new(dots_end as i32, row, "OK", OK));
+            lines.push(Line::new(dots_end as i32, row, ui_text::get("boot-ok"), OK));
         }
     }
 
     if stage >= BootStage::Ready {
-        lines.push(Line::new(0, 7, "READY.", ACCENT));
+        lines.push(Line::new(0, 7, ui_text::get("boot-ready"), ACCENT));
     }
     lines
 }
@@ -233,7 +247,14 @@ pub(super) fn render_intro(
                     GENERATION_SCALE,
                     GENERATION_RAMP[step],
                 ),
-                (format!("SYSTEM ROM {version}"), 1, SUBTITLE_RAMP[step]),
+                (
+                    ui_text::get_with(
+                        "boot-system-rom",
+                        &[("version", Arg::Text(&version.to_string()))],
+                    ),
+                    1,
+                    SUBTITLE_RAMP[step],
+                ),
             ];
             // Rows are placed by their ink rather than their cells, so the
             // identity looks the same whatever spacing the font's cells
@@ -308,7 +329,7 @@ fn status_line(label: &str, detail: &str) -> String {
     let mut line = format!("{label:<8}{detail} ");
     let dots = STATUS_OK_COLUMN.saturating_sub(line.len() + 1).max(1);
     line.push_str(&".".repeat(dots));
-    line.push_str(" OK");
+    line.push_str(&ui_text::get("boot-ok-2"));
     line
 }
 

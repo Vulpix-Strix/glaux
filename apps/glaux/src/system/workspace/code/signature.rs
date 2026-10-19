@@ -16,11 +16,14 @@ use crate::system::code_session::CodeSession;
 use crate::system::code_text::spot;
 use crate::system::docs;
 use crate::system::workspace::Rect;
+use crate::ui_text;
 pub(super) use layout::SignatureLayout;
 use view::{SignatureView, ViewSource, view_for};
 
 /// The status bar hint while the signature is shown.
-pub const SIGNATURE_HINT: &str = "Esc: close";
+pub fn signature_hint() -> String {
+    ui_text::get("code-esc-close")
+}
 
 /// The call the caret is typing arguments for, as it was when the engine
 /// last looked at the text. See [`is_current`](Self::is_current).

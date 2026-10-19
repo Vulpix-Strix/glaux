@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use crate::system::PickedFile;
+use crate::ui_text;
 
 /// A native dialog choosing one PNG file, at most one open at a time.
 #[derive(Debug, Default)]
@@ -34,8 +35,8 @@ impl FilePicker {
             return false;
         }
         let dialog = rfd::FileDialog::new()
-            .set_title("Import spritesheet")
-            .add_filter("PNG image", &["png", "PNG"])
+            .set_title(ui_text::get("desktop-import-spritesheet"))
+            .add_filter(ui_text::get("desktop-png-image"), &["png", "PNG"])
             .set_directory(directory);
         let (answer, pending) = mpsc::channel();
         if cfg!(target_os = "macos") {
@@ -67,7 +68,9 @@ impl FilePicker {
             Err(TryRecvError::Empty) => return None,
             Err(TryRecvError::Disconnected) => {
                 tracing::error!("file dialog thread ended without an answer");
-                PickedFile::Unavailable("The file dialog stopped unexpectedly.".to_owned())
+                PickedFile::Unavailable(ui_text::get(
+                    "desktop-the-file-dialog-stopped-unexpectedly",
+                ))
             }
         };
         self.pending = None;

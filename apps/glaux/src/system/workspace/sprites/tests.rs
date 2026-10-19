@@ -444,15 +444,15 @@ fn save_is_asked_for_only_with_unsaved_edits() {
     let mut doc = document();
     assert_eq!(
         command(&mut editor, &mut doc, InputEvent::Save),
-        Some(SpriteRequest::Notice("Nothing to save"))
+        Some(SpriteRequest::Notice("Nothing to save".to_owned()))
     );
     assert_eq!(
         command(&mut editor, &mut doc, InputEvent::Undo),
-        Some(SpriteRequest::Notice("Nothing to undo"))
+        Some(SpriteRequest::Notice("Nothing to undo".to_owned()))
     );
     assert_eq!(
         command(&mut editor, &mut doc, InputEvent::Redo),
-        Some(SpriteRequest::Notice("Nothing to redo"))
+        Some(SpriteRequest::Notice("Nothing to redo".to_owned()))
     );
     down(&mut editor, &mut doc, 0, 0);
     // Saving mid-drag ends the drag first, so it is saved whole.
@@ -614,7 +614,7 @@ fn applying_a_palette_is_one_undoable_edit() {
     assert!(!doc.is_modified());
     assert_eq!(
         command(&mut editor, &mut doc, InputEvent::Undo),
-        Some(SpriteRequest::Notice("Nothing to undo")),
+        Some(SpriteRequest::Notice("Nothing to undo".to_owned())),
         "one step"
     );
     command(&mut editor, &mut doc, InputEvent::Redo);
@@ -740,11 +740,11 @@ fn c_opens_edit_color_but_transparency_has_no_color_to_edit() {
     editor.color = 0;
     assert_eq!(
         command(&mut editor, &mut doc, InputEvent::Text('c')),
-        Some(SpriteRequest::Notice("Color 0 is transparent"))
+        Some(SpriteRequest::Notice("Color 0 is transparent".to_owned()))
     );
     assert_eq!(
         tap_swatch_twice(&mut editor, &mut doc, 0, 1),
-        Some(SpriteRequest::Notice("Color 0 is transparent"))
+        Some(SpriteRequest::Notice("Color 0 is transparent".to_owned()))
     );
     assert!(!editor.has_dialog());
 

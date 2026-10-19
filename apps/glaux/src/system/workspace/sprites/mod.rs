@@ -3,6 +3,7 @@
 //! those edits, and asks for them to be saved.
 
 mod color_editor;
+mod import_errors;
 mod import_preview;
 mod layout;
 mod palette_picker;
@@ -29,6 +30,7 @@ use palette_picker::{PalettePicker, PickerLayout, PickerOutcome};
 use sheet::{SheetView, grid_position};
 
 use crate::system::sprite_document::{ColorScope, ColorTarget, SpriteDocument};
+use crate::ui_text;
 
 /// Most ticks between the presses of a double click.
 const DOUBLE_CLICK_TICKS: u32 = TICK_RATE * 2 / 5;
@@ -46,7 +48,7 @@ pub struct SpriteSource<'a> {
 }
 
 /// What the editor asks of the workspace after an input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpriteRequest {
     /// Save the document to the cartridge.
     Save,
@@ -54,7 +56,7 @@ pub enum SpriteRequest {
     Import,
     /// Tell the user something briefly, such as that there is nothing to
     /// undo.
-    Notice(&'static str),
+    Notice(String),
 }
 
 /// A modal dialog the editor opened, which takes every input while open.
@@ -346,7 +348,9 @@ impl SpriteEditor {
         if self.awaiting_file {
             if event == InputEvent::Break {
                 self.awaiting_file = false;
-                return Some(SpriteRequest::Notice("Stopped waiting for the file dialog"));
+                return Some(SpriteRequest::Notice(ui_text::get(
+                    "sprites-stopped-waiting-for-the-file-dialog",
+                )));
             }
             return None;
         }
@@ -425,13 +429,17 @@ impl SpriteEditor {
             InputEvent::Undo => {
                 self.end_stroke(document.as_deref_mut());
                 if !document.is_some_and(SpriteDocument::undo) {
-                    return Some(SpriteRequest::Notice("Nothing to undo"));
+                    return Some(SpriteRequest::Notice(ui_text::get(
+                        "sprites-nothing-to-undo",
+                    )));
                 }
             }
             InputEvent::Redo => {
                 self.end_stroke(document.as_deref_mut());
                 if !document.is_some_and(SpriteDocument::redo) {
-                    return Some(SpriteRequest::Notice("Nothing to redo"));
+                    return Some(SpriteRequest::Notice(ui_text::get(
+                        "sprites-nothing-to-redo",
+                    )));
                 }
             }
             _ => {}
@@ -543,7 +551,9 @@ impl SpriteEditor {
             local,
         };
         let Some(uses) = document.color_uses(target, self.selected) else {
-            return Some(SpriteRequest::Notice("Color 0 is transparent"));
+            return Some(SpriteRequest::Notice(ui_text::get(
+                "sprites-color-0-is-transparent",
+            )));
         };
         self.end_stroke(Some(&mut *document));
         let old = document.video().palette.get(uses.master);
@@ -576,7 +586,9 @@ impl SpriteEditor {
         self.end_stroke(document.as_deref_mut());
         match document {
             Some(document) if document.is_modified() => Some(SpriteRequest::Save),
-            Some(_) => Some(SpriteRequest::Notice("Nothing to save")),
+            Some(_) => Some(SpriteRequest::Notice(ui_text::get(
+                "workspace-nothing-to-save",
+            ))),
             None => None,
         }
     }

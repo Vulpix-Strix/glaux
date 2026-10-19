@@ -68,7 +68,7 @@ fn entries(shell: &Shell) -> Vec<Entry> {
 }
 
 fn banner() -> Entry {
-    Entry::Banner(BANNER.into())
+    Entry::Banner("Ready. Type 'help' for a list of commands.".into())
 }
 
 fn command(text: &str) -> Entry {
@@ -112,7 +112,7 @@ fn new_shell_shows_banner_prompt_and_cursor() {
     assert_eq!(
         new_shell().lines(&font(), COLUMNS, ROWS),
         [
-            Line::new(0, 0, BANNER, ACCENT),
+            Line::new(0, 0, "Ready. Type 'help' for a list of commands.", ACCENT),
             Line::new(0, 1, "> ", TEXT),
             cursor(2, 1, " "),
         ]

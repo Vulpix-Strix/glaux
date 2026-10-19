@@ -1,3 +1,5 @@
+mod references;
+
 use glaux_docs::validate::{UiCatalogSource, ui_catalogs};
 use glaux_docs::{Diagnostic, Library};
 use glaux_i18n::{Catalog, Language};
@@ -130,4 +132,53 @@ fn the_interface_translator_resolves_the_tab_names() {
         .map(|id| text.get(id).into_owned())
         .into();
     assert_eq!(names, ["Code", "Sprites", "Map", "SFX", "Music"]);
+}
+
+#[test]
+fn broken_fluent_references_are_catalog_errors() {
+    let sources = [UiCatalogSource {
+        language: Language::english(),
+        location: "broken.ftl",
+        source: "message = { missing-message }\n",
+    }];
+    let report = ui_catalogs(&sources);
+    assert!(report.iter().any(Diagnostic::is_error), "{report:?}");
+}
+
+#[test]
+fn plural_messages_preserve_zero_one_many_and_large_counts() {
+    use glaux_i18n::Arg;
+    for (count, expected) in [
+        (0.0, "No sprite groups"),
+        (1.0, "1 sprite group"),
+        (2.0, "2 sprite groups"),
+        (1_000_000.0, "1000000 sprite groups"),
+    ] {
+        assert_eq!(
+            get_with("sprites-import-groups", &[("count", Arg::Number(count))]),
+            expected
+        );
+    }
+    assert_eq!(
+        get_with(
+            "sprites-color-shared-tiles",
+            &[
+                ("entries", Arg::Number(1.0)),
+                ("banks", Arg::Number(0.0)),
+                ("tiles", Arg::Number(1.0))
+            ]
+        ),
+        "  this palette; 1 other tile."
+    );
+    assert_eq!(
+        get_with(
+            "sprites-color-shared-tiles",
+            &[
+                ("entries", Arg::Number(2.0)),
+                ("banks", Arg::Number(1.0)),
+                ("tiles", Arg::Number(0.0))
+            ]
+        ),
+        "  (2 palette colors), no other tiles."
+    );
 }

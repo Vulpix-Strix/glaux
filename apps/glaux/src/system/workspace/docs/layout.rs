@@ -15,6 +15,7 @@ use glaux_syntax::{Grammar, Highlighter, SyntaxKind};
 use super::LanguageFilter;
 use crate::system::workspace::{BAR, take_cells};
 use crate::system::{ACCENT, DIM, PALE, TEXT, WARN, syntax_theme};
+use crate::ui_text;
 
 /// Pixels between two blocks.
 const BLOCK_GAP: u8 = 4;
@@ -484,11 +485,11 @@ impl Builder<'_> {
         out: &mut Vec<Row>,
     ) {
         let (name, ink) = match kind {
-            AlertKind::Note => ("Note", ACCENT),
-            AlertKind::Tip => ("Tip", ACCENT),
-            AlertKind::Important => ("Important", ACCENT),
-            AlertKind::Warning => ("Warning", WARN),
-            AlertKind::Caution => ("Caution", WARN),
+            AlertKind::Note => (&ui_text::get("docs-note"), ACCENT),
+            AlertKind::Tip => (&ui_text::get("docs-tip"), ACCENT),
+            AlertKind::Important => (&ui_text::get("docs-important"), ACCENT),
+            AlertKind::Warning => (&ui_text::get("docs-warning"), WARN),
+            AlertKind::Caution => (&ui_text::get("docs-caution"), WARN),
         };
         let start = out.len();
         let title = title.unwrap_or(name);

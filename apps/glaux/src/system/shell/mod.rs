@@ -2,12 +2,14 @@
 
 mod commands;
 mod completion;
+mod errors;
 mod history;
 mod parser;
 mod scrollback;
 
 use std::ops::Range;
 
+use glaux_i18n::Arg;
 use glaux_input::InputEvent;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::psg::{Adsr, CHANNELS, Waveform};
@@ -17,6 +19,7 @@ use super::line_editor::LineEditor;
 use super::{ACCENT, BACKGROUND, DIM, ERROR, Line, SystemInfo, TEXT, TRACE, WARN};
 use crate::cartridge::{CartridgeManifest, Language, LoadedCartridge};
 use crate::cartridge_fs::CartridgeStorage;
+use crate::ui_text;
 use commands::{COMMANDS, Context};
 
 pub(super) use commands::cartridge_identity;
@@ -51,13 +54,16 @@ pub struct Voice {
     pub gate: bool,
 }
 
-const BANNER: &str = "Ready. Type 'help' for a list of commands.";
+fn banner() -> String {
+    ui_text::get("shell-ready-type-help-for-a-list-of-commands")
+}
 const PROMPT: &str = "> ";
 
 /// Shown whenever a cartridge in an experimental language is created or
 /// run.
-pub(super) const EXPERIMENTAL_LANGUAGE_WARNING: &str =
-    "RHAI SUPPORT IS EXPERIMENTAL. THE SCRIPTING API MAY CHANGE WITHOUT NOTICE.";
+pub(super) fn experimental_language_warning() -> String {
+    ui_text::get("shell-rhai-experimental")
+}
 /// Ticks a text cursor spends in each blink phase: 600 ms at 60 Hz.
 pub(super) const BLINK_TICKS: u32 = 36;
 
@@ -137,7 +143,7 @@ impl Shell {
     /// and navigating `cartridges`.
     pub fn new(info: SystemInfo, cartridges: CartridgeStorage) -> Self {
         let mut scrollback = Scrollback::default();
-        scrollback.push(Entry::Banner(BANNER.into()));
+        scrollback.push(Entry::Banner(banner()));
         Self {
             editor: LineEditor::default(),
             history: History::default(),
@@ -302,18 +308,24 @@ impl Shell {
     pub(super) fn announce_loaded(&mut self, manifest: &CartridgeManifest, origin: LoadOrigin) {
         match origin {
             LoadOrigin::Existing => {
-                self.report(format!("Loaded {}", cartridge_identity(manifest)));
+                self.report(ui_text::get_with(
+                    "shell-loaded-2",
+                    &[(
+                        "value",
+                        Arg::Text(&(cartridge_identity(manifest).to_string())),
+                    )],
+                ));
             }
             LoadOrigin::Created => {
                 self.warn_if_experimental(manifest.runtime.language);
                 for line in [
-                    "Your new cartridge is ready!",
+                    &ui_text::get("shell-your-new-cartridge-is-ready"),
                     manifest.cartridge.name.as_str(),
                     "",
-                    "Every great game starts somewhere.",
-                    "This one starts with you.",
+                    &ui_text::get("shell-every-great-game-starts-somewhere"),
+                    &ui_text::get("shell-this-one-starts-with-you"),
                     "",
-                    "Try 'run' to see your first creation.",
+                    &ui_text::get("shell-try-run-to-see-your-first-creation"),
                 ] {
                     self.report(line);
                 }
@@ -334,7 +346,7 @@ impl Shell {
                 language = language.name(),
                 "experimental scripting language"
             );
-            self.report_warning(EXPERIMENTAL_LANGUAGE_WARNING);
+            self.report_warning(experimental_language_warning());
         }
     }
 
@@ -353,7 +365,9 @@ impl Shell {
                 Entry::Banner(text) | Entry::Output(text) | Entry::Log(_, text) => text.clone(),
                 Entry::Command(text) => format!("{PROMPT}{text}"),
                 Entry::Error(text) => format!("! {text}"),
-                Entry::Warning(text) => format!("WARN: {text}"),
+                Entry::Warning(text) => {
+                    ui_text::get_with("shell-warn", &[("text", Arg::Text(&text.to_string()))])
+                }
             })
             .collect()
     }
@@ -397,10 +411,11 @@ impl Shell {
             }
             Ok(None) => None,
             Err(err) => {
-                self.scrollback.push(Entry::Error(err.to_string()));
+                self.scrollback.push(Entry::Error(errors::parse(&err)));
                 let parser::ParseError::UnterminatedQuote { quote, .. } = err;
-                self.scrollback.push(Entry::Output(format!(
-                    "Close the quoted text with another {quote}"
+                self.scrollback.push(Entry::Output(ui_text::get_with(
+                    "shell-close-the-quoted-text-with-another",
+                    &[("quote", Arg::Text(&quote.to_string()))],
                 )));
                 None
             }

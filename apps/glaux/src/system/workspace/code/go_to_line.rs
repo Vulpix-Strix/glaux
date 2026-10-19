@@ -1,5 +1,6 @@
 //! GO TO LINE moves the caret to a line typed by number.
 
+use glaux_i18n::Arg;
 use glaux_input::InputEvent;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -8,6 +9,7 @@ use super::prompt::{Prompt, PromptInput, PromptLayout};
 use crate::system::ERROR;
 use crate::system::workspace::dialog::INK;
 use crate::system::workspace::text_field::{Accepts, TextField};
+use crate::ui_text;
 
 /// Most digits a line number takes.
 const MAX_DIGITS: usize = 9;
@@ -39,7 +41,15 @@ impl GoToLine {
         let mut field = TextField::new(MAX_DIGITS, Accepts::Digits);
         field.set_text(&current.to_string());
         Self {
-            prompt: Prompt::new("GO TO LINE", format!("Line number (1-{lines}):"), "", field),
+            prompt: Prompt::new(
+                &ui_text::get("code-go-to-line-2"),
+                ui_text::get_with(
+                    "code-line-number-1",
+                    &[("lines", Arg::Text(&lines.to_string()))],
+                ),
+                "",
+                field,
+            ),
             lines,
             invalid: false,
         }
@@ -83,9 +93,15 @@ impl GoToLine {
     /// The line under the field.
     pub fn message(&self) -> (String, u8) {
         if self.invalid {
-            (format!("Enter a line from 1 to {}.", self.lines), ERROR)
+            (
+                ui_text::get_with(
+                    "code-line-out-of-range",
+                    &[("lines", Arg::Text(&self.lines.to_string()))],
+                ),
+                ERROR,
+            )
         } else {
-            ("Enter: go  Esc: cancel".to_owned(), INK)
+            (ui_text::get("code-enter-go-esc-cancel"), INK)
         }
     }
 

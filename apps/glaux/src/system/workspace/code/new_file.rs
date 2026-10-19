@@ -3,6 +3,7 @@
 //! The user types the path below `code/` without an extension. The language
 //! named in the cartridge's manifest decides the extension.
 
+use glaux_i18n::Arg;
 use glaux_input::InputEvent;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -13,6 +14,7 @@ use crate::cartridge::source::{SourcePath, SourcePathError};
 use crate::system::ERROR;
 use crate::system::workspace::dialog::INK;
 use crate::system::workspace::text_field::TextField;
+use crate::ui_text;
 
 /// The folder new scripts go in.
 pub const CODE_DIR: &str = "code/";
@@ -42,9 +44,20 @@ pub struct NewFile {
 impl NewFile {
     /// The window for a cartridge written in `language`.
     pub fn new(language: Language) -> Self {
-        let label = format!("New .{} script in {CODE_DIR}", language.extension());
+        let label = ui_text::get_with(
+            "code-new-script-description",
+            &[
+                ("extension", Arg::Text(language.extension())),
+                ("directory", Arg::Text(CODE_DIR)),
+            ],
+        );
         Self {
-            prompt: Prompt::new("NEW FILE", label, CODE_DIR, TextField::any(MAX_PATH)),
+            prompt: Prompt::new(
+                &ui_text::get("code-new-file-2"),
+                label,
+                CODE_DIR,
+                TextField::any(MAX_PATH),
+            ),
             language,
             failure: None,
         }
@@ -95,12 +108,18 @@ impl NewFile {
         }
         if self.prompt.text().is_empty() {
             return (
-                format!("Type a name; .{} is added.", self.language.extension()),
+                ui_text::get_with(
+                    "code-new-script-name-hint",
+                    &[("extension", Arg::Text(self.language.extension()))],
+                ),
                 INK,
             );
         }
         match self.path() {
-            Ok(path) => (format!("Creates {path}"), INK),
+            Ok(path) => (
+                ui_text::get_with("code-creates", &[("path", Arg::Text(&path.to_string()))]),
+                INK,
+            ),
             Err(message) => (message, ERROR),
         }
     }
@@ -121,28 +140,34 @@ impl NewFile {
 /// The script `typed` names under [`CODE_DIR`] in `language`.
 pub(super) fn path_for(typed: &str, language: Language) -> Result<SourcePath, String> {
     if typed.is_empty() {
-        return Err("Type a name for the script.".to_owned());
+        return Err(ui_text::get("code-type-a-name-for-the-script"));
     }
     if let Some(given) = Language::ALL
         .into_iter()
         .find(|given| typed.ends_with(&format!(".{}", given.extension())))
     {
         return Err(if given == language {
-            format!("Leave out .{}; it is added.", language.extension())
+            ui_text::get_with(
+                "code-new-script-extension-hint",
+                &[("extension", Arg::Text(language.extension()))],
+            )
         } else {
-            format!(
-                "This cartridge is {}; .{} is added.",
-                language.name(),
-                language.extension()
+            ui_text::get_with(
+                "code-new-script-language-hint",
+                &[
+                    ("language", Arg::Text(language.name())),
+                    ("extension", Arg::Text(language.extension())),
+                ],
             )
         });
     }
     let path = format!("{CODE_DIR}{typed}.{}", language.extension());
     SourcePath::parse(&path).map_err(|err| match err {
-        SourcePathError::Invalid(_) => "Use names joined by /, without .., \\ or :".to_owned(),
-        SourcePathError::UnsupportedExtension(_) => {
-            format!("Not a valid .{} file name.", language.extension())
-        }
+        SourcePathError::Invalid(_) => ui_text::get("code-use-names-joined-by-without-or"),
+        SourcePathError::UnsupportedExtension(_) => ui_text::get_with(
+            "code-invalid-script-name",
+            &[("extension", Arg::Text(language.extension()))],
+        ),
     })
 }
 

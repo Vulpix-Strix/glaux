@@ -3,6 +3,7 @@
 
 use std::ops::RangeInclusive;
 
+use crate::ui_text;
 use glaux_machine::font::Features;
 use serde::{Deserialize, Serialize};
 
@@ -37,11 +38,11 @@ impl IndentStyle {
         Self::ALL[(at + isize::from(step)).rem_euclid(len) as usize]
     }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::Detect => "Detect",
-            Self::Spaces => "Spaces",
-            Self::Tabs => "Tabs",
+            Self::Detect => ui_text::get("system-detect"),
+            Self::Spaces => ui_text::get("system-spaces"),
+            Self::Tabs => ui_text::get("system-tabs"),
         }
     }
 }

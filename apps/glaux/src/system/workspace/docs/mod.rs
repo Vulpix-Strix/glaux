@@ -13,6 +13,7 @@ mod tabs;
 mod view;
 
 use glaux_docs::{DocId, Kind, Library, Scope as PageScope, ScriptLanguage};
+use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::system_rom::SystemCursor;
@@ -26,6 +27,7 @@ use view::{Geometry, OptionsBar};
 use super::Rect;
 use crate::system::ExternalUrl;
 use crate::system::ExternalUrlError;
+use crate::ui_text;
 
 /// Most page tabs open at once. Opening one more is refused, so no tab is
 /// ever replaced behind the user's back.
@@ -38,11 +40,17 @@ const HOME: &str = "guide/index";
 const OUTLINE_LEVEL: u8 = 2;
 
 /// The status bar hint while the page has the keys.
-pub const DOCS_HINT: &str = "Alt+Left: back  Alt+Right: fwd  Ctrl+B: nav";
+pub fn docs_hint() -> String {
+    ui_text::get("docs-alt-left-back-alt-right-fwd-ctrl-b-nav")
+}
 /// The status bar hint while SEARCH DOCS is open.
-pub const SEARCH_HINT: &str = "Type: query  Tab: filter  Enter: open  Esc: close";
+pub fn search_hint() -> String {
+    ui_text::get("docs-type-query-tab-filter-enter-open-esc-close")
+}
 /// The status bar hint while the list of tabs is open.
-pub const MENU_HINT: &str = "Up/Down: pick  Enter: show  Esc: close";
+pub fn menu_hint() -> String {
+    ui_text::get("docs-up-down-pick-enter-show-esc-close")
+}
 
 /// The pages the browser reads, and the languages to read them in.
 #[derive(Debug, Clone, Copy)]
@@ -62,11 +70,11 @@ pub enum LanguageFilter {
 }
 
 impl LanguageFilter {
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::All => "All",
-            Self::Luau => "Luau",
-            Self::Rhai => "Rhai",
+            Self::All => ui_text::get("docs-all"),
+            Self::Luau => "Luau".to_owned(),
+            Self::Rhai => "Rhai".to_owned(),
         }
     }
 
@@ -286,8 +294,9 @@ impl DocsBrowser {
                 return None;
             }
             if self.tabs.len() >= MAX_TABS {
-                return Some(DocsRequest::Notice(format!(
-                    "Docs tab limit reached ({MAX_TABS}). Close a tab first."
+                return Some(DocsRequest::Notice(ui_text::get_with(
+                    "docs-docs-tab-limit-reached-close-a-tab-first",
+                    &[("MAX-TABS", Arg::Text(&MAX_TABS.to_string()))],
                 )));
             }
             self.tabs.push(DocTab {
@@ -415,7 +424,10 @@ impl DocsBrowser {
 
     fn build(&self, source: Source<'_>, key: Key) -> Shown {
         let Some(resolved) = source.library.page(&key.id, source.chain) else {
-            let layout = layout::message(&self.font, &format!("No page {}", key.id));
+            let layout = layout::message(
+                &self.font,
+                &ui_text::get_with("docs-no-page", &[("value", Arg::Text(&key.id.to_string()))]),
+            );
             return Shown {
                 title: key.id.to_string(),
                 crumb: String::new(),
@@ -569,20 +581,30 @@ impl DocsBrowser {
         match DocId::from_uri(target) {
             Some(Ok(id)) => {
                 if source.library.page(&id, source.chain).is_none() {
-                    return Some(DocsRequest::Notice(format!("Broken link: {target}")));
+                    return Some(DocsRequest::Notice(ui_text::get_with(
+                        "docs-broken-link",
+                        &[("target", Arg::Text(target))],
+                    )));
                 }
                 let fragment = target
                     .split_once('#')
                     .map(|(_, fragment)| fragment.to_owned());
                 self.open(source, id, fragment, new_tab)
             }
-            Some(Err(_)) => Some(DocsRequest::Notice(format!("Broken link: {target}"))),
+            Some(Err(_)) => Some(DocsRequest::Notice(ui_text::get_with(
+                "docs-broken-link",
+                &[("target", Arg::Text(target))],
+            ))),
             None => Some(match ExternalUrl::parse(target) {
                 Ok(url) => DocsRequest::OpenExternal(url),
-                Err(ExternalUrlError::Scheme(scheme)) => {
-                    DocsRequest::Notice(format!("Blocked link: {scheme}"))
-                }
-                Err(_) => DocsRequest::Notice(format!("Broken link: {target}")),
+                Err(ExternalUrlError::Scheme(scheme)) => DocsRequest::Notice(ui_text::get_with(
+                    "docs-blocked-link",
+                    &[("scheme", Arg::Text(&scheme.to_string()))],
+                )),
+                Err(_) => DocsRequest::Notice(ui_text::get_with(
+                    "docs-broken-link",
+                    &[("target", Arg::Text(target))],
+                )),
             }),
         }
     }
@@ -627,7 +649,7 @@ impl DocsBrowser {
 
     fn search_layout(&self, area: Rect) -> SearchLayout {
         let labels = search::Scope::ALL
-            .map(|scope| i32::try_from(self.font.text_cells(scope.label())).unwrap_or(0));
+            .map(|scope| i32::try_from(self.font.text_cells(&scope.label())).unwrap_or(0));
         SearchLayout::new(
             area,
             self.geometry.metrics.cell_w,
@@ -893,13 +915,13 @@ impl DocsBrowser {
     }
 
     /// What the status bar says while nothing else is to be reported.
-    pub fn hint(&self) -> &'static str {
+    pub fn hint(&self) -> String {
         if self.search.is_some() {
-            SEARCH_HINT
+            search_hint()
         } else if self.menu.is_some() {
-            MENU_HINT
+            menu_hint()
         } else {
-            DOCS_HINT
+            docs_hint()
         }
     }
 }
@@ -919,7 +941,7 @@ struct PanelRow {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PanelKind {
-    Title(&'static str),
+    Title(String),
     /// A heading of the page, and whether the view is in its section.
     Outline {
         row: usize,
@@ -957,7 +979,7 @@ impl DocsBrowser {
         let scroll = self.scroll();
         let current = outline.iter().rposition(|heading| heading.row <= scroll);
         if !outline.is_empty() {
-            lines.push(PanelKind::Title("On this page"));
+            lines.push(PanelKind::Title(ui_text::get("docs-on-this-page")));
             for (index, heading) in outline.iter().enumerate() {
                 lines.push(PanelKind::Outline {
                     row: heading.row,
@@ -966,7 +988,7 @@ impl DocsBrowser {
             }
         }
         if !shown.related.is_empty() {
-            lines.push(PanelKind::Title("Related"));
+            lines.push(PanelKind::Title(ui_text::get("docs-related")));
             lines.extend((0..shown.related.len()).map(PanelKind::Related));
         }
         lines.truncate(room);

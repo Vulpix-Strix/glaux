@@ -9,6 +9,7 @@ use super::{Source, title_of};
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{AREA_MARGIN, PAD, SHADOW_OFFSET};
 use crate::system::workspace::text_field::{FieldInput, TextField};
+use crate::ui_text;
 
 /// Rows of results the window shows at once.
 pub const LIST_ROWS: usize = 7;
@@ -35,11 +36,11 @@ pub enum Scope {
 impl Scope {
     pub const ALL: [Self; 3] = [Self::All, Self::Api, Self::Guides];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Self::All => "All",
-            Self::Api => "API",
-            Self::Guides => "Guides",
+            Self::All => ui_text::get("docs-all"),
+            Self::Api => ui_text::get("docs-api"),
+            Self::Guides => ui_text::get("docs-guides"),
         }
     }
 

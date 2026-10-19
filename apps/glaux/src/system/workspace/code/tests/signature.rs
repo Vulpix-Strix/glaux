@@ -266,9 +266,9 @@ fn the_popup_takes_no_key_but_escape() {
 #[test]
 fn the_status_bar_names_the_key_that_closes_it() {
     let (mut editor, mut session) = luau("");
-    assert_ne!(editor.hint(), SIGNATURE_HINT);
+    assert_ne!(editor.hint(), "Esc: close");
     type_str(&mut editor, &mut session, "spr(");
-    assert_eq!(editor.hint(), SIGNATURE_HINT);
+    assert_eq!(editor.hint(), "Esc: close");
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn the_list_of_suggestions_keeps_its_hint_and_its_escape() {
     type_str(&mut editor, &mut session, "spr(re");
     assert!(editor.completion().is_some());
     assert!(is_open(&editor));
-    assert_eq!(editor.hint(), COMPLETION_HINT);
+    assert_eq!(editor.hint(), "Up/Down: pick  Tab: accept  Esc: close");
     feed(&mut editor, &mut session, &[InputEvent::Break]);
     assert!(editor.completion().is_none());
     assert!(is_open(&editor), "the first Escape closes only the list");

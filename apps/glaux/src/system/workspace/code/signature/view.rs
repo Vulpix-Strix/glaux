@@ -2,9 +2,11 @@
 //! any width.
 
 use glaux_docs::DocId;
+use glaux_i18n::Arg;
 use glaux_sense::{Doc, ParamInfo, SignatureHelp};
 
 use super::super::completion::type_name;
+use crate::ui_text;
 
 /// The parameter the caret is writing, as its name and, when it has one,
 /// its type.
@@ -47,9 +49,12 @@ pub fn view_for(help: &SignatureHelp, source: &ViewSource<'_>) -> SignatureView 
     let active = help.active_param.and_then(|at| signature.params.get(at));
     let note = match &signature.doc {
         Doc::Api(id) => active.and_then(|param| (source.meaning)(id, &param.name)),
-        Doc::Local(definition) => Some(format!(
-            "Declared on line {}.",
-            (source.line_of)(definition.declared.start)
+        Doc::Local(definition) => Some(ui_text::get_with(
+            "code-signature-declaration",
+            &[(
+                "line",
+                Arg::Text(&((source.line_of)(definition.declared.start).to_string())),
+            )],
         )),
         Doc::None => None,
     };

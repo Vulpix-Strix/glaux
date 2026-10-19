@@ -302,11 +302,17 @@ fn save_and_import_split_the_row_above_the_palette_button() {
         assert!(save.right() < import.x, "a gap separates them");
         assert_eq!(layout.palette_button.width, layout.canvas_frame.width);
         assert!(layout.palette_button.y > save.bottom());
-        for label in [SAVE_LABEL, IMPORT_LABEL] {
+        for label in ["Save", "Import"] {
             assert!(
                 text_cells(label) * METRICS.cell_w + 2 * BUTTON_PAD <= save.width,
                 "{label} fits"
             );
         }
     }
+}
+
+#[test]
+fn tile_captions_keep_their_padding_and_advanced_coordinates() {
+    assert_eq!(caption(7, false), "Tile 0007");
+    assert_eq!(caption(7, true), "Tile 0007 (7,0)");
 }

@@ -13,9 +13,12 @@ use glaux_video::draw::{draw_text, fill_rect};
 
 use super::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};
 use crate::system::{DIM, PALE, TEXT};
+use crate::ui_text;
 
 /// The status bar hint while a context menu is open.
-pub const MENU_HINT: &str = "Up/Down: pick  Enter: run  Esc: close";
+pub fn menu_hint() -> String {
+    ui_text::get("workspace-up-down-pick-enter-run-esc-close")
+}
 /// Height of a separator row.
 const SEPARATOR_HEIGHT: i32 = 5;
 /// Cells left of a label.
@@ -24,10 +27,10 @@ const LABEL_INDENT: i32 = 1;
 const SHORTCUT_GAP: i32 = 3;
 
 /// One row of a menu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuEntry<A> {
     Item {
-        label: &'static str,
+        label: String,
         /// The keys that do the same, shown at the row's right end.
         shortcut: Option<&'static str>,
         enabled: bool,
@@ -39,9 +42,9 @@ pub enum MenuEntry<A> {
 
 impl<A> MenuEntry<A> {
     /// An enabled item.
-    pub fn item(label: &'static str, shortcut: Option<&'static str>, action: A) -> Self {
+    pub fn item(label: &str, shortcut: Option<&'static str>, action: A) -> Self {
         Self::Item {
-            label,
+            label: label.to_owned(),
             shortcut,
             enabled: true,
             action,
@@ -49,14 +52,9 @@ impl<A> MenuEntry<A> {
     }
 
     /// An item that shows but can't be chosen unless `enabled`.
-    pub fn when(
-        enabled: bool,
-        label: &'static str,
-        shortcut: Option<&'static str>,
-        action: A,
-    ) -> Self {
+    pub fn when(enabled: bool, label: &str, shortcut: Option<&'static str>, action: A) -> Self {
         Self::Item {
-            label,
+            label: label.to_owned(),
             shortcut,
             enabled,
             action,
@@ -273,7 +271,7 @@ impl<A: Copy> ContextMenu<A> {
         fill(framebuffer, layout.window, DIM);
         fill(framebuffer, layout.window.inset(1), BAR);
         for (index, (entry, &row)) in self.entries.iter().zip(&layout.rows).enumerate() {
-            match *entry {
+            match entry {
                 MenuEntry::Separator => {
                     let rule = Rect {
                         x: row.x + 2,

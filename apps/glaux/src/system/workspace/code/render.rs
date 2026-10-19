@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use glaux_i18n::Arg;
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -24,11 +25,14 @@ use crate::system::syntax_theme;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::ui_text;
 
 /// Side of the dot marking a tab whose document has unsaved edits.
 const DIRTY_DOT: i32 = 3;
 /// Marks a file OPEN FILE lists that already has a tab.
-const OPEN_TAG: &str = "open";
+fn open_tag() -> String {
+    ui_text::get("code-open-file-tag")
+}
 /// The ground of text the find bar matches, outside the selection.
 const MATCH: u8 = HOVER_SHADE;
 
@@ -133,7 +137,7 @@ impl CodeEditor {
                         painter.empty_state(self.entry_error.as_deref());
                         for (rect, label, _) in self.empty_actions() {
                             let lit = hover_pointer.is_some_and(|at| rect.contains(at));
-                            painter.text(label, rect.x, rect.y, if lit { TEXT } else { ACCENT });
+                            painter.text(&label, rect.x, rect.y, if lit { TEXT } else { ACCENT });
                         }
                     }
                 }
@@ -145,7 +149,8 @@ impl CodeEditor {
             }
         }
         painter.settings_button(ui, settings_lit);
-        let (status, color) = notice.unwrap_or((self.hint(), PALE));
+        let hint = self.hint();
+        let (status, color) = notice.unwrap_or((&hint, PALE));
         painter.status_bar(status, color);
 
         if let (Some(menu), Some(session)) = (self.menu, session) {
@@ -349,7 +354,13 @@ impl Painter<'_> {
         self.fill(tag_rect, BAR);
         self.text(tag, tag_rect.x + 2, y, PALE);
 
-        let position = format!("Ln {}  Col {}", caret.line + 1, caret.column + 1);
+        let position = ui_text::get_with(
+            "code-caret-position",
+            &[
+                ("line", Arg::Text(&(caret.line + 1).to_string())),
+                ("column", Arg::Text(&(caret.column + 1).to_string())),
+            ],
+        );
         let position_x = self.layout.settings_button().x
             - self.cell_w()
             - self.layout.cells(&position) * self.cell_w();
@@ -611,13 +622,18 @@ impl Painter<'_> {
         let area = self.layout.text;
         let x = area.x + self.cell_w();
         let mut y = area.y + self.cell_h();
-        self.text("No file open.", x, y, TEXT);
+        self.text(&ui_text::get("code-no-file-open"), x, y, TEXT);
         // The links to create and open files take the next two rows. See
         // `CodeEditor::empty_actions`.
         y += 2 * self.cell_h();
         if let Some(error) = entry_error {
             y += 2 * self.cell_h();
-            self.text("The entry script could not be opened:", x, y, TEXT);
+            self.text(
+                &ui_text::get("code-the-entry-script-could-not-be-opened"),
+                x,
+                y,
+                TEXT,
+            );
             for line in wrap(
                 self.font,
                 error,
@@ -674,7 +690,7 @@ impl Painter<'_> {
             self.font,
             layout.window,
             layout.title_bar,
-            "OPEN FILE",
+            &ui_text::get("code-open-file-2"),
             cell_w,
         );
         let filter = format!("> {}_", picker.filter());
@@ -689,7 +705,7 @@ impl Painter<'_> {
             INK,
         );
 
-        let tag_width = self.layout.cells(OPEN_TAG) * cell_w;
+        let tag_width = self.layout.cells(&open_tag()) * cell_w;
         let marker = 2 * cell_w;
         for (row, path) in picker
             .matches()
@@ -714,7 +730,7 @@ impl Painter<'_> {
                     height: rect.height,
                 };
                 self.fill(tag, ink);
-                self.text(OPEN_TAG, tag.x + 2, rect.y + 1, ground);
+                self.text(&open_tag(), tag.x + 2, rect.y + 1, ground);
             }
             let room = (rect.width - marker - tag_width - 4 - cell_w) / cell_w.max(1);
             let label = shorten_start(self.font, path.as_str(), usize::try_from(room).unwrap_or(0));
@@ -723,10 +739,18 @@ impl Painter<'_> {
 
         let total = picker.paths().len();
         let summary = match picker.error() {
-            Some(error) => format!("Cannot list scripts: {error}"),
-            None if total == 0 => "No .luau or .rhai files in this cartridge.".to_owned(),
-            None if picker.match_count() == 0 => "No file matches.".to_owned(),
-            None => format!("{} of {total} files", picker.match_count()),
+            Some(error) => {
+                ui_text::get_with("code-cannot-list-scripts", &[("error", Arg::Text(error))])
+            }
+            None if total == 0 => ui_text::get("code-no-luau-or-rhai-files-in-this-cartridge"),
+            None if picker.match_count() == 0 => ui_text::get("code-no-file-matches"),
+            None => ui_text::get_with(
+                "code-picker-file-count",
+                &[
+                    ("matches", Arg::Text(&(picker.match_count().to_string()))),
+                    ("total", Arg::Text(&total.to_string())),
+                ],
+            ),
         };
         let columns = usize::try_from(layout.list.width / cell_w.max(1)).unwrap_or(0);
         let mut y = layout.summary_y;

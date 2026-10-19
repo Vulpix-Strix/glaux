@@ -7,6 +7,7 @@ use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use super::LanguageFilter;
 use crate::system::workspace::Rect;
 use crate::system::workspace::code::text_view::INDICATOR;
+use crate::ui_text;
 
 /// Cells the side panel's text takes.
 const NAV_COLS: i32 = 13;
@@ -160,9 +161,9 @@ impl Geometry {
             right -= BUTTON_GAP;
             rect
         };
-        let search = button(SEARCH_LABEL);
-        let nav = button(NAV_LABEL);
-        let filter = button(filter.label());
+        let search = button(&search_label());
+        let nav = button(&nav_label());
+        let filter = button(&filter.label());
         let left_edge = 4;
         let back = Rect {
             x: left_edge,
@@ -212,6 +213,10 @@ impl Geometry {
 }
 
 /// The options bar's label for the side panel's button.
-pub const NAV_LABEL: &str = "Nav";
+pub fn nav_label() -> String {
+    ui_text::get("docs-nav")
+}
 /// The options bar's label for the search button.
-pub const SEARCH_LABEL: &str = "Search";
+pub fn search_label() -> String {
+    ui_text::get("docs-search")
+}

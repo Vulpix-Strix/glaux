@@ -13,9 +13,14 @@ use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
     AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells,
 };
+use crate::ui_text;
 
-const TITLE: &str = "EDITOR SETTINGS";
-const DONE: &str = "Done";
+fn title() -> String {
+    ui_text::get("code-editor-settings")
+}
+fn done() -> String {
+    ui_text::get("code-done")
+}
 /// Side of a checkbox.
 const CHECKBOX: i32 = 7;
 /// Cells taken left of a row's label by its checkbox.
@@ -46,15 +51,15 @@ impl Row {
         Self::Done,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::WordWrap => "Word wrap",
-            Self::TabSize => "Tab size",
-            Self::LineNumbers => "Show line numbers",
-            Self::Ligatures => "Ligatures",
-            Self::IndentWith => "Indent with",
-            Self::IndentSize => "Indent size",
-            Self::Done => DONE,
+            Self::WordWrap => ui_text::get("code-word-wrap"),
+            Self::TabSize => ui_text::get("code-tab-size"),
+            Self::LineNumbers => ui_text::get("code-show-line-numbers"),
+            Self::Ligatures => ui_text::get("code-ligatures"),
+            Self::IndentWith => ui_text::get("code-indent-with"),
+            Self::IndentSize => ui_text::get("code-indent-size"),
+            Self::Done => done(),
         }
     }
 
@@ -188,25 +193,25 @@ impl SettingsDialog {
         let cell_w = cell_w.max(1);
         let label_cells = Row::ALL
             .iter()
-            .map(|row| LABEL_INDENT + text_cells(row.label()))
+            .map(|row| LABEL_INDENT + text_cells(&row.label()))
             .max()
             .unwrap_or(0);
         // A stepper's label followed by "< value >" two cells after it.
         let widest_value = IndentStyle::ALL
             .iter()
-            .map(|style| text_cells(style.label()))
+            .map(|style| text_cells(&style.label()))
             .max()
             .unwrap_or(1);
         let stepper_cells = widest_value + 4;
         let stepper_label = Row::ALL
             .iter()
             .filter(|row| row.is_stepper())
-            .map(|row| text_cells(row.label()))
+            .map(|row| text_cells(&row.label()))
             .max()
             .unwrap_or(0);
         let inner_cells = (label_cells + 1)
             .max(LABEL_INDENT + stepper_label + 2 + stepper_cells)
-            .max(text_cells(TITLE));
+            .max(text_cells(&title()));
         let inner_width = (inner_cells * cell_w).min(area.width - 2 * AREA_MARGIN - 2 * PAD);
         let row_height = cell_h + 2;
         let button_height = cell_h + 4;
@@ -240,7 +245,7 @@ impl SettingsDialog {
             width: inner_width,
             height: row_height,
         });
-        let done_width = (text_cells(DONE) + 4) * cell_w;
+        let done_width = (text_cells(&done()) + 4) * cell_w;
         SettingsLayout {
             window,
             title_bar,
@@ -271,7 +276,7 @@ impl SettingsDialog {
             font,
             layout.window,
             layout.title_bar,
-            TITLE,
+            &title(),
             cell_w,
         );
         for (&rect, row) in layout.rows.iter().zip(Row::ALL) {
@@ -280,7 +285,7 @@ impl SettingsDialog {
             fill(framebuffer, rect, ground);
             let text_y = rect.y + 2;
             let label_x = rect.x + 2 + LABEL_INDENT * cell_w;
-            draw_text(framebuffer, font, row.label(), label_x, text_y, ink);
+            draw_text(framebuffer, font, &row.label(), label_x, text_y, ink);
             match row {
                 Row::WordWrap | Row::LineNumbers | Row::Ligatures => {
                     let checked = match row {
@@ -319,7 +324,7 @@ impl SettingsDialog {
             framebuffer,
             font,
             layout.done,
-            DONE,
+            &done(),
             self.focus == Row::Done,
             cell_w,
             cell_h,

@@ -15,7 +15,7 @@ mod docs;
 mod sprites;
 mod text_field;
 
-use glaux_i18n::Translator;
+use glaux_i18n::{Arg, Translator};
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::{BitmapFont, FontMetrics};
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
@@ -45,6 +45,7 @@ use crate::cartridge::{CartridgeError, Language, LoadedCartridge, VideoAsset};
 use crate::cartridge_fs::FsError;
 use crate::rom::ICON_SIZE;
 use crate::sprite_import::SheetSource;
+use crate::ui_text;
 use code::{CodeEditor, CodeRequest};
 pub(super) use dialog::{Dialog, DialogLayout};
 use docs::{DocsBrowser, DocsRequest, Source};
@@ -252,13 +253,13 @@ impl Tab {
     }
 
     /// What the view will edit, shown while it has no editor.
-    fn purpose(self) -> &'static str {
+    fn purpose(self) -> String {
         match self {
-            Self::Code => "Edit the cartridge's Luau and Rhai scripts.",
-            Self::Sprites => "Draw object tiles and their palettes.",
-            Self::Map => "Lay out tiles into maps.",
-            Self::Sfx => "Shape sound effects for the PSG.",
-            Self::Music => "Arrange sound effects into songs.",
+            Self::Code => ui_text::get("workspace-edit-the-cartridge-s-luau-and-rhai-scripts"),
+            Self::Sprites => ui_text::get("workspace-draw-object-tiles-and-their-palettes"),
+            Self::Map => ui_text::get("workspace-lay-out-tiles-into-maps"),
+            Self::Sfx => ui_text::get("workspace-shape-sound-effects-for-the-psg"),
+            Self::Music => ui_text::get("workspace-arrange-sound-effects-into-songs"),
         }
     }
 
@@ -560,39 +561,50 @@ fn wrap(font: &BitmapFont, text: &str, columns: usize) -> Vec<String> {
 /// What to tell the user when saving an asset file failed.
 pub(super) fn write_advice(err: &CartridgeError) -> String {
     match err {
-        CartridgeError::AssetReadOnly(asset) => {
-            format!("{asset} is read-only. Make it writable, then save again.")
-        }
-        CartridgeError::AssetUnwritable(asset) => format!(
-            "Glaux could not write {asset}. Check the cartridge folder's permissions and free space, then save again."
+        CartridgeError::AssetReadOnly(asset) => ui_text::get_with(
+            "workspace-is-read-only-make-it-writable-then-save-again-2",
+            &[("path", Arg::Text(&asset.to_string()))],
         ),
-        CartridgeError::AssetUnreadable(asset) => format!(
-            "Glaux could not read {asset} to check it for outside changes. Check its permissions, then save again."
+        CartridgeError::AssetUnwritable(asset) => ui_text::get_with(
+            "workspace-glaux-could-not-write-check-the-cartridge-folder-s-permissions-an-2",
+            &[("path", Arg::Text(&asset.to_string()))],
         ),
-        CartridgeError::AssetNotAFile(asset) => {
-            format!("{asset} is not a regular file. Move it aside, then save again.")
-        }
-        other => other.to_string(),
+        CartridgeError::AssetUnreadable(asset) => ui_text::get_with(
+            "workspace-glaux-could-not-read-to-check-it-for-outside-changes-check-its-pe-2",
+            &[("path", Arg::Text(&asset.to_string()))],
+        ),
+        CartridgeError::AssetNotAFile(asset) => ui_text::get_with(
+            "workspace-is-not-a-regular-file-move-it-aside-then-save-again-2",
+            &[("path", Arg::Text(&asset.to_string()))],
+        ),
+        other => crate::system::ui_errors::cartridge(other),
     }
 }
 
 /// What to tell the user when saving the script at `path` failed.
 pub(super) fn source_write_advice(path: &SourcePath, err: &FsError) -> String {
     match err {
-        FsError::ReadOnly(_) => format!("{path} is read-only. Make it writable, then save again."),
-        FsError::NotAFile(_) => {
-            format!("{path} is not a regular file. Move it aside, then save again.")
-        }
-        FsError::Unreadable(_) => format!(
-            "Glaux could not read {path} to check it for outside changes. Check its permissions, then save again."
+        FsError::ReadOnly(_) => ui_text::get_with(
+            "workspace-is-read-only-make-it-writable-then-save-again-2",
+            &[("path", Arg::Text(&path.to_string()))],
         ),
-        FsError::NotFound(_) | FsError::NotADirectory(_) => {
-            format!("The folder holding {path} is gone. Recreate it, then save again.")
-        }
-        FsError::Unwritable(_) | FsError::AlreadyExists(_) => format!(
-            "Glaux could not write {path}. Check the cartridge folder's permissions and free space, then save again."
+        FsError::NotAFile(_) => ui_text::get_with(
+            "workspace-is-not-a-regular-file-move-it-aside-then-save-again-2",
+            &[("path", Arg::Text(&path.to_string()))],
         ),
-        FsError::Unavailable => "Cartridge storage is unavailable.".to_owned(),
+        FsError::Unreadable(_) => ui_text::get_with(
+            "workspace-glaux-could-not-read-to-check-it-for-outside-changes-check-its-pe-2",
+            &[("path", Arg::Text(&path.to_string()))],
+        ),
+        FsError::NotFound(_) | FsError::NotADirectory(_) => ui_text::get_with(
+            "workspace-save-missing-folder",
+            &[("path", Arg::Text(&path.to_string()))],
+        ),
+        FsError::Unwritable(_) | FsError::AlreadyExists(_) => ui_text::get_with(
+            "workspace-glaux-could-not-write-check-the-cartridge-folder-s-permissions-an-2",
+            &[("path", Arg::Text(&path.to_string()))],
+        ),
+        FsError::Unavailable => ui_text::get("workspace-cartridge-storage-is-unavailable"),
     }
 }
 
@@ -608,7 +620,12 @@ fn saved_line(written: &[SavedFile]) -> Option<String> {
 /// The line telling which of `names` a run of saves that stopped partway
 /// did write, if any.
 pub(super) fn saved_before_stopping(names: &[String]) -> Option<String> {
-    (!names.is_empty()).then(|| format!("Saved {} before stopping.", names.join(", ")))
+    (!names.is_empty()).then(|| {
+        ui_text::get_with(
+            "workspace-saved-before-stopping",
+            &[("value", Arg::Text(&(names.join(", ").to_string())))],
+        )
+    })
 }
 
 /// `names` as one phrase, as in `a.luau, b.luau and graphics`.
@@ -616,30 +633,44 @@ fn phrase(names: &[String]) -> String {
     match names {
         [] => String::new(),
         [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [rest @ .., last] => ui_text::get_with(
+            "workspace-and",
+            &[
+                ("value", Arg::Text(&(rest.join(", ").to_string()))),
+                ("last", Arg::Text(&last.to_string())),
+            ],
+        ),
     }
 }
 
-/// Asks whether to save the unsaved edits to `names` before `what` goes
-/// ahead, as in "runs load pong". Cancel is focused so a stray Enter
-/// loses nothing.
-pub(super) fn unsaved_dialog(names: &[String], what: &str) -> Dialog<Choice> {
-    let (have, them) = match names {
-        [_] => ("has", "it"),
-        _ => ("have", "them"),
+/// Asks about unsaved edits before the pending command or exit.
+/// Cancel is focused so a stray Enter loses nothing.
+pub(super) fn unsaved_dialog(
+    names: &[String],
+    pending: &super::unsaved::Pending,
+) -> Dialog<Choice> {
+    use super::unsaved::Pending;
+    let count = Arg::Number(names.len() as f64);
+    let instructions = match pending {
+        Pending::Command { action, .. } => ui_text::get_with(
+            "workspace-unsaved-command",
+            &[("count", count), ("action", Arg::Text(action))],
+        ),
+        Pending::Exit => ui_text::get_with("workspace-unsaved-exit", &[("count", count)]),
     };
     Dialog::new(
-        "UNSAVED CHANGES",
+        ui_text::get("workspace-unsaved-title"),
         vec![
-            format!("{} {have} unsaved changes.", phrase(names)),
-            format!(
-                "SAVE ALL saves {them}, then {what}. DISCARD throws {them} away and {what} anyway."
+            ui_text::get_with(
+                "workspace-unsaved-names",
+                &[("names", Arg::Text(&phrase(names))), ("count", count)],
             ),
+            instructions,
         ],
         vec![
-            ("SAVE ALL", Choice::Save),
-            ("DISCARD", Choice::Discard),
-            ("CANCEL", Choice::Cancel),
+            (&ui_text::get("workspace-save-all"), Choice::Save),
+            (&ui_text::get("workspace-discard"), Choice::Discard),
+            (&ui_text::get("workspace-cancel"), Choice::Cancel),
         ],
         2,
         Some(Choice::Cancel),
@@ -650,16 +681,18 @@ pub(super) fn unsaved_dialog(names: &[String], what: &str) -> Dialog<Choice> {
 /// closing its tab. Cancel is focused so a stray Enter loses nothing.
 fn close_dialog(path: &SourcePath) -> Dialog<Choice> {
     Dialog::new(
-        "UNSAVED CHANGES",
+        ui_text::get("workspace-unsaved-title"),
         vec![
-            format!("{path} has unsaved changes."),
-            "SAVE writes them to the file, then closes it. DISCARD closes it without saving."
-                .to_owned(),
+            ui_text::get_with(
+                "workspace-has-unsaved-changes",
+                &[("path", Arg::Text(&path.to_string()))],
+            ),
+            ui_text::get("workspace-close-unsaved-instructions"),
         ],
         vec![
-            ("SAVE", Choice::Save),
-            ("DISCARD", Choice::Discard),
-            ("CANCEL", Choice::Cancel),
+            (&ui_text::get("workspace-save"), Choice::Save),
+            (&ui_text::get("workspace-discard"), Choice::Discard),
+            (&ui_text::get("workspace-cancel"), Choice::Cancel),
         ],
         2,
         Some(Choice::Cancel),
@@ -678,23 +711,30 @@ fn delete_dialog(
     external: bool,
     seen: Option<Vec<u8>>,
 ) -> (Dialog<Choice>, Target) {
-    let mut lines = vec![format!("Delete {path} from the cartridge?")];
+    let mut lines = vec![ui_text::get_with(
+        "workspace-delete-from-the-cartridge",
+        &[("path", Arg::Text(&path.to_string()))],
+    )];
     match &seen {
-        None => lines.push(format!(
-            "{path} was already deleted outside Glaux. DELETE only closes its tab."
+        None => lines.push(ui_text::get_with(
+            "workspace-delete-already-missing",
+            &[("path", Arg::Text(&path.to_string()))],
         )),
-        Some(_) => lines.push("The file cannot be recovered.".to_owned()),
+        Some(_) => lines.push(ui_text::get("workspace-the-file-cannot-be-recovered")),
     }
     if external {
-        lines.push("It changed outside Glaux; those changes will be lost.".to_owned());
+        lines.push(ui_text::get("workspace-delete-external-warning"));
     }
     if modified {
-        lines.push("Its unsaved changes will be lost.".to_owned());
+        lines.push(ui_text::get("workspace-delete-unsaved-warning"));
     }
     let dialog = Dialog::new(
-        "DELETE SCRIPT",
+        ui_text::get("workspace-delete-script"),
         lines,
-        vec![("DELETE", Choice::Delete), ("CANCEL", Choice::Cancel)],
+        vec![
+            (&ui_text::get("workspace-delete"), Choice::Delete),
+            (&ui_text::get("workspace-cancel"), Choice::Cancel),
+        ],
         1,
         Some(Choice::Cancel),
     )
@@ -706,16 +746,19 @@ fn delete_dialog(
 /// failed.
 fn edit_failure(path: &SourcePath, err: &SourceEditError) -> String {
     match err {
-        SourceEditError::Fs(FsError::ReadOnly(_)) => {
-            format!("{path} is read-only. Make it writable, then try again.")
-        }
-        SourceEditError::Fs(FsError::AlreadyExists(existing)) => {
-            format!("{} already exists.", existing.trim_start_matches('/'))
-        }
-        SourceEditError::Fs(FsError::Unwritable(_)) => format!(
-            "Glaux could not change {path}. Check the cartridge folder's permissions, and that it is a regular file."
+        SourceEditError::Fs(FsError::ReadOnly(_)) => ui_text::get_with(
+            "workspace-is-read-only-make-it-writable-then-try-again",
+            &[("path", Arg::Text(&path.to_string()))],
         ),
-        err => err.to_string(),
+        SourceEditError::Fs(FsError::AlreadyExists(existing)) => ui_text::get_with(
+            "workspace-already-exists",
+            &[("value", Arg::Text(existing.trim_start_matches('/')))],
+        ),
+        SourceEditError::Fs(FsError::Unwritable(_)) => ui_text::get_with(
+            "workspace-edit-write-failed",
+            &[("path", Arg::Text(&path.to_string()))],
+        ),
+        err => crate::system::ui_errors::code::source_edit(err),
     }
 }
 
@@ -731,24 +774,30 @@ pub(super) fn script_conflict_dialog(
     let SourceConflict { path, kind, disk } = conflict;
     let (what, replaces) = match kind {
         SourceConflictKind::Modified => (
-            format!("{path} changed outside Glaux."),
-            "OVERWRITE DISK replaces the file with your edits.",
+            ui_text::get_with(
+                "workspace-changed-outside-glaux",
+                &[("path", Arg::Text(&path.to_string()))],
+            ),
+            &ui_text::get("workspace-overwrite-disk-replaces-the-file-with-your-edits"),
         ),
         SourceConflictKind::Deleted => (
-            format!("{path} was deleted outside Glaux."),
-            "OVERWRITE DISK writes your edits to it again.",
+            ui_text::get_with(
+                "workspace-was-deleted-outside-glaux",
+                &[("path", Arg::Text(&path.to_string()))],
+            ),
+            &ui_text::get("workspace-overwrite-disk-writes-your-edits-to-it-again"),
         ),
     };
     let mut lines = vec![what];
     lines.extend(saved);
-    lines.push("Your unsaved edits are still in memory.".to_owned());
+    lines.push(ui_text::get("workspace-unsaved-edits-kept"));
     lines.push(replaces.to_owned());
     let dialog = Dialog::new(
-        "FILE CONFLICT",
+        ui_text::get("workspace-file-conflict"),
         lines,
         vec![
-            ("OVERWRITE DISK", Choice::Overwrite),
-            ("CANCEL", Choice::Cancel),
+            (&ui_text::get("workspace-overwrite-disk"), Choice::Overwrite),
+            (&ui_text::get("workspace-cancel"), Choice::Cancel),
         ],
         1,
         Some(Choice::Cancel),
@@ -769,28 +818,34 @@ pub(super) fn asset_conflict_dialog(
         .map(|conflict| {
             let asset = conflict.asset();
             match conflict.kind {
-                ConflictKind::Modified => format!("{asset} changed outside Glaux."),
-                ConflictKind::Deleted => format!("{asset} was deleted outside Glaux."),
-                ConflictKind::Created => format!("A new {asset} appeared outside Glaux."),
+                ConflictKind::Modified => ui_text::get_with(
+                    "workspace-changed-outside-glaux",
+                    &[("path", Arg::Text(&asset.to_string()))],
+                ),
+                ConflictKind::Deleted => ui_text::get_with(
+                    "workspace-was-deleted-outside-glaux",
+                    &[("path", Arg::Text(&asset.to_string()))],
+                ),
+                ConflictKind::Created => ui_text::get_with(
+                    "workspace-a-new-appeared-outside-glaux",
+                    &[("asset", Arg::Text(&asset.to_string()))],
+                ),
             }
         })
         .collect();
     lines.extend(saved);
-    let (them, files) = match conflicts.as_slice() {
-        [_] => ("it", "the file"),
-        _ => ("them", "these files"),
-    };
-    lines.push("Your unsaved edits are still in memory.".to_owned());
-    lines.push(format!(
-        "OVERWRITE DISK replaces {files} with your edits. DISCARD & RELOAD throws away your unsaved edits to {them} and the undo steps involving {them}."
+    lines.push(ui_text::get("workspace-unsaved-edits-kept"));
+    lines.push(ui_text::get_with(
+        "workspace-asset-conflict-instructions",
+        &[("count", Arg::Number(conflicts.len() as f64))],
     ));
     let dialog = Dialog::new(
-        "FILE CONFLICT",
+        ui_text::get("workspace-file-conflict"),
         lines,
         vec![
-            ("OVERWRITE DISK", Choice::Overwrite),
-            ("DISCARD & RELOAD", Choice::Reload),
-            ("CANCEL", Choice::Cancel),
+            (&ui_text::get("workspace-overwrite-disk"), Choice::Overwrite),
+            (&ui_text::get("workspace-discard-reload"), Choice::Reload),
+            (&ui_text::get("workspace-cancel"), Choice::Cancel),
         ],
         2,
         Some(Choice::Cancel),
@@ -807,7 +862,7 @@ pub(super) fn message_dialog(title: &str, lines: Vec<String>) -> Dialog<Choice> 
     Dialog::new(
         title,
         lines,
-        vec![("OK", Choice::Dismiss)],
+        vec![(&ui_text::get("boot-ok"), Choice::Dismiss)],
         0,
         Some(Choice::Dismiss),
     )
@@ -877,10 +932,11 @@ impl WorkspaceVideo {
     pub fn source<'a>(
         &'a self,
         document: Option<&'a SpriteDocument>,
-    ) -> Result<SpriteSource<'a>, &'a str> {
-        let video = self.0.as_deref().map_err(String::as_str)?;
+    ) -> Result<SpriteSource<'a>, String> {
+        let video = self.0.as_deref().map_err(Clone::clone)?;
         // The system only prepares a preview from a document it keeps.
-        let document = document.ok_or("The cartridge's sprites are not loaded.")?;
+        let document = document
+            .ok_or_else(|| ui_text::get("workspace-the-cartridge-s-sprites-are-not-loaded"))?;
         Ok(SpriteSource {
             obj: document.obj(),
             master: &document.video().palette,
@@ -931,7 +987,7 @@ impl Workspace {
             layout,
             font: font.clone(),
             tab: Tab::default(),
-            tab_labels: TabLabels::new(&crate::ui_text::translator()),
+            tab_labels: TabLabels::new(&ui_text::translator()),
             code: CodeEditor::new(
                 layout.code_metrics(),
                 font.clone(),
@@ -964,7 +1020,7 @@ impl Workspace {
                 master: video.palette.clone(),
                 obj: video.obj.palettes().clone(),
             }))),
-            Err(err) => WorkspaceVideo::unavailable(err.to_string()),
+            Err(err) => WorkspaceVideo::unavailable(super::ui_errors::video::preview_palette(&err)),
         }
     }
 
@@ -1139,7 +1195,10 @@ impl Workspace {
                 None
             }
             DocsRequest::OpenExternal(url) => {
-                self.notify(format!("Opening {}", url.as_str()), PALE);
+                self.notify(
+                    ui_text::get_with("workspace-opening", &[("value", Arg::Text(url.as_str()))]),
+                    PALE,
+                );
                 Some(WorkspaceRequest::OpenExternal(url))
             }
             DocsRequest::Copy(text) => Some(WorkspaceRequest::Copy(text)),
@@ -1272,7 +1331,13 @@ impl Workspace {
                 tracing::info!(file = %path, "script created");
                 self.code.refresh_metrics(code);
                 self.code.reveal_active(code);
-                self.notify(format!("Created {path}"), PALE);
+                self.notify(
+                    ui_text::get_with(
+                        "workspace-created",
+                        &[("path", Arg::Text(&path.to_string()))],
+                    ),
+                    PALE,
+                );
             }
             Err(message) => {
                 tracing::debug!(file = %path, error = %message, "script not created");
@@ -1307,10 +1372,13 @@ impl Workspace {
             Err(err) => {
                 tracing::debug!(file = %path, %err, "script not readable for deletion");
                 self.open_message(
-                    "DELETE FAILED",
+                    &ui_text::get("workspace-delete-failed"),
                     vec![
-                        format!("Glaux could not read {path} to check it for outside changes."),
-                        "Nothing was deleted.".to_owned(),
+                        ui_text::get_with(
+                            "workspace-delete-read-failed",
+                            &[("path", Arg::Text(&path.to_string()))],
+                        ),
+                        ui_text::get("workspace-nothing-was-deleted"),
                     ],
                 );
                 return;
@@ -1334,13 +1402,22 @@ impl Workspace {
                 tracing::info!(file = %path, "script deleted");
                 self.code.refresh_metrics(code);
                 self.script_closed(code);
-                self.notify(format!("Deleted {path}"), PALE);
+                self.notify(
+                    ui_text::get_with(
+                        "workspace-deleted",
+                        &[("path", Arg::Text(&path.to_string()))],
+                    ),
+                    PALE,
+                );
             }
             Err(err) => {
                 tracing::debug!(file = %path, %err, "script not deleted");
                 self.open_message(
-                    "DELETE FAILED",
-                    vec![edit_failure(path, &err), "Nothing was deleted.".to_owned()],
+                    &ui_text::get("workspace-delete-failed"),
+                    vec![
+                        edit_failure(path, &err),
+                        ui_text::get("workspace-nothing-was-deleted"),
+                    ],
                 );
             }
         }
@@ -1357,14 +1434,20 @@ impl Workspace {
     ) {
         let result = result.map_err(|err| match &err {
             MoveScriptError::File(SourceEditError::Fs(fs)) => edit_failure(to, &fs.clone().into()),
-            _ => err.to_string(),
+            _ => crate::system::ui_errors::code::move_script(&err),
         });
         match &result {
             Ok(()) => {
                 tracing::info!(file = %to, "script renamed");
                 self.code.refresh_metrics(code);
                 self.code.reveal_active(code);
-                self.notify(format!("Renamed to {to}"), PALE);
+                self.notify(
+                    ui_text::get_with(
+                        "workspace-renamed-to",
+                        &[("to", Arg::Text(&to.to_string()))],
+                    ),
+                    PALE,
+                );
             }
             Err(message) => {
                 tracing::debug!(file = %to, error = %message, "script not renamed");
@@ -1409,7 +1492,19 @@ impl Workspace {
             }
             Err(err) => {
                 tracing::debug!(file = %path, error = %err, "code document not opened");
-                self.notify(format!("Cannot open {path}: {err}"), ERROR);
+                self.notify(
+                    ui_text::get_with(
+                        "workspace-cannot-open",
+                        &[
+                            ("path", Arg::Text(&path.to_string())),
+                            (
+                                "err",
+                                Arg::Text(&crate::system::ui_errors::code::document(&err)),
+                            ),
+                        ],
+                    ),
+                    ERROR,
+                );
             }
         }
     }
@@ -1425,7 +1520,10 @@ impl Workspace {
             }
             Err(message) => {
                 tracing::debug!(error = %message, "entry script not opened");
-                self.notify("Cannot open the entry script", ERROR);
+                self.notify(
+                    ui_text::get("workspace-cannot-open-the-entry-script"),
+                    ERROR,
+                );
                 self.code.set_entry_error(Some(message));
             }
         }
@@ -1455,20 +1553,37 @@ impl Workspace {
     pub fn saved(&mut self, result: Result<Saved, SaveError>) {
         match result {
             Ok(Saved::Written(files)) => match files.as_slice() {
-                [file] => self.notify(format!("Saved {} ({} bytes)", file.asset, file.bytes), OK),
+                [file] => self.notify(
+                    ui_text::get_with(
+                        "workspace-saved-bytes",
+                        &[
+                            ("value", Arg::Text(&file.asset.to_string())),
+                            ("value-2", Arg::Text(&file.bytes.to_string())),
+                        ],
+                    ),
+                    OK,
+                ),
                 files => self.notify(
-                    format!("Saved {}", file_list(files.iter().map(|file| file.asset))),
+                    ui_text::get_with(
+                        "workspace-saved",
+                        &[(
+                            "value",
+                            Arg::Text(&(file_list(files.iter().map(|file| file.asset)))),
+                        )],
+                    ),
                     OK,
                 ),
             },
-            Ok(Saved::NothingToSave) => self.notify("Nothing to save", PALE),
+            Ok(Saved::NothingToSave) => {
+                self.notify(ui_text::get("workspace-nothing-to-save"), PALE)
+            }
             Err(SaveError { written, cause }) => {
                 let saved = saved_line(&written);
                 match cause {
                     SaveFailure::Conflict(conflicts) => self.open_conflict(conflicts, saved),
                     SaveFailure::Cartridge(err) => {
                         let lines = saved.into_iter().chain([write_advice(&err)]).collect();
-                        self.open_error("SAVE FAILED", lines);
+                        self.open_error(&ui_text::get("workspace-save-failed"), lines);
                     }
                 }
             }
@@ -1481,14 +1596,30 @@ impl Workspace {
     pub fn script_saved(&mut self, id: DocumentId, result: Result<CodeSaved, CodeSaveError>) {
         match result {
             Ok(CodeSaved::Written { path, bytes }) => {
-                self.notify(format!("Saved {path} ({bytes} bytes)"), OK);
+                self.notify(
+                    ui_text::get_with(
+                        "workspace-saved-bytes",
+                        &[
+                            ("value", Arg::Text(&path.to_string())),
+                            ("value-2", Arg::Text(&bytes.to_string())),
+                        ],
+                    ),
+                    OK,
+                );
             }
-            Ok(CodeSaved::NothingToSave(_)) => self.notify("Nothing to save", PALE),
-            Err(CodeSaveError::NotOpen) => self.notify("That file is no longer open", PALE),
+            Ok(CodeSaved::NothingToSave(_)) => {
+                self.notify(ui_text::get("workspace-nothing-to-save"), PALE)
+            }
+            Err(CodeSaveError::NotOpen) => {
+                self.notify(ui_text::get("workspace-that-file-is-no-longer-open"), PALE)
+            }
             Err(CodeSaveError::Conflict(conflict)) => self.open_script_conflict(id, conflict),
             Err(CodeSaveError::Failed { path, error }) => {
                 tracing::debug!(file = %path, %error, "script not saved");
-                self.open_error("SAVE FAILED", vec![source_write_advice(&path, &error)]);
+                self.open_error(
+                    &ui_text::get("workspace-save-failed"),
+                    vec![source_write_advice(&path, &error)],
+                );
             }
         }
     }
@@ -1509,10 +1640,15 @@ impl Workspace {
     pub fn reloaded(&mut self, assets: &[VideoAsset], result: Result<(), String>) {
         match result {
             Ok(()) => self.notify(
-                format!("Reloaded {} from disk", file_list(assets.iter().copied())),
+                ui_text::get_with(
+                    "workspace-reloaded-from-disk",
+                    &[("value", Arg::Text(&(file_list(assets.iter().copied()))))],
+                ),
                 OK,
             ),
-            Err(message) => self.open_error("RELOAD FAILED", vec![message]),
+            Err(message) => {
+                self.open_error(&ui_text::get("workspace-reload-failed"), vec![message])
+            }
         }
     }
 
@@ -1526,7 +1662,7 @@ impl Workspace {
     /// it could not be shown.
     pub fn file_dialog_closed(&mut self) {
         self.sprites.stop_awaiting_file();
-        self.notify("No file chosen", PALE);
+        self.notify(ui_text::get("workspace-no-file-chosen"), PALE);
     }
 
     /// The host could not open its file dialog, for the reason in
@@ -1556,8 +1692,11 @@ impl Workspace {
                 self.system_palette.clone(),
             )),
             Err(err) => self.open_message(
-                "CANNOT IMPORT",
-                vec![format!("{err:#}"), "Nothing was changed.".to_owned()],
+                &ui_text::get("workspace-cannot-import"),
+                vec![
+                    format!("{err:#}"),
+                    ui_text::get("workspace-nothing-was-changed"),
+                ],
             ),
         }
     }
@@ -1566,13 +1705,19 @@ impl Workspace {
     pub fn reopened(&mut self, reopened: Result<Reopened, String>) {
         let reopened = match reopened {
             Ok(reopened) => reopened,
-            Err(message) => return self.open_error("CANNOT READ FILES", vec![message]),
+            Err(message) => {
+                return self
+                    .open_error(&ui_text::get("workspace-cannot-read-files"), vec![message]);
+            }
         };
         if reopened.history_trimmed {
             self.notify(
-                format!(
-                    "{} changed on disk: reloaded, undo steps dropped",
-                    file_list(reopened.reloaded.iter().copied())
+                ui_text::get_with(
+                    "workspace-changed-on-disk-reloaded-undo-steps-dropped",
+                    &[(
+                        "value",
+                        Arg::Text(&(file_list(reopened.reloaded.iter().copied()))),
+                    )],
                 ),
                 PALE,
             );
@@ -1588,7 +1733,7 @@ impl Workspace {
     }
 
     fn open_error(&mut self, title: &str, mut lines: Vec<String>) {
-        lines.push("Your edits are still in memory.".to_owned());
+        lines.push(ui_text::get("workspace-your-edits-are-still-in-memory"));
         self.open_message(title, lines);
     }
 
@@ -1810,11 +1955,11 @@ impl Workspace {
         y += 3 * cell_h;
         for (text, color) in [
             (self.tab.purpose(), TEXT),
-            ("Not available yet.", DIM),
-            ("", DIM),
-            ("Esc shell   Ctrl+Tab switch tab", DIM),
+            (ui_text::get("workspace-not-available-yet"), DIM),
+            (String::new(), DIM),
+            (ui_text::get("workspace-esc-shell-ctrl-tab-switch-tab"), DIM),
         ] {
-            draw_text(framebuffer, font, text, x, y, color);
+            draw_text(framebuffer, font, &text, x, y, color);
             y += cell_h;
         }
     }

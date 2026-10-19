@@ -17,6 +17,7 @@ use crate::system::code_search::{SearchOptions, find_all};
 use crate::system::workspace::text_field::{FieldColors, FieldInput, TextField};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::ui_text;
 
 /// Most characters a query or replacement holds.
 const MAX_QUERY: usize = 128;
@@ -365,7 +366,7 @@ impl FindBar {
         button(
             framebuffer,
             layout.whole_word,
-            "W",
+            &ui_text::get("code-find-whole-word-button"),
             self.options.whole_word,
             focused(FindFocus::WholeWord),
         );
@@ -385,14 +386,14 @@ impl FindBar {
             button(
                 framebuffer,
                 layout.replace_one,
-                "Replace",
+                &ui_text::get("code-replace-2"),
                 false,
                 focused(FindFocus::ReplaceOne),
             );
             button(
                 framebuffer,
                 layout.replace_all,
-                "All",
+                &ui_text::get("code-all"),
                 false,
                 focused(FindFocus::ReplaceAll),
             );

@@ -1,6 +1,7 @@
 //! The SELECT PALETTE dialog chooses the object palette bank one tile is
 //! drawn with. It shows every bank's colors and the tile drawn through each.
 
+use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -16,10 +17,17 @@ use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
     BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,
 };
+use crate::ui_text;
 
-const TITLE: &str = "SELECT PALETTE";
-const CANCEL: &str = "CANCEL";
-const APPLY: &str = "APPLY";
+fn title() -> String {
+    ui_text::get("sprites-select-palette")
+}
+fn cancel() -> String {
+    ui_text::get("workspace-cancel")
+}
+fn apply() -> String {
+    ui_text::get("sprites-apply")
+}
 /// Marks the bank the tile uses now.
 const CURRENT_TAG: &str = "current";
 /// Marks the pending row.
@@ -164,19 +172,28 @@ impl PalettePicker {
             font,
             layout.window,
             layout.title_bar,
-            TITLE,
+            &title(),
             cell_w,
         );
 
         let current = source.obj.attributes().bank(self.tile);
         text(
             framebuffer,
-            &format!("Tile {:04}", self.tile),
+            &ui_text::get_with(
+                "sprites-tile",
+                &[("tile", Arg::Text(&format!("{:04}", self.tile)))],
+            ),
             layout.text_x,
             layout.header_y,
             INK,
         );
-        let current_text = format!("Current: {}", bank_name(current, layout.advanced));
+        let current_text = ui_text::get_with(
+            "sprites-current",
+            &[(
+                "value",
+                Arg::Text(&(bank_name(current, layout.advanced).to_string())),
+            )],
+        );
         let current_x = layout.text_right - cells(&current_text) * cell_w;
         text(framebuffer, &current_text, current_x, layout.header_y, INK);
 
@@ -239,12 +256,20 @@ impl PalettePicker {
             framebuffer,
             font,
             layout.cancel,
-            CANCEL,
+            &cancel(),
             false,
             cell_w,
             cell_h,
         );
-        draw_button(framebuffer, font, layout.apply, APPLY, true, cell_w, cell_h);
+        draw_button(
+            framebuffer,
+            font,
+            layout.apply,
+            &apply(),
+            true,
+            cell_w,
+            cell_h,
+        );
     }
 }
 
@@ -292,7 +317,7 @@ impl PickerLayout {
             + ROW_GAP
             + cells(CURRENT_TAG) * cell_w
             + ROW_PAD;
-        let button_width = (cells(CANCEL) + 4) * cell_w;
+        let button_width = (cells(&cancel()) + 4) * cell_w;
         let button_height = cell_h + 4;
 
         let title_height = cell_h + 2;

@@ -5,6 +5,7 @@
 
 pub mod hsv;
 
+use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -23,16 +24,27 @@ use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
     BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window_with_detail, fill, text_cells as cells,
 };
+use crate::ui_text;
 use hsv::{HUE_STEPS, Hsv, format_hex, parse_hex};
 
-const TITLE: &str = "EDIT COLOR";
-const CANCEL: &str = "CANCEL";
+fn title() -> String {
+    ui_text::get("sprites-edit-color")
+}
+fn cancel() -> String {
+    ui_text::get("workspace-cancel")
+}
 /// The confirm button while only the edited color uses its master.
-const APPLY: &str = "APPLY";
+fn apply() -> String {
+    ui_text::get("sprites-apply")
+}
 /// The confirm button while other palette colors share the master and
 /// change with it.
-const APPLY_TO_ALL: &str = "APPLY TO ALL";
-const HUE_LABEL: &str = "HUE";
+fn apply_to_all() -> String {
+    ui_text::get("sprites-apply-to-all")
+}
+fn hue_label() -> String {
+    ui_text::get("sprites-hue")
+}
 const HEX_LABEL: &str = "HEX";
 /// Columns and rows of the saturation/value field's color cells.
 const SV_COLUMNS: usize = 8;
@@ -349,11 +361,11 @@ impl ColorEditor {
     }
 
     /// The confirm button's label: it says when other colors change too.
-    pub fn apply_label(&self) -> &'static str {
+    pub fn apply_label(&self) -> String {
         if self.uses.is_shared() && self.applied_scope() == ColorScope::All {
-            APPLY_TO_ALL
+            apply_to_all()
         } else {
-            APPLY
+            apply()
         }
     }
 
@@ -629,7 +641,7 @@ impl ColorEditor {
             font,
             layout.window,
             layout.title_bar,
-            TITLE,
+            &title(),
             &heading,
             cell_w,
         );
@@ -691,8 +703,8 @@ impl ColorEditor {
         let old_slot = source.preview.slots()[usize::from(self.uses.master)];
         fill(framebuffer, layout.swatches, INK);
         for (rect, slot, color, label) in [
-            (layout.old, old_slot, self.old, "OLD"),
-            (layout.new, NEW_SLOT, self.rgb, "NEW"),
+            (layout.old, old_slot, self.old, &ui_text::get("sprites-old")),
+            (layout.new, NEW_SLOT, self.rgb, &ui_text::get("sprites-new")),
         ] {
             fill(framebuffer, rect, slot);
             let x = rect.x + (rect.width - cells(label) * cell_w) / 2;
@@ -703,7 +715,7 @@ impl ColorEditor {
         // The hue strip and its marker.
         text(
             framebuffer,
-            HUE_LABEL,
+            &hue_label(),
             layout.text_x,
             layout.hue_label_y,
             INK,
@@ -825,7 +837,7 @@ impl ColorEditor {
             framebuffer,
             font,
             layout.cancel,
-            CANCEL,
+            &cancel(),
             self.focus == Control::Cancel,
             cell_w,
             cell_h,
@@ -834,7 +846,7 @@ impl ColorEditor {
             framebuffer,
             font,
             layout.apply,
-            self.apply_label(),
+            &self.apply_label(),
             self.focus != Control::Cancel,
             cell_w,
             cell_h,
@@ -863,29 +875,36 @@ fn heading(target: ColorTarget, uses: &ColorUses, advanced: bool) -> String {
     let ColorTarget { bank, local } = target;
     if advanced {
         let master = uses.master;
-        format!(
-            "OBP{} L{local:X}  Master ${master:02X} ({master})",
-            bank.get()
+        ui_text::get_with(
+            "sprites-color-heading-advanced",
+            &[
+                ("bank", Arg::Text(&(bank.get().to_string()))),
+                ("local", Arg::Text(&format!("{:X}", local))),
+                ("master-hex", Arg::Text(&format!("{:02X}", master))),
+                ("master", Arg::Text(&master.to_string())),
+            ],
         )
     } else {
-        format!("Palette {}, color {local:X}", bank.get())
+        ui_text::get_with(
+            "sprites-color-heading",
+            &[
+                ("bank", Arg::Text(&(bank.get().to_string()))),
+                ("local", Arg::Text(&format!("{:X}", local))),
+            ],
+        )
     }
 }
 
 /// The name of the tile the preview shows.
 fn tile_label(tile: usize) -> String {
-    format!("Tile {tile:04}")
+    ui_text::get_with(
+        "sprites-tile",
+        &[("tile", Arg::Text(&format!("{:04}", tile)))],
+    )
 }
 
-/// `count` followed by `one` or `many`.
-fn counted(count: usize, one: &str, many: &str) -> String {
-    format!("{count} {}", if count == 1 { one } else { many })
-}
-
-/// What applying would change beyond the edited color, as far as the
-/// document can tell, and what it cannot tell. Each count keeps its own
-/// unit: other palettes (banks), palette colors (bank entries) and tiles
-/// are never mixed. Empty lines stay blank.
+/// What applying would change beyond the edited color and what the
+/// document cannot tell about code that draws colors directly.
 pub fn impact_lines(
     target: ColorTarget,
     uses: &ColorUses,
@@ -894,73 +913,68 @@ pub fn impact_lines(
     let master = uses.master;
     let entries = uses.entries.len();
     let banks = uses.other_banks(target.bank);
-    let tiles = other_tiles(uses.tiles);
     let scope = if uses.is_shared() || master < CODE_COLORS {
         code_note(master, advanced)
     } else {
         String::new()
     };
-
     if !uses.is_shared() {
-        // The count only sees stored banks. Code may draw more tiles with
-        // this palette, so no count is shown as "only this tile".
-        let first = if uses.tiles == 0 {
-            "Changes it in every tile that uses it.".to_owned()
-        } else {
-            format!("Also shows in {tiles}.")
-        };
+        let first = ui_text::get_with(
+            "sprites-color-unshared-tiles",
+            &[("tiles", Arg::Number(uses.tiles as f64))],
+        );
         let second = if advanced {
-            format!("Master ${master:02X} ({master}) is not shared.")
+            ui_text::get_with(
+                "sprites-color-unshared-master",
+                &[
+                    ("hex", Arg::Text(&format!("{master:02X}"))),
+                    ("master", Arg::Number(master.into())),
+                ],
+            )
         } else {
             String::new()
         };
         return [first, second, scope];
     }
-
     if advanced {
-        let in_banks = if banks.is_empty() {
-            "this bank".to_owned()
-        } else {
-            counted(banks.len(), "bank", "banks")
-        };
-        let first = format!(
-            "! Master ${master:02X}: {}, {in_banks}",
-            counted(entries, "more entry", "more entries")
+        let first = ui_text::get_with(
+            "sprites-color-shared-master",
+            &[
+                ("hex", Arg::Text(&format!("{master:02X}"))),
+                ("entries", Arg::Number(entries as f64)),
+                ("banks", Arg::Number(banks.len() as f64)),
+            ],
         );
         let list: Vec<String> = uses
             .entries
             .iter()
             .map(|entry| format!("OBP{} L{:X}", entry.bank.get(), entry.local))
             .collect();
-        let second = format!("  {}", list.join(", "));
-        return [first, second, advanced_tiles_note(uses)];
+        return [
+            first,
+            format!("  {}", list.join(", ")),
+            advanced_tiles_note(uses),
+        ];
     }
-
-    let colors = counted(entries, "palette color", "palette colors");
-    let (first, second) = if banks.is_empty() {
-        (
-            format!(
-                "! Shared with {} of",
-                counted(entries, "other color", "other colors")
-            ),
-            format!("  this palette; {tiles}."),
-        )
-    } else {
-        (
-            format!(
-                "! Shared: also in {}",
-                counted(banks.len(), "other palette", "other palettes")
-            ),
-            format!("  ({colors}), {tiles}."),
-        )
-    };
+    let first = ui_text::get_with(
+        "sprites-color-shared-palettes",
+        &[
+            ("entries", Arg::Number(entries as f64)),
+            ("banks", Arg::Number(banks.len() as f64)),
+        ],
+    );
+    let second = ui_text::get_with(
+        "sprites-color-shared-tiles",
+        &[
+            ("entries", Arg::Number(entries as f64)),
+            ("banks", Arg::Number(banks.len() as f64)),
+            ("tiles", Arg::Number(uses.tiles as f64)),
+        ],
+    );
     [first, second, scope]
 }
 
-/// What the scope rows say, the first for [`ColorScope::All`] and the
-/// second for [`ColorScope::Palette`], and what the chosen `scope` means
-/// beyond them, given `spare`, where [`ColorScope::Palette`] would put the
-/// color.
+/// The two application scopes and the effect of the chosen scope on code.
 pub fn scope_lines(
     target: ColorTarget,
     uses: &ColorUses,
@@ -971,80 +985,91 @@ pub fn scope_lines(
     let master = uses.master;
     let bank = target.bank.get();
     let all = if advanced {
-        format!(
-            "All: master ${master:02X}, {}",
-            counted(uses.entries.len(), "more entry", "more entries")
+        ui_text::get_with(
+            "sprites-color-scope-all-master",
+            &[
+                ("hex", Arg::Text(&format!("{master:02X}"))),
+                ("entries", Arg::Number(uses.entries.len() as f64)),
+            ],
         )
     } else {
-        format!(
-            "All {} palettes, {}",
-            uses.other_banks(target.bank).len() + 1,
-            other_tiles(uses.tiles)
+        ui_text::get_with(
+            "sprites-color-scope-all-palettes",
+            &[
+                (
+                    "banks",
+                    Arg::Number((uses.other_banks(target.bank).len() + 1) as f64),
+                ),
+                ("tiles", Arg::Number(uses.tiles as f64)),
+            ],
         )
     };
     let index = spare.master();
     let only = if advanced {
-        format!("OBP{bank} only: master ${index:02X} ({index})")
+        ui_text::get_with(
+            "sprites-color-scope-only-master",
+            &[
+                ("bank", Arg::Number(bank.into())),
+                ("hex", Arg::Text(&format!("{index:02X}"))),
+                ("index", Arg::Number(index.into())),
+            ],
+        )
     } else {
-        format!("Only Palette {bank}, {}", other_tiles(uses.palette_tiles))
+        ui_text::get_with(
+            "sprites-color-scope-only-palette",
+            &[
+                ("bank", Arg::Number(bank.into())),
+                ("tiles", Arg::Number(uses.palette_tiles as f64)),
+            ],
+        )
     };
     // A spare no palette maps may still be drawn by number from code.
     let consequence = match (scope, spare, advanced) {
         (ColorScope::All, _, false) => code_note(master, false),
         (ColorScope::All, _, true) => advanced_tiles_note(uses),
         (ColorScope::Palette, Spare::Reused(_), false) => {
-            "Other palettes keep the old color.".to_owned()
+            ui_text::get("sprites-color-other-palettes-unchanged")
         }
-        (ColorScope::Palette, Spare::Reused(_), true) => {
-            format!("${index:02X} already has this color.")
-        }
+        (ColorScope::Palette, Spare::Reused(_), true) => ui_text::get_with(
+            "sprites-color-already-matches",
+            &[("hex", Arg::Text(&format!("{index:02X}")))],
+        ),
         (ColorScope::Palette, Spare::Unmapped(_), false) => {
-            "Code using that color number changes.".to_owned()
+            ui_text::get("sprites-color-code-number-changes")
         }
-        (ColorScope::Palette, Spare::Unmapped(_), true) => {
-            format!("Code drawing {index} changes too.")
-        }
+        (ColorScope::Palette, Spare::Unmapped(_), true) => ui_text::get_with(
+            "sprites-color-code-index-changes",
+            &[("index", Arg::Number(index.into()))],
+        ),
     };
     [all, only, consequence]
 }
 
-/// `count` other tiles, in words.
-fn other_tiles(count: usize) -> String {
-    match count {
-        0 => "no other tiles".to_owned(),
-        n => counted(n, "other tile", "other tiles"),
-    }
-}
-
-/// What changing `master` itself means beyond the document. Code may draw
-/// any master index directly, and every frame starts cleared to master 0.
-/// The document sees neither.
+/// Code may draw any master index directly, and each frame starts at 0.
 fn code_note(master: u8, advanced: bool) -> String {
     match (advanced, master) {
-        (false, 0) => "Game background; code may use it too.".to_owned(),
-        (false, _) => "Game code may use it too.".to_owned(),
-        (true, 0) => "Background and code using 0 change too.".to_owned(),
-        (true, _) => format!("Code drawing color {master} changes too."),
+        (false, 0) => ui_text::get("sprites-color-background-code"),
+        (false, _) => ui_text::get("sprites-color-game-code"),
+        (true, 0) => ui_text::get("sprites-color-background-code-changes"),
+        (true, _) => ui_text::get_with(
+            "sprites-color-code-master-changes",
+            &[("master", Arg::Number(master.into()))],
+        ),
     }
 }
 
-/// Advanced mode's note on the other tiles and the code a shared master
-/// reaches.
+/// The other tiles and code reached by a shared master color.
 fn advanced_tiles_note(uses: &ColorUses) -> String {
-    let tiles = other_tiles(uses.tiles);
-    match (uses.tiles, uses.master) {
-        (0, master) => code_note(master, true),
-        (_, 0) => format!("{}; code, background too.", capitalized(&tiles)),
-        (_, master) => format!("{}; code using {master} too.", capitalized(&tiles)),
+    if uses.tiles == 0 {
+        return code_note(uses.master, true);
     }
-}
-
-fn capitalized(text: &str) -> String {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .map(|c| c.to_ascii_uppercase().to_string() + chars.as_str())
-        .unwrap_or_default()
+    ui_text::get_with(
+        "sprites-color-tiles-code",
+        &[
+            ("tiles", Arg::Number(uses.tiles as f64)),
+            ("master", Arg::Number(uses.master.into())),
+        ],
+    )
 }
 
 /// `line` cut to `columns` characters, ending in `..` when cut.
@@ -1209,8 +1234,8 @@ impl ColorEditorLayout {
 
         let impact_y = fields_y + field_height + SECTION_GAP;
         let buttons_y = impact_y + impact_height + SECTION_GAP;
-        let apply_width = (cells(APPLY_TO_ALL) + 4) * cell_w;
-        let cancel_width = (cells(CANCEL) + 4) * cell_w;
+        let apply_width = (cells(&apply_to_all()) + 4) * cell_w;
+        let cancel_width = (cells(&cancel()) + 4) * cell_w;
         let apply = Rect {
             x: text_right - apply_width,
             y: buttons_y,

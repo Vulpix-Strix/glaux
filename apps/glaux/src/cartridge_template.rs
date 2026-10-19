@@ -26,7 +26,7 @@ const MAX_ID_LEN: usize = 32;
 
 /// Longest accepted display name or author, in characters. Keeps both on
 /// one shell row next to their labels.
-const MAX_TEXT_LEN: usize = 32;
+pub(crate) const MAX_TEXT_LEN: usize = 32;
 
 /// Names Windows reserves for devices in every directory. An ID is a
 /// directory name, so these would make a cartridge impossible to copy there.

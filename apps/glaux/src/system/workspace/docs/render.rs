@@ -1,5 +1,6 @@
 //! Drawing the browser.
 
+use glaux_i18n::Arg;
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -8,13 +9,14 @@ use glaux_video::draw::{draw_text, fill_rect, pixel};
 use super::layout::{Deco, Row, Run};
 use super::search::{Scope, Search, SearchLayout};
 use super::tabs::{CHEVRON_WIDTH, CLOSE_SIZE, LABEL_PAD, MARKER, StripHit};
-use super::view::{Geometry, NAV_LABEL, SEARCH_LABEL};
+use super::view::{Geometry, nav_label, search_label};
 use super::{DocsBrowser, PanelKind, Source};
 use crate::system::workspace::code::text_view::thumb;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::text_field::FieldColors;
 use crate::system::workspace::{BAR, ELLIPSIS, HOVER_SHADE, IDLE_SHADE, Rect, take_cells};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::ui_text;
 
 /// Thickness of the box around a code block or a table, in pixels from the
 /// edge of the cells it frames.
@@ -185,12 +187,12 @@ impl DocsBrowser {
         };
         button(canvas, items.back, "<", true, self.can_go(true));
         button(canvas, items.forward, ">", true, self.can_go(false));
-        button(canvas, items.filter, self.filter.label(), true, true);
-        button(canvas, items.nav, NAV_LABEL, !self.nav_collapsed, true);
+        button(canvas, items.filter, &self.filter.label(), true, true);
+        button(canvas, items.nav, &nav_label(), !self.nav_collapsed, true);
         button(
             canvas,
             items.search,
-            SEARCH_LABEL,
+            &search_label(),
             self.search.is_some(),
             true,
         );
@@ -223,7 +225,7 @@ impl DocsBrowser {
             let hovered = pointer.is_some_and(|at| row.rect.contains(at));
             let y = row.rect.y + 1;
             match row.kind {
-                PanelKind::Title(title) => canvas.text(title, text_x, y, DIM),
+                PanelKind::Title(title) => canvas.text(&title, text_x, y, DIM),
                 PanelKind::Outline {
                     row: target,
                     active,
@@ -304,10 +306,11 @@ impl DocsBrowser {
     fn status(&self, canvas: &mut Canvas<'_>, pointer: Option<Point>, notice: Option<(&str, u8)>) {
         let bar = self.geometry.status;
         canvas.fill(bar, BAR);
+        let hint = self.hint();
         let (text, ink) = match (notice, pointer.and_then(|at| self.hovered_target(at))) {
             (Some((text, ink)), _) => (text, ink),
             (None, Some(target)) => (target, PALE),
-            (None, None) => (self.hint(), DIM),
+            (None, None) => (hint.as_str(), DIM),
         };
         let columns = usize::try_from((bar.width - 8) / canvas.cell_w.max(1)).unwrap_or(0);
         let y = canvas.bar_text_y(bar.y, bar.height);
@@ -352,7 +355,7 @@ impl DocsBrowser {
             canvas.font,
             layout.window,
             layout.title_bar,
-            "SEARCH DOCS",
+            &ui_text::get("docs-search-docs"),
             canvas.cell_w,
         );
         canvas.fill(layout.field, INK);
@@ -373,10 +376,13 @@ impl DocsBrowser {
             let on = scope == search.scope();
             let (ground, ink) = if on { (INK, BODY) } else { (BODY, INK) };
             canvas.fill(*rect, ground);
-            canvas.text(scope.label(), rect.x + 3, rect.y, ink);
+            canvas.text(&scope.label(), rect.x + 3, rect.y, ink);
         }
         let found = search.results().len();
-        let count = format!("{found} {}", if found == 1 { "page" } else { "pages" });
+        let count = ui_text::get_with(
+            "docs-search-page-count",
+            &[("count", Arg::Number(found as f64))],
+        );
         let count_x = layout.count.right() - canvas.cells(&count) * canvas.cell_w;
         canvas.text(&count, count_x.max(layout.count.x), layout.count.y, INK);
 
@@ -407,7 +413,7 @@ impl DocsBrowser {
         }
         if search.results().is_empty() {
             canvas.text(
-                "No page matches.",
+                &ui_text::get("docs-no-page-matches"),
                 layout.rows[0].x + 2,
                 layout.rows[0].y,
                 INK,

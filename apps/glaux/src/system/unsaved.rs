@@ -9,6 +9,7 @@
 
 use std::collections::VecDeque;
 
+use glaux_i18n::Arg;
 use glaux_input::InputEvent;
 
 use super::code_document::{CodeSaveError, CodeSaved, DocumentId};
@@ -21,6 +22,7 @@ use super::workspace::{
     write_advice,
 };
 use crate::cartridge::LoadedCartridge;
+use crate::ui_text;
 
 /// What waits on the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,19 +35,14 @@ pub(super) enum Pending {
 }
 
 impl Pending {
-    /// What going ahead does, as in "runs load pong".
-    fn what(&self) -> String {
-        match self {
-            Self::Command { action, .. } => format!("runs {action}"),
-            Self::Exit => "quits Glaux".to_owned(),
-        }
-    }
-
     /// The line telling that it did not go ahead.
     fn stopped(&self) -> String {
         match self {
-            Self::Command { action, .. } => format!("{action} did not run."),
-            Self::Exit => "Glaux did not quit.".to_owned(),
+            Self::Command { action, .. } => ui_text::get_with(
+                "system-did-not-run",
+                &[("action", Arg::Text(&action.to_string()))],
+            ),
+            Self::Exit => ui_text::get("system-glaux-did-not-quit"),
         }
     }
 }
@@ -117,13 +114,13 @@ impl UnsavedFlow {
             })
             .unwrap_or_default();
         if sprites.is_some_and(SpriteDocument::is_modified) {
-            names.push("graphics".to_owned());
+            names.push(ui_text::get("system-graphics"));
         }
         if names.is_empty() {
             return None;
         }
         Some(Self {
-            dialog: unsaved_dialog(&names, &pending.what()),
+            dialog: unsaved_dialog(&names, &pending),
             pending,
             stage: Stage::Ask,
             queue: VecDeque::new(),
@@ -185,7 +182,10 @@ impl UnsavedFlow {
                 if let Some(sprites) = edits.sprites.as_deref_mut() {
                     let assets: Vec<_> = seen.iter().map(|disk| disk.asset).collect();
                     if let Err(err) = sprites.reload(edits.cartridge, &assets, edits.defaults) {
-                        self.fail("RELOAD FAILED", err.to_string());
+                        self.fail(
+                            &ui_text::get("system-reload-failed"),
+                            super::ui_errors::video::video_load(&err),
+                        );
                         return Outcome::Open;
                     }
                     // Assets outside the conflict may still be unsaved.
@@ -242,7 +242,10 @@ impl UnsavedFlow {
             }
             Err(CodeSaveError::Failed { path, error }) => {
                 tracing::debug!(file = %path, %error, "script not saved");
-                self.fail("SAVE FAILED", source_write_advice(&path, &error));
+                self.fail(
+                    &ui_text::get("system-save-failed"),
+                    source_write_advice(&path, &error),
+                );
                 Err(Outcome::Open)
             }
         }
@@ -266,7 +269,7 @@ impl UnsavedFlow {
                 Err(Outcome::Open)
             }
             Some(SaveFailure::Cartridge(err)) => {
-                self.fail("SAVE FAILED", write_advice(&err));
+                self.fail(&ui_text::get("system-save-failed"), write_advice(&err));
                 Err(Outcome::Open)
             }
         }
@@ -281,16 +284,23 @@ impl UnsavedFlow {
     fn fail(&mut self, title: &str, advice: String) {
         let mut lines: Vec<String> = saved_before_stopping(&self.saved).into_iter().collect();
         lines.push(advice);
-        lines.push("Your other edits are still in memory.".to_owned());
+        lines.push(ui_text::get("system-your-other-edits-are-still-in-memory"));
         lines.push(self.pending.stopped());
         self.show(message_dialog(title, lines), Stage::Failed);
     }
 
     /// Gives up on the pending action, telling what was saved first.
     fn stop(&self) -> Outcome {
-        Outcome::Stopped(
-            saved_before_stopping(&self.saved)
-                .map(|saved| format!("{saved} {}", self.pending.stopped())),
-        )
+        let names = self.saved.join(", ");
+        let line = (!self.saved.is_empty()).then(|| match &self.pending {
+            Pending::Command { action, .. } => ui_text::get_with(
+                "system-saved-command-stopped",
+                &[("names", Arg::Text(&names)), ("action", Arg::Text(action))],
+            ),
+            Pending::Exit => {
+                ui_text::get_with("system-saved-exit-stopped", &[("names", Arg::Text(&names))])
+            }
+        });
+        Outcome::Stopped(line)
     }
 }

@@ -1,6 +1,7 @@
 use std::cell::Cell;
 
 use super::*;
+use crate::ui_text;
 
 thread_local! {
     /// The documentation the browser reads on this thread instead of the
@@ -60,7 +61,7 @@ pub fn modal_details(workspace: &Workspace) -> Option<(usize, Vec<String>)> {
 
 /// The label and whether it can be chosen of each item of the Code view's
 /// open context menu.
-pub fn code_menu_items(workspace: &Workspace) -> Vec<(&'static str, bool)> {
+pub fn code_menu_items(workspace: &Workspace) -> Vec<(&str, bool)> {
     workspace.code.menu_items()
 }
 
@@ -98,7 +99,7 @@ pub fn sprite_pixel(workspace: &Workspace, x: i32, y: i32) -> Point {
 
 /// The tab names the interface shows in English.
 pub fn english_labels() -> TabLabels {
-    TabLabels::new(&crate::ui_text::translator())
+    TabLabels::new(&ui_text::translator())
 }
 
 /// The leftmost column the cartridge name may use.

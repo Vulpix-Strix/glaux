@@ -72,7 +72,7 @@ fn right_click_tab(system: System, name: &str) -> System {
     }])
 }
 
-fn menu(system: &System) -> Vec<(&'static str, bool)> {
+fn menu(system: &System) -> Vec<(&str, bool)> {
     workspace::tests_support::code_menu_items(&system.workspace)
 }
 

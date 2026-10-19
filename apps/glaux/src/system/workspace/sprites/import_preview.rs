@@ -5,6 +5,7 @@
 //! The conversion is the one `glaux import sprites` runs. This dialog only
 //! shows its result and hands it to the document as one edit.
 
+use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -27,13 +28,26 @@ use crate::system::workspace::dialog::{
     AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,
 };
 use crate::system::workspace::{Rect, SYSTEM_COLORS, wrap};
+use crate::ui_text;
 
-const TITLE: &str = "IMPORT SPRITES";
-const CANCEL: &str = "CANCEL";
-const IMPORT: &str = "IMPORT";
-const TRANSPARENT_LABEL: &str = "Transparent:";
-const ALPHA_ONLY: &str = "Alpha only";
-const TOP_LEFT: &str = "Top-left color";
+fn title() -> String {
+    ui_text::get("sprites-import-sprites")
+}
+fn cancel() -> String {
+    ui_text::get("workspace-cancel")
+}
+fn import() -> String {
+    ui_text::get("sprites-import-2")
+}
+fn transparent_label() -> String {
+    ui_text::get("sprites-transparent")
+}
+fn alpha_only() -> String {
+    ui_text::get("sprites-alpha-only")
+}
+fn top_left() -> String {
+    ui_text::get("sprites-top-left-color")
+}
 /// Widest the sheet is shown, the whole object-tile grid at 1x.
 const PREVIEW_WIDTH: i32 = (OBJ_GRID_COLUMNS * OBJ_TILE_WIDTH) as i32;
 /// Lines of the summary column above the transparency control.
@@ -174,7 +188,7 @@ impl ImportPreview {
                 self.defaults.palette(),
                 self.defaults.obj_palettes(),
             )
-            .map_err(|err| err.to_string())
+            .map_err(|err| super::import_errors::fit(&err))
             .and_then(|fitted| self.prepare(fitted, document))
             .map(Box::new);
     }
@@ -182,10 +196,16 @@ impl ImportPreview {
     fn prepare(&self, fitted: Fitted, document: &SpriteDocument) -> Result<Converted, String> {
         // The fit verified its own output through these decoders, so a
         // failure here is a broken invariant reported, not a panic.
-        let internal = |err: &dyn std::fmt::Display| format!("internal error: {err}");
-        let tiles = ObjTileBank::from_bytes(&fitted.tiles).map_err(|e| internal(&e))?;
-        let attributes =
-            ObjTileAttributes::from_bytes(&fitted.attributes).map_err(|e| internal(&e))?;
+        let internal = |err: &dyn std::fmt::Display| {
+            ui_text::get_with(
+                "sprites-internal-error",
+                &[("err", Arg::Text(&err.to_string()))],
+            )
+        };
+        let tiles = ObjTileBank::from_bytes(&fitted.tiles)
+            .map_err(|e| internal(&crate::system::ui_errors::video::obj_tiles(&e)))?;
+        let attributes = ObjTileAttributes::from_bytes(&fitted.attributes)
+            .map_err(|e| internal(&crate::system::ui_errors::video::obj_attributes(&e)))?;
         let video = CartridgeVideo {
             palette: fitted.palette,
             obj: ObjVram::new(tiles, attributes, fitted.obj_palettes),
@@ -196,7 +216,7 @@ impl ImportPreview {
             &video.palette,
             video.obj.palettes(),
         )
-        .map_err(|e| internal(&e))?;
+        .map_err(|e| internal(&crate::system::ui_errors::video::preview_palette(&e)))?;
         Ok(Converted {
             summary: fitted.summary,
             impact: document.replacement_impact(&video),
@@ -290,22 +310,43 @@ impl ImportPreview {
         let image = &self.source.image;
         let mut lines = vec![
             self.name.clone(),
-            format!("{}x{} px", image.width, image.height),
+            ui_text::get_with(
+                "sprites-image-dimensions",
+                &[
+                    ("width", Arg::Text(&image.width.to_string())),
+                    ("height", Arg::Text(&image.height.to_string())),
+                ],
+            ),
         ];
         if let Ok(converted) = &self.converted {
             let summary = &converted.summary;
             let new = summary.allocated.as_ref().map_or(0, |r| r.clone().count());
-            lines[1] += &format!(", {} tiles", summary.source_tiles);
-            lines.push(format!("{} colors, {new} new", summary.colors));
-            lines.push(format!(
-                "{} of {OBJ_PALETTE_BANKS} palettes",
-                summary.banks_used
+            lines[1] = ui_text::get_with(
+                "sprites-import-image-summary",
+                &[
+                    ("width", Arg::Number(image.width as f64)),
+                    ("height", Arg::Number(image.height as f64)),
+                    ("tiles", Arg::Number(summary.source_tiles as f64)),
+                ],
+            );
+            lines.push(ui_text::get_with(
+                "sprites-import-color-count",
+                &[
+                    ("colors", Arg::Text(&summary.colors.to_string())),
+                    ("new", Arg::Text(&new.to_string())),
+                ],
             ));
-            lines.push(match self.source.groups.len() {
-                0 => "No sprite groups".to_owned(),
-                1 => "1 sprite group".to_owned(),
-                n => format!("{n} sprite groups"),
-            });
+            lines.push(ui_text::get_with(
+                "sprites-import-palette-count",
+                &[
+                    ("used", Arg::Text(&summary.banks_used.to_string())),
+                    ("total", Arg::Text(&OBJ_PALETTE_BANKS.to_string())),
+                ],
+            ));
+            lines.push(ui_text::get_with(
+                "sprites-import-groups",
+                &[("count", Arg::Number(self.source.groups.len() as f64))],
+            ));
         }
         lines
     }
@@ -315,7 +356,10 @@ impl ImportPreview {
     pub fn notes(&self) -> Vec<String> {
         match &self.converted {
             Ok(converted) => impact_notes(&converted.impact),
-            Err(message) => vec![format!("Cannot import: {message}")],
+            Err(message) => vec![ui_text::get_with(
+                "sprites-cannot-import",
+                &[("message", Arg::Text(&message.to_string()))],
+            )],
         }
     }
 
@@ -331,7 +375,7 @@ impl ImportPreview {
             font,
             layout.window,
             layout.title_bar,
-            TITLE,
+            &title(),
             cell_w,
         );
 
@@ -347,12 +391,16 @@ impl ImportPreview {
         }
         text(
             framebuffer,
-            TRANSPARENT_LABEL,
+            &transparent_label(),
             layout.summary_x,
             layout.transparency.y - cell_h - 1,
             INK,
         );
-        let mode = if self.keyed { TOP_LEFT } else { ALPHA_ONLY };
+        let mode = if self.keyed {
+            &top_left()
+        } else {
+            &alpha_only()
+        };
         if self.can_key() {
             draw_button(
                 framebuffer,
@@ -382,7 +430,7 @@ impl ImportPreview {
             framebuffer,
             font,
             layout.cancel,
-            CANCEL,
+            &cancel(),
             false,
             cell_w,
             cell_h,
@@ -392,13 +440,13 @@ impl ImportPreview {
                 framebuffer,
                 font,
                 layout.import,
-                IMPORT,
+                &import(),
                 true,
                 cell_w,
                 cell_h,
             );
         } else {
-            draw_disabled_button(framebuffer, font, layout.import, IMPORT, cell_w, cell_h);
+            draw_disabled_button(framebuffer, font, layout.import, &import(), cell_w, cell_h);
         }
     }
 
@@ -452,17 +500,22 @@ impl ImportPreview {
 /// What replacing the sprites changes, as the dialog tells it.
 pub fn impact_notes(impact: &ReplaceImpact) -> Vec<String> {
     if !impact.changes_anything() {
-        return vec!["The sheet matches the current sprites: nothing changes.".to_owned()];
+        return vec![ui_text::get(
+            "sprites-the-sheet-matches-the-current-sprites-nothing-changes",
+        )];
     }
     let mut notes = Vec::new();
     notes.push(match impact.drawn_tiles_erased {
-        0 => format!(
-            "Replaces every sprite: {} tiles change.",
-            impact.tiles_changed
+        0 => ui_text::get_with(
+            "sprites-replaces-every-sprite-tiles-change",
+            &[("value", Arg::Text(&impact.tiles_changed.to_string()))],
         ),
-        erased => format!(
-            "Replaces every sprite: {} tiles change, {erased} drawn ones erased.",
-            impact.tiles_changed
+        erased => ui_text::get_with(
+            "sprites-replaces-every-sprite-tiles-change-drawn-ones-erased",
+            &[
+                ("value", Arg::Text(&impact.tiles_changed.to_string())),
+                ("erased", Arg::Text(&erased.to_string())),
+            ],
         ),
     });
     let masters = impact.master_range.map(|(low, high)| {
@@ -473,22 +526,31 @@ pub fn impact_notes(impact: &ReplaceImpact) -> Vec<String> {
         }
     });
     match &masters {
-        Some(range) => notes.push(format!(
-            "{} palettes and master colors {range} change.",
-            impact.banks_changed
+        Some(range) => notes.push(ui_text::get_with(
+            "sprites-palettes-and-master-colors-change",
+            &[
+                ("value", Arg::Text(&impact.banks_changed.to_string())),
+                ("range", Arg::Text(&range.to_string())),
+            ],
         )),
         None if impact.banks_changed > 0 => {
-            notes.push(format!("{} palettes change.", impact.banks_changed));
+            notes.push(ui_text::get_with(
+                "sprites-palettes-change",
+                &[("value", Arg::Text(&impact.banks_changed.to_string()))],
+            ));
         }
         None => {}
     }
     notes.push(match &masters {
-        Some(range) => {
-            format!("Code that draws tiles, or colors {range}, by number will show the new ones.")
-        }
-        None => "Code that draws tiles by number will show the new ones.".to_owned(),
+        Some(range) => ui_text::get_with(
+            "sprites-code-that-draws-tiles-or-colors-by-number-will-show-the-new-ones",
+            &[("range", Arg::Text(&range.to_string()))],
+        ),
+        None => ui_text::get("sprites-code-that-draws-tiles-by-number-will-show-the-new-ones"),
     });
-    notes.push("Nothing is written until Save. Ctrl+Z undoes it.".to_owned());
+    notes.push(ui_text::get(
+        "sprites-nothing-is-written-until-save-ctrl-z-undoes-it",
+    ));
     notes
 }
 
@@ -554,7 +616,7 @@ impl ImportLayout {
         let text_x = window.x + 1 + PAD;
         let text_right = window.right() - 1 - PAD;
 
-        let button_width = (cells(CANCEL).max(cells(IMPORT)) + 4) * cell_w;
+        let button_width = (cells(&cancel()).max(cells(&import())) + 4) * cell_w;
         let button_height = cell_h + 4;
         let buttons_y = window.bottom() - 1 - PAD - button_height;
         let import = Rect {
@@ -594,7 +656,7 @@ impl ImportLayout {
         let transparency = Rect {
             x: summary_x,
             y: summary_y + (SUMMARY_LINES + 1) * cell_h + 1,
-            width: (cells(TOP_LEFT) + 2) * cell_w,
+            width: (cells(&top_left()) + 2) * cell_w,
             height: button_height,
         };
         Self {

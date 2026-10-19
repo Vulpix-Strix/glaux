@@ -1,6 +1,7 @@
 //! Where each part of the sprite editor sits on the 320×240 screen.
 //! Rendering and hit-testing both read these rectangles.
 
+use glaux_i18n::Arg;
 use glaux_input::Point;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS};
@@ -8,6 +9,7 @@ use glaux_machine::sprite::{OBJ_TILE_CAPACITY, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH};
 
 use super::sheet::{SheetView, Visible, Zoom, grid_position};
 use crate::system::workspace::Rect;
+use crate::ui_text;
 
 /// Canvas pixels per tile pixel.
 pub const CANVAS_ZOOM: i32 = 12;
@@ -28,10 +30,20 @@ const SWATCH_GAP: i32 = 3;
 /// Character cells reserved for the palette panel's row labels.
 const LABEL_CELLS: i32 = 7;
 /// The labels of the buttons under the canvas caption.
-pub const SAVE_LABEL: &str = "Save";
-pub const IMPORT_LABEL: &str = "Import";
+pub fn save_label() -> String {
+    ui_text::get("sprites-save")
+}
+pub fn import_label() -> String {
+    ui_text::get("sprites-import")
+}
 /// Row labels of the palette panel in Advanced mode, top to bottom.
-pub const ADVANCED_LABELS: [&str; 3] = ["OBP", "Local", "Master"];
+pub fn advanced_labels() -> [String; 3] {
+    [
+        "OBP".to_owned(),
+        ui_text::get("sprites-local"),
+        ui_text::get("sprites-master"),
+    ]
+}
 
 /// Font cell size and where the editor's area begins below the tab bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,12 +70,12 @@ pub enum ToolSlot {
 impl ToolSlot {
     pub const ALL: [Self; 4] = [Self::Pencil, Self::Eraser, Self::Eyedropper, Self::Fill];
 
-    pub fn name(self) -> &'static str {
+    pub fn name(self) -> String {
         match self {
-            Self::Pencil => "Pencil",
-            Self::Eraser => "Eraser",
-            Self::Eyedropper => "Eyedropper",
-            Self::Fill => "Fill",
+            Self::Pencil => ui_text::get("sprites-pencil"),
+            Self::Eraser => ui_text::get("sprites-eraser"),
+            Self::Eyedropper => ui_text::get("sprites-eyedropper"),
+            Self::Fill => ui_text::get("sprites-fill"),
         }
     }
 
@@ -250,8 +262,12 @@ impl SpriteLayout {
         let zoom_in = button(1, BUTTON_PAD, 0);
         let zoom_label = button(2, 0, 0);
         let zoom_out = button(1, BUTTON_PAD, GAP);
-        let advanced_button = button(text_cells("Advanced"), BUTTON_PAD, GAP);
-        let grid_button = button(text_cells("Grid"), BUTTON_PAD, 0);
+        let advanced_button = button(
+            text_cells(&ui_text::get("sprites-advanced")),
+            BUTTON_PAD,
+            GAP,
+        );
+        let grid_button = button(text_cells(&ui_text::get("sprites-grid")), BUTTON_PAD, 0);
 
         let caption_cells = text_cells(&caption(OBJ_TILE_CAPACITY - 1, advanced));
         let under_canvas = Rect {
@@ -413,9 +429,19 @@ impl SpriteLayout {
 pub fn caption(tile: usize, advanced: bool) -> String {
     if advanced {
         let (column, row) = grid_position(tile);
-        format!("Tile {tile:04} ({column},{row})")
+        ui_text::get_with(
+            "sprites-tile-coordinates",
+            &[
+                ("tile", Arg::Text(&format!("{:04}", tile))),
+                ("column", Arg::Text(&column.to_string())),
+                ("row", Arg::Text(&row.to_string())),
+            ],
+        )
     } else {
-        format!("Tile {tile:04}")
+        ui_text::get_with(
+            "sprites-tile",
+            &[("tile", Arg::Text(&format!("{:04}", tile)))],
+        )
     }
 }
 

@@ -3,7 +3,8 @@
 
 use super::*;
 use crate::cartridge::fixture::write_rhai_cartridge;
-use crate::system::shell::EXPERIMENTAL_LANGUAGE_WARNING;
+const EXPERIMENTAL_LANGUAGE_WARNING: &str =
+    "RHAI SUPPORT IS EXPERIMENTAL. THE SCRIPTING API MAY CHANGE WITHOUT NOTICE.";
 use pretty_assertions::assert_eq;
 
 /// The experimental warning as the transcript shows it.

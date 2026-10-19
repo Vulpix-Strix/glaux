@@ -8,6 +8,7 @@ use super::{CodeEditor, CodeRequest, close_tab};
 use crate::system::code_document::DocumentId;
 use crate::system::code_session::CodeSession;
 use crate::system::workspace::context_menu::{ContextMenu, MenuEntry};
+use crate::ui_text;
 
 /// An action a Code view menu runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,26 +62,52 @@ pub fn text_menu(session: &CodeSession, at: Point) -> ContextMenu<CodeAction> {
         vec![
             MenuEntry::when(
                 can(CodeSession::can_undo),
-                "Undo",
+                &ui_text::get("code-undo"),
                 Some("Ctrl+Z"),
                 CodeAction::Undo,
             ),
             MenuEntry::when(
                 can(CodeSession::can_redo),
-                "Redo",
+                &ui_text::get("code-redo"),
                 Some("Ctrl+Y"),
                 CodeAction::Redo,
             ),
             MenuEntry::Separator,
-            MenuEntry::when(selected, "Cut", Some("Ctrl+X"), CodeAction::Cut),
-            MenuEntry::when(selected, "Copy", Some("Ctrl+C"), CodeAction::Copy),
-            MenuEntry::item("Paste", Some("Ctrl+V"), CodeAction::Paste),
+            MenuEntry::when(
+                selected,
+                &ui_text::get("code-cut"),
+                Some("Ctrl+X"),
+                CodeAction::Cut,
+            ),
+            MenuEntry::when(
+                selected,
+                &ui_text::get("code-copy"),
+                Some("Ctrl+C"),
+                CodeAction::Copy,
+            ),
+            MenuEntry::item(
+                &ui_text::get("code-paste"),
+                Some("Ctrl+V"),
+                CodeAction::Paste,
+            ),
             MenuEntry::Separator,
-            MenuEntry::item("Select all", Some("Ctrl+A"), CodeAction::SelectAll),
+            MenuEntry::item(
+                &ui_text::get("code-select-all"),
+                Some("Ctrl+A"),
+                CodeAction::SelectAll,
+            ),
             MenuEntry::Separator,
-            MenuEntry::item("Find...", Some("Ctrl+F"), CodeAction::Find),
-            MenuEntry::item("Replace...", Some("Ctrl+H"), CodeAction::Replace),
-            MenuEntry::item("Go to line...", Some("Ctrl+G"), CodeAction::GoToLine),
+            MenuEntry::item(&ui_text::get("code-find"), Some("Ctrl+F"), CodeAction::Find),
+            MenuEntry::item(
+                &ui_text::get("code-replace"),
+                Some("Ctrl+H"),
+                CodeAction::Replace,
+            ),
+            MenuEntry::item(
+                &ui_text::get("code-go-to-line"),
+                Some("Ctrl+G"),
+                CodeAction::GoToLine,
+            ),
         ],
         at,
     )
@@ -102,26 +129,34 @@ pub struct TabTarget {
 /// on one.
 pub fn file_menu(tab: Option<TabTarget>, at: Point) -> ContextMenu<CodeAction> {
     let mut entries = vec![
-        MenuEntry::item("New file...", Some("Ctrl+N"), CodeAction::NewFile),
-        MenuEntry::item("Open file...", Some("Ctrl+P"), CodeAction::OpenFile),
+        MenuEntry::item(
+            &ui_text::get("code-new-file"),
+            Some("Ctrl+N"),
+            CodeAction::NewFile,
+        ),
+        MenuEntry::item(
+            &ui_text::get("code-open-file"),
+            Some("Ctrl+P"),
+            CodeAction::OpenFile,
+        ),
     ];
     if let Some(tab) = tab {
         entries.push(MenuEntry::Separator);
         entries.push(MenuEntry::item(
-            "Close tab",
+            &ui_text::get("code-close-tab"),
             Some("Ctrl+W"),
             CodeAction::CloseTab(tab.id),
         ));
         entries.push(MenuEntry::Separator);
         entries.push(MenuEntry::when(
             tab.renamable && !tab.protected,
-            "Rename script...",
+            &ui_text::get("code-rename-script"),
             None,
             CodeAction::RenameScript(tab.id),
         ));
         entries.push(MenuEntry::when(
             !tab.protected,
-            "Delete script...",
+            &ui_text::get("code-delete-script"),
             None,
             CodeAction::DeleteScript(tab.id),
         ));

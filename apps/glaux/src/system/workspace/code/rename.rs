@@ -3,6 +3,7 @@
 //! The user edits the path below `code/` without an extension. The script
 //! keeps the language, and so the extension, it already has.
 
+use glaux_i18n::Arg;
 use glaux_input::InputEvent;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -14,6 +15,7 @@ use crate::system::ERROR;
 use crate::system::code_document::DocumentId;
 use crate::system::workspace::dialog::INK;
 use crate::system::workspace::text_field::TextField;
+use crate::ui_text;
 
 /// Most characters of the path typed.
 const MAX_PATH: usize = 96;
@@ -53,9 +55,20 @@ impl RenameScript {
             .strip_suffix(&extension)?;
         let mut field = TextField::any(MAX_PATH);
         field.set_text(typed);
-        let label = format!("Move {from} within {CODE_DIR}");
+        let label = ui_text::get_with(
+            "code-rename-description",
+            &[
+                ("from", Arg::Text(&from.to_string())),
+                ("directory", Arg::Text(CODE_DIR)),
+            ],
+        );
         Some(Self {
-            prompt: Prompt::new("RENAME SCRIPT", label, CODE_DIR, field),
+            prompt: Prompt::new(
+                &ui_text::get("code-rename-script-2"),
+                label,
+                CODE_DIR,
+                field,
+            ),
             id,
             from,
             failure: None,
@@ -106,8 +119,14 @@ impl RenameScript {
             return (failure.clone(), ERROR);
         }
         match self.path() {
-            Ok(path) if path == self.from => ("Type a new path.".to_owned(), INK),
-            Ok(path) => (format!("Moves it to {path}"), INK),
+            Ok(path) if path == self.from => (ui_text::get("code-type-a-new-path"), INK),
+            Ok(path) => (
+                ui_text::get_with(
+                    "code-moves-it-to",
+                    &[("path", Arg::Text(&path.to_string()))],
+                ),
+                INK,
+            ),
             Err(message) => (message, ERROR),
         }
     }

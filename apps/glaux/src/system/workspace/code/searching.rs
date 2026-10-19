@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use glaux_i18n::Arg;
 use glaux_input::{InputEvent, PointerButton};
 
 use super::find::{FindAction, FindBar};
@@ -14,6 +15,7 @@ use crate::system::code_history::EditKind;
 use crate::system::code_search::{next_from, previous_from};
 use crate::system::code_selection::Selection;
 use crate::system::code_session::{CodeSession, DocumentView};
+use crate::ui_text;
 
 /// Most bytes of a selection that becomes the query when the bar opens.
 const MAX_SEEDED_QUERY: usize = 128;
@@ -208,7 +210,12 @@ impl CodeEditor {
             text: replaced,
         };
         self.commit(session, id, edit, EditKind::Structural, None)
-            .then(|| CodeRequest::Notice(format!("Replaced {}", matches.len())))
+            .then(|| {
+                CodeRequest::Notice(ui_text::get_with(
+                    "code-replaced",
+                    &[("value", Arg::Text(&(matches.len().to_string())))],
+                ))
+            })
     }
 
     /// Opens GO TO LINE on the active document.

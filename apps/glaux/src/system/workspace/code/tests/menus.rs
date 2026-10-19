@@ -6,14 +6,14 @@ use crate::system::workspace::context_menu::MenuEntry;
 use pretty_assertions::assert_eq;
 
 /// Each item's label and whether it can be chosen, separators left out.
-fn items(editor: &CodeEditor) -> Vec<(&'static str, bool)> {
+fn items(editor: &CodeEditor) -> Vec<(&str, bool)> {
     editor
         .context_menu()
         .unwrap()
         .entries()
         .iter()
-        .filter_map(|entry| match *entry {
-            MenuEntry::Item { label, enabled, .. } => Some((label, enabled)),
+        .filter_map(|entry| match entry {
+            MenuEntry::Item { label, enabled, .. } => Some((label.as_str(), *enabled)),
             MenuEntry::Separator => None,
         })
         .collect()

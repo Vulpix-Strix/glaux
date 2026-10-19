@@ -250,9 +250,9 @@ fn serve_host_requests(system: &mut System, picker: &mut FilePicker, config_dir:
         match request {
             HostRequest::PickPng { directory } => {
                 if !picker.open_png(&directory) {
-                    system.file_picked(PickedFile::Unavailable(
-                        "A file dialog is already open.".to_owned(),
-                    ));
+                    system.file_picked(PickedFile::Unavailable(ui_text::get(
+                        "desktop-file-dialog-already-open",
+                    )));
                 }
             }
             HostRequest::OpenExternal(url) => desktop::external::open_url(&url),

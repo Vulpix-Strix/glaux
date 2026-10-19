@@ -1049,7 +1049,7 @@ impl SpriteDocument {
         defaults: &CartridgeVideoDefaults,
     ) -> Result<Reopened, String> {
         self.history.close();
-        let files = VideoFiles::read(cartridge).map_err(|err| err.to_string())?;
+        let files = VideoFiles::read(cartridge).map_err(|err| super::ui_errors::cartridge(&err))?;
         let mut fresh = self.video.clone();
         let mut reopened = Reopened::default();
         for asset in VideoAsset::ALL {
@@ -1068,7 +1068,7 @@ impl SpriteDocument {
             } else {
                 fresh
                     .decode_asset(asset, disk, defaults)
-                    .map_err(|err| err.to_string())?;
+                    .map_err(|err| super::ui_errors::video::video_asset(&err))?;
                 reopened.reloaded.push(asset);
             }
         }

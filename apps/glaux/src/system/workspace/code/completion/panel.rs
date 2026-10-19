@@ -1,7 +1,9 @@
 //! What the documentation panel beside the suggestion list says about a
 //! candidate.
 
+use crate::ui_text;
 use glaux_docs::{ApiCatalog, DocId, Kind, ScriptLanguage, ValueType};
+use glaux_i18n::Arg;
 use glaux_sense::{Candidate, CandidateKind, Doc};
 use glaux_syntax::{Definition, DefinitionKind, SyntaxKind};
 
@@ -39,14 +41,20 @@ pub fn panel_for(candidate: &Candidate, source: &PanelSource<'_>) -> Option<DocP
 
 fn local_panel(definition: &Definition, source: &PanelSource<'_>) -> DocPanel {
     let line = (source.line_of)(definition.declared.start);
-    let (signature, what) = match definition.kind {
+    let (signature, summary) = match definition.kind {
         DefinitionKind::Variable => (
             vec![(definition.name.clone(), SyntaxKind::Variable)],
-            "Local variable",
+            ui_text::get_with(
+                "code-local-variable-declared",
+                &[("line", Arg::Number(line as f64))],
+            ),
         ),
         DefinitionKind::Parameter => (
             vec![(definition.name.clone(), SyntaxKind::Variable)],
-            "Parameter",
+            ui_text::get_with(
+                "code-parameter-declared",
+                &[("line", Arg::Number(line as f64))],
+            ),
         ),
         DefinitionKind::Function => {
             let mut signature = vec![
@@ -55,12 +63,18 @@ fn local_panel(definition: &Definition, source: &PanelSource<'_>) -> DocPanel {
             ];
             signature.push((definition.params.join(", "), SyntaxKind::Variable));
             signature.push((")".to_owned(), SyntaxKind::Operator));
-            (signature, "Function")
+            (
+                signature,
+                ui_text::get_with(
+                    "code-function-declared",
+                    &[("line", Arg::Number(line as f64))],
+                ),
+            )
         }
     };
     DocPanel {
         signature,
-        summary: Some(format!("{what} declared on line {line}.")),
+        summary: Some(summary),
         params: None,
     }
 }

@@ -4,6 +4,7 @@
 //!
 //! [`ObjPreviewPalette`]: glaux_video::preview::ObjPreviewPalette
 
+use glaux_i18n::Arg;
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
@@ -16,22 +17,27 @@ use glaux_video::draw::{
 };
 
 use super::layout::{
-    ADVANCED_LABELS, CANVAS_ZOOM, Hit, IMPORT_LABEL, SAVE_LABEL, SCROLLBAR, SpriteLayout, ToolSlot,
-    caption,
+    CANVAS_ZOOM, Hit, SCROLLBAR, SpriteLayout, ToolSlot, advanced_labels, caption, import_label,
+    save_label,
 };
 use super::sheet::{SheetView, Visible, grid_position};
 use super::{EditorDialog, SpriteEditor, SpriteSource};
 use crate::rom::ICON_SIZE;
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
 use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::ui_text;
 
 /// The two colors of the checkerboard behind transparent pixels.
 pub(super) const CHECK_DARK: u8 = 12;
 pub(super) const CHECK_LIGHT: u8 = 13;
 /// The status bar hint while the palette picker is open.
-const PICKER_HINT: &str = "Arrows: choose  Enter: apply  Esc: cancel";
+fn picker_hint() -> String {
+    ui_text::get("sprites-arrows-choose-enter-apply-esc-cancel")
+}
 /// The status bar hint while EDIT COLOR is open.
-const COLOR_HINT: &str = "Drag: pick  Tab: next  Enter: apply  Esc: cancel";
+fn color_hint() -> String {
+    ui_text::get("sprites-drag-pick-tab-next-enter-apply-esc-cancel")
+}
 /// Frames around the canvas and the sheet.
 const FRAME: u8 = DIM;
 /// Pixel grid lines over the canvas.
@@ -42,11 +48,17 @@ const HOVER_TOOL_INKS: [u8; 3] = [OUTLINE, HOVER_SHADE, PALE];
 const IDLE_TOOL_INKS: [u8; 3] = [OUTLINE, IDLE_SHADE, DIM];
 /// Shown in the options bar while the tiles differ from the cartridge's
 /// files.
-const MODIFIED: &str = "MODIFIED";
+fn modified_label() -> String {
+    ui_text::get("sprites-modified")
+}
 /// The status bar hint while IMPORT SPRITES is open.
-const IMPORT_HINT: &str = "T: transparency  Enter: import  Esc: cancel";
+fn import_hint() -> String {
+    ui_text::get("sprites-t-transparency-enter-import-esc-cancel")
+}
 /// The status bar notice while the host's file dialog is open.
-pub(super) const WAITING_NOTICE: &str = "Waiting for the file dialog. Esc: stop waiting";
+pub(super) fn waiting_notice() -> String {
+    ui_text::get("sprites-waiting-for-the-file-dialog-esc-stop-waiting")
+}
 
 impl SpriteEditor {
     /// Draws the editor below the tab bar from `source`, or explains why
@@ -97,13 +109,14 @@ impl SpriteEditor {
         }
         let (left, mut right) = self.status(source.ok().as_ref(), hover);
         match self.dialog {
-            Some(EditorDialog::Palette(_)) => right = PICKER_HINT.to_owned(),
-            Some(EditorDialog::Color(_)) => right = COLOR_HINT.to_owned(),
-            Some(EditorDialog::Import(_)) => right = IMPORT_HINT.to_owned(),
+            Some(EditorDialog::Palette(_)) => right = picker_hint(),
+            Some(EditorDialog::Color(_)) => right = color_hint(),
+            Some(EditorDialog::Import(_)) => right = import_hint(),
             None => {}
         }
+        let waiting = waiting_notice();
         let notice = if self.awaiting_file {
-            Some((WAITING_NOTICE, PALE))
+            Some((waiting.as_str(), PALE))
         } else {
             notice
         };
@@ -139,59 +152,108 @@ impl SpriteEditor {
     /// left, and a hint for the hovered control on the right.
     fn status(&self, source: Option<&SpriteSource<'_>>, hover: Hit) -> (String, String) {
         let (column, row) = grid_position(self.selected);
-        let mut left = format!("Tile {:04}", self.selected);
-        if self.advanced {
-            left += &format!(" ({column},{row})");
-            if let Some(source) = source {
-                let bank = source.obj.attributes().bank(self.selected);
-                left += &format!(" | OBP {} | 4 bpp", bank.get());
-            }
-        }
+        let bank = source.map(|s| s.obj.attributes().bank(self.selected).get());
+        let pixel = match hover {
+            Hit::Canvas { x, y } => source
+                .and_then(|s| s.obj.tiles().pixel(self.selected, x.into(), y.into()))
+                .map(|local| (x, y, local)),
+            _ => None,
+        };
+        let left = ui_text::get_with(
+            "sprites-status",
+            &[
+                ("tile", Arg::Text(&format!("{:04}", self.selected))),
+                ("column", Arg::Number(column as f64)),
+                ("row", Arg::Number(row as f64)),
+                (
+                    "advanced",
+                    Arg::Text(if self.advanced { "yes" } else { "no" }),
+                ),
+                (
+                    "has-bank",
+                    Arg::Text(if bank.is_some() { "yes" } else { "no" }),
+                ),
+                ("bank", Arg::Number(bank.unwrap_or_default().into())),
+                (
+                    "has-pixel",
+                    Arg::Text(if pixel.is_some() { "yes" } else { "no" }),
+                ),
+                ("x", Arg::Number(pixel.map_or(0, |p| p.0).into())),
+                ("y", Arg::Number(pixel.map_or(0, |p| p.1).into())),
+                (
+                    "color",
+                    Arg::Text(&format!("{:X}", pixel.map_or(0, |p| p.2))),
+                ),
+            ],
+        );
         let right = match hover {
-            Hit::Canvas { x, y } => {
-                if let Some(local) =
-                    source.and_then(|s| s.obj.tiles().pixel(self.selected, x.into(), y.into()))
-                {
-                    left += &format!(" | X:{x} Y:{y} | Color:{local:X}");
-                }
-                match self.tool {
-                    ToolSlot::Pencil => "Drag: draw",
-                    ToolSlot::Eraser => "Drag: erase",
-                    ToolSlot::Eyedropper => "Click: pick its color",
-                    ToolSlot::Fill => "Click: fill the area",
-                }
-                .to_owned()
+            Hit::Canvas { .. } => match self.tool {
+                ToolSlot::Pencil => ui_text::get("sprites-drag-draw"),
+                ToolSlot::Eraser => ui_text::get("sprites-drag-erase"),
+                ToolSlot::Eyedropper => ui_text::get("sprites-click-pick-its-color"),
+                ToolSlot::Fill => ui_text::get("sprites-click-fill-the-area"),
             }
+            .to_owned(),
             Hit::Sheet(tile) => {
                 let (column, row) = grid_position(tile);
-                format!("Click: select tile {tile:04} ({column},{row})")
+                ui_text::get_with(
+                    "sprites-click-select-tile",
+                    &[
+                        ("tile", Arg::Text(&format!("{:04}", tile))),
+                        ("column", Arg::Text(&column.to_string())),
+                        ("row", Arg::Text(&row.to_string())),
+                    ],
+                )
             }
-            Hit::Swatch(0) => "Click: select transparent color 0".to_owned(),
-            Hit::Swatch(local) => format!("Click: select color {local:X}  Double-click: edit"),
-            Hit::Bank(bank) => format!("Click: choose this tile's palette, from OBP {bank}"),
-            Hit::PaletteButton => "Click: choose this tile's palette".to_owned(),
-            Hit::Tool(tool) => format!("{}: {}", tool.key().to_ascii_uppercase(), tool.name()),
-            Hit::GridButton => "G: show or hide the pixel grid".to_owned(),
-            Hit::AdvancedButton if self.advanced => "A: hide palette details".to_owned(),
-            Hit::AdvancedButton => "A: show palette details".to_owned(),
+            Hit::Swatch(0) => ui_text::get("sprites-click-select-transparent-color-0"),
+            Hit::Swatch(local) => ui_text::get_with(
+                "sprites-click-select-color-double-click-edit",
+                &[("local", Arg::Text(&format!("{:X}", local)))],
+            ),
+            Hit::Bank(bank) => ui_text::get_with(
+                "sprites-click-choose-this-tile-s-palette-from-obp",
+                &[("bank", Arg::Text(&bank.to_string()))],
+            ),
+            Hit::PaletteButton => ui_text::get("sprites-click-choose-this-tile-s-palette"),
+            Hit::Tool(tool) => ui_text::get_with(
+                "sprites-tool-hint",
+                &[
+                    (
+                        "key",
+                        Arg::Text(&tool.key().to_ascii_uppercase().to_string()),
+                    ),
+                    (
+                        "tool",
+                        Arg::Text(match tool {
+                            ToolSlot::Pencil => "pencil",
+                            ToolSlot::Eraser => "eraser",
+                            ToolSlot::Eyedropper => "eyedropper",
+                            ToolSlot::Fill => "fill",
+                        }),
+                    ),
+                ],
+            ),
+            Hit::GridButton => ui_text::get("sprites-g-show-or-hide-the-pixel-grid"),
+            Hit::AdvancedButton if self.advanced => ui_text::get("sprites-a-hide-palette-details"),
+            Hit::AdvancedButton => ui_text::get("sprites-a-show-palette-details"),
             Hit::ZoomOut => match self.sheet.zoom().zoomed_out() {
-                Some(_) => "-: zoom the sheet out".to_owned(),
-                None => "The sheet is at its smallest".to_owned(),
+                Some(_) => ui_text::get("sprites-zoom-the-sheet-out"),
+                None => ui_text::get("sprites-the-sheet-is-at-its-smallest"),
             },
             Hit::ZoomIn => match self.sheet.zoom().zoomed_in() {
-                Some(_) => "+: zoom the sheet in".to_owned(),
-                None => "The sheet is at its largest".to_owned(),
+                Some(_) => ui_text::get("sprites-zoom-the-sheet-in"),
+                None => ui_text::get("sprites-the-sheet-is-at-its-largest"),
             },
             Hit::SaveButton if source.is_some_and(|s| s.modified) => {
-                "Ctrl+S: write the changed files".to_owned()
+                ui_text::get("sprites-ctrl-s-write-the-changed-files")
             }
-            Hit::SaveButton => "No unsaved edits".to_owned(),
-            Hit::ImportButton => "Click: replace all sprites with a PNG sheet".to_owned(),
+            Hit::SaveButton => ui_text::get("sprites-no-unsaved-edits"),
+            Hit::ImportButton => ui_text::get("sprites-click-replace-all-sprites-with-a-png-sheet"),
             Hit::None if source.is_none() => String::new(),
             Hit::None if self.sheet.zoom().zoomed_out().is_some() => {
-                "Wheel: scroll  Shift+wheel: pan".to_owned()
+                ui_text::get("sprites-wheel-scroll-shift-wheel-pan")
             }
-            Hit::None => "Wheel: scroll  Arrows: select".to_owned(),
+            Hit::None => ui_text::get("sprites-wheel-scroll-arrows-select"),
         };
         (left, right)
     }
@@ -244,34 +306,37 @@ impl Painter<'_> {
         let cell_w = layout.metrics.cell_w;
         fill_rect(self.framebuffer, bar.x, bar.bottom() - 1, bar.width, 1, BAR);
         let text_y = self.bar_text_y(bar.y, bar.height - 1);
-        let tile = format!("Tile {:04}", editor.selected);
+        let tile = ui_text::get_with(
+            "sprites-tile",
+            &[("tile", Arg::Text(&format!("{:04}", editor.selected)))],
+        );
         self.text(&tile, 4, text_y, TEXT);
 
         let tool = editor.tool.name();
         let tag = Rect {
             x: 4 + self.cells(&tile) + cell_w,
             y: bar.y + 1,
-            width: self.cells(tool) + 4,
+            width: self.cells(&tool) + 4,
             height: bar.height - 3,
         };
         self.fill(tag, BAR);
-        self.text(tool, tag.x + 2, text_y, PALE);
+        self.text(&tool, tag.x + 2, text_y, PALE);
         if modified {
-            self.text(MODIFIED, tag.right() + cell_w, text_y, ACCENT);
+            self.text(&modified_label(), tag.right() + cell_w, text_y, ACCENT);
         }
 
         let zoom = editor.sheet.zoom();
-        let buttons = [
+        let buttons: [(Rect, &str, Hit, bool, bool); 4] = [
             (
                 layout.grid_button,
-                "Grid",
+                &ui_text::get("sprites-grid"),
                 Hit::GridButton,
                 editor.grid,
                 true,
             ),
             (
                 layout.advanced_button,
-                "Advanced",
+                &ui_text::get("sprites-advanced"),
                 Hit::AdvancedButton,
                 editor.advanced,
                 true,
@@ -477,9 +542,9 @@ impl Painter<'_> {
         let color = editor.color();
 
         let swatch_label = if layout.advanced {
-            ADVANCED_LABELS[1]
+            &advanced_labels()[1]
         } else {
-            "Palette"
+            &ui_text::get("sprites-palette-2")
         };
         self.text(swatch_label, 4, layout.swatch_y, DIM);
         for (local, &rect) in layout.swatches.iter().enumerate() {
@@ -518,7 +583,7 @@ impl Painter<'_> {
             return;
         }
 
-        self.text(ADVANCED_LABELS[0], 4, layout.bank_y, DIM);
+        self.text(&advanced_labels()[0], 4, layout.bank_y, DIM);
         for (number, &rect) in layout.banks.iter().enumerate().take(OBJ_PALETTE_BANKS) {
             let shown = ObjBank::new(number as u8).unwrap_or(ObjBank::ZERO);
             let ink = if shown == bank {
@@ -538,7 +603,7 @@ impl Painter<'_> {
         }
 
         // Master indices are the cartridge's, never the frame's slots.
-        self.text(ADVANCED_LABELS[2], 4, layout.master_y, DIM);
+        self.text(&advanced_labels()[2], 4, layout.master_y, DIM);
         for (local, &rect) in layout.swatches.iter().enumerate() {
             let label = master_label(source, bank, local as u8);
             self.text(&label, rect.x, layout.master_y + 1, TEXT);
@@ -556,14 +621,24 @@ impl Painter<'_> {
         let right = layout.tools[0].1.x - 4;
         let columns = (right - 4) / layout.metrics.cell_w;
         let mut y = layout.canvas_frame.y + cell_h;
-        self.text("Can't show this cartridge's sprites:", 4, y, TEXT);
+        self.text(
+            &ui_text::get("sprites-can-t-show-this-cartridge-s-sprites"),
+            4,
+            y,
+            TEXT,
+        );
         y += cell_h + 2;
         for line in wrap(self.font, message, usize::try_from(columns).unwrap_or(1)) {
             self.text(&line, 4, y, ERROR);
             y += cell_h;
         }
         y += cell_h;
-        self.text("Fix the file, then reopen the workspace.", 4, y, DIM);
+        self.text(
+            &ui_text::get("sprites-fix-the-file-then-reopen-the-workspace"),
+            4,
+            y,
+            DIM,
+        );
     }
 
     /// The status bar: `left` in `left_color`, and `right` if both fit.
@@ -590,7 +665,16 @@ impl Painter<'_> {
     fn palette_button(&mut self, editor: &SpriteEditor, source: &SpriteSource<'_>, hover: Hit) {
         let rect = self.layout.palette_button;
         let bank = source.obj.attributes().bank(editor.selected);
-        let label = format!("{}...", bank_name(bank, editor.advanced));
+        let label = ui_text::get_with(
+            "sprites-palette-button",
+            &[
+                ("bank", Arg::Number(bank.get().into())),
+                (
+                    "advanced",
+                    Arg::Text(if editor.advanced { "yes" } else { "no" }),
+                ),
+            ],
+        );
         let hovered = hover == Hit::PaletteButton;
         self.fill(rect, if hovered { HOVER_SHADE } else { BAR });
         self.outline(rect, DIM);
@@ -611,9 +695,9 @@ impl Painter<'_> {
         };
         self.fill(rect, face);
         self.outline(rect, if held { TEXT } else { DIM });
-        let x = rect.x + (rect.width - self.cells(IMPORT_LABEL)) / 2;
+        let x = rect.x + (rect.width - self.cells(&import_label())) / 2;
         let y = self.bar_text_y(rect.y, rect.height);
-        self.text(IMPORT_LABEL, x, y, ink);
+        self.text(&import_label(), x, y, ink);
     }
 
     /// The Save button, which only looks pressable while there is
@@ -628,9 +712,9 @@ impl Painter<'_> {
             (true, true) => TEXT,
             (true, false) => PALE,
         };
-        let x = rect.x + (rect.width - self.cells(SAVE_LABEL)) / 2;
+        let x = rect.x + (rect.width - self.cells(&save_label())) / 2;
         let y = self.bar_text_y(rect.y, rect.height);
-        self.text(SAVE_LABEL, x, y, color);
+        self.text(&save_label(), x, y, color);
     }
 }
 
@@ -683,11 +767,22 @@ fn selection_text(source: &SpriteSource<'_>, bank: ObjBank, local: u8) -> String
     match source.obj.palettes().resolve(bank, local) {
         Some(master) => {
             let Rgb { r, g, b } = source.master.get(master);
-            format!(
-                "Selected: Local {local:X} -> Master {master} (${master:02X}) -> #{r:02X}{g:02X}{b:02X}"
+            ui_text::get_with(
+                "sprites-selected-color",
+                &[
+                    ("local", Arg::Text(&format!("{:X}", local))),
+                    ("master", Arg::Text(&master.to_string())),
+                    ("master-hex", Arg::Text(&format!("{:02X}", master))),
+                    ("r", Arg::Text(&format!("{:02X}", r))),
+                    ("g", Arg::Text(&format!("{:02X}", g))),
+                    ("b", Arg::Text(&format!("{:02X}", b))),
+                ],
             )
         }
-        None => format!("Selected: Local {local:X} -> transparent"),
+        None => ui_text::get_with(
+            "sprites-selected-local-transparent",
+            &[("local", Arg::Text(&format!("{:X}", local)))],
+        ),
     }
 }
 
@@ -697,7 +792,10 @@ pub(super) fn bank_name(bank: ObjBank, advanced: bool) -> String {
     if advanced {
         format!("OBP{}", bank.get())
     } else {
-        format!("Palette {}", bank.get())
+        ui_text::get_with(
+            "sprites-palette-name",
+            &[("bank", Arg::Text(&(bank.get().to_string())))],
+        )
     }
 }
 

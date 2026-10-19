@@ -1,12 +1,14 @@
 //! OPEN FILE shows every script of the cartridge in one list that typing
 //! narrows.
 
+use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
 
 use crate::cartridge::source::{ScriptListing, SourcePath};
 use crate::cartridge_fs::{FsError, WalkGap};
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{AREA_MARGIN, PAD};
+use crate::ui_text;
 
 /// Rows of files the window shows at once, where the area has room.
 pub const LIST_ROWS: usize = 10;
@@ -43,7 +45,7 @@ pub struct FilePicker {
 impl FilePicker {
     pub fn new(listing: Result<ScriptListing, FsError>) -> Self {
         let mut picker = Self {
-            listing: listing.map_err(|err| err.to_string()),
+            listing: listing.map_err(|err| crate::system::ui_errors::fs(&err)),
             filter: String::new(),
             matches: Vec::new(),
             focus: 0,
@@ -77,7 +79,10 @@ impl FilePicker {
         if gaps.len() > MAX_GAP_LINES
             && let Some(last) = lines.last_mut()
         {
-            *last = format!("...and {} more places not searched", gaps.len() - 1);
+            *last = ui_text::get_with(
+                "code-and-more-places-not-searched",
+                &[("value", Arg::Text(&((gaps.len() - 1).to_string())))],
+            );
         }
         lines
     }
@@ -212,10 +217,22 @@ fn rank(path: &SourcePath, filter: &str) -> Option<u8> {
 fn gap_line(gap: &WalkGap) -> String {
     let path = |path: &str| path.trim_start_matches('/').to_owned();
     match gap {
-        WalkGap::FileLimit(limit) => format!("Listing stopped after {limit} files"),
-        WalkGap::TooDeep(dir) => format!("Too deep, not searched: {}", path(dir)),
-        WalkGap::Unreadable(dir) => format!("Cannot read folder {}", path(dir)),
-        WalkGap::AlreadyWalked(dir) => format!("Skipped link to a listed folder: {}", path(dir)),
+        WalkGap::FileLimit(limit) => ui_text::get_with(
+            "code-listing-stopped-after-files",
+            &[("limit", Arg::Text(&limit.to_string()))],
+        ),
+        WalkGap::TooDeep(dir) => ui_text::get_with(
+            "code-too-deep-not-searched",
+            &[("value", Arg::Text(&(path(dir).to_string())))],
+        ),
+        WalkGap::Unreadable(dir) => ui_text::get_with(
+            "code-cannot-read-folder",
+            &[("value", Arg::Text(&(path(dir).to_string())))],
+        ),
+        WalkGap::AlreadyWalked(dir) => ui_text::get_with(
+            "code-skipped-link-to-a-listed-folder",
+            &[("value", Arg::Text(&(path(dir).to_string())))],
+        ),
     }
 }
 

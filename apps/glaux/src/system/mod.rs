@@ -31,6 +31,7 @@ mod syntax_theme;
 mod test_font;
 #[cfg(test)]
 mod test_frames;
+mod ui_errors;
 mod unsaved;
 mod video;
 mod workspace;
@@ -47,6 +48,7 @@ use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
 use workspace::{Tab, Workspace, WorkspaceRequest, WorkspaceVideo};
 
+use glaux_i18n::Arg;
 use glaux_input::{InputEvent, InputMode, Point};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
@@ -70,6 +72,7 @@ use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge_fs::CartridgeStorage;
 use crate::sprite_import::SheetSource;
+use crate::ui_text;
 
 // System UI colors, as indices into the system palette (Zughy 32).
 const BACKGROUND: u8 = 11;
@@ -135,11 +138,15 @@ pub enum PausedView {
 }
 
 /// Shown when the shell opens over a paused cartridge.
-const PAUSED_SHELL_HINT: &str = "Type 'resume' to continue or 'stop' to end.";
+fn paused_shell_hint() -> String {
+    ui_text::get("system-type-resume-to-continue-or-stop-to-end")
+}
 
 /// Shown when Break asks for the workspace with no cartridge loaded. Fits
 /// one shell row.
-const NO_CARTRIDGE_HINT: &str = "Nothing to edit. Try 'new <id>' or 'load <path>'.";
+fn no_cartridge_hint() -> String {
+    ui_text::get("system-nothing-to-edit-try-new-id-or-load-path")
+}
 
 /// Facts about the running system that the shell reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,7 +157,14 @@ pub struct SystemInfo {
 
 /// `GLAUX G1  SYSTEM ROM x.y.z`, shared by the boot header and `VERSION`.
 fn identity_line(rom_version: &Version) -> String {
-    format!("{NAME} {GENERATION}  SYSTEM ROM {rom_version}")
+    ui_text::get_with(
+        "system-identity",
+        &[
+            ("name", Arg::Text(NAME)),
+            ("generation", Arg::Text(GENERATION)),
+            ("rom-version", Arg::Text(&rom_version.to_string())),
+        ],
+    )
 }
 
 /// Work the system asks of the host, outside the machine. See
@@ -663,7 +677,11 @@ impl System {
                     font,
                     rom.ui(),
                     cartridge,
-                    video.source(self.sprites.as_ref()),
+                    video
+                        .source(self.sprites.as_ref())
+                        .as_ref()
+                        .map(|source| *source)
+                        .map_err(String::as_str),
                     self.code.as_ref(),
                     pointer,
                 );
@@ -777,7 +795,7 @@ fn shell_input(
                     );
                 }
                 None => {
-                    shell.report(NO_CARTRIDGE_HINT);
+                    shell.report(no_cartridge_hint());
                     continue;
                 }
             }
@@ -826,7 +844,10 @@ fn shell_request(
             discard_documents(ctx.sprites, ctx.code, ctx.workspace);
             let identity = cartridge_identity(cartridge.manifest());
             tracing::info!(cartridge = %identity, "cartridge unloaded");
-            shell.report(format!("Unloaded {identity}"));
+            shell.report(ui_text::get_with(
+                "system-unloaded",
+                &[("identity", Arg::Text(&identity.to_string()))],
+            ));
         }
         Some(ShellRequest::Run) => {
             // `run` only asks to start when a cartridge is loaded.
@@ -1041,7 +1062,8 @@ fn open_workspace(
             workspace.reopened(document.reopen(&cartridge, video_defaults));
             Ok(document)
         }
-        None => SpriteDocument::load(&cartridge, video_defaults).map_err(|err| err.to_string()),
+        None => SpriteDocument::load(&cartridge, video_defaults)
+            .map_err(|err| ui_errors::video::video_load(&err)),
     };
     let video = match document {
         Ok(document) => workspace.prepare_video(sprites.insert(document)),
@@ -1137,11 +1159,11 @@ fn workspace_tick(
             WorkspaceRequest::CreateScript(path) => {
                 let result = cartridge
                     .create_source(&path)
-                    .map_err(|err| err.to_string())
+                    .map_err(|err| ui_errors::fs(&err))
                     .and_then(|()| {
                         code.open(&cartridge, &path)
                             .map(drop)
-                            .map_err(|err| err.to_string())
+                            .map_err(|err| ui_errors::code::document(&err))
                     });
                 workspace.script_created(code, &path, result);
                 continue;
@@ -1202,7 +1224,7 @@ fn workspace_tick(
             WorkspaceRequest::Reload(assets) => {
                 let result = document
                     .reload(&cartridge, &assets, video_defaults)
-                    .map_err(|err| err.to_string());
+                    .map_err(|err| ui_errors::video::video_load(&err));
                 workspace.reloaded(&assets, result);
             }
             WorkspaceRequest::PickSpritesheet => {
@@ -1248,11 +1270,11 @@ fn open_entry_once(workspace: &mut Workspace, code: &mut CodeSession, cartridge:
     }
     let entry = &cartridge.manifest().runtime.entry;
     let result = SourcePath::parse(entry)
-        .map_err(|err| err.to_string())
+        .map_err(|err| ui_errors::code::source_path(&err))
         .and_then(|path| {
             code.open(cartridge, &path)
                 .map(drop)
-                .map_err(|err| err.to_string())
+                .map_err(|err| ui_errors::code::document(&err))
         });
     workspace.entry_opened(code, result);
 }
@@ -1274,9 +1296,15 @@ fn start(
         Ok(mut running) => {
             tracing::info!(cartridge = %identity, edited, "cartridge started");
             if edited {
-                shell.report(format!("Running {identity} with unsaved graphics changes"));
+                shell.report(ui_text::get_with(
+                    "system-running-with-unsaved-graphics-changes",
+                    &[("identity", Arg::Text(&identity.to_string()))],
+                ));
             } else {
-                shell.report(format!("Running {identity}"));
+                shell.report(ui_text::get_with(
+                    "system-running",
+                    &[("identity", Arg::Text(&identity.to_string()))],
+                ));
             }
             shell.warn_if_experimental(running.cartridge().manifest().runtime.language);
             shell.log(running.take_output());
@@ -1285,8 +1313,8 @@ fn start(
         Err(failed) => {
             let FailedStart { cartridge, error } = *failed;
             match error {
-                StartError::Cartridge(err) => shell.report_error(err.to_string()),
-                StartError::Video(err) => shell.report_error(err.to_string()),
+                StartError::Cartridge(err) => shell.report_error(ui_errors::cartridge(&err)),
+                StartError::Video(err) => shell.report_error(ui_errors::video::video_asset(&err)),
                 StartError::Script(failure) => {
                     tracing::info!(
                         cartridge = %identity,
@@ -1294,7 +1322,7 @@ fn start(
                         "cartridge failed to start"
                     );
                     shell.log(failure.output);
-                    shell.report_error(failure.error.to_string());
+                    shell.report_error(ui_errors::runtime::runtime(&failure.error));
                 }
             }
             SystemState::Shell {
@@ -1329,7 +1357,10 @@ fn pause(mut shell: Box<Shell>, mut running: RunningCartridge) -> SystemState {
     shell.log(running.take_output());
     let identity = cartridge_identity(running.cartridge().manifest());
     tracing::info!(cartridge = %identity, "cartridge paused");
-    shell.report(format!("Paused {identity}"));
+    shell.report(ui_text::get_with(
+        "system-paused",
+        &[("identity", Arg::Text(&identity.to_string()))],
+    ));
     SystemState::Paused {
         shell,
         running,
@@ -1352,7 +1383,7 @@ fn paused_game_tick(
             InputEvent::Enter => {
                 let identity = cartridge_identity(running.cartridge().manifest());
                 tracing::info!(cartridge = %identity, "shell opened with the cartridge paused");
-                shell.report(PAUSED_SHELL_HINT);
+                shell.report(paused_shell_hint());
                 return paused_shell_tick(shell, running, &input[index + 1..]);
             }
             _ => {}
@@ -1406,7 +1437,10 @@ fn resume(mut shell: Box<Shell>, mut running: RunningCartridge) -> SystemState {
     running.reset_input();
     let identity = cartridge_identity(running.cartridge().manifest());
     tracing::info!(cartridge = %identity, "cartridge resumed");
-    shell.report(format!("Resumed {identity}"));
+    shell.report(ui_text::get_with(
+        "system-resumed",
+        &[("identity", Arg::Text(&identity.to_string()))],
+    ));
     SystemState::Running { shell, running }
 }
 
@@ -1419,11 +1453,14 @@ fn stop(mut shell: Box<Shell>, mut running: RunningCartridge, reason: StopReason
     match reason {
         StopReason::Stopped => {
             tracing::info!(cartridge = %identity, "cartridge stopped");
-            shell.report(format!("Stopped {identity}"));
+            shell.report(ui_text::get_with(
+                "system-stopped",
+                &[("identity", Arg::Text(&identity.to_string()))],
+            ));
         }
         StopReason::Failed(err) => {
             tracing::info!(cartridge = %identity, error = %err, "cartridge failed");
-            shell.report_error(err.to_string());
+            shell.report_error(ui_errors::runtime::runtime(&err));
         }
     }
     SystemState::Shell {

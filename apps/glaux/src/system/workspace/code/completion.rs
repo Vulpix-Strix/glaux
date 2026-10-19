@@ -19,12 +19,15 @@ use crate::system::code_history::EditKind;
 use crate::system::code_session::CodeSession;
 use crate::system::code_text::spot;
 use crate::system::docs;
+use crate::ui_text;
 use layout::{CompletionLayout, VISIBLE_ROWS};
 pub(super) use panel::{DocPanel, type_name};
 use panel::{PanelSource, panel_for};
 
 /// The status bar hint while suggestions are listed.
-pub const COMPLETION_HINT: &str = "Up/Down: pick  Tab: accept  Esc: close";
+pub fn completion_hint() -> String {
+    ui_text::get("code-up-down-pick-tab-accept-esc-close")
+}
 
 /// What the popup did with an input event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
