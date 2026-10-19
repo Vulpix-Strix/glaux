@@ -10,6 +10,7 @@ use crate::system::editor_settings::EditorSettings;
 use crate::system::test_font::LAYOUT_FONT;
 use pretty_assertions::assert_eq;
 
+mod autocomplete;
 pub(super) mod completion;
 mod editing;
 mod find;

@@ -63,6 +63,21 @@ impl DocumentSyntax {
         }
     }
 
+    /// The tree brought up to date with `document`, reparsing only if the
+    /// text changed. `None` when the grammar could not be set up.
+    pub fn parsed(&mut self, document: &CodeDocument) -> Option<&Highlighter> {
+        if document.language() != self.language {
+            *self = Self::new(document.language());
+        }
+        let highlighter = self.highlighter.as_mut()?;
+        let revision = document.revision();
+        if self.parsed != Some(revision) {
+            highlighter.update(document.text());
+            self.parsed = Some(revision);
+        }
+        Some(highlighter)
+    }
+
     /// The spans last computed, sorted and apart. Text between them is plain.
     pub fn spans(&self) -> &[Span] {
         &self.spans

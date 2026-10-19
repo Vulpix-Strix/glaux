@@ -749,6 +749,8 @@ impl CodeEditor {
         let session = session?;
         self.refresh_metrics(session);
         let before = (session.tabs().active(), session.tabs().len());
+        let was_open = self.completion.is_some();
+        let revision = session.active_document().map(CodeDocument::revision);
         let request = self.input(event, session);
         if (session.tabs().active(), session.tabs().len()) != before {
             self.reveal_active(session);
@@ -759,6 +761,7 @@ impl CodeEditor {
         self.refresh_metrics(session);
         self.refresh_find(session);
         self.sync_completion(session);
+        self.request_completion(event, was_open, revision, session);
         request
     }
 

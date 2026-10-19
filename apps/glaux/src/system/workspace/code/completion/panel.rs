@@ -1,9 +1,5 @@
 //! What the documentation panel beside the suggestion list says about a
 //! candidate.
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "nothing asks the session for suggestions yet")
-)]
 
 use glaux_docs::{ApiCatalog, DocId, Kind, ScriptLanguage, ValueType};
 use glaux_sense::{Candidate, CandidateKind, Doc};

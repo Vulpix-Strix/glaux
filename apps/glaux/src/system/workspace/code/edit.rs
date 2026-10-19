@@ -123,7 +123,10 @@ impl CodeEditor {
 
     /// The active document's id, selection and measuring key, once its
     /// measurements describe the view.
-    fn editable(&self, session: &CodeSession) -> Option<(DocumentId, Selection, MetricsKey)> {
+    pub(super) fn editable(
+        &self,
+        session: &CodeSession,
+    ) -> Option<(DocumentId, Selection, MetricsKey)> {
         let document = session.active_document()?;
         let id = document.id();
         let key = self.geometry(document).metrics_key();

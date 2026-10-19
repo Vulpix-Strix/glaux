@@ -7,7 +7,13 @@ fn active_text(system: &System) -> Option<String> {
 }
 
 fn typed(system: System, text: &str) -> System {
-    let events: Vec<InputEvent> = text.chars().map(InputEvent::Text).collect();
+    let events: Vec<InputEvent> = text
+        .chars()
+        .map(|ch| match ch {
+            '\n' => InputEvent::Enter,
+            ch => InputEvent::Text(ch),
+        })
+        .collect();
     system.update(&events)
 }
 
@@ -63,6 +69,51 @@ fn only_the_code_view_takes_typing_for_its_scripts() {
     let system = typed(press_break(system), "c");
     assert_eq!(workspace_tab(&system), Tab::Code);
     assert_eq!(active_text(&system).as_deref(), Some("ac-- main\n"));
+}
+
+#[test]
+fn suggestions_follow_unsaved_text_and_accepting_is_undoable() {
+    for (args, dir, entry, local, member) in [
+        (
+            "my-game",
+            "my-game",
+            "code/main.luau",
+            "local speed = 1\n",
+            "audio.",
+        ),
+        (
+            "owl --lang rhai",
+            "owl",
+            "code/main.rhai",
+            "let speed = 1;\n",
+            "audio::",
+        ),
+    ] {
+        let fixture = Fixture::new(&format!("sys-code-complete-{dir}"));
+        let system = starter_in_code(&fixture, args);
+        let on_disk = std::fs::read_to_string(fixture.root().join(dir).join(entry)).unwrap();
+
+        // A local that exists only in memory is offered, and so are members.
+        let system = system.update(&[InputEvent::DocumentEnd { select: false }]);
+        let system = typed(system, &format!("\n{local}sp"));
+        let system = system.update(&[InputEvent::Tab { reverse: false }]);
+        let text = active_text(&system).unwrap();
+        assert!(text.ends_with("speed"), "{entry}: {text:?}");
+
+        let system = typed(system, &format!("\n{member}to"));
+        let before = active_text(&system).unwrap();
+        let system = system.update(&[InputEvent::Tab { reverse: false }]);
+        assert_eq!(
+            active_text(&system).unwrap(),
+            format!("{before}ne"),
+            "{entry}"
+        );
+        let system = system.update(&[InputEvent::Undo]);
+        assert_eq!(active_text(&system), Some(before), "{entry}");
+
+        let after = std::fs::read_to_string(fixture.root().join(dir).join(entry)).unwrap();
+        assert_eq!(after, on_disk, "{entry} was written");
+    }
 }
 
 fn modal(system: &System) -> Option<(&str, Vec<&str>)> {

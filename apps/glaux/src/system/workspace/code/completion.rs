@@ -5,18 +5,24 @@ mod layout;
 mod panel;
 mod render;
 
+use std::sync::OnceLock;
+
+use glaux_docs::{Library, ScriptLanguage};
+use glaux_i18n::FallbackChain;
 use glaux_input::{InputEvent, Point, PointerButton};
-use glaux_sense::{CandidateKind, Completions, Insertion};
+use glaux_sense::{CandidateKind, Completions, Insertion, Trigger};
 use glaux_syntax::SyntaxKind;
 
 use super::CodeEditor;
+use crate::cartridge::Language;
 use crate::system::code_document::{CodeDocument, DocumentId};
-use crate::system::code_edit::Edit;
+use crate::system::code_edit::{Edit, IndentUnit};
 use crate::system::code_history::EditKind;
 use crate::system::code_session::CodeSession;
 use crate::system::code_text::spot;
 use layout::{CompletionLayout, Place, VISIBLE_ROWS};
 pub(super) use panel::DocPanel;
+use panel::{PanelSource, panel_for};
 
 /// The status bar hint while suggestions are listed.
 pub const COMPLETION_HINT: &str = "Up/Down: pick  Tab: accept  Esc: close";
@@ -68,10 +74,6 @@ impl CompletionPopup {
     /// A popup listing `completions` for `document`, with the first
     /// candidate picked, or `None` when there is nothing to list. `panels`
     /// holds each candidate's documentation in the same order.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "nothing asks the session for suggestions yet")
-    )]
     pub fn new(
         document: DocumentId,
         completions: Completions,
@@ -103,6 +105,22 @@ impl CompletionPopup {
     #[cfg(test)]
     pub fn first(&self) -> usize {
         self.first
+    }
+
+    /// The label of each candidate, in list order.
+    #[cfg(test)]
+    pub fn labels(&self) -> Vec<&str> {
+        self.completions
+            .items
+            .iter()
+            .map(|candidate| candidate.label.as_str())
+            .collect()
+    }
+
+    /// The documentation shown beside the picked candidate.
+    #[cfg(test)]
+    pub fn picked_panel(&self) -> Option<&DocPanel> {
+        self.panel()
     }
 
     /// Whether the user moved the pick since the list opened.
@@ -244,13 +262,122 @@ fn marker(kind: CandidateKind) -> (char, SyntaxKind) {
     }
 }
 
+/// The embedded documentation, parsed the first time suggestions need it.
+fn library() -> &'static Library {
+    static LIBRARY: OnceLock<Library> = OnceLock::new();
+    LIBRARY.get_or_init(Library::embedded)
+}
+
+/// The languages the documentation is read in, in order of preference.
+fn docs_chain() -> &'static FallbackChain {
+    static CHAIN: OnceLock<FallbackChain> = OnceLock::new();
+    CHAIN.get_or_init(|| crate::ui_text::translator().chain().clone())
+}
+
+/// Whether `ch` can be part of an identifier.
+fn is_word(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+/// What typing or deleting asks of the list, given whether one was open
+/// before the event. `None` leaves the list as the text left it.
+fn trigger_for(event: InputEvent, was_open: bool) -> Option<Trigger> {
+    match event {
+        InputEvent::Complete => Some(Trigger::Manual),
+        // Narrowing a list that is open answers from a single letter.
+        InputEvent::Text(ch) if is_word(ch) => Some(if was_open {
+            Trigger::Manual
+        } else {
+            Trigger::Auto
+        }),
+        InputEvent::Text('.' | ':') => Some(Trigger::Member),
+        InputEvent::Backspace if was_open => Some(Trigger::Manual),
+        _ => None,
+    }
+}
+
 impl CodeEditor {
+    /// Opens, narrows or closes the list after `event` was applied, which
+    /// is the only place suggestions are asked for. `revision` is the
+    /// active document's before the event: typing and deleting only count
+    /// when they changed the text.
+    ///
+    /// Ctrl+Space always asks. Typing asks after a separator or, once two
+    /// characters are in, a word, only when the caret is at the end of the
+    /// word. Pasting, undoing, redoing and moving never open the list.
+    pub(super) fn request_completion(
+        &mut self,
+        event: InputEvent,
+        was_open: bool,
+        revision: Option<u64>,
+        session: &mut CodeSession,
+    ) {
+        let Some(trigger) = trigger_for(event, was_open) else {
+            return;
+        };
+        let manual = event == InputEvent::Complete;
+        if !manual && session.active_document().map(CodeDocument::revision) == revision {
+            return;
+        }
+        self.completion = None;
+        let Some((id, selection, _)) = self.editable(session) else {
+            return;
+        };
+        if !selection.is_empty() {
+            return;
+        }
+        let caret = selection.caret().byte();
+        let Some(document) = session.document(id) else {
+            return;
+        };
+        let text = document.text();
+        // A caret inside a word would replace only half of it.
+        if trigger == Trigger::Auto && text[caret..].chars().next().is_some_and(is_word) {
+            return;
+        }
+        let deleting = event == InputEvent::Backspace;
+        if deleting && !is_word_end(text, caret) && !ends_member(text, caret) {
+            return;
+        }
+        let unit = IndentUnit::of(
+            document,
+            self.settings.indent,
+            self.settings.indent_columns(),
+        );
+        let Some(completions) =
+            session.completions(id, caret, trigger, &unit.text(), library().api())
+        else {
+            return;
+        };
+        let Some(document) = session.document(id) else {
+            return;
+        };
+        let language = match document.language() {
+            Language::Luau => ScriptLanguage::Luau,
+            Language::Rhai => ScriptLanguage::Rhai,
+        };
+        let summary = |id: &glaux_docs::DocId| {
+            let page = library().page(id, docs_chain())?.page;
+            page.summary().map(str::to_owned)
+        };
+        let line_of = |byte: usize| document.line_of(byte) + 1;
+        let source = PanelSource {
+            language,
+            api: library().api(),
+            summary: &summary,
+            line_of: &line_of,
+        };
+        let panels = completions
+            .items
+            .iter()
+            .map(|candidate| panel_for(candidate, &source))
+            .collect();
+        self.completion = CompletionPopup::new(id, completions, panels);
+    }
+
     /// Lists `completions` for `document`, the word at its caret. Does
     /// nothing when there is nothing to list.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "nothing asks the session for suggestions yet")
-    )]
+    #[cfg(test)]
     pub fn show_completions(
         &mut self,
         document: DocumentId,
@@ -366,6 +493,17 @@ impl CodeEditor {
             caret.map(|caret| (caret, caret)),
         );
     }
+}
+
+/// Whether the text before `caret` ends in a word.
+fn is_word_end(text: &str, caret: usize) -> bool {
+    text[..caret].chars().next_back().is_some_and(is_word)
+}
+
+/// Whether the text before `caret` ends in a member separator.
+fn ends_member(text: &str, caret: usize) -> bool {
+    let before = &text[..caret];
+    before.ends_with('.') || before.ends_with("::")
 }
 
 #[cfg(test)]

@@ -12,6 +12,9 @@ pub use tabs::{DocumentTabs, DocumentView};
 use std::collections::HashMap;
 use std::ops::Range;
 
+use glaux_docs::{ApiCatalog, ScriptLanguage};
+use glaux_sense::{Completions, Request, Trigger};
+
 use super::code_cursor::Caret;
 use super::code_document::{
     CodeDocument, CodeDocumentError, CodeDocuments, CodeRenameError, CodeSaveError, CodeSaved,
@@ -20,8 +23,8 @@ use super::code_document::{
 use super::code_history::{EditHistory, EditKind};
 use super::code_selection::Selection;
 use super::code_syntax::DocumentSyntax;
-use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::{SourceEditError, SourcePath};
+use crate::cartridge::{Language, LoadedCartridge};
 use crate::cartridge_fs::FsError;
 
 /// The Code view's documents and tabs for one cartridge.
@@ -91,6 +94,40 @@ impl CodeSession {
     /// [`refresh_syntax`](Self::refresh_syntax), sorted and apart.
     pub fn syntax_spans(&self, id: DocumentId) -> &[glaux_syntax::Span] {
         self.syntax.get(&id).map_or(&[], DocumentSyntax::spans)
+    }
+
+    /// What can be written at `caret` in `id`, answered from the text as it
+    /// is now, unsaved edits included. The answer carries the document's
+    /// revision so it can be told apart from a later text. `indent` is one
+    /// step of indentation for inserted declarations. `None` if `id` is not
+    /// open or its syntax is unavailable.
+    pub fn completions(
+        &mut self,
+        id: DocumentId,
+        caret: usize,
+        trigger: Trigger,
+        indent: &str,
+        api: &ApiCatalog,
+    ) -> Option<Completions> {
+        let document = self.documents.get(id)?;
+        let highlighter = self
+            .syntax
+            .entry(id)
+            .or_insert_with(|| DocumentSyntax::new(document.language()))
+            .parsed(document)?;
+        let request = Request {
+            language: match document.language() {
+                Language::Luau => ScriptLanguage::Luau,
+                Language::Rhai => ScriptLanguage::Rhai,
+            },
+            text: document.text(),
+            caret,
+            revision: document.revision(),
+            trigger,
+            line_ending: document.line_ending().as_str(),
+            indent,
+        };
+        Some(glaux_sense::complete(&request, api, highlighter))
     }
 
     /// Replaces `range` of `id`'s text with `text`, see

@@ -74,7 +74,7 @@ impl IndentUnit {
         }
     }
 
-    fn text(self) -> String {
+    pub fn text(self) -> String {
         match self {
             Self::Tab => "\t".to_owned(),
             Self::Spaces(width) => " ".repeat(width.max(1)),
