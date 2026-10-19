@@ -255,6 +255,7 @@ fn serve_host_requests(system: &mut System, picker: &mut FilePicker, config_dir:
                     ));
                 }
             }
+            HostRequest::OpenExternal(url) => desktop::external::open_url(&url),
             HostRequest::SaveEditorSettings(settings) => {
                 let Some(dir) = config_dir else {
                     tracing::debug!("no config directory, editor settings not saved");

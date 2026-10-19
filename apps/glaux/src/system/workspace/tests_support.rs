@@ -1,4 +1,26 @@
+use std::cell::Cell;
+
 use super::*;
+
+thread_local! {
+    /// The documentation the browser reads on this thread instead of the
+    /// embedded one.
+    static DOCS: Cell<Option<Source<'static>>> = const { Cell::new(None) };
+}
+
+/// Makes the browser read `library` in `chain`'s languages on this thread
+/// from now on. The library lives until the process ends.
+pub fn use_docs(library: glaux_docs::Library, chain: glaux_i18n::FallbackChain) {
+    let source = Source {
+        library: Box::leak(Box::new(library)),
+        chain: Box::leak(Box::new(chain)),
+    };
+    DOCS.with(|docs| docs.set(Some(source)));
+}
+
+pub(super) fn docs_override() -> Option<Source<'static>> {
+    DOCS.with(Cell::get)
+}
 
 /// The sprite editor's metrics with the System ROM font, as the workspace
 /// lays it out.
@@ -80,9 +102,15 @@ pub fn english_labels() -> TabLabels {
 }
 
 /// The leftmost column the cartridge name may use.
-pub fn name_start(metrics: FontMetrics) -> i32 {
-    let layout = Layout::new(metrics);
-    WIDTH as i32 - NAME_PAD - layout.name_cells(&english_labels()) as i32 * layout.cell_w
+pub fn name_start(font: &BitmapFont) -> i32 {
+    let layout = Layout::new(font.metrics());
+    let labels = english_labels();
+    layout.name_right(&labels, font) - layout.name_cells(&labels, font) as i32 * layout.cell_w
+}
+
+/// Where the Docs button sits in the bar for `font`.
+pub fn docs_button(font: &BitmapFont) -> Rect {
+    Layout::new(font.metrics()).docs_button(english_labels().docs(), font)
 }
 
 /// Where the sprite editor's palette button is.
@@ -140,5 +168,19 @@ pub fn import_preview_parts(workspace: &Workspace) -> (Rect, Rect, Rect, Rect) {
         layout.transparency,
         layout.cancel,
         layout.import,
+    )
+}
+
+/// Whether the documentation browser covers the selected view.
+pub fn docs_open(workspace: &Workspace) -> bool {
+    workspace.docs_open
+}
+
+/// How many page tabs the documentation browser has, and the id of the page
+/// the active one shows.
+pub fn docs_pages(workspace: &Workspace) -> (usize, Option<String>) {
+    (
+        workspace.docs.tab_count(),
+        workspace.docs.current().map(ToString::to_string),
     )
 }

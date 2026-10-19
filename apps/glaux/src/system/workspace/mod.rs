@@ -11,6 +11,7 @@
 mod code;
 mod context_menu;
 mod dialog;
+mod docs;
 mod sprites;
 mod text_field;
 
@@ -31,13 +32,14 @@ use super::code_document::{
     SourceConflictKind,
 };
 use super::code_session::{CodeSession, MoveScriptError};
+use super::docs as library_docs;
 use super::editor_settings::EditorSettings;
 use super::sprite_document::{
     Conflict, ConflictKind, DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile,
     SpriteDocument, file_list,
 };
 use super::video::CartridgeVideoDefaults;
-use super::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
+use super::{ACCENT, BACKGROUND, DIM, ERROR, ExternalUrl, OK, PALE, TEXT};
 use crate::cartridge::source::{ScriptListing, SourceEditError, SourcePath};
 use crate::cartridge::{CartridgeError, Language, LoadedCartridge, VideoAsset};
 use crate::cartridge_fs::FsError;
@@ -45,6 +47,7 @@ use crate::rom::ICON_SIZE;
 use crate::sprite_import::SheetSource;
 use code::{CodeEditor, CodeRequest};
 pub(super) use dialog::{Dialog, DialogLayout};
+use docs::{DocsBrowser, DocsRequest, Source};
 #[cfg(test)]
 pub use sprites::ImportPreview;
 #[cfg(not(test))]
@@ -80,6 +83,10 @@ const HINT_GAP: i32 = 4;
 const NAME_GAP: i32 = 8;
 /// Space between the cartridge name and the right edge.
 const NAME_PAD: i32 = 4;
+/// Space around the label of the Docs button.
+const DOCS_PAD: i32 = 3;
+/// Space between the Docs button and the right edge.
+const DOCS_MARGIN: i32 = 2;
 /// Fewest cells worth showing of a truncated cartridge name.
 const MIN_NAME_CELLS: usize = 4;
 /// Marks a cartridge name cut short to fit the bar.
@@ -147,6 +154,8 @@ pub enum WorkspaceRequest {
     /// Move this script's file to this path. Answer with
     /// [`Workspace::script_renamed`].
     RenameScript { id: DocumentId, to: SourcePath },
+    /// Open this link in the program the host uses for it.
+    OpenExternal(ExternalUrl),
     /// Put this text on the host's clipboard.
     Copy(String),
     /// Read the host's clipboard. Answer with [`Workspace::paste`].
@@ -348,6 +357,16 @@ impl Layout {
         }
     }
 
+    /// The cell size and top of the documentation browser, below the tab
+    /// bar.
+    const fn docs_metrics(self) -> docs::Metrics {
+        docs::Metrics {
+            cell_w: self.cell_w,
+            cell_h: self.cell_h,
+            top: self.bar_height(),
+        }
+    }
+
     /// The cell size and top of the sprite editor, below the tab bar.
     const fn sprite_metrics(self) -> sprites::Metrics {
         sprites::Metrics {
@@ -403,11 +422,27 @@ impl Layout {
         (self.bar_height() - self.cell_h) / 2 + 1
     }
 
+    /// The Docs button at the bar's right end, showing `label`.
+    fn docs_button(self, label: &str, font: &BitmapFont) -> Rect {
+        let width = text_width(font, label) + 2 * DOCS_PAD;
+        Rect {
+            x: WIDTH as i32 - DOCS_MARGIN - width,
+            y: 0,
+            width,
+            height: self.bar_height(),
+        }
+    }
+
+    /// Where the cartridge name ends: left of the Docs button.
+    fn name_right(self, labels: &TabLabels, font: &BitmapFont) -> i32 {
+        self.docs_button(labels.docs(), font).x - NAME_PAD
+    }
+
     /// Cells available to the cartridge name, right of the longest hint.
-    fn name_cells(self, labels: &TabLabels) -> usize {
+    fn name_cells(self, labels: &TabLabels, font: &BitmapFont) -> usize {
         let longest = i32::try_from(labels.longest_cells()).unwrap_or(0) * self.cell_w;
         let start = self.hint_x() + longest + NAME_GAP;
-        let space = WIDTH as i32 - NAME_PAD - start;
+        let space = self.name_right(labels, font) - start;
         usize::try_from(space / self.cell_w.max(1)).unwrap_or(0)
     }
 }
@@ -415,21 +450,41 @@ impl Layout {
 /// The tabs' names in the interface language, resolved once because the
 /// language does not change while the workspace exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TabLabels([String; Tab::ALL.len()]);
+pub struct TabLabels {
+    tabs: [String; Tab::ALL.len()],
+    /// The Docs button's label, and the hint naming it.
+    docs: String,
+    docs_hint: String,
+}
 
 impl TabLabels {
     pub fn new(text: &Translator) -> Self {
-        Self(Tab::ALL.map(|tab| text.get(tab.message_id()).into_owned()))
+        Self {
+            tabs: Tab::ALL.map(|tab| text.get(tab.message_id()).into_owned()),
+            docs: text.get("docs-button").into_owned(),
+            docs_hint: text.get("docs-button-hint").into_owned(),
+        }
     }
 
     pub fn get(&self, tab: Tab) -> &str {
-        &self.0[tab.index()]
+        &self.tabs[tab.index()]
     }
 
-    /// The width in cells of the longest name.
+    /// The Docs button's label.
+    fn docs(&self) -> &str {
+        &self.docs
+    }
+
+    /// The hint shown while the pointer is over the Docs button.
+    fn docs_hint(&self) -> &str {
+        &self.docs_hint
+    }
+
+    /// The width in cells of the longest name the hint area shows.
     fn longest_cells(&self) -> usize {
-        self.0
+        self.tabs
             .iter()
+            .chain([&self.docs_hint])
             .map(|label| label.chars().count())
             .max()
             .unwrap_or(0)
@@ -853,6 +908,10 @@ pub struct Workspace {
     tab_labels: TabLabels,
     code: CodeEditor,
     sprites: SpriteEditor,
+    docs: DocsBrowser,
+    /// Whether the documentation browser covers the selected view. Hiding
+    /// it keeps its tabs.
+    docs_open: bool,
     /// While open, the dialog takes every input and the views take none.
     modal: Option<Modal>,
     notice: Option<Notice>,
@@ -879,6 +938,8 @@ impl Workspace {
                 EditorSettings::default(),
             ),
             sprites: SpriteEditor::new(layout.sprite_metrics()),
+            docs: DocsBrowser::new(layout.docs_metrics(), font.clone()),
+            docs_open: false,
             modal: None,
             notice: None,
             ticks: 0,
@@ -1008,22 +1069,82 @@ impl Workspace {
             return self.code_input(event, code);
         }
         match event {
-            InputEvent::NextView => self.switch_to(self.tab.next(), sprites),
-            InputEvent::PreviousView => self.switch_to(self.tab.previous(), sprites),
+            InputEvent::NextView => {
+                self.docs_open = false;
+                self.switch_to(self.tab.next(), sprites);
+            }
+            InputEvent::PreviousView => {
+                self.docs_open = false;
+                self.switch_to(self.tab.previous(), sprites);
+            }
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,
                 ..
             } if self.layout.tab_at(at).is_some() => {
                 if let Some(tab) = self.layout.tab_at(at) {
+                    self.docs_open = false;
                     self.switch_to(tab, sprites);
                 }
             }
+            InputEvent::PointerDown {
+                button: PointerButton::Primary,
+                at,
+                ..
+            } if self.docs_button().contains(at) => self.toggle_docs(sprites),
+            InputEvent::Docs if !self.docs_open => self.toggle_docs(sprites),
+            _ if self.docs_open => return self.docs_input(event),
             _ if self.tab == Tab::Sprites => return self.sprite_input(event, sprites),
             _ if self.tab == Tab::Code => return self.code_input(event, code),
             _ => {}
         }
         None
+    }
+
+    /// The Docs button in the tab bar.
+    fn docs_button(&self) -> Rect {
+        self.layout.docs_button(self.tab_labels.docs(), &self.font)
+    }
+
+    /// Shows the documentation browser over the selected view, or hides it.
+    /// Its tabs and history stay for the next time. Neither the Code view's
+    /// documents nor the sprite editor's are touched.
+    fn toggle_docs(&mut self, sprites: Option<&mut SpriteDocument>) {
+        if self.docs_open {
+            self.docs_open = false;
+            return;
+        }
+        // A drag must not outlive the view it started in.
+        self.end_stroke(sprites);
+        self.docs.show(docs_source());
+        self.docs_open = true;
+    }
+
+    /// Hands `event` to the documentation browser and carries out what it
+    /// asks.
+    fn docs_input(&mut self, event: InputEvent) -> Option<WorkspaceRequest> {
+        let request = self.docs.handle_input(event, docs_source())?;
+        self.docs_request(request)
+    }
+
+    /// Carries out what the documentation browser asked for.
+    fn docs_request(&mut self, request: DocsRequest) -> Option<WorkspaceRequest> {
+        match request {
+            DocsRequest::Close => {
+                self.docs_open = false;
+                None
+            }
+            DocsRequest::Notice(text) => {
+                self.notify(text, PALE);
+                None
+            }
+            DocsRequest::OpenExternal(url) => {
+                self.notify(format!("Opening {}", url.as_str()), PALE);
+                Some(WorkspaceRequest::OpenExternal(url))
+            }
+            DocsRequest::Copy(text) => Some(WorkspaceRequest::Copy(text)),
+            DocsRequest::Paste => Some(WorkspaceRequest::Paste),
+        }
     }
 
     /// Hands `event` to the Code view and passes on the file work it asks
@@ -1087,7 +1208,7 @@ impl Workspace {
     /// Whether Escape stays in the workspace, closing what is open there,
     /// rather than returning to the shell.
     pub fn claims_break(&self) -> bool {
-        self.has_modal() || (self.tab == Tab::Code && self.code.claims_break())
+        self.has_modal() || self.docs_open || (self.tab == Tab::Code && self.code.claims_break())
     }
 
     /// The pointer to show at `at`, with the Code view showing `code`, and
@@ -1117,8 +1238,12 @@ impl Workspace {
             hand(layout.button_at(at).is_some())
         } else if self.tab == Tab::Code && self.code.is_dragging() {
             self.code.cursor(at, code)
-        } else if !self.has_modal() && self.layout.tab_at(at).is_some() {
+        } else if !self.has_modal()
+            && (self.layout.tab_at(at).is_some() || self.docs_button().contains(at))
+        {
             SystemCursor::Hand
+        } else if self.docs_open {
+            self.docs.cursor(at, docs_source())
         } else {
             match self.tab {
                 Tab::Sprites => self.sprites.cursor(at),
@@ -1251,7 +1376,9 @@ impl Workspace {
     /// Hands the clipboard's `text` to the Code view, which inserts it
     /// where the keys are.
     pub fn paste(&mut self, code: &mut CodeSession, text: Option<String>) {
-        if self.tab == Tab::Code {
+        if self.docs_open {
+            self.docs.paste(docs_source(), text);
+        } else if self.tab == Tab::Code {
             self.code.paste(text, Some(code));
         }
     }
@@ -1545,9 +1672,12 @@ impl Workspace {
         // Nothing under an open dialog reacts to the pointer, and only the
         // sprite editor's dialog does while one is open.
         let pointer = pointer.filter(|_| self.modal.is_none());
-        let hovered = pointer
+        let chrome_pointer = pointer
             .filter(|_| !self.sprites.has_dialog() && !self.code.has_overlay())
-            .and_then(|at| layout.tab_at(at));
+            .filter(|_| !self.docs.has_overlay() || !self.docs_open);
+        let hovered = chrome_pointer.and_then(|at| layout.tab_at(at));
+        let button = self.docs_button();
+        let over_button = chrome_pointer.is_some_and(|at| button.contains(at));
         for (tab, rect) in layout.tabs() {
             let active = tab == self.tab;
             let inks: [u8; INK_SLOTS] = if active {
@@ -1583,21 +1713,25 @@ impl Workspace {
         // Icons alone don't say which editor is which: name the one under
         // the pointer, or else the open one.
         let (hint, color) = match hovered {
-            Some(tab) => (tab, PALE),
-            None => (self.tab, DIM),
+            Some(tab) => (self.tab_labels.get(tab), PALE),
+            None if over_button => (self.tab_labels.docs_hint(), PALE),
+            None => (self.tab_labels.get(self.tab), DIM),
         };
         draw_text(
             framebuffer,
             font,
-            self.tab_labels.get(hint),
+            hint,
             layout.hint_x(),
             layout.text_y(),
             color,
         );
 
+        self.docs_button_face(framebuffer, font, over_button);
+
         let name = &cartridge.manifest().cartridge.name;
-        if let Some(name) = fit_name(font, name, layout.name_cells(&self.tab_labels)) {
-            let x = WIDTH as i32 - NAME_PAD - text_width(font, &name);
+        let cells = layout.name_cells(&self.tab_labels, font);
+        if let Some(name) = fit_name(font, name, cells) {
+            let x = layout.name_right(&self.tab_labels, font) - text_width(font, &name);
             draw_text(framebuffer, font, &name, x, layout.text_y(), PALE);
         }
 
@@ -1605,14 +1739,20 @@ impl Workspace {
             .notice
             .as_ref()
             .map(|notice| (notice.text.as_str(), notice.color));
-        match self.tab {
-            Tab::Sprites => self
-                .sprites
-                .render(framebuffer, font, ui, sprites, pointer, notice),
-            Tab::Code => self
-                .code
-                .render(framebuffer, font, ui, code, pointer, notice),
-            _ => self.render_placeholder(framebuffer, font),
+        if self.docs_open {
+            self.docs
+                .render(framebuffer, font, docs_source(), pointer, notice);
+        } else {
+            match self.tab {
+                Tab::Sprites => {
+                    self.sprites
+                        .render(framebuffer, font, ui, sprites, pointer, notice)
+                }
+                Tab::Code => self
+                    .code
+                    .render(framebuffer, font, ui, code, pointer, notice),
+                _ => self.render_placeholder(framebuffer, font),
+            }
         }
         if let Some(modal) = &self.modal {
             let dialog_layout =
@@ -1621,6 +1761,36 @@ impl Workspace {
                     .layout(font, layout.view_area(), layout.cell_w, layout.cell_h);
             modal.dialog.render(framebuffer, font, &dialog_layout);
         }
+    }
+
+    /// The Docs button: a plate like the active tab's while the browser is
+    /// open, and lit while the pointer is over it.
+    fn docs_button_face(&self, framebuffer: &mut Framebuffer, font: &BitmapFont, hovered: bool) {
+        let button = self.docs_button();
+        let ink = if self.docs_open {
+            fill_rect(
+                framebuffer,
+                button.x,
+                button.y,
+                button.width,
+                button.height,
+                BACKGROUND,
+            );
+            fill_rect(framebuffer, button.x, button.y, button.width, 1, ACCENT);
+            ACCENT
+        } else if hovered {
+            PALE
+        } else {
+            DIM
+        };
+        draw_text(
+            framebuffer,
+            font,
+            self.tab_labels.docs(),
+            button.x + DOCS_PAD,
+            self.layout.text_y(),
+            ink,
+        );
     }
 
     /// The selected view's stand-in until its editor exists.
@@ -1647,6 +1817,18 @@ impl Workspace {
             draw_text(framebuffer, font, text, x, y, color);
             y += cell_h;
         }
+    }
+}
+
+/// The embedded documentation and the languages it is read in.
+fn docs_source() -> Source<'static> {
+    #[cfg(test)]
+    if let Some(source) = tests_support::docs_override() {
+        return source;
+    }
+    Source {
+        library: library_docs::library(),
+        chain: library_docs::chain(),
     }
 }
 

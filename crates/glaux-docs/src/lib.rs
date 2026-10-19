@@ -9,6 +9,7 @@ mod diagnostic;
 mod id;
 mod ids_lock;
 mod library;
+mod link;
 mod page;
 pub mod validate;
 
@@ -16,5 +17,9 @@ pub use catalog::{ApiCatalog, ApiEntry, Binding, Kind, Param, ScriptLanguage, Va
 pub use diagnostic::{Diagnostic, Severity};
 pub use id::{DocId, DocIdError, URI_SCHEME};
 pub use ids_lock::{IdsLock, IdsLockError};
-pub use library::{Library, Resolved};
-pub use page::{ImageRef, LinkRef, Page, ParameterRow, Scope, Section, TextRun};
+pub use library::{Hit, Library, Rank, Resolved};
+pub use link::{EXTERNAL_SCHEMES, is_external_scheme, scheme};
+pub use page::{
+    AlertKind, Block, BlockKind, ImageRef, Inline, LinkRef, Page, ParameterRow, Scope, Section,
+    TextRun, anchor, plain_text,
+};

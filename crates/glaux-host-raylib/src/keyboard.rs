@@ -27,6 +27,7 @@ const REPEAT_INTERVAL: Duration = Duration::from_millis(33);
 pub(crate) struct Modifiers {
     pub(crate) shift: bool,
     pub(crate) ctrl: bool,
+    pub(crate) alt: bool,
 }
 
 /// Builds the event for a key, given the modifiers held.
@@ -42,12 +43,14 @@ struct EditKey {
     plain_only: bool,
 }
 
-const EDIT_KEYS: [EditKey; 14] = [
+const EDIT_KEYS: [EditKey; 15] = [
     EditKey {
         key: KeyboardKey::KEY_LEFT,
         event: |m| {
             let select = m.shift;
-            if m.ctrl {
+            if m.alt && !m.ctrl {
+                InputEvent::Back
+            } else if m.ctrl {
                 InputEvent::WordLeft { select }
             } else {
                 InputEvent::Left { select }
@@ -60,7 +63,9 @@ const EDIT_KEYS: [EditKey; 14] = [
         key: KeyboardKey::KEY_RIGHT,
         event: |m| {
             let select = m.shift;
-            if m.ctrl {
+            if m.alt && !m.ctrl {
+                InputEvent::Forward
+            } else if m.ctrl {
                 InputEvent::WordRight { select }
             } else {
                 InputEvent::Right { select }
@@ -157,6 +162,12 @@ const EDIT_KEYS: [EditKey; 14] = [
         plain_only: false,
     },
     EditKey {
+        key: KeyboardKey::KEY_F1,
+        event: |_| InputEvent::Docs,
+        repeats: false,
+        plain_only: false,
+    },
+    EditKey {
         key: KeyboardKey::KEY_ESCAPE,
         event: |_| InputEvent::Break,
         repeats: false,
@@ -168,7 +179,7 @@ const EDIT_KEYS: [EditKey; 14] = [
 /// press and never repeated. Raylib key codes name physical positions, so on
 /// layouts other than QWERTY the shortcut follows the key where the letter
 /// sits on QWERTY.
-const SHORTCUTS: [(KeyboardKey, KeyEvent); 16] = [
+const SHORTCUTS: [(KeyboardKey, KeyEvent); 17] = [
     (KeyboardKey::KEY_Z, |m| {
         if m.shift {
             InputEvent::Redo
@@ -187,6 +198,7 @@ const SHORTCUTS: [(KeyboardKey, KeyEvent); 16] = [
     (KeyboardKey::KEY_F, |_| InputEvent::Find),
     (KeyboardKey::KEY_H, |_| InputEvent::Replace),
     (KeyboardKey::KEY_G, |_| InputEvent::GoToLine),
+    (KeyboardKey::KEY_B, |_| InputEvent::ToggleSidebar),
     (KeyboardKey::KEY_SPACE, |m| {
         if m.shift {
             InputEvent::SignatureHelp
@@ -569,6 +581,10 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::GoToLine
                     | InputEvent::Complete
                     | InputEvent::SignatureHelp
+                    | InputEvent::Docs
+                    | InputEvent::Back
+                    | InputEvent::Forward
+                    | InputEvent::ToggleSidebar
                     | InputEvent::Copy
                     | InputEvent::Cut
                     | InputEvent::Paste

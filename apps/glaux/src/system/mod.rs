@@ -19,6 +19,7 @@ mod code_syntax;
 mod code_text;
 mod docs;
 mod editor_settings;
+mod external_url;
 mod line_editor;
 mod pause;
 mod running;
@@ -40,6 +41,7 @@ use code_session::CodeSession;
 #[cfg(test)]
 pub use editor_settings::IndentStyle;
 pub use editor_settings::{EditorSettings, INDENT_SIZES, TAB_SIZES};
+pub use external_url::{ExternalUrl, ExternalUrlError};
 pub use shell::Shell;
 use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
@@ -160,6 +162,9 @@ pub enum HostRequest {
     PickPng { directory: PathBuf },
     /// Keep these Code view settings for the next launch.
     SaveEditorSettings(EditorSettings),
+    /// Open this link in the program the operating system uses for it. The
+    /// system asked because the user chose the link.
+    OpenExternal(ExternalUrl),
 }
 
 /// How the host's file dialog answered a [`HostRequest::PickPng`].
@@ -1172,6 +1177,10 @@ fn workspace_tick(
                 workspace.script_renamed(code, &to, result);
                 continue;
             }
+            WorkspaceRequest::OpenExternal(url) => {
+                host_requests.push(HostRequest::OpenExternal(url));
+                continue;
+            }
             WorkspaceRequest::Copy(text) => {
                 clipboard.set_text(&text);
                 continue;
@@ -1212,6 +1221,7 @@ fn workspace_tick(
             | WorkspaceRequest::PrepareDelete(_)
             | WorkspaceRequest::DeleteScript { .. }
             | WorkspaceRequest::RenameScript { .. }
+            | WorkspaceRequest::OpenExternal(_)
             | WorkspaceRequest::Copy(_)
             | WorkspaceRequest::Paste => {
                 unreachable!("code requests are carried out above")

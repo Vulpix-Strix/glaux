@@ -6,6 +6,10 @@ use glaux_i18n::Language;
 
 use crate::{DocId, ScriptLanguage};
 
+mod blocks;
+
+pub use blocks::{AlertKind, Block, BlockKind, Inline, plain_text};
+
 /// The heading text that opens a Luau-only subsection.
 const LUAU_HEADING: &str = "Luau";
 /// The heading text that opens a Rhai-only subsection.
@@ -39,6 +43,29 @@ pub struct Section {
     /// Lines from the heading to the line before the next heading of the
     /// same or a shallower level (one-based, inclusive).
     pub lines: RangeInclusive<usize>,
+}
+
+impl Section {
+    /// The name a `#fragment` link uses to point at this heading: its title
+    /// in lowercase with each run of other characters than letters and
+    /// digits turned into one hyphen.
+    pub fn anchor(&self) -> String {
+        anchor(&self.title)
+    }
+}
+
+/// See [`Section::anchor`].
+pub fn anchor(title: &str) -> String {
+    let mut anchor = String::new();
+    for ch in title.chars() {
+        if ch.is_alphanumeric() {
+            anchor.extend(ch.to_lowercase());
+        } else if !anchor.is_empty() && !anchor.ends_with('-') {
+            anchor.push('-');
+        }
+    }
+    anchor.truncate(anchor.trim_end_matches('-').len());
+    anchor
 }
 
 /// A link in the page text.
@@ -88,6 +115,7 @@ pub struct Page {
     text_runs: Vec<TextRun>,
     html_lines: Vec<usize>,
     parameters: Option<Vec<ParameterRow>>,
+    blocks: Vec<Block>,
 }
 
 impl Page {
@@ -106,6 +134,7 @@ impl Page {
             text_runs: Vec::new(),
             html_lines: Vec::new(),
             parameters: None,
+            blocks: Vec::new(),
             source: String::new(),
         };
         page.scan(root, source.lines().count().max(1));
@@ -166,6 +195,11 @@ impl Page {
         self.parameters.as_deref()
     }
 
+    /// The page as a viewer draws it, in document order.
+    pub fn blocks(&self) -> &[Block] {
+        &self.blocks
+    }
+
     fn scan<'a>(&mut self, root: &'a AstNode<'a>, total_lines: usize) {
         for node in root.descendants() {
             let line = node.data().sourcepos.start.line;
@@ -214,6 +248,7 @@ impl Page {
             .map(|(_, title, _)| title.clone());
         self.outline = build_outline(&headings, total_lines);
         self.parameters = parameters(root, &self.outline);
+        self.blocks = blocks::build(root, &self.outline);
     }
 
     fn push_text(&mut self, line: usize, text: &str) {

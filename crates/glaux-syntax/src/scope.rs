@@ -558,7 +558,7 @@ fn text<'s>(source: &'s str, node: Node) -> &'s str {
     source.get(node.byte_range()).unwrap_or_default()
 }
 
-fn named(node: Node) -> impl Iterator<Item=Node> {
+fn named(node: Node) -> impl Iterator<Item = Node> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor)
         .collect::<Vec<_>>()

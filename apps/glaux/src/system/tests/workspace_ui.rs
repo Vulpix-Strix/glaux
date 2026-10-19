@@ -332,10 +332,11 @@ fn a_long_cartridge_name_never_draws_over_the_tabs() {
     let system = enter(shell_with_cartridge(&fixture, ""), "load long");
     let long = render(&press_break(system));
     let short = render(&press_break(loaded(&fixture)));
-    let metrics = fake_rom().font().metrics();
+    let rom = fake_rom();
+    let metrics = rom.font().metrics();
     let tabs = Tab::ALL.map(|tab| workspace::tests_support::tab_rect(tab, metrics));
     let last = tabs[tabs.len() - 1];
-    let name_start = workspace::tests_support::name_start(metrics);
+    let name_start = workspace::tests_support::name_start(rom.font());
     assert!(name_start > last.x + last.width);
     for x in 0..name_start {
         for y in 0..last.height {

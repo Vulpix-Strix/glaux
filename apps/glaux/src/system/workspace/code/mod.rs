@@ -20,7 +20,7 @@ mod render;
 mod searching;
 mod settings;
 mod signature;
-mod text_view;
+pub(super) mod text_view;
 
 use std::ops::Range;
 

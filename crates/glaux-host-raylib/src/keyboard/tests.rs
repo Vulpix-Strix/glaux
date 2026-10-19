@@ -21,7 +21,10 @@ fn frame(
     shift: bool,
     elapsed: Duration,
 ) -> Vec<InputEvent> {
-    let modifiers = Modifiers { shift, ctrl: false };
+    let modifiers = Modifiers {
+        shift,
+        ..Modifiers::default()
+    };
     frame_with(edit, keys, state, modifiers, elapsed)
 }
 
@@ -87,7 +90,11 @@ fn ctrl_movement_keys_move_by_word_and_document() {
     let keys = [KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END];
     for shift in [false, true] {
         let select = shift;
-        let ctrl = Modifiers { shift, ctrl: true };
+        let ctrl = Modifiers {
+            shift,
+            ctrl: true,
+            ..Modifiers::default()
+        };
         assert_eq!(
             frame_with(&mut EditKeys::default(), &keys, PRESSED, ctrl, FRAME),
             [
@@ -120,8 +127,8 @@ fn held_ctrl_page_keys_never_page_or_repeat() {
     // With Ctrl held, PageDown is only the NextDocument shortcut, which
     // fires once per press.
     let ctrl = Modifiers {
-        shift: false,
         ctrl: true,
+        ..Modifiers::default()
     };
     let mut edit = EditKeys::default();
     let mut events = frame_with(&mut edit, &[KEY_PAGE_DOWN], PRESSED, ctrl, FRAME);
@@ -162,7 +169,11 @@ fn ctrl_tab_switches_views_instead_of_tabbing() {
                     KeyState::default()
                 }
             },
-            Modifiers { shift, ctrl },
+            Modifiers {
+                shift,
+                ctrl,
+                ..Modifiers::default()
+            },
             FRAME,
             &mut out,
         );
@@ -213,7 +224,11 @@ fn shortcuts(keys: &[KeyboardKey], shift: bool, ctrl: bool) -> Vec<InputEvent> {
     let mut out = Vec::new();
     shortcut_events(
         |key| keys.contains(&key),
-        Modifiers { shift, ctrl },
+        Modifiers {
+            shift,
+            ctrl,
+            ..Modifiers::default()
+        },
         &mut out,
     );
     out
@@ -257,6 +272,49 @@ fn ctrl_shift_space_asks_for_the_signature_instead_of_suggestions() {
     assert_eq!(
         shortcuts(&[KEY_SPACE], true, true),
         [InputEvent::SignatureHelp]
+    );
+}
+
+#[test]
+fn ctrl_b_toggles_the_side_panel() {
+    assert_eq!(
+        shortcuts(&[KEY_B], false, true),
+        [InputEvent::ToggleSidebar]
+    );
+    assert_eq!(shortcuts(&[KEY_B], false, false), []);
+}
+
+#[test]
+fn f1_opens_the_docs_once_per_press() {
+    assert_eq!(press(&[KEY_F1], false), [InputEvent::Docs]);
+    let counts = hold(KEY_F1, 40);
+    assert_eq!(counts[0], 1);
+    assert!(counts[1..].iter().all(|&count| count == 0), "{counts:?}");
+}
+
+#[test]
+fn alt_with_a_horizontal_arrow_goes_back_and_forward() {
+    let alt = Modifiers {
+        alt: true,
+        ..Modifiers::default()
+    };
+    let key = |key| frame_with(&mut EditKeys::default(), &[key], PRESSED, alt, FRAME);
+    assert_eq!(key(KEY_LEFT), [InputEvent::Back]);
+    assert_eq!(key(KEY_RIGHT), [InputEvent::Forward]);
+    // Ctrl keeps its word movement even with Alt held, and Alt alone
+    // elsewhere changes nothing.
+    let both = Modifiers {
+        ctrl: true,
+        alt: true,
+        ..Modifiers::default()
+    };
+    assert_eq!(
+        frame_with(&mut EditKeys::default(), &[KEY_LEFT], PRESSED, both, FRAME),
+        [InputEvent::WordLeft { select: false }]
+    );
+    assert_eq!(
+        frame_with(&mut EditKeys::default(), &[KEY_DOWN], PRESSED, alt, FRAME),
+        [InputEvent::Down { select: false }]
     );
 }
 
@@ -314,6 +372,10 @@ fn editing_commands_are_kept_only_in_workspace_mode() {
         InputEvent::GoToLine,
         InputEvent::Complete,
         InputEvent::SignatureHelp,
+        InputEvent::Docs,
+        InputEvent::Back,
+        InputEvent::Forward,
+        InputEvent::ToggleSidebar,
         InputEvent::Copy,
         InputEvent::Cut,
         InputEvent::Paste,

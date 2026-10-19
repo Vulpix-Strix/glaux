@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use glaux_i18n::validate::{CatalogIssue, Severity as CatalogSeverity};
 use glaux_i18n::{Catalog, CatalogError, Language};
 
-use crate::{Diagnostic, DocId, Library, Page, URI_SCHEME};
+use crate::{Diagnostic, DocId, Library, Page, URI_SCHEME, is_external_scheme, scheme};
 
 /// Checks the whole library: pages, links, images, translations, the API
 /// catalog against its pages, and `ids.lock`.
@@ -126,7 +126,7 @@ fn link_problem(target: &str, english_ids: &BTreeSet<DocId>) -> Option<(&'static
         };
     }
     match scheme(target) {
-        Some("http" | "https" | "mailto") => None,
+        Some(scheme) if is_external_scheme(scheme) => None,
         Some(other) => Some((
             "unsupported-link",
             format!("links with scheme `{other}:` are not supported"),
@@ -136,15 +136,6 @@ fn link_problem(target: &str, english_ids: &BTreeSet<DocId>) -> Option<(&'static
             format!("{target:?} is a file path; link to a page with {URI_SCHEME}<id>"),
         )),
     }
-}
-
-fn scheme(target: &str) -> Option<&str> {
-    let (scheme, _) = target.split_once(':')?;
-    let valid = !scheme.is_empty()
-        && scheme
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c));
-    valid.then_some(scheme)
 }
 
 fn image_problem(library: &Library, page: &Page, target: &str) -> Option<Problem> {

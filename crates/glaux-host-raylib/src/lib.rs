@@ -340,6 +340,8 @@ impl RaylibHost {
                 || rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT),
             ctrl: rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL)
                 || rl.is_key_down(KeyboardKey::KEY_RIGHT_CONTROL),
+            alt: rl.is_key_down(KeyboardKey::KEY_LEFT_ALT)
+                || rl.is_key_down(KeyboardKey::KEY_RIGHT_ALT),
         };
         self.edit_keys.events(
             |key| KeyState {

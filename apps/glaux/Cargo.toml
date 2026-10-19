@@ -32,6 +32,7 @@ glaux-syntax.workspace = true
 glaux-docs.workspace = true
 glaux-sense.workspace = true
 rfd.workspace = true
+open.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"

@@ -11,3 +11,8 @@ tab-sprites = Sprites
 tab-map = Map
 tab-sfx = SFX
 tab-music = Music
+
+## Documentation browser
+
+docs-button = Docs
+docs-button-hint = Docs (F1)

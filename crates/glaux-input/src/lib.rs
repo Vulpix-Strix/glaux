@@ -122,6 +122,15 @@ pub enum InputEvent {
     /// Ask for the signature of the call the caret is writing arguments
     /// for (Ctrl+Shift+Space on desktop).
     SignatureHelp,
+    /// Open the documentation browser, or close it when it is open (F1 on
+    /// desktop).
+    Docs,
+    /// Go back to the page shown before this one (Alt+Left on desktop).
+    Back,
+    /// Go forward again after going back (Alt+Right on desktop).
+    Forward,
+    /// Show or hide a view's side panel (Ctrl+B on desktop).
+    ToggleSidebar,
     /// Put the selection on the clipboard (Ctrl+C on desktop).
     Copy,
     /// Put the selection on the clipboard and delete it (Ctrl+X on

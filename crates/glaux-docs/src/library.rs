@@ -5,6 +5,10 @@ use rust_embed::RustEmbed;
 
 use crate::{ApiCatalog, Diagnostic, DocId, IdsLock, Page};
 
+mod search;
+
+pub use search::{Hit, Rank};
+
 /// Top-level directory holding the API catalog files.
 const API_DIR: &str = "api";
 /// Top-level directory holding shared images and other files.
