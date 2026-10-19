@@ -11,6 +11,7 @@ use crate::cartridge_fs::fixture::Fixture;
 use crate::system::code_history::EditKind;
 use crate::system::shell::BLINK_TICKS;
 
+mod completion;
 mod highlight;
 mod selection;
 

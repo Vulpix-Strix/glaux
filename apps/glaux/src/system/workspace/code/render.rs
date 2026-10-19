@@ -90,6 +90,18 @@ impl CodeEditor {
                             matches,
                             session.syntax_spans(id),
                         );
+                        if let (Some(popup), Some(layout)) =
+                            (&self.completion, self.completion_layout(session))
+                            && !self.has_overlay()
+                        {
+                            popup.render(
+                                painter.framebuffer,
+                                font,
+                                self.layout.metrics.cell_w,
+                                &layout,
+                                hover_pointer,
+                            );
+                        }
                         if let (Some(bar), Some(layout)) = (&self.find, self.find_layout()) {
                             let current =
                                 matches.iter().position(|found| *found == selection.range());

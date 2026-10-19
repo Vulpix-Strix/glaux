@@ -834,6 +834,7 @@ dependencies = [
  "glaux-modules",
  "glaux-rhai",
  "glaux-script",
+ "glaux-sense",
  "glaux-syntax",
  "glaux-video",
  "libc",

@@ -6,6 +6,7 @@
 //! [`CodeSession`]. The editor keeps only what is on screen around them.
 
 mod actions;
+mod completion;
 mod edit;
 mod find;
 mod go_to_line;
@@ -27,6 +28,7 @@ use glaux_machine::machine::TICK_RATE;
 use glaux_machine::system_rom::SystemCursor;
 
 use actions::{CodeAction, TabTarget, file_menu, text_menu};
+use completion::{COMPLETION_HINT, CompletionPopup};
 use find::{FindBar, FindLayout};
 use go_to_line::GoToLine;
 pub use layout::Metrics;
@@ -191,6 +193,9 @@ pub struct CodeEditor {
     /// Docked over the text while open. It takes the keys only while one of
     /// its parts has them.
     find: Option<FindBar>,
+    /// Listed under the word being typed while open. It takes only the
+    /// keys that pick, accept or dismiss a suggestion.
+    completion: Option<CompletionPopup>,
     /// Position in tab order of the tab being dragged along the strip.
     drag: Option<usize>,
     /// Where the pointer last was, which decides what the wheel scrolls.
@@ -224,6 +229,7 @@ impl CodeEditor {
             rename: None,
             go_to: None,
             find: None,
+            completion: None,
             drag: None,
             pointer: None,
             entry_error: None,
@@ -274,9 +280,10 @@ impl CodeEditor {
     }
 
     /// Whether Escape belongs to the view rather than leaving the
-    /// workspace: an overlay is open, or the find bar, which it closes.
+    /// workspace: an overlay is open, or the find bar or the list of
+    /// suggestions, which it closes.
     pub fn claims_break(&self) -> bool {
-        self.has_overlay() || self.find.is_some()
+        self.has_overlay() || self.find.is_some() || self.completion.is_some()
     }
 
     /// Whether a part of the find bar has the keys.
@@ -300,6 +307,8 @@ impl CodeEditor {
             RENAME_HINT
         } else if self.go_to.is_some() {
             GO_TO_HINT
+        } else if self.completion.is_some() {
+            COMPLETION_HINT
         } else if self.find_focused() {
             FIND_HINT
         } else {
@@ -310,6 +319,11 @@ impl CodeEditor {
     #[cfg(test)]
     pub fn find(&self) -> Option<&FindBar> {
         self.find.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn completion(&self) -> Option<&CompletionPopup> {
+        self.completion.as_ref()
     }
 
     #[cfg(test)]
@@ -554,6 +568,7 @@ impl CodeEditor {
         self.rename = None;
         self.go_to = None;
         self.find = None;
+        self.completion = None;
         self.end_drag();
         self.last_click = None;
         self.entry_error = None;
@@ -727,6 +742,7 @@ impl CodeEditor {
             && self.layout.settings_button().contains(at)
         {
             self.settings_dialog = Some(SettingsDialog::new(self.settings));
+            self.completion = None;
             self.drag = None;
             return None;
         }
@@ -742,6 +758,7 @@ impl CodeEditor {
         }
         self.refresh_metrics(session);
         self.refresh_find(session);
+        self.sync_completion(session);
         request
     }
 
@@ -789,6 +806,9 @@ impl CodeEditor {
         }
         if self.go_to.is_some() {
             return self.go_to_input(event, session);
+        }
+        if let Some(request) = self.completion_input(event, session) {
+            return request;
         }
         if self.find.is_some()
             && let Some(request) = self.find_input(event, session)

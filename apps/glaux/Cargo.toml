@@ -29,6 +29,8 @@ glaux-luau.workspace = true
 glaux-script.workspace = true
 glaux-rhai.workspace = true
 glaux-syntax.workspace = true
+glaux-docs.workspace = true
+glaux-sense.workspace = true
 rfd.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -50,6 +52,5 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
-glaux-docs.workspace = true
 pretty_assertions.workspace = true
 proptest.workspace = true
