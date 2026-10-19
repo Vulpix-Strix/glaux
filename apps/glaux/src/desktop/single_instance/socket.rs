@@ -168,7 +168,14 @@ fn listen(listener: &UnixListener, stop: &AtomicBool, launches: &Sender<Secondar
 fn receive(stream: UnixStream) -> anyhow::Result<SecondaryLaunch> {
     // Accepted streams can inherit the listener's non-blocking mode.
     stream.set_nonblocking(false)?;
-    stream.set_read_timeout(Some(READ_TIMEOUT))?;
+    match stream.set_read_timeout(Some(READ_TIMEOUT)) {
+        Ok(()) => {}
+        // macOS refuses to set a timeout once the peer has closed its end.
+        // Reading such a socket returns what was sent and then ends, so it
+        // cannot block.
+        Err(err) if err.kind() == ErrorKind::InvalidInput => {}
+        Err(err) => return Err(err.into()),
+    }
     let mut payload = Vec::new();
     stream.take(MAX_PAYLOAD + 1).read_to_end(&mut payload)?;
     anyhow::ensure!(

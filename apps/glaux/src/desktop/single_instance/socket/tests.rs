@@ -98,3 +98,15 @@ fn garbage_payload_does_not_stop_the_listener() {
     assert_eq!(received, launch("after"));
     drop(owner);
 }
+
+#[test]
+fn a_launch_is_read_after_its_sender_has_already_gone() {
+    // A secondary launch writes and exits at once, so the owner often
+    // accepts a connection whose other end is already closed.
+    let (mut sender, receiver) = UnixStream::pair().unwrap();
+    sender
+        .write_all(&launch("late").to_json().unwrap())
+        .unwrap();
+    drop(sender);
+    assert_eq!(receive(receiver).unwrap(), launch("late"));
+}
