@@ -127,6 +127,9 @@ fn listing_puts_directories_first_and_ignores_case() {
 #[test]
 fn listing_order_is_total() {
     let fixture = Fixture::new("listing-ties");
+    if !fixture.is_case_sensitive() {
+        return;
+    }
     let fs = fixture.open();
     for name in ["readme", "README", "Readme"] {
         fs::write(fixture.root().join("tools").join(name), "").unwrap();

@@ -34,6 +34,17 @@ impl Fixture {
         Self { base }
     }
 
+    /// Whether the host file system tells names apart that differ only in
+    /// case. Tests that create such names cannot run where it does not,
+    /// as on the default macOS and Windows volumes.
+    pub(crate) fn is_case_sensitive(&self) -> bool {
+        let probe = self.base.join("case-probe");
+        fs::write(&probe, "").unwrap();
+        let sensitive = !self.base.join("CASE-PROBE").exists();
+        fs::remove_file(probe).unwrap();
+        sensitive
+    }
+
     pub(crate) fn data_dir(&self) -> PathBuf {
         self.base.join("data")
     }

@@ -77,6 +77,9 @@ fn listed(listing: &ScriptListing) -> Vec<&str> {
 #[test]
 fn lists_every_script_in_any_directory_in_a_fixed_order() {
     let fixture = Fixture::new("source-list");
+    if !fixture.is_case_sensitive() {
+        return;
+    }
     let cart = cartridge_with(
         &fixture,
         &[
@@ -250,4 +253,28 @@ mod editing {
         assert!(exists(&fixture, "code/sub/b.luau"));
         assert!(!exists(&fixture, "code/a.luau"));
     }
+}
+
+#[test]
+fn listing_order_ignores_case_and_then_breaks_ties_by_exact_name() {
+    let mut paths: Vec<SourcePath> = [
+        "code/ui/hud.rhai",
+        "code/Enemies/bat.luau",
+        "code/enemies/Ant.luau",
+        "code/enemies/ant.luau",
+    ]
+    .iter()
+    .map(|path| SourcePath::parse(path).unwrap())
+    .collect();
+    paths.sort_by(SourcePath::listing_order);
+    let sorted: Vec<&str> = paths.iter().map(SourcePath::as_str).collect();
+    assert_eq!(
+        sorted,
+        [
+            "code/enemies/Ant.luau",
+            "code/enemies/ant.luau",
+            "code/Enemies/bat.luau",
+            "code/ui/hud.rhai",
+        ]
+    );
 }
