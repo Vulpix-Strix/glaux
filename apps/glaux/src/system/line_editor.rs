@@ -157,6 +157,7 @@ impl LineEditor {
             | InputEvent::Complete
             | InputEvent::SignatureHelp
             | InputEvent::Docs
+            | InputEvent::Function(_)
             | InputEvent::Back
             | InputEvent::Forward
             | InputEvent::ToggleSidebar

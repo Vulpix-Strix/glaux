@@ -1,0 +1,25 @@
+// Editorial credits shown by the `credits` command. Sections without items
+// are not shown. See credits.md for the format.
+(
+    sections: [
+        (
+            title: "Created by",
+            items: [
+                Message("Cuervolu"),
+            ],
+        ),
+        (
+            title: "Special Thanks",
+            items: [
+                Person(role: "Glaux logo", name: "Kitsurade-Kits"),
+                Person(role: "Early feedback", name: "Madokoso, Kalid"),
+            ],
+        ),
+    ],
+    authors: {
+        "1-bit Pixel Icons": "Nikoichu",
+        "Simple Pixel Cursors": "Gabl",
+        "Pixel Code": "Qwerasd",
+        "Zughy 32": "Zughy",
+    },
+)

@@ -87,6 +87,7 @@ shell-set-a-channel-envelope = Set a channel envelope
 shell-show-available-commands = Show available commands
 shell-show-system-information = Show system information
 shell-show-the-current-directory = Show the current directory
+shell-show-the-credits-and-licenses = Show the credits and licenses
 shell-show-the-system-rom-version = Show the System ROM version
 shell-state = STATE
 shell-stop-the-paused-cartridge = Stop the paused cartridge
@@ -475,6 +476,115 @@ docs-tip = Tip
 docs-type-query-tab-filter-enter-open-esc-close = Type: query  Tab: filter  Enter: open  Esc: close
 docs-up-down-pick-enter-show-esc-close = Up/Down: pick  Enter: show  Esc: close
 docs-warning = Warning
+
+## Credits
+
+credits-button-back = BACK
+credits-button-read-text = READ TEXT
+credits-button-read-texts = READ TEXTS
+credits-card-license = License
+credits-card-note-license = No license is stated.
+credits-card-note-nothing = No license or version is stated.
+credits-card-source = Source
+credits-card-terms = Terms
+credits-card-texts = Texts
+credits-card-texts-count = { $count } embedded
+credits-card-title = < { $kind } { $position }/{ $total } >
+credits-card-version = Version
+credits-creative-resources = CREATIVE RESOURCES
+credits-filter-all = All { $count }
+credits-filter-art = Art { $count }
+credits-filter-lib = Lib { $count }
+credits-filter-native = Native { $count }
+credits-find-hint = { $count } found  Enter: keep  Esc: cancel
+credits-find-prompt = Find:
+credits-hint-find-kept = Find: { $query }  Esc: clear  ?: keys
+credits-hint-intro = Space: skip  Up/Down: scroll  Esc: exit
+credits-hint-libraries = Enter: open  /: find  C: category  ?: keys
+credits-hint-licenses = Enter: show libraries  Esc: exit
+credits-hint-paused = Up/Down: scroll  Space: play  Esc: exit
+credits-hint-playing = Up/Down: scroll  Space: pause  Esc: exit
+credits-hint-system = Left/Right: page  Esc: exit
+credits-key-back = Cancel, back, exit
+credits-key-category = Next category
+credits-key-ends = First or last
+credits-key-find = Find
+credits-key-move = Move
+credits-key-neighbors = Previous or next page
+credits-key-open = Open
+credits-key-page = Move one page
+credits-key-pages = Go to page
+credits-key-reflow = Wrap or reflow text
+credits-key-sort = Sort name or license
+credits-key-text = Next text (Shift: back)
+credits-keys-title = < KEYS >
+credits-kind-art = ART
+credits-kind-library = LIBRARY
+credits-kind-native = NATIVE
+credits-licenses-alternative = Alt
+credits-licenses-both = { $license }: { $required } must follow it; { $offered ->
+        [one] { $offered } offers
+       *[other] { $offered } offer
+    } it as one option
+credits-licenses-entries = { $count ->
+        [one] { $count } entry
+       *[other] { $count } entries
+    }
+credits-licenses-license = License
+credits-licenses-offered-only = { $license }: { $offered ->
+        [one] { $offered } offers
+       *[other] { $offered } offer
+    } it as one option
+credits-licenses-required = Req
+credits-licenses-required-only = { $license }: { $required } must follow it
+credits-licenses-undeclared = { $count ->
+        [one] { $count } entry states
+       *[other] { $count } entries state
+    } no license
+credits-match-count = { $shown } of { $total } entries match.
+credits-no-match = No entries match.
+credits-not-declared = Not declared
+credits-paused-tag = PAUSED
+credits-reader-hint = Up/Down: line  PgDn: page  Tab: text  Esc: back
+credits-reader-position = Pg { $page }/{ $pages }  { $percent }%
+credits-reader-reflow = Reflow
+credits-reader-text = Text { $index }/{ $count }  { $title }
+credits-reader-wrap = Wrap
+credits-show = Show
+credits-sort-license = Sort: License
+credits-sort-name = Sort: Name
+credits-sources-and-licenses = Sources and licenses: F3 Libraries
+credits-status-intro = In { $seconds }s
+credits-status-paused = Paused { $percent }%
+credits-status-playing = { $percent }%
+credits-system-audio = Audio
+credits-system-colors = Colors
+credits-system-colors-value = { $count } indexed
+credits-system-copyright = Copyright
+credits-system-display = Display
+credits-system-font = Font
+credits-system-font-value = { $name }, { $cell } cell
+credits-system-graphics = Graphics
+credits-system-model = Model
+credits-system-notices = Notices
+credits-system-notices-value = { $entries } entries, { $texts } texts
+credits-system-palette = UI palette
+credits-system-scripting = Scripting
+credits-system-sound = Sound
+credits-system-sound-value = { $channels } channels, { $rate } Hz
+credits-system-tiles = Tiles
+credits-system-tiles-value = { $width }x{ $height }, { $count } tiles
+credits-system-title = SYSTEM
+credits-system-version = Version
+credits-system-version-value = { $app }, ROM { $rom }
+credits-tab-credits = Credits
+credits-tab-libraries = Libraries
+credits-tab-licenses = Licenses
+credits-tab-system = System
+credits-tagline = Fantasy console { $generation }
+credits-terms-all = All of { $count } apply
+credits-terms-choice = Pick one of { $count } options
+credits-terms-single = Must be followed
 
 ## Desktop dialogs
 

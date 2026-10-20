@@ -121,6 +121,17 @@ pub(super) static COMMANDS: &[Command] = &[
         flags: &[],
     },
     Command {
+        name: "credits",
+        aliases: &[],
+        usage: "credits",
+        description_id: "shell-show-the-credits-and-licenses",
+        min_args: 0,
+        max_args: 0,
+        handler: credits,
+        takes_path: false,
+        flags: &[],
+    },
+    Command {
         name: "version",
         aliases: &["ver"],
         usage: "version",
@@ -761,6 +772,17 @@ fn unload(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
             }
         }
         CartridgeSlot::Paused(_) => ctx.error(paused_error()),
+    }
+}
+
+/// Asks the system to open the credits view. A paused cartridge keeps the
+/// shell, so the command waits until it is resumed or stopped.
+fn credits(_: &Invocation<'_>, ctx: &mut Context<'_>) {
+    match ctx.slot {
+        CartridgeSlot::Paused(_) => ctx.error(paused_error()),
+        CartridgeSlot::Empty | CartridgeSlot::Loaded { .. } => {
+            *ctx.request = Some(ShellRequest::Credits);
+        }
     }
 }
 

@@ -125,6 +125,9 @@ pub enum InputEvent {
     /// Open the documentation browser, or close it when it is open (F1 on
     /// desktop).
     Docs,
+    /// A function key other than F1, which is [`Docs`](Self::Docs). The
+    /// number is the key's own: `2` for F2 up to `4` for F4.
+    Function(u8),
     /// Go back to the page shown before this one (Alt+Left on desktop).
     Back,
     /// Go forward again after going back (Alt+Right on desktop).

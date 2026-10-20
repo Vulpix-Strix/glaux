@@ -26,6 +26,10 @@ Type `run`. The owl appears. Move it with the arrow keys and press Z to make it 
 
 Press Escape to pause. Escape again resumes. Enter on the pause screen returns to the shell, where `resume` continues the cartridge and `stop` ends it.
 
+## Credits and licenses
+
+Type `credits` in the shell to see who made Glaux, facts about the system, and the license of every library and resource inside it. F1 to F4 switch between the Credits, System, Libraries and Licenses pages, `?` lists the keys, and Escape goes back one level and finally returns to the shell.
+
 ## Edit the script
 
 With the shell showing, press Escape to open the editor on your cartridge. Replace the whole script with this minimal game, which moves a square and counts the times you press Z:

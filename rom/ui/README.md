@@ -56,3 +56,15 @@ The author's page states: "All of these icons are licensed under CC0, which
 means you have absolutely no restrictions on how you can use them. I would
 still appreciate it if you gave me attribution for my work, but it's not
 strictly required." Thanks, Nikoichu :D!
+
+## Logo
+
+`logo.png` is the picture above the name on the credits title card. It is a
+placeholder owl, drawn for the credits design, and not the official logo.
+Replace the file to change it. The credits view draws it as large as fits a
+32 pixel square and needs no other change.
+
+Unlike the icons it keeps its colors: every opaque pixel must be exactly one
+of the first 32 colors of the system palette (`../palette/system.hex`), and
+transparent pixels are left alone. Loading fails with the offending color
+otherwise.

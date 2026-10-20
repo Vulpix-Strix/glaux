@@ -66,3 +66,9 @@ the component's own source. Do not add anything cargo-about already reports.
   of the raylib and GLFW notices. Distinct notices are kept as they are.
 - `extra.json` entries whose text holds two alternatives (miniaudio, dr_libs, stb) keep the whole
   block and have no `spdx`.
+
+## Where it is shown
+
+The `credits` command in the shell browses this inventory in its Libraries and
+Licenses pages. The editorial credits, such as who made Glaux, are a separate
+hand-written file, `rom/credits.md` explains it.

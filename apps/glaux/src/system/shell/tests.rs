@@ -298,6 +298,7 @@ fn enter_runs_the_command_and_opens_a_new_prompt() {
             output("help     Show available commands"),
             output("clear    Clear the console"),
             output("info     Show system information"),
+            output("credits  Show the credits and licenses"),
             output("version  Show the System ROM version"),
             output("pwd      Show the current directory"),
             output("ls       List a directory"),
@@ -320,7 +321,7 @@ fn enter_runs_the_command_and_opens_a_new_prompt() {
     );
     assert_eq!(
         editor_lines(&shell, COLUMNS),
-        [Line::new(0, 18, "> ", TEXT), cursor(2, 18, " ")]
+        [Line::new(0, 19, "> ", TEXT), cursor(2, 19, " ")]
     );
 }
 
@@ -746,7 +747,7 @@ fn tab_on_empty_line_lists_every_command() {
             banner(),
             command(""),
             output(
-                "help  clear  info  version  pwd  ls  cd  new  load  unload  run  resume  stop  tone  env  gate"
+                "help  clear  info  credits  version  pwd  ls  cd  new  load  unload  run  resume  stop  tone  env  gate"
             )
         ]
     );

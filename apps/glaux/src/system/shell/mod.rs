@@ -79,6 +79,8 @@ pub enum ShellRequest {
     },
     /// Start the loaded cartridge.
     Run,
+    /// Open the credits view over the shell.
+    Credits,
     /// Remove the loaded cartridge from the shell.
     Unload,
     /// Continue the paused cartridge with the VM it had.
@@ -271,6 +273,7 @@ impl Shell {
             | InputEvent::Complete
             | InputEvent::SignatureHelp
             | InputEvent::Docs
+            | InputEvent::Function(_)
             | InputEvent::Back
             | InputEvent::Forward
             | InputEvent::ToggleSidebar

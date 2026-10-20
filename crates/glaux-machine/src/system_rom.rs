@@ -124,6 +124,45 @@ impl SystemUi {
     }
 }
 
+/// A picture drawn in master palette indices, such as the logo. Unlike an
+/// [`InkImage`], its pixels name the palette entry they use, so it keeps all
+/// its colors.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IndexedImage {
+    width: usize,
+    height: usize,
+    /// Row by row. `None` leaves the pixel under it untouched.
+    pixels: Vec<Option<u8>>,
+}
+
+impl IndexedImage {
+    /// Returns `None` when `pixels` is not exactly `width * height` long.
+    pub fn new(width: usize, height: usize, pixels: Vec<Option<u8>>) -> Option<Self> {
+        (width.checked_mul(height)? == pixels.len()).then_some(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    /// The palette index at (`x`, `y`), or `None` where the image is
+    /// transparent or the position is outside it.
+    pub fn get(&self, x: usize, y: usize) -> Option<u8> {
+        if x >= self.width || y >= self.height {
+            return None;
+        }
+        self.pixels[y * self.width + x]
+    }
+}
+
 /// Built-in data the machine is created with: the ROM version, its
 /// copyright notice, the system palette, the system font, the system
 /// sounds, the system UI images and the object palette banks cartridges
@@ -136,6 +175,7 @@ pub struct SystemRom {
     font: BitmapFont,
     sounds: SystemSounds,
     ui: SystemUi,
+    logo: IndexedImage,
     obj_palettes: ObjPalettes,
 }
 
@@ -148,6 +188,7 @@ impl SystemRom {
             font,
             sounds: SystemSounds::default(),
             ui: SystemUi::default(),
+            logo: IndexedImage::default(),
             obj_palettes: ObjPalettes::linear(),
         }
     }
@@ -161,6 +202,12 @@ impl SystemRom {
     /// This ROM with `ui` in place of its UI images.
     pub fn with_ui(mut self, ui: SystemUi) -> Self {
         self.ui = ui;
+        self
+    }
+
+    /// This ROM with `logo` as the picture shown above the system's name.
+    pub fn with_logo(mut self, logo: IndexedImage) -> Self {
+        self.logo = logo;
         self
     }
 
@@ -200,6 +247,11 @@ impl SystemRom {
     /// The images the system UI draws with.
     pub fn ui(&self) -> &SystemUi {
         &self.ui
+    }
+
+    /// The logo, empty when the ROM has none.
+    pub fn logo(&self) -> &IndexedImage {
+        &self.logo
     }
 
     /// The object palette banks a cartridge starts with unless it supplies

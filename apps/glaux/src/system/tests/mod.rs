@@ -20,6 +20,7 @@ mod cartridge_audio;
 mod code_editing;
 mod code_productivity;
 mod code_tabs;
+mod credits_view;
 mod docs_browser;
 mod drawing;
 mod input;

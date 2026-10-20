@@ -12,7 +12,7 @@ use glaux_machine::ink_image::InkImage;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjPalettes};
 use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
 use glaux_machine::system_rom::{
-    Cursor, SystemCursor, SystemIcon, SystemRom, SystemSounds, SystemUi,
+    Cursor, IndexedImage, SystemCursor, SystemIcon, SystemRom, SystemSounds, SystemUi,
 };
 use png::{BitDepth, ColorType, Transformations};
 use semver::Version;
@@ -31,6 +31,10 @@ const VERSION: &str = include_str!("../../../rom/version");
 const COPYRIGHT: &str = include_str!("../../../rom/copyright");
 const PALETTE_HEX: &str = include_str!("../../../rom/palette/system.hex");
 const OBP_TXT: &str = include_str!("../../../rom/palette/obp.txt");
+const LOGO_PNG: (&str, &[u8]) = embed!("ui/logo.png");
+
+/// The editorial credits, which the credits view reads when it opens.
+pub const CREDITS_RON: &str = include_str!("../../../rom/credits.ron");
 
 /// How one cursor is stored: its image, how many times its native size it
 /// is drawn, how many frames it holds side by side, and its hotspot in
@@ -139,7 +143,10 @@ fn build(
         FontMetrics::SYSTEM.cell_width(),
         FontMetrics::SYSTEM.cell_height()
     );
+    let logo =
+        parse_logo(LOGO_PNG.1, &palette).with_context(|| format!("invalid {}", LOGO_PNG.0))?;
     Ok(SystemRom::new(version, copyright, palette, font)
+        .with_logo(logo)
         .with_sounds(sounds()?)
         .with_ui(ui()?)
         .with_obj_palettes(obj_palettes))
@@ -167,6 +174,33 @@ pub fn ui() -> anyhow::Result<SystemUi> {
         .unwrap_or_else(|_| unreachable!("one image per icon"));
     Ok(SystemUi::new(cursors, icons))
 }
+
+/// Decodes the logo, whose colors must each be in the first
+/// [`SYSTEM_COLORS`] entries of `palette`, the colors of the system's own UI.
+/// Transparent pixels stay transparent. Any size is accepted, so replacing
+/// the file needs no change here.
+fn parse_logo(png: &[u8], palette: &Palette) -> anyhow::Result<IndexedImage> {
+    let (width, height, rgba) = decode_png(png)?;
+    let mut pixels = Vec::with_capacity(rgba.len());
+    for [r, g, b, a] in rgba {
+        if a < 128 {
+            pixels.push(None);
+            continue;
+        }
+        let color = Rgb { r, g, b };
+        let index = palette.entries()[..SYSTEM_COLORS]
+            .iter()
+            .position(|&entry| entry == color)
+            .with_context(|| {
+                format!("color #{r:02x}{g:02x}{b:02x} is not in the system palette")
+            })?;
+        pixels.push(Some(u8::try_from(index)?));
+    }
+    IndexedImage::new(width, height, pixels).context("pixel count does not match the size")
+}
+
+/// Palette entries the system draws its own interface with.
+const SYSTEM_COLORS: usize = 32;
 
 /// Decodes a view icon: a [`ICON_SIZE`]-square image in the icon colors.
 fn parse_icon(png: &[u8]) -> anyhow::Result<InkImage> {

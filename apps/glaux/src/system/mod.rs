@@ -17,6 +17,7 @@ mod code_selection;
 mod code_session;
 mod code_syntax;
 mod code_text;
+mod credits;
 mod docs;
 mod editor_settings;
 mod external_url;
@@ -39,6 +40,7 @@ mod workspace;
 pub use boot::Boot;
 pub use clipboard::Clipboard;
 use code_session::CodeSession;
+use credits::CreditsView;
 #[cfg(test)]
 pub use editor_settings::IndentStyle;
 pub use editor_settings::{EditorSettings, INDENT_SIZES, TAB_SIZES};
@@ -100,6 +102,13 @@ pub enum SystemState {
     Shell {
         shell: Box<Shell>,
         loaded: Option<LoadedCartridge>,
+    },
+    /// The credits view is the active UI. The shell keeps its state, taking
+    /// no input, and Escape on one of the view's main pages returns to it.
+    Credits {
+        shell: Box<Shell>,
+        loaded: Option<LoadedCartridge>,
+        view: Box<CreditsView>,
     },
     /// The editor workspace is the active UI, working on the loaded
     /// cartridge without starting it. The shell keeps its state, taking no
@@ -348,7 +357,9 @@ impl System {
     pub fn input_mode(&self) -> InputMode {
         match self.state {
             SystemState::Running { .. } => InputMode::Game,
-            SystemState::Workspace { .. } => InputMode::Workspace,
+            // The credits view reads the same keys as the workspace, but
+            // draws no pointer.
+            SystemState::Workspace { .. } | SystemState::Credits { .. } => InputMode::Workspace,
             SystemState::Boot { .. } | SystemState::Shell { .. } | SystemState::Paused { .. } => {
                 InputMode::Text
             }
@@ -450,6 +461,11 @@ impl System {
                     }
                 }
                 SystemState::Shell { shell, loaded } => shell_tick(shell, loaded, input, &mut ctx),
+                SystemState::Credits {
+                    shell,
+                    loaded,
+                    view,
+                } => credits_tick(shell, loaded, view, input),
                 SystemState::Workspace {
                     shell,
                     cartridge,
@@ -587,7 +603,8 @@ impl System {
                 view: PausedView::Game(_),
                 ..
             }
-            | SystemState::Workspace { .. } => AudioSource::Silent,
+            | SystemState::Workspace { .. }
+            | SystemState::Credits { .. } => AudioSource::Silent,
         };
         let fresh = source != self.audio_source;
         if fresh {
@@ -607,7 +624,8 @@ impl System {
                 view: PausedView::Game(_),
                 ..
             }
-            | SystemState::Workspace { .. } => {}
+            | SystemState::Workspace { .. }
+            | SystemState::Credits { .. } => {}
         }
     }
 
@@ -626,6 +644,7 @@ impl System {
             } => running.palette(),
             SystemState::Boot { .. }
             | SystemState::Shell { .. }
+            | SystemState::Credits { .. }
             | SystemState::Paused {
                 view: PausedView::Shell,
                 ..
@@ -685,6 +704,10 @@ impl System {
                     self.code.as_ref(),
                     pointer,
                 );
+                return;
+            }
+            SystemState::Credits { view, .. } => {
+                view.render(framebuffer, rom);
                 return;
             }
             SystemState::Running { running, .. } => {
@@ -879,6 +902,18 @@ fn shell_request(
                 }
             }
         }
+        Some(ShellRequest::Credits) => {
+            tracing::info!("opening the credits");
+            let view = Box::new(CreditsView::open());
+            return (
+                SystemState::Credits {
+                    shell,
+                    loaded,
+                    view,
+                },
+                false,
+            );
+        }
         Some(_request @ (ShellRequest::Resume | ShellRequest::Stop)) => {
             unreachable!("{_request:?} was requested without a paused cartridge")
         }
@@ -976,7 +1011,7 @@ fn unsaved_tick(
 fn cartridge_of(state: &SystemState) -> Option<&LoadedCartridge> {
     match state {
         SystemState::Boot { .. } => None,
-        SystemState::Shell { loaded, .. } => loaded.as_ref(),
+        SystemState::Shell { loaded, .. } | SystemState::Credits { loaded, .. } => loaded.as_ref(),
         SystemState::Workspace { cartridge, .. } => Some(cartridge),
         SystemState::Running { running, .. } | SystemState::Paused { running, .. } => {
             Some(running.cartridge())
@@ -992,7 +1027,7 @@ fn report(state: &mut SystemState, workspace: &mut Workspace, message: String) {
             shell.report(message);
         }
         SystemState::Workspace { .. } => workspace.report(message),
-        SystemState::Boot { .. } | SystemState::Running { .. } => {}
+        SystemState::Boot { .. } | SystemState::Running { .. } | SystemState::Credits { .. } => {}
     }
 }
 
@@ -1397,6 +1432,26 @@ fn paused_game_tick(
     }
 }
 
+/// Feeds `input` to the credits view, which closes on its own Escape and
+/// leaves the shell as it was. Events after the close are dropped, as after
+/// any change of screen.
+fn credits_tick(
+    shell: Box<Shell>,
+    loaded: Option<LoadedCartridge>,
+    mut view: Box<CreditsView>,
+    input: &[InputEvent],
+) -> SystemState {
+    view.tick();
+    if input.iter().any(|&event| view.handle_input(event)) {
+        return SystemState::Shell { shell, loaded };
+    }
+    SystemState::Credits {
+        shell,
+        loaded,
+        view,
+    }
+}
+
 /// Feeds `input` to the shell while the cartridge stays paused, and carries
 /// out a `resume` or `stop`. Events after either in the same tick are
 /// dropped.
@@ -1417,6 +1472,7 @@ fn paused_shell_tick(
                 _request @ (ShellRequest::Load { .. }
                 | ShellRequest::Unload
                 | ShellRequest::Run
+                | ShellRequest::Credits
                 | ShellRequest::ConfirmUnsaved { .. }),
             ) => {
                 unreachable!("{_request:?} was requested while a cartridge is paused")

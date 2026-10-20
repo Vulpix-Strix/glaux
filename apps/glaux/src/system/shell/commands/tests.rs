@@ -105,6 +105,7 @@ fn help_lists_every_command() {
             "help     Show available commands",
             "clear    Clear the console",
             "info     Show system information",
+            "credits  Show the credits and licenses",
             "version  Show the System ROM version",
             "pwd      Show the current directory",
             "ls       List a directory",
