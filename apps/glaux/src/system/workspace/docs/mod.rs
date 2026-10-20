@@ -224,6 +224,11 @@ impl DocsBrowser {
     }
 
     #[cfg(test)]
+    pub fn search_hits(&self) -> Option<usize> {
+        self.search.as_ref().map(|search| search.results().len())
+    }
+
+    #[cfg(test)]
     pub fn active_tab(&self) -> usize {
         self.active
     }

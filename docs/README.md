@@ -19,6 +19,8 @@ A page's id is its path below the language directory without `.md`, and its link
 - Standard GitHub Flavored Markdown is allowed, including tables and images. Give every image alt text, because it is what a viewer shows when it cannot draw the image. Raw HTML is never rendered, so avoid it.
 - A page for a function can have a `## Parameters` table whose first column lists the parameter names. They are compared with the catalog.
 - Put Luau or Rhai specifics in a subsection headed exactly `Luau` or `Rhai` (level 3 or deeper), or in a fenced block tagged `luau` or `rhai`. Everything else applies to both languages.
+- The documentation browser draws headings, paragraphs, inline code, links, bulleted and numbered lists, tables, fenced code blocks, block quotes, alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` and `[!CAUTION]`) and thematic breaks. There is one typeface, so bold and italic text are told apart by color, an image shows its alt text in brackets and strikethrough is not drawn. Lines wrap at the width of the screen, code blocks included, and a table too wide for its columns shows each row as stacked lines.
+- Links to other pages use `glaux://`. A link may end in `#heading` to open the page at that heading. A link to `http`, `https` or `mailto` opens in the program the system uses for it, after the reader presses it. Any other scheme is blocked.
 - Characters outside the system font show as a placeholder box. Keep text to what the font can draw, with precomposed letters.
 
 ## The API catalog

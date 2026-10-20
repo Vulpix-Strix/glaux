@@ -542,3 +542,35 @@ fn the_embedded_pages_all_lay_out_at_every_width() {
         }
     }
 }
+
+#[test]
+fn docs_glyphs_everything_the_layout_draws_for_the_shipped_pages_is_drawable() {
+    let font = crate::rom::load().unwrap().font().clone();
+    let library = glaux_docs::Library::embedded();
+    let chain = glaux_i18n::FallbackChain::english();
+    let mut missing = Vec::new();
+    for id in super::super::nav::order(&library, &chain) {
+        let page = library.page(&id, &chain).unwrap().page;
+        // A narrow width forces wrapping, stacked tables and continuation
+        // markers, which add glyphs the page source does not hold.
+        for cols in [20, 53] {
+            let layout = build(&Params {
+                page: &page,
+                tag: String::new(),
+                cols,
+                filter: LanguageFilter::All,
+                font: &font,
+            });
+            for run in layout.rows.iter().flat_map(|row| &row.runs) {
+                missing.extend(
+                    run.text
+                        .chars()
+                        .filter(|&ch| font.glyph_id(ch).is_none())
+                        .map(|ch| format!("{id} at {cols} columns: U+{:04X}", u32::from(ch))),
+                );
+            }
+        }
+    }
+    missing.dedup();
+    assert_eq!(missing, Vec::<String>::new());
+}

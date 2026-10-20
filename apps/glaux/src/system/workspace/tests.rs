@@ -3,6 +3,7 @@ use crate::system::test_font::LAYOUT_FONT;
 use pretty_assertions::assert_eq;
 
 mod cursor;
+mod docs_button;
 
 fn layout() -> Layout {
     Layout::new(FontMetrics::SYSTEM)

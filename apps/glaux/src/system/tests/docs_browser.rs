@@ -283,3 +283,104 @@ fn the_browser_draws_in_the_workspace_frame() {
         assert_eq!(closed.pixel(x, 2), open.pixel(x, 2), "x = {x}");
     }
 }
+
+/// The point on the first letter of the Docs button's label, where the fake
+/// font draws a solid block.
+fn docs_label_pixel() -> (i32, i32) {
+    let rect = workspace::tests_support::docs_button(fake_rom().font());
+    let (_, y) = workspace::tests_support::hint_origin(fake_rom().font().metrics());
+    (rect.x + 3, y)
+}
+
+fn presented_at(system: &System, pointer: Point) -> Framebuffer {
+    let rom = fake_rom();
+    let mut fb = Framebuffer::new();
+    system.render(&mut fb, &rom, Some(pointer));
+    system.draw_cursor(&mut fb, &rom, Some(pointer));
+    fb
+}
+
+#[test]
+fn the_button_is_dim_at_rest_pale_under_the_pointer_and_accented_while_open() {
+    let fixture = Fixture::new("sys-docs-button-states");
+    let system = in_code(&fixture);
+    let (x, y) = docs_label_pixel();
+    let button = workspace::tests_support::docs_button(fake_rom().font());
+
+    let rest = render(&system);
+    assert_eq!(rest.pixel(x, y), Some(DIM), "rest");
+    let hover = presented_at(&system, Point::new((button.x + 1) as u16, 1));
+    assert_eq!(hover.pixel(x, y), Some(PALE), "hover");
+
+    let open = system.update(&[InputEvent::Docs]);
+    let frame = render(&open);
+    assert_eq!(frame.pixel(x, y), Some(ACCENT), "open");
+    // The plate takes the view's color with an accent line on top, as the
+    // active tab does.
+    assert_eq!(frame.pixel(button.x, 0), Some(ACCENT));
+    assert_eq!(frame.pixel((button.x + button.width) - 1, 0), Some(ACCENT));
+    assert_eq!(frame.pixel(button.x, 1), Some(BACKGROUND));
+    assert_eq!(frame.pixel(button.x - 1, 0), rest.pixel(button.x - 1, 0));
+}
+
+#[test]
+fn hovering_the_button_names_it_and_hovering_a_tab_names_the_tab() {
+    let fixture = Fixture::new("sys-docs-button-hint");
+    let system = in_code(&fixture);
+    let metrics = fake_rom().font().metrics();
+    let (hx, hy) = workspace::tests_support::hint_origin(metrics);
+    let cell = metrics.cell_width() as i32;
+    let button = workspace::tests_support::docs_button(fake_rom().font());
+
+    let idle = render(&system);
+    let over_button = presented_at(&system, Point::new((button.x + 1) as u16, 1));
+    let over_tab = presented_at(&system, tab_centre(Tab::Map));
+
+    // The button's hint is "Docs (F1)": nine blocks, one more than "Sprites".
+    assert_eq!(over_button.pixel(hx, hy), Some(PALE));
+    assert_eq!(over_button.pixel(hx + 8 * cell, hy), Some(PALE));
+    assert_eq!(
+        over_button.pixel(hx + 9 * cell, hy),
+        idle.pixel(hx + 9 * cell, hy)
+    );
+    // Hovering either one never draws over the other's place.
+    for x in button.x..(button.x + button.width) {
+        for y in 0..button.height {
+            if (x, y) == (button.x + 1, 1) {
+                continue;
+            }
+            let moved = over_tab.pixel(x, y) != idle.pixel(x, y);
+            assert!(!moved, "the tab hint reached the button at ({x}, {y})");
+        }
+    }
+    let name_start = workspace::tests_support::name_start(fake_rom().font());
+    for x in name_start..button.x {
+        for y in 0..button.height {
+            assert_eq!(over_button.pixel(x, y), idle.pixel(x, y), "({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn a_long_cartridge_name_stops_before_the_docs_button() {
+    let fixture = Fixture::new("sys-docs-button-name");
+    let dir = fixture.root().join("long");
+    write_cartridge(&dir, &"W".repeat(120));
+    let long = render(&press_break(enter(
+        shell_with_cartridge(&fixture, ""),
+        "load long",
+    )));
+    let short = render(&in_code(&Fixture::new("sys-docs-button-name-short")));
+    let button = workspace::tests_support::docs_button(fake_rom().font());
+    for x in button.x - 4..WIDTH as i32 {
+        for y in 0..button.height {
+            assert_eq!(long.pixel(x, y), short.pixel(x, y), "({x}, {y})");
+        }
+    }
+    // The truncated name does reach as far as the gap before the button.
+    let last = (0..button.x - 4)
+        .rev()
+        .find(|&x| (0..button.height).any(|y| long.pixel(x, y) == Some(PALE)))
+        .unwrap();
+    assert!(last >= button.x - 4 - 2 * CELL_W, "{last}");
+}

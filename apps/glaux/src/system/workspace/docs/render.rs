@@ -581,3 +581,6 @@ fn draw_deco(canvas: &mut Canvas<'_>, deco: &Deco, x: i32, y: i32, width: i32, h
         canvas.hline(x, y + height / 2, width, DIM);
     }
 }
+
+#[cfg(test)]
+mod tests;
