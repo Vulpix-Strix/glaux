@@ -1,0 +1,143 @@
+{
+  "texts": [
+    {
+      "kind": "license",
+      "title": "miniaudio and dr_libs: Unlicense or MIT-0, choose one",
+      "content": "This software is available as a choice of the following licenses. Choose\nwhichever you prefer.\n\n===============================================================================\nALTERNATIVE 1 - Public Domain (www.unlicense.org)\n===============================================================================\nThis is free and unencumbered software released into the public domain.\n\nAnyone is free to copy, modify, publish, use, compile, sell, or distribute this\nsoftware, either in source code form or as a compiled binary, for any purpose,\ncommercial or non-commercial, and by any means.\n\nIn jurisdictions that recognize copyright laws, the author or authors of this\nsoftware dedicate any and all copyright interest in the software to the public\ndomain. We make this dedication for the benefit of the public at large and to\nthe detriment of our heirs and successors. We intend this dedication to be an\novert act of relinquishment in perpetuity of all present and future rights to\nthis software under copyright law.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN\nACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION\nWITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\nFor more information, please refer to <http://unlicense.org/>\n\n===============================================================================\nALTERNATIVE 2 - MIT No Attribution\n===============================================================================\nCopyright 2025 David Reid\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the \"Software\"), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+    },
+    {
+      "kind": "license",
+      "title": "miniaudio and dr_libs: Unlicense or MIT-0, choose one",
+      "content": "This software is available as a choice of the following licenses. Choose\nwhichever you prefer.\n\n===============================================================================\nALTERNATIVE 1 - Public Domain (www.unlicense.org)\n===============================================================================\nThis is free and unencumbered software released into the public domain.\n\nAnyone is free to copy, modify, publish, use, compile, sell, or distribute this\nsoftware, either in source code form or as a compiled binary, for any purpose,\ncommercial or non-commercial, and by any means.\n\nIn jurisdictions that recognize copyright laws, the author or authors of this\nsoftware dedicate any and all copyright interest in the software to the public\ndomain. We make this dedication for the benefit of the public at large and to\nthe detriment of our heirs and successors. We intend this dedication to be an\novert act of relinquishment in perpetuity of all present and future rights to\nthis software under copyright law.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN\nACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION\nWITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\nFor more information, please refer to <http://unlicense.org/>\n\n===============================================================================\nALTERNATIVE 2 - MIT No Attribution\n===============================================================================\nCopyright 2023 David Reid\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the \"Software\"), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+    },
+    {
+      "kind": "license",
+      "title": "stb: MIT or Unlicense, choose one",
+      "content": "This software is available under 2 licenses -- choose whichever you prefer.\n------------------------------------------------------------------------------\nALTERNATIVE A - MIT License\nCopyright (c) 2017 Sean Barrett\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the \"Software\"), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso, subject to the following conditions:\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n------------------------------------------------------------------------------\nALTERNATIVE B - Public Domain (www.unlicense.org)\nThis is free and unencumbered software released into the public domain.\nAnyone is free to copy, modify, publish, use, compile, sell, or distribute this\nsoftware, either in source code form or as a compiled binary, for any purpose,\ncommercial or non-commercial, and by any means.\nIn jurisdictions that recognize copyright laws, the author or authors of this\nsoftware dedicate any and all copyright interest in the software to the public\ndomain. We make this dedication for the benefit of the public at large and to\nthe detriment of our heirs and successors. We intend this dedication to be an\novert act of relinquishment in perpetuity of all present and future rights to\nthis software under copyright law.\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN\nACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION\nWITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n------------------------------------------------------------------------------\n"
+    },
+    {
+      "kind": "license",
+      "title": "MIT License (Luau)",
+      "spdx": "MIT",
+      "content": "MIT License\n\nCopyright (c) 2022-2025 Aleksandr Orlenko (luau-src crate)\nCopyright (c) 2019-2024 Roblox Corporation\nCopyright (c) 1994–2019 Lua.org, PUC-Rio.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the \"Software\"), to deal in\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+    },
+    {
+      "kind": "notice",
+      "title": "Glaux note: no license file shipped",
+      "content": "The grammar declares the MIT license in its tree-sitter.json but ships no license file.\nGlaux vendors only the generated src/parser.c and its headers.\n"
+    },
+    {
+      "kind": "license",
+      "title": "SIL Open Font License 1.1 (Pixel Code)",
+      "spdx": "OFL-1.1",
+      "content": "Copyright (c) 2022, Qwerasd\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license is copied below, and is also available with a FAQ at:\nhttps://scripts.sil.org/OFL\n\n\n-----------------------------------------------------------\nSIL OPEN FONT LICENSE Version 1.1 - 26 February 2007\n-----------------------------------------------------------\n\nPREAMBLE\nThe goals of the Open Font License (OFL) are to stimulate worldwide\ndevelopment of collaborative font projects, to support the font creation\nefforts of academic and linguistic communities, and to provide a free and\nopen framework in which fonts may be shared and improved in partnership\nwith others.\n\nThe OFL allows the licensed fonts to be used, studied, modified and\nredistributed freely as long as they are not sold by themselves. The\nfonts, including any derivative works, can be bundled, embedded,\nredistributed and/or sold with any software provided that any reserved\nnames are not used by derivative works. The fonts and derivatives,\nhowever, cannot be released under any other type of license. The\nrequirement for fonts to remain under this license does not apply\nto any document created using the fonts or their derivatives.\n\nDEFINITIONS\n\"Font Software\" refers to the set of files released by the Copyright\nHolder(s) under this license and clearly marked as such. This may\ninclude source files, build scripts and documentation.\n\n\"Reserved Font Name\" refers to any names specified as such after the\ncopyright statement(s).\n\n\"Original Version\" refers to the collection of Font Software components as\ndistributed by the Copyright Holder(s).\n\n\"Modified Version\" refers to any derivative made by adding to, deleting,\nor substituting -- in part or in whole -- any of the components of the\nOriginal Version, by changing formats or by porting the Font Software to a\nnew environment.\n\n\"Author\" refers to any designer, engineer, programmer, technical\nwriter or other person who contributed to the Font Software.\n\nPERMISSION & CONDITIONS\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Font Software, to use, study, copy, merge, embed, modify,\nredistribute, and sell modified and unmodified copies of the Font\nSoftware, subject to the following conditions:\n\n1) Neither the Font Software nor any of its individual components,\nin Original or Modified Versions, may be sold by itself.\n\n2) Original or Modified Versions of the Font Software may be bundled,\nredistributed and/or sold with any software, provided that each copy\ncontains the above copyright notice and this license. These can be\nincluded either as stand-alone text files, human-readable headers or\nin the appropriate machine-readable metadata fields within text or\nbinary files as long as those fields can be easily viewed by the user.\n\n3) No Modified Version of the Font Software may use the Reserved Font\nName(s) unless explicit written permission is granted by the corresponding\nCopyright Holder. This restriction only applies to the primary font name as\npresented to the users.\n\n4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font\nSoftware shall not be used to promote, endorse or advertise any\nModified Version, except to acknowledge the contribution(s) of the\nCopyright Holder(s) and the Author(s) or with their explicit written\npermission.\n\n5) The Font Software, modified or unmodified, in part or in whole,\nmust be distributed entirely under this license, and must not be\ndistributed under any other license. The requirement for fonts to\nremain under this license does not apply to any document created\nusing the Font Software.\n\nTERMINATION\nThis license becomes null and void if any of the above conditions are\nnot met.\n\nDISCLAIMER\nTHE FONT SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\nOF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE\nCOPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\nINCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL\nDAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM\nOTHER DEALINGS IN THE FONT SOFTWARE."
+    },
+    {
+      "kind": "notice",
+      "title": "Simple Pixel Cursors: license and credits",
+      "content": "Simple Pixel Cursors - License & Credits  \n\n═══════════════════════════════════════════════\n\n**License**  \nLicensed under **CC0 1.0 Universal (CC0 1.0)**  \nThis work is in the public domain. It can be used for personal and commercial use, modified, and redistributed without any restrictions. No credit is required, but it is always appreciated.  \nRefrain from using any of these resources to feed LLM/AI models.\n\n**CC0 License Details**:  \nhttps://creativecommons.org/publicdomain/zero/1.0/  \n\n═══════════════════════════════════════════════\n\n**Credits**  \nCreated by **Gabl**  \nItch.io profile: https://gabl18.itch.io/  \nPack downloaded from: https://gabl18.itch.io/simple-pixel-cursors\nNo AI has been used in the making of this Asset Pack!\n\n═══════════════════════════════════════════════\n\nThanks for downloading this asset pack, have fun creating!   "
+    },
+    {
+      "kind": "notice",
+      "title": "1-bit Pixel Icons: statement by the author",
+      "content": "All of these icons are licensed under CC0, which means you have absolutely no restrictions on how you can use them. I would still appreciate it if you gave me attribution for my work, but it's not strictly required."
+    },
+    {
+      "kind": "notice",
+      "title": "Glaux note: no license stated",
+      "content": "Zughy 32 palette by Zughy, published on Lospec. The palette page does not state a license.\n"
+    }
+  ],
+  "entries": [
+    {
+      "name": "1-bit Pixel Icons",
+      "version": "",
+      "license": "CC0-1.0",
+      "repository": "https://nikoichu.itch.io/pixel-icons",
+      "category": "art",
+      "text_ids": [
+        7
+      ]
+    },
+    {
+      "name": "Pixel Code",
+      "version": "eefe4180",
+      "license": "OFL-1.1",
+      "repository": "https://github.com/qwerasd205/PixelCode",
+      "category": "art",
+      "text_ids": [
+        5
+      ]
+    },
+    {
+      "name": "Simple Pixel Cursors",
+      "version": "",
+      "license": "CC0-1.0",
+      "repository": "https://gabl18.itch.io/simple-pixel-cursors",
+      "category": "art",
+      "text_ids": [
+        6
+      ]
+    },
+    {
+      "name": "Zughy 32",
+      "version": "",
+      "license": "",
+      "repository": "https://lospec.com/palette-list/zughy-32",
+      "category": "art",
+      "text_ids": [
+        8
+      ]
+    },
+    {
+      "name": "dr_libs",
+      "version": "0.14.5",
+      "license": "Unlicense OR MIT-0",
+      "repository": "https://github.com/mackron/dr_libs",
+      "category": "native",
+      "text_ids": [
+        1
+      ]
+    },
+    {
+      "name": "Luau",
+      "version": "0.740",
+      "license": "MIT",
+      "repository": "https://github.com/luau-lang/luau",
+      "category": "native",
+      "text_ids": [
+        3
+      ]
+    },
+    {
+      "name": "miniaudio",
+      "version": "0.11.24",
+      "license": "Unlicense OR MIT-0",
+      "repository": "https://github.com/mackron/miniaudio",
+      "category": "native",
+      "text_ids": [
+        0
+      ]
+    },
+    {
+      "name": "stb",
+      "version": "2.30",
+      "license": "MIT OR Unlicense",
+      "repository": "https://github.com/nothings/stb",
+      "category": "native",
+      "text_ids": [
+        2
+      ]
+    },
+    {
+      "name": "tree-sitter-rhai",
+      "version": "4ac7384d",
+      "license": "MIT",
+      "repository": "https://github.com/elkowar/tree-sitter-rhai",
+      "category": "native",
+      "text_ids": [
+        4
+      ]
+    }
+  ]
+}

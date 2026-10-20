@@ -4,6 +4,7 @@ mod import_publish;
 mod import_sprites;
 mod sprites;
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -35,6 +36,8 @@ pub(crate) enum Command {
     Convert(ConvertArgs),
     /// Import assets into a cartridge.
     Import(ImportArgs),
+    /// List the third-party software Glaux includes and its licenses.
+    Licenses,
 }
 
 /// Commands in the asset-conversion namespace.
@@ -115,6 +118,29 @@ pub(crate) fn run(command: Command) -> anyhow::Result<()> {
                 summary.byte_count,
                 summary.output.display()
             );
+            Ok(())
+        }
+        Command::Licenses => {
+            let licenses = crate::licenses::third_party()?;
+            let mut out = std::io::stdout().lock();
+            for entry in &licenses.entries {
+                writeln!(
+                    out,
+                    "{} {} ({}) [{:?}]",
+                    entry.name, entry.version, entry.license, entry.category
+                )?;
+                if let Some(repository) = &entry.repository {
+                    writeln!(out, "{repository}")?;
+                }
+                for text in licenses.texts_of(entry) {
+                    match &text.spdx {
+                        Some(spdx) => writeln!(out, "\n{} ({spdx})", text.title)?,
+                        None => writeln!(out, "\n{}", text.title)?,
+                    }
+                    writeln!(out, "\n{}", text.content.trim_end())?;
+                }
+                writeln!(out, "\n{}\n", "-".repeat(78))?;
+            }
             Ok(())
         }
         Command::Import(ImportArgs {

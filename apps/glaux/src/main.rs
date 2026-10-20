@@ -6,6 +6,7 @@ mod clock;
 mod config_file;
 mod desktop;
 mod editor_settings_file;
+mod licenses;
 mod logging;
 mod platform;
 mod rom;
