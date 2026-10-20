@@ -356,3 +356,48 @@ mod moving {
         assert!(host(&fixture, "code/main.luau").exists());
     }
 }
+
+#[test]
+fn the_symbol_at_a_caret_is_a_page_a_local_or_unknown_in_both_languages() {
+    let fixture = Fixture::new("code-session-symbol");
+    let luau = "local function mine() end\nspr(1)\naudio.tone(1)\nnothing_here()\n-- spr\n";
+    let rhai = "fn mine() {}\nspr(1);\naudio::tone(1);\nnothing_here();\n";
+    let cart = cartridge(
+        &fixture,
+        &[
+            ("code/a.luau", luau.as_bytes()),
+            ("code/b.rhai", rhai.as_bytes()),
+        ],
+    );
+    let api = glaux_docs::Library::embedded();
+    let api = api.api();
+    let mut session = CodeSession::default();
+    for (file, text, member) in [
+        ("code/a.luau", luau, "audio.tone"),
+        ("code/b.rhai", rhai, "audio::tone"),
+    ] {
+        let id = session.open(&cart, &path(file)).unwrap();
+        let at = |needle: &str, inside: usize| text.find(needle).unwrap() + inside;
+        let mut symbol = |caret| session.symbol_at(id, caret, api);
+        let spr = Symbol::Api(DocId::parse("api/graphics/spr").unwrap());
+        assert_eq!(symbol(at("spr(", 0)), Some(spr.clone()), "{file} start");
+        assert_eq!(symbol(at("spr(", 3)), Some(spr), "{file} end");
+        let tone = Symbol::Api(DocId::parse("api/audio/tone").unwrap());
+        assert_eq!(
+            symbol(at(member, member.len() - 2)),
+            Some(tone),
+            "{file} member"
+        );
+        assert_eq!(
+            symbol(at("mine", 2)),
+            Some(Symbol::Local("mine".to_owned()))
+        );
+        assert_eq!(symbol(at("nothing_here", 3)), Some(Symbol::Unknown));
+        // Between two non-word characters there is no word.
+        assert_eq!(symbol(at("(1)", 0) + 1 + 1), None, "{file} after the digit");
+    }
+    // A comment offers nothing, even for a name of the API.
+    let id = session.open(&cart, &path("code/a.luau")).unwrap();
+    let caret = luau.rfind("spr").unwrap() + 1;
+    assert_eq!(session.symbol_at(id, caret, api), None);
+}

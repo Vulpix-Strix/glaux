@@ -7,7 +7,7 @@ mod view;
 
 use glaux_docs::DocId;
 use glaux_input::InputEvent;
-use glaux_sense::SignatureHelp;
+use glaux_sense::{Signature, SignatureHelp};
 
 use super::popup::Place;
 use super::{CodeEditor, CodeRequest};
@@ -39,6 +39,11 @@ impl SignaturePopup {
     /// offsets in the answer are still right.
     pub fn is_current(&self, document: &CodeDocument) -> bool {
         document.id() == self.document && document.revision() == self.help.revision
+    }
+
+    /// The signature being typed, whose page says what its arguments mean.
+    pub fn signature(&self) -> &Signature {
+        self.help.signature()
     }
 
     #[cfg(test)]

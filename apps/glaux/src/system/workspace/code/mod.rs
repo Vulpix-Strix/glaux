@@ -7,6 +7,7 @@
 
 mod actions;
 mod completion;
+mod docs_lookup;
 mod edit;
 mod find;
 mod go_to_line;
@@ -45,6 +46,7 @@ use text_view::TextGeometry;
 
 use super::Rect;
 use super::context_menu::{ContextMenu, MenuLayout, MenuOutcome, menu_hint as context_menu_hint};
+use super::docs::DocTarget;
 use crate::cartridge::Language;
 use crate::cartridge::source::{ScriptListing, SourcePath};
 use crate::cartridge_fs::FsError;
@@ -138,6 +140,10 @@ pub enum CodeRequest {
     Rename { id: DocumentId, to: SourcePath },
     /// Show this in the status bar for a moment.
     Notice(String),
+    /// Show this page of the documentation.
+    OpenDocs(DocTarget),
+    /// Show the documentation with its search open.
+    SearchDocs,
 }
 
 /// The list of every open tab, dropped from the strip's right end.
@@ -854,6 +860,9 @@ impl CodeEditor {
         }
         if self.go_to.is_some() {
             return self.go_to_input(event, session);
+        }
+        if event == InputEvent::Docs {
+            return Some(self.docs_request(session));
         }
         if let Some(request) = self.completion_input(event, session) {
             return request;

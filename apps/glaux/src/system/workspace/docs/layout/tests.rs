@@ -555,7 +555,7 @@ fn docs_glyphs_everything_the_layout_draws_for_the_shipped_pages_is_drawable() {
         // markers, which add glyphs the page source does not hold.
         for cols in [20, 53] {
             let layout = build(&Params {
-                page: &page,
+                page,
                 tag: String::new(),
                 cols,
                 filter: LanguageFilter::All,

@@ -43,12 +43,16 @@ fn f1_opens_the_browser_over_the_code_view_and_escape_closes_it() {
     let system = system.update(&[InputEvent::Docs]);
     assert!(docs_open(&system));
     assert_eq!(workspace_tab(&system), Tab::Code);
+    // Nothing under the caret to look up, so the search is what opens.
+    assert!(workspace::tests_support::docs_searching(&system.workspace));
     let (tabs, current) = workspace::tests_support::docs_pages(&system.workspace);
     assert_eq!(tabs, 1);
     assert_eq!(current.as_deref(), Some("guide/index"));
 
-    // Escape closes the browser, and only then does it leave the
-    // workspace.
+    // Escape closes the search, then the browser, and only then does it
+    // leave the workspace.
+    let system = press_break(system);
+    assert!(docs_open(&system));
     let system = press_break(system);
     assert!(!docs_open(&system));
     assert!(is_workspace(&system));
@@ -58,8 +62,8 @@ fn f1_opens_the_browser_over_the_code_view_and_escape_closes_it() {
 
 #[test]
 fn f1_again_hides_the_browser() {
-    let fixture = Fixture::new("sys-docs-f1-twice");
-    let system = in_code(&fixture).update(&[InputEvent::Docs, InputEvent::Docs]);
+    let fixture = Fixture::new("sys-docs-f1-twice-hide");
+    let system = in_code(&fixture).update(&[InputEvent::Docs, InputEvent::Break, InputEvent::Docs]);
     assert!(!docs_open(&system));
     assert!(is_workspace(&system));
 }
@@ -213,6 +217,7 @@ fn an_allowed_link_becomes_a_request_for_the_host_and_is_announced() {
     let fixture = Fixture::new("sys-docs-external");
     let mut system = in_code(&fixture).update(&[
         InputEvent::Docs,
+        InputEvent::Break,
         InputEvent::Tab { reverse: false },
         InputEvent::Enter,
     ]);
@@ -236,6 +241,7 @@ fn blocked_and_broken_links_report_and_ask_nothing_of_the_host() {
     let fixture = Fixture::new("sys-docs-blocked");
     let mut system = in_code(&fixture).update(&[
         InputEvent::Docs,
+        InputEvent::Break,
         InputEvent::Tab { reverse: false },
         InputEvent::Tab { reverse: false },
         InputEvent::Enter,
@@ -383,4 +389,147 @@ fn a_long_cartridge_name_stops_before_the_docs_button() {
         .find(|&x| (0..button.height).any(|y| long.pixel(x, y) == Some(PALE)))
         .unwrap();
     assert!(last >= button.x - 4 - 2 * CELL_W, "{last}");
+}
+
+/// The workspace on its Code view with `script` open, caret at the start.
+fn in_code_with(fixture: &Fixture, script: &str) -> System {
+    let system = press_break(enter(shell_with_cartridge(fixture, script), "load pong"));
+    assert_eq!(workspace_tab(&system), Tab::Code);
+    system
+}
+
+fn location(system: &System) -> Option<(String, Option<String>)> {
+    workspace::tests_support::docs_location(&system.workspace)
+}
+
+fn page(id: &str) -> Option<(String, Option<String>)> {
+    Some((id.to_owned(), None))
+}
+
+/// Everything the browser must leave alone: the text, whether it is
+/// modified, the revision and what undo has.
+fn editor_state(system: &System) -> (String, bool, u64, bool) {
+    let code = system.code.as_ref().unwrap();
+    let document = code.active_document().unwrap();
+    (
+        document.text().to_owned(),
+        code.is_modified(),
+        document.revision(),
+        code.can_undo(document.id()),
+    )
+}
+
+#[test]
+fn f1_in_a_call_opens_the_function_at_its_parameters_and_changes_nothing() {
+    let fixture = Fixture::new("sys-docs-f1-signature");
+    let system = typed(in_code_with(&fixture, ""), "spr(1, ");
+    let before = editor_state(&system);
+    assert_eq!(before.0, "spr(1, ");
+    assert!(before.1 && before.3);
+    let system = system.update(&[InputEvent::Docs]);
+
+    assert!(docs_open(&system));
+    assert_eq!(
+        location(&system),
+        Some(("api/graphics/spr".to_owned(), Some("parameters".to_owned())))
+    );
+    assert_eq!(editor_state(&system), before);
+
+    // Back in the editor the popup is gone, the caret is where it was and
+    // typing carries on from there, with undo still holding it all.
+    let system = press_break(system);
+    assert!(!docs_open(&system));
+    let system = typed(system, "2)");
+    assert_eq!(text_of(&system), "spr(1, 2)");
+    let system = system.update(&[InputEvent::Undo, InputEvent::Undo, InputEvent::Undo]);
+    assert!(text_of(&system).len() < "spr(1, 2)".len());
+}
+
+#[test]
+fn f1_with_suggestions_open_shows_the_one_picked() {
+    let fixture = Fixture::new("sys-docs-f1-completion");
+    let system = typed(in_code_with(&fixture, ""), "pse");
+    let before = editor_state(&system);
+    let system = system.update(&[InputEvent::Docs]);
+    assert_eq!(location(&system), page("api/graphics/pset"));
+    assert_eq!(editor_state(&system), before);
+    // The list closed: the editor takes Enter as a line break.
+    let system = press_break(system);
+    let system = system.update(&[InputEvent::Enter]);
+    assert_eq!(text_of(&system), "pse\n");
+}
+
+#[test]
+fn f1_on_a_known_name_opens_its_page() {
+    let fixture = Fixture::new("sys-docs-f1-symbol");
+    let system = in_code_with(&fixture, "pset(0, 0, 1)\nspr(1, 1, 1)\n");
+    let before = editor_state(&system);
+    let system = system.update(&[InputEvent::Docs]);
+    assert_eq!(location(&system), page("api/graphics/pset"));
+    assert_eq!(editor_state(&system), before);
+}
+
+#[test]
+fn f1_without_a_name_opens_the_search() {
+    let fixture = Fixture::new("sys-docs-f1-search");
+    let system = in_code_with(&fixture, "-- nothing to look up\n");
+    let system = system.update(&[InputEvent::Docs]);
+    assert!(docs_open(&system));
+    assert!(workspace::tests_support::docs_searching(&system.workspace));
+    assert_eq!(editor_state(&system).0, "-- nothing to look up\n");
+}
+
+#[test]
+fn f1_on_the_scripts_own_function_says_it_has_no_page() {
+    let fixture = Fixture::new("sys-docs-f1-local");
+    let system = in_code_with(&fixture, "function mine() end\nmine()\n");
+    let system = system.update(&[InputEvent::Down { select: false }, InputEvent::Docs]);
+    assert!(!docs_open(&system));
+    assert_eq!(
+        workspace::tests_support::notice(&system.workspace),
+        Some("No documentation for mine")
+    );
+}
+
+#[test]
+fn f1_brings_forward_a_page_that_is_already_open() {
+    let fixture = Fixture::new("sys-docs-f1-twice");
+    let system = in_code_with(&fixture, "pset(0, 0, 1)\nspr(1, 1, 1)\n");
+    let system = system.update(&[InputEvent::Docs]);
+    let system = press_break(system);
+    let system = system.update(&[InputEvent::Down { select: false }, InputEvent::Docs]);
+    assert_eq!(location(&system), page("api/graphics/spr"));
+    assert_eq!(workspace::tests_support::docs_pages(&system.workspace).0, 2);
+
+    let system = press_break(system);
+    let system = system.update(&[InputEvent::Up { select: false }, InputEvent::Docs]);
+    assert_eq!(location(&system), page("api/graphics/pset"));
+    assert_eq!(
+        workspace::tests_support::docs_pages(&system.workspace).0,
+        2,
+        "the open tab was shown again"
+    );
+}
+
+#[test]
+fn f1_from_the_sprite_view_opens_the_browser_where_it_was() {
+    let fixture = Fixture::new("sys-docs-f1-sprites");
+    let system = in_code_with(&fixture, "pset(0, 0, 1)\n").update(&[InputEvent::Docs]);
+    let system = press_break(system).update(&click(tab_centre(Tab::Sprites)));
+    let system = system.update(&[InputEvent::Docs]);
+    assert!(docs_open(&system));
+    assert_eq!(workspace_tab(&system), Tab::Sprites);
+    assert_eq!(location(&system), page("api/graphics/pset"));
+}
+
+#[test]
+fn opening_and_closing_documentation_from_the_editor_keeps_the_selection() {
+    let fixture = Fixture::new("sys-docs-f1-selection");
+    let system = in_code_with(&fixture, "pset(0, 0, 1)\n");
+    let system = system.update(&[InputEvent::Right { select: true }]);
+    let system = system.update(&[InputEvent::Docs]);
+    let system = press_break(system);
+    // The selection survived: typing replaces the selected `p`.
+    let system = typed(system, "x");
+    assert_eq!(text_of(&system), "xset(0, 0, 1)\n");
 }

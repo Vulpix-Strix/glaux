@@ -7,7 +7,7 @@ mod render;
 
 use glaux_docs::ScriptLanguage;
 use glaux_input::{InputEvent, Point, PointerButton};
-use glaux_sense::{CandidateKind, Completions, Insertion, Trigger};
+use glaux_sense::{Candidate, CandidateKind, Completions, Insertion, Trigger};
 use glaux_syntax::SyntaxKind;
 
 use super::CodeEditor;
@@ -117,6 +117,11 @@ impl CompletionPopup {
             .iter()
             .map(|candidate| candidate.label.as_str())
             .collect()
+    }
+
+    /// The candidate the list has picked.
+    pub fn picked(&self) -> Option<&Candidate> {
+        self.completions.items.get(self.selected)
     }
 
     /// The documentation shown beside the picked candidate.

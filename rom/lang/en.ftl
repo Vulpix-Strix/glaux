@@ -236,6 +236,7 @@ code-new-script-description = New .{ $extension } script in { $directory }
 code-new-script-extension-hint = Leave out .{ $extension }; it is added.
 code-new-script-language-hint = This cartridge is { $language }; .{ $extension } is added.
 code-new-script-name-hint = Type a name; .{ $extension } is added.
+code-no-documentation-for = No documentation for { $value }
 code-no-file-matches = No file matches.
 code-no-file-open = No file open.
 code-no-luau-or-rhai-files-in-this-cartridge = No .luau or .rhai files in this cartridge.

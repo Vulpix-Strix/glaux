@@ -52,6 +52,31 @@ pub fn menu_hint() -> String {
     ui_text::get("docs-up-down-pick-enter-show-esc-close")
 }
 
+/// A page to show and where in it. This is all the rest of the interface
+/// needs to send a reader to the documentation, whether from the editor's
+/// F1 or, later, from a hover.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocTarget {
+    pub id: DocId,
+    /// The heading to scroll to, as written after `#` in a link.
+    pub fragment: Option<String>,
+}
+
+impl DocTarget {
+    pub fn page(id: DocId) -> Self {
+        Self { id, fragment: None }
+    }
+
+    /// The page at its parameters, which is where a function's page says
+    /// what each argument means.
+    pub fn parameters(id: DocId) -> Self {
+        Self {
+            id,
+            fragment: Some("parameters".to_owned()),
+        }
+    }
+}
+
 /// The pages the browser reads, and the languages to read them in.
 #[derive(Debug, Clone, Copy)]
 pub struct Source<'a> {
@@ -223,6 +248,13 @@ impl DocsBrowser {
         self.tabs.len()
     }
 
+    /// The page and heading the active tab shows.
+    #[cfg(test)]
+    pub fn location(&self) -> Option<(&DocId, Option<&str>)> {
+        let entry = self.tabs.get(self.active)?.current();
+        Some((&entry.id, entry.fragment.as_deref()))
+    }
+
     #[cfg(test)]
     pub fn search_hits(&self) -> Option<usize> {
         self.search.as_ref().map(|search| search.results().len())
@@ -282,6 +314,20 @@ impl DocsBrowser {
         let request = self.navigate(id, fragment, new_tab);
         self.refresh(source);
         request
+    }
+
+    /// Shows `target` in a tab of its own, or brings forward the tab that
+    /// already shows its page, leaving every other tab as it was.
+    pub fn show_target(&mut self, source: Source<'_>, target: DocTarget) -> Option<DocsRequest> {
+        self.search = None;
+        self.menu = None;
+        self.open(source, target.id, target.fragment, true)
+    }
+
+    /// Shows the browser with SEARCH DOCS open.
+    pub fn show_search(&mut self, source: Source<'_>) {
+        self.show(source);
+        self.open_search(source);
     }
 
     fn navigate(

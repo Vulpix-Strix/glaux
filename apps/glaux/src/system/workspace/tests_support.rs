@@ -185,3 +185,16 @@ pub fn docs_pages(workspace: &Workspace) -> (usize, Option<String>) {
         workspace.docs.current().map(ToString::to_string),
     )
 }
+
+/// The page and heading the active documentation tab shows.
+pub fn docs_location(workspace: &Workspace) -> Option<(String, Option<String>)> {
+    workspace
+        .docs
+        .location()
+        .map(|(id, fragment)| (id.to_string(), fragment.map(str::to_owned)))
+}
+
+/// Whether SEARCH DOCS is open.
+pub fn docs_searching(workspace: &Workspace) -> bool {
+    workspace.docs.search_hits().is_some()
+}

@@ -48,7 +48,7 @@ use crate::sprite_import::SheetSource;
 use crate::ui_text;
 use code::{CodeEditor, CodeRequest};
 pub(super) use dialog::{Dialog, DialogLayout};
-use docs::{DocsBrowser, DocsRequest, Source};
+use docs::{DocTarget, DocsBrowser, DocsRequest, Source};
 #[cfg(test)]
 pub use sprites::ImportPreview;
 #[cfg(not(test))]
@@ -1148,7 +1148,10 @@ impl Workspace {
                 at,
                 ..
             } if self.docs_button().contains(at) => self.toggle_docs(sprites),
-            InputEvent::Docs if !self.docs_open => self.toggle_docs(sprites),
+            // With a script open, the Code view decides what F1 shows.
+            InputEvent::Docs if !self.docs_open && !(self.tab == Tab::Code && code.is_some()) => {
+                self.toggle_docs(sprites)
+            }
             _ if self.docs_open => return self.docs_input(event),
             _ if self.tab == Tab::Sprites => return self.sprite_input(event, sprites),
             _ if self.tab == Tab::Code => return self.code_input(event, code),
@@ -1173,6 +1176,36 @@ impl Workspace {
         // A drag must not outlive the view it started in.
         self.end_stroke(sprites);
         self.docs.show(docs_source());
+        self.docs_open = true;
+    }
+
+    /// Shows the browser on `target`, in a new tab or in the one that has
+    /// the page already. Neither the Code view's documents nor the sprite
+    /// editor's are touched.
+    fn open_docs(&mut self, target: DocTarget) {
+        let source = docs_source();
+        if source.library.page(&target.id, source.chain).is_none() {
+            self.notify(
+                ui_text::get_with(
+                    "code-no-documentation-for",
+                    &[("value", Arg::Text(target.id.as_str()))],
+                ),
+                PALE,
+            );
+            return;
+        }
+        self.end_stroke(None);
+        let refused = self.docs.show_target(source, target);
+        self.docs_open = true;
+        if let Some(DocsRequest::Notice(text)) = refused {
+            self.notify(text, PALE);
+        }
+    }
+
+    /// Shows the browser with its search open.
+    fn search_docs(&mut self) {
+        self.end_stroke(None);
+        self.docs.show_search(docs_source());
         self.docs_open = true;
     }
 
@@ -1228,6 +1261,14 @@ impl Workspace {
             CodeRequest::Rename { id, to } => Some(WorkspaceRequest::RenameScript { id, to }),
             CodeRequest::Notice(text) => {
                 self.notify(text, PALE);
+                None
+            }
+            CodeRequest::OpenDocs(target) => {
+                self.open_docs(target);
+                None
+            }
+            CodeRequest::SearchDocs => {
+                self.search_docs();
                 None
             }
             CodeRequest::ConfirmClose(id) => {

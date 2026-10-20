@@ -12,8 +12,10 @@ pub use tabs::{DocumentTabs, DocumentView};
 use std::collections::HashMap;
 use std::ops::Range;
 
-use glaux_docs::{ApiCatalog, ScriptLanguage};
-use glaux_sense::{Completions, Request, SignatureHelp, SignatureRequest, Trigger};
+use glaux_docs::{ApiCatalog, DocId, ScriptLanguage};
+use glaux_sense::{
+    Completions, Position, Request, Resolved, SignatureHelp, SignatureRequest, Trigger,
+};
 
 use super::code_cursor::Caret;
 use super::code_document::{
@@ -151,6 +153,41 @@ impl CodeSession {
             revision: document.revision(),
         };
         glaux_sense::signature_help(&request, api, highlighter)
+    }
+
+    /// What the word at `caret` in `id` refers to, answered from the text as
+    /// it is now. `None` if `id` is not open, its syntax is unavailable or
+    /// there is no word there to look up, as in a comment or a string.
+    pub fn symbol_at(&mut self, id: DocumentId, caret: usize, api: &ApiCatalog) -> Option<Symbol> {
+        let document = self.documents.get(id)?;
+        let highlighter = self
+            .syntax
+            .entry(id)
+            .or_insert_with(|| DocumentSyntax::new(document.language()))
+            .parsed(document)?;
+        let language = script_language(document.language());
+        let text = document.text();
+        let context = glaux_sense::context(language, text, caret, highlighter)?;
+        let word = &text[context.anchor.clone()];
+        if word.is_empty() {
+            return None;
+        }
+        let mut path: Vec<&str> = match &context.position {
+            Position::Member { receiver, .. } => receiver.iter().map(String::as_str).collect(),
+            Position::Reference { .. } => Vec::new(),
+            // A name being declared is the script's own, though the scope
+            // that holds it does not start until the declaration ends.
+            Position::Declaration { .. } => return Some(Symbol::Local(word.to_owned())),
+            Position::Suppressed => return None,
+        };
+        path.push(word);
+        Some(
+            match glaux_sense::resolve(api, language, highlighter, caret, &path) {
+                Some(Resolved::Entry(entry)) => Symbol::Api(entry.id().clone()),
+                Some(Resolved::Local(definition)) => Symbol::Local(definition.name),
+                None => Symbol::Unknown,
+            },
+        )
     }
 
     /// Replaces `range` of `id`'s text with `text`, see
@@ -365,6 +402,17 @@ pub enum MoveScriptError {
     Missing(SourcePath),
     #[error(transparent)]
     File(#[from] SourceEditError),
+}
+
+/// What a word in a script refers to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Symbol {
+    /// A name of the script API, with the id of its documentation page.
+    Api(DocId),
+    /// Something the script defines, which has no page.
+    Local(String),
+    /// A word that names nothing the engine knows.
+    Unknown,
 }
 
 fn script_language(language: Language) -> ScriptLanguage {

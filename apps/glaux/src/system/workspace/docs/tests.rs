@@ -1074,3 +1074,84 @@ fn the_real_documentation_opens_and_every_internal_link_resolves() {
         }
     }
 }
+
+impl Case {
+    fn show_target(&mut self, id: &str, fragment: Option<&str>) -> Option<DocsRequest> {
+        let mut browser = self.browser.clone();
+        let request = browser.show_target(
+            self.source(),
+            DocTarget {
+                id: DocId::parse(id).unwrap(),
+                fragment: fragment.map(str::to_owned),
+            },
+        );
+        self.browser = browser;
+        request
+    }
+}
+
+#[test]
+fn a_target_opens_in_a_new_tab_and_leaves_the_others_alone() {
+    let mut case = Case::new();
+    case.open("guide/a", false);
+    assert_eq!(case.show_target("guide/b", None), None);
+    assert_eq!(case.tab_ids(), ["guide/a", "guide/b"]);
+    assert_eq!(case.current(), "guide/b");
+    // The tab it left still has its history.
+    case.send(InputEvent::PreviousDocument);
+    assert_eq!(case.current(), "guide/a");
+    case.send(InputEvent::Back);
+    assert_eq!(case.current(), "guide/index");
+}
+
+#[test]
+fn a_target_with_no_tabs_does_not_leave_the_front_page_behind() {
+    let mut case = Case::new();
+    case.browser.tabs.clear();
+    case.browser.shown = None;
+    case.show_target("guide/b", None);
+    assert_eq!(case.tab_ids(), ["guide/b"]);
+}
+
+#[test]
+fn a_target_for_an_open_page_shows_that_tab_and_goes_to_the_heading() {
+    let mut case = Case::new();
+    case.open("guide/a", true);
+    case.open("guide/b", true);
+    assert_eq!(case.show_target("guide/a", Some("two")), None);
+    assert_eq!(case.tab_ids().len(), 3);
+    assert_eq!(case.current(), "guide/a");
+    assert_eq!(case.browser.active_tab(), 1);
+    assert!(case.scroll() > 0, "the view went to the heading");
+    assert_eq!(
+        case.browser.location().map(|(_, fragment)| fragment),
+        Some(Some("two"))
+    );
+}
+
+#[test]
+fn a_target_is_refused_at_the_tab_limit_and_changes_nothing() {
+    let mut case = Case::with_pages(MAX_TABS);
+    for n in 0..MAX_TABS - 1 {
+        case.open(&format!("guide/p{n:02}"), true);
+    }
+    assert_eq!(case.tab_ids().len(), MAX_TABS);
+    let before = case.browser.clone();
+    let request = case.show_target(&format!("guide/p{:02}", MAX_TABS - 1), None);
+    assert!(matches!(request, Some(DocsRequest::Notice(_))));
+    assert_eq!(case.browser, before);
+    // A page that is open still comes forward.
+    assert_eq!(case.show_target("guide/p00", None), None);
+    assert_eq!(case.current(), "guide/p00");
+}
+
+#[test]
+fn showing_the_search_keeps_the_tabs_and_opens_the_query() {
+    let mut case = Case::new();
+    case.open("guide/a", true);
+    let mut browser = case.browser.clone();
+    browser.show_search(case.source());
+    assert_eq!(browser.tab_count(), 2);
+    assert_eq!(browser.active_tab(), 1);
+    assert!(browser.search_hits().is_some());
+}
