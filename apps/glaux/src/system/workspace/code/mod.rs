@@ -14,6 +14,7 @@ mod go_to_line;
 mod hover;
 mod layout;
 mod menu;
+mod navigation;
 mod new_file;
 mod picker;
 mod popup;
@@ -23,6 +24,7 @@ mod render;
 mod searching;
 mod settings;
 mod signature;
+mod symbols;
 pub(super) mod text_view;
 
 use std::ops::Range;
@@ -45,6 +47,7 @@ use prompt::{Prompt, PromptLayout};
 use rename::{RenameAction, RenameScript};
 use settings::{SettingsAction, SettingsDialog, SettingsLayout};
 use signature::{Dismissed, SignaturePopup, signature_hint};
+use symbols::SymbolPanel;
 use text_view::TextGeometry;
 
 use super::Rect;
@@ -56,7 +59,7 @@ use crate::cartridge_fs::FsError;
 use crate::system::code_cursor::{Caret, line_at, word_at};
 use crate::system::code_document::{CodeDocument, DocumentId};
 use crate::system::code_selection::{Edge, Selection};
-use crate::system::code_session::{CodeSession, DocumentView};
+use crate::system::code_session::{CodeSession, Destination, DocumentView};
 use crate::system::code_text::{TextMetrics, spot};
 use crate::system::editor_settings::EditorSettings;
 use crate::system::shell::BLINK_TICKS;
@@ -106,6 +109,10 @@ fn picker_hint() -> String {
 fn menu_hint() -> String {
     ui_text::get("code-up-down-pick-enter-show-esc-close")
 }
+/// The status bar hint while the symbol panel has the keys.
+fn symbols_hint() -> String {
+    ui_text::get("code-up-down-pick-enter-go-esc-back")
+}
 /// The status bar hint while EDITOR SETTINGS is open.
 fn settings_hint() -> String {
     ui_text::get("code-up-down-pick-enter-toggle-esc-close")
@@ -149,6 +156,14 @@ pub enum CodeRequest {
     SearchDocs,
     /// Run the cartridge from its entry point.
     Run,
+    /// Go to the definition of the name at byte `caret` of this document.
+    GoToDefinition { id: DocumentId, caret: usize },
+    /// Move to this place, remembering where the jump started.
+    Jump(Destination),
+    /// Return to the place before the last jump.
+    Back,
+    /// Go again to the place Back left.
+    Forward,
 }
 
 /// The list of every open tab, dropped from the strip's right end.
@@ -245,6 +260,8 @@ pub struct CodeEditor {
     entry_error: Option<String>,
     /// The cartridge's entry script, which cannot be renamed or deleted.
     entry: Option<SourcePath>,
+    /// The declarations of the open document, docked right of the text while open.
+    symbols: Option<SymbolPanel>,
     /// Ticks since the caret blink last restarted in its visible phase.
     blink: u32,
     /// The selection being dragged out in the text, while its press is held.
@@ -279,6 +296,7 @@ impl CodeEditor {
             pointer: None,
             entry_error: None,
             entry: None,
+            symbols: None,
             blink: 0,
             selecting: None,
             last_click: None,
@@ -304,6 +322,7 @@ impl CodeEditor {
             self.autoscroll(session);
             self.refresh_find(session);
             self.tick_hover(session);
+            self.sync_symbols(session);
         }
     }
 
@@ -334,6 +353,7 @@ impl CodeEditor {
             || self.completion.is_some()
             || self.signature.is_some()
             || self.hover.is_some()
+            || self.symbols.as_ref().is_some_and(SymbolPanel::focused)
     }
 
     /// Whether a part of the find bar has the keys.
@@ -357,6 +377,8 @@ impl CodeEditor {
             rename_hint()
         } else if self.go_to.is_some() {
             go_to_hint()
+        } else if self.symbols.as_ref().is_some_and(SymbolPanel::focused) {
+            symbols_hint()
         } else if self.completion.is_some() {
             completion_hint()
         } else if self.find_focused() {
@@ -439,12 +461,6 @@ impl CodeEditor {
         self.settings
     }
 
-    /// Puts the caret at the start of `line`, counted from 0, in the
-    /// active document and scrolls to it.
-    pub fn show_line(&mut self, session: &mut CodeSession, line: usize) {
-        self.go_to_line(session, line);
-    }
-
     /// Shows code with `settings` from now on. Documents already open are
     /// measured again on the next input.
     pub fn set_settings(&mut self, settings: EditorSettings) {
@@ -475,7 +491,10 @@ impl CodeEditor {
     /// The part of the text area the text takes: all of it, or what the
     /// find bar leaves below it.
     fn text_area(&self) -> Rect {
-        let text = self.layout.text;
+        let mut text = self.layout.text;
+        if self.symbols.is_some() {
+            text.width -= symbols::WIDTH;
+        }
         match self.find_layout() {
             Some(find) => Rect {
                 y: find.panel.bottom(),
@@ -860,6 +879,7 @@ impl CodeEditor {
         self.request_completion(event, was_open, revision, session);
         self.update_signature(event, revision, session);
         self.sync_hover(session);
+        self.sync_symbols(session);
         request
     }
 
@@ -908,6 +928,9 @@ impl CodeEditor {
         if self.go_to.is_some() {
             return self.go_to_input(event, session);
         }
+        if let Some(request) = self.symbols_input(event, session) {
+            return request;
+        }
         if let Some(request) = self.hover_input(event, session) {
             return request;
         }
@@ -937,6 +960,14 @@ impl CodeEditor {
             InputEvent::Find => self.open_find(session, false),
             InputEvent::Replace => self.open_find(session, true),
             InputEvent::GoToLine => self.open_go_to(session),
+            InputEvent::GoToSymbol => self.toggle_symbols(session),
+            InputEvent::GoToDefinition => return self.definition_request(session, None),
+            InputEvent::GoToDefinitionAt(at) if self.text_area().contains(at) => {
+                let (id, byte) = self.hit_text(session, at)?;
+                return Some(CodeRequest::GoToDefinition { id, caret: byte });
+            }
+            InputEvent::Back if session.can_go_back() => return Some(CodeRequest::Back),
+            InputEvent::Forward if session.can_go_forward() => return Some(CodeRequest::Forward),
             InputEvent::Save => return session.tabs().active().map(CodeRequest::Save),
             InputEvent::CloseDocument => {
                 return session

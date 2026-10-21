@@ -15,6 +15,7 @@ mod completion;
 mod highlight;
 mod selection;
 mod signature;
+mod symbols;
 
 const CELL_W: i32 = 6;
 const CELL_H: i32 = 12;

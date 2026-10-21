@@ -9,7 +9,7 @@ use crate::system::code_document::CodeDocumentError;
 use pretty_assertions::assert_eq;
 
 /// A Luau cartridge at `/games/pong` with `files` written into it.
-fn cartridge(fixture: &Fixture, files: &[(&str, &[u8])]) -> LoadedCartridge {
+pub(in crate::system) fn cartridge(fixture: &Fixture, files: &[(&str, &[u8])]) -> LoadedCartridge {
     let dir = fixture.root().join("games/pong");
     write_cartridge(&dir, "Pong");
     for (path, bytes) in files {
@@ -20,7 +20,7 @@ fn cartridge(fixture: &Fixture, files: &[(&str, &[u8])]) -> LoadedCartridge {
     LoadedCartridge::load(&fixture.storage(), "games/pong").unwrap()
 }
 
-fn path(path: &str) -> SourcePath {
+pub(in crate::system) fn path(path: &str) -> SourcePath {
     SourcePath::parse(path).unwrap()
 }
 

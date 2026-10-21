@@ -18,6 +18,7 @@ mod code_session;
 mod code_syntax;
 mod code_text;
 mod credits;
+mod definition;
 mod docs;
 mod editor_settings;
 mod external_url;
@@ -43,6 +44,7 @@ pub use boot::Boot;
 pub use clipboard::Clipboard;
 use code_session::CodeSession;
 use credits::CreditsView;
+use definition::Definition;
 #[cfg(test)]
 pub use editor_settings::IndentStyle;
 pub use editor_settings::{EditorSettings, INDENT_SIZES, TAB_SIZES};
@@ -1458,6 +1460,25 @@ fn workspace_tick(
                 workspace.script_renamed(code, &to, result);
                 continue;
             }
+            WorkspaceRequest::GoToDefinition { id, caret } => {
+                match definition::locate(code, &cartridge, id, caret) {
+                    Definition::Found(target) => workspace.jump(code, &cartridge, &target),
+                    missed => workspace.definition_missed(&missed),
+                }
+                continue;
+            }
+            WorkspaceRequest::Jump(target) => {
+                workspace.jump(code, &cartridge, &target);
+                continue;
+            }
+            WorkspaceRequest::NavigateBack => {
+                workspace.travel(code, &cartridge, true);
+                continue;
+            }
+            WorkspaceRequest::NavigateForward => {
+                workspace.travel(code, &cartridge, false);
+                continue;
+            }
             WorkspaceRequest::OpenExternal(url) => {
                 host_requests.push(HostRequest::OpenExternal(url));
                 continue;
@@ -1503,6 +1524,10 @@ fn workspace_tick(
             | WorkspaceRequest::PrepareDelete(_)
             | WorkspaceRequest::DeleteScript { .. }
             | WorkspaceRequest::RenameScript { .. }
+            | WorkspaceRequest::GoToDefinition { .. }
+            | WorkspaceRequest::Jump(_)
+            | WorkspaceRequest::NavigateBack
+            | WorkspaceRequest::NavigateForward
             | WorkspaceRequest::OpenExternal(_)
             | WorkspaceRequest::Copy(_)
             | WorkspaceRequest::Paste => {

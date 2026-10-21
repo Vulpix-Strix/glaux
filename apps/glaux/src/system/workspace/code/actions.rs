@@ -22,6 +22,7 @@ pub enum CodeAction {
     Find,
     Replace,
     GoToLine,
+    GoToDefinition,
     NewFile,
     OpenFile,
     CloseTab(DocumentId),
@@ -43,6 +44,7 @@ impl CodeAction {
             Self::Find => InputEvent::Find,
             Self::Replace => InputEvent::Replace,
             Self::GoToLine => InputEvent::GoToLine,
+            Self::GoToDefinition => InputEvent::GoToDefinition,
             Self::NewFile => InputEvent::NewFile,
             Self::OpenFile => InputEvent::OpenFile,
             Self::CloseTab(_) | Self::RenameScript(_) | Self::DeleteScript(_) => return None,
@@ -89,6 +91,12 @@ pub fn text_menu(session: &CodeSession, at: Point) -> ContextMenu<CodeAction> {
                 &ui_text::get("code-paste"),
                 Some("Ctrl+V"),
                 CodeAction::Paste,
+            ),
+            MenuEntry::Separator,
+            MenuEntry::item(
+                &ui_text::get("code-go-to-definition"),
+                Some("F11"),
+                CodeAction::GoToDefinition,
             ),
             MenuEntry::Separator,
             MenuEntry::item(

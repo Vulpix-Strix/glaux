@@ -14,7 +14,7 @@ use crate::system::code_edit::Edit;
 use crate::system::code_history::EditKind;
 use crate::system::code_search::{next_from, previous_from};
 use crate::system::code_selection::Selection;
-use crate::system::code_session::{CodeSession, DocumentView};
+use crate::system::code_session::CodeSession;
 use crate::ui_text;
 
 /// Most bytes of a selection that becomes the query when the bar opens.
@@ -268,20 +268,8 @@ impl CodeEditor {
             return;
         };
         let selection = Selection::collapsed(Caret::at(document, start));
-        let geometry = self.geometry(document);
-        let view = session.tabs().metrics(id).map(|metrics| {
-            let top = DocumentView {
-                top_line: line.saturating_sub(geometry.rows / 3),
-                top_row: 0,
-                left_column: 0,
-            };
-            geometry.clamp(top, metrics)
-        });
-        if let (Some(view), Some(stored)) = (view, session.tabs_mut().view_mut(id)) {
-            *stored = view;
-        }
-        let view = self.revealing(session, id, selection.caret());
-        self.show_selection(session, id, selection, view);
+        session.tabs_mut().set_selection(id, selection);
+        self.show_arrival(session, id, None);
     }
 }
 
@@ -294,6 +282,10 @@ fn is_document_command(event: InputEvent) -> bool {
             | InputEvent::OpenFile
             | InputEvent::NewFile
             | InputEvent::GoToLine
+            | InputEvent::GoToDefinition
+            | InputEvent::GoToSymbol
+            | InputEvent::Back
+            | InputEvent::Forward
             | InputEvent::Find
             | InputEvent::Replace
             | InputEvent::CloseDocument

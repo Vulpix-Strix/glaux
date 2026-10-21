@@ -5,15 +5,19 @@
 //! something to the store that issued it, so the whole session is dropped
 //! together when another cartridge is loaded or the cartridge is unloaded.
 
+mod navigation;
 mod tabs;
 
+pub use navigation::{Destination, Landing, Spot};
 pub use tabs::{DocumentTabs, DocumentView};
 
 use std::collections::HashMap;
 use std::ops::Range;
 
 use glaux_docs::{ApiCatalog, DocId, ScriptLanguage};
-use glaux_sense::{Completions, Hover, Request, SignatureHelp, SignatureRequest, Subject, Trigger};
+use glaux_sense::{
+    Completions, Hover, Request, Resolution, SignatureHelp, SignatureRequest, Subject, Trigger,
+};
 
 use super::code_cursor::Caret;
 use super::code_document::{
@@ -37,6 +41,8 @@ pub struct CodeSession {
     histories: HashMap<DocumentId, EditHistory>,
     /// Each open document's highlighting, dropped when it closes.
     syntax: HashMap<DocumentId, DocumentSyntax>,
+    /// The places jumped between, apart from undo and redo.
+    navigation: navigation::History,
     /// Whether the entry script was opened, or tried, on the first visit
     /// to the Code view. Never reset, so closing every tab stays closed.
     entry_requested: bool,
@@ -184,6 +190,39 @@ impl CodeSession {
             .parsed(document)?;
         let language = script_language(document.language());
         glaux_sense::hover(api, language, document.text(), offset, highlighter)
+    }
+
+    /// What the name at `caret` in `id` leads to within that document and
+    /// its imports, answered from the text as it is now. Finding the other
+    /// document is left to the caller. `None` if `id` is not open or its
+    /// syntax is unavailable.
+    pub fn resolve_at(&mut self, id: DocumentId, caret: usize) -> Option<Resolution> {
+        let document = self.documents.get(id)?;
+        let highlighter = self
+            .syntax
+            .entry(id)
+            .or_insert_with(|| DocumentSyntax::new(document.language()))
+            .parsed(document)?;
+        let language = script_language(document.language());
+        Some(glaux_sense::definition(
+            language,
+            document.text(),
+            caret,
+            highlighter,
+        ))
+    }
+
+    /// The declarations of `id`'s text as it is now, for an outline. The syntax is
+    /// parsed again only if the text changed. `None` if `id` is not open or its syntax
+    /// is unavailable.
+    pub fn symbols(&mut self, id: DocumentId) -> Option<Vec<glaux_syntax::Symbol>> {
+        let document = self.documents.get(id)?;
+        let highlighter = self
+            .syntax
+            .entry(id)
+            .or_insert_with(|| DocumentSyntax::new(document.language()))
+            .parsed(document)?;
+        Some(highlighter.symbols())
     }
 
     /// Replaces `range` of `id`'s text with `text`, see
@@ -337,6 +376,7 @@ impl CodeSession {
             }
             return Err(err.into());
         }
+        self.navigation.renamed(&from, to);
         Ok(())
     }
 
@@ -357,6 +397,14 @@ impl CodeSession {
             .filter_map(|id| self.documents.get(id))
             .filter(|document| document.is_modified())
             .collect()
+    }
+
+    /// The open document holding the file at `path`, with its unsaved edits.
+    pub fn document_at(&self, path: &SourcePath) -> Option<&CodeDocument> {
+        self.tabs
+            .ids()
+            .filter_map(|id| self.documents.get(id))
+            .find(|document| document.path() == path)
     }
 
     /// The active tab's document.
@@ -419,4 +467,4 @@ fn script_language(language: Language) -> ScriptLanguage {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

@@ -7,13 +7,14 @@ use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::system_rom::{SystemIcon, SystemUi};
-use glaux_syntax::Span;
+use glaux_syntax::{Span, SymbolKind, SyntaxKind};
 use glaux_video::draw::{draw_glyph, draw_ink_image, draw_text, fill_rect, pixel};
 
 use super::layout::{
     CHEVRON_WIDTH, CLOSE_SIZE, CodeLayout, LABEL_PAD, SETTINGS_MARGIN, StripHit, shorten_start,
 };
 use super::picker::FilePicker;
+use super::symbols::{PAD, PanelLayout, SymbolPanel, clip_name, kind_letter};
 use super::text_view::{TextGeometry, thumb};
 use super::{CodeEditor, labels, picker_layout, settings_layout};
 use crate::cartridge::Language;
@@ -95,6 +96,9 @@ impl CodeEditor {
                             matches,
                             session.syntax_spans(id),
                         );
+                        if let (Some(panel), Some(layout)) = (&self.symbols, self.panel_layout()) {
+                            painter.symbol_panel(panel, &layout, hover_pointer);
+                        }
                         if let (Some(popup), Some(layout)) =
                             (&self.signature, self.signature_layout(session))
                             && !self.has_overlay()
@@ -625,6 +629,72 @@ impl Painter<'_> {
     }
 
     /// `n` in decimal, its last digit's cell ending at `right`.
+    /// The symbol panel: its title, then the declarations from the one at `scroll`,
+    /// the selected one on a bar, with the pointer's row lit.
+    fn symbol_panel(&mut self, panel: &SymbolPanel, layout: &PanelLayout, pointer: Option<Point>) {
+        let (cell_w, area) = (self.cell_w(), layout.area);
+        self.fill(area, BACKGROUND);
+        self.fill(Rect { width: 1, ..area }, BAR);
+        let title = ui_text::get("code-symbols");
+        let title_color = if panel.focused() { ACCENT } else { PALE };
+        let y = self.bar_text_y(layout.title.y, layout.title.height - 1);
+        self.text(&title, area.x + PAD, y, title_color);
+        self.fill(
+            Rect {
+                y: layout.title.bottom() - 1,
+                height: 1,
+                ..area
+            },
+            BAR,
+        );
+        if panel.rows().is_empty() {
+            let empty = ui_text::get("code-no-symbols");
+            self.text(&empty, area.x + PAD, layout.first_row.y + 2, DIM);
+            return;
+        }
+        let rows = panel.rows().iter().enumerate().skip(panel.scroll());
+        for (n, (index, entry)) in rows.take(layout.visible).enumerate() {
+            let symbol = &entry.symbol;
+            let row = layout.row(n);
+            let selected = index == panel.selected();
+            let lit = pointer.is_some_and(|at| row.contains(at));
+            if selected {
+                self.fill(
+                    Rect {
+                        x: row.x + 1,
+                        width: row.width - 1,
+                        ..row
+                    },
+                    BAR,
+                );
+            } else if lit {
+                self.fill(
+                    Rect {
+                        x: row.x + 1,
+                        width: row.width - 1,
+                        ..row
+                    },
+                    IDLE_SHADE,
+                );
+            }
+            let text_y = row.y + (row.height - self.cell_h()) / 2;
+            let kind_color = syntax_theme::color(match symbol.kind {
+                SymbolKind::Function => SyntaxKind::Function,
+                SymbolKind::Variable => SyntaxKind::Variable,
+                SymbolKind::Constant => SyntaxKind::Constant,
+            });
+            let line = (entry.line + 1).to_string();
+            let x = area.x + PAD;
+            self.text(kind_letter(symbol.kind), x, text_y, kind_color);
+            let line_x = area.right() - PAD - self.layout.cells(&line) * cell_w;
+            self.text(&line, line_x, text_y, DIM);
+            let room = (line_x - x) / cell_w.max(1) - 3;
+            let name = clip_name(self.font, &symbol.name, usize::try_from(room).unwrap_or(0));
+            let color = if selected { TEXT } else { PALE };
+            self.text(&name, x + 2 * cell_w, text_y, color);
+        }
+    }
+
     fn number(&mut self, n: usize, right: i32, y: i32, color: u8) {
         let mut digits = [0; 20];
         let mut start = digits.len();

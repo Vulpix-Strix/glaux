@@ -33,6 +33,8 @@ use super::code_document::{
     SourceConflictKind,
 };
 use super::code_session::{CodeSession, MoveScriptError};
+use super::code_session::{Destination, Landing, Spot};
+use super::definition::Definition;
 use super::docs as library_docs;
 use super::editor_settings::EditorSettings;
 use super::logs::SourceLocation;
@@ -161,6 +163,16 @@ pub enum WorkspaceRequest {
     /// Move this script's file to this path. Answer with
     /// [`Workspace::script_renamed`].
     RenameScript { id: DocumentId, to: SourcePath },
+    /// Go to the definition of the name at byte `caret` of this script. Answer with
+    /// [`Workspace::jump`], or [`Workspace::definition_missed`] when there is none.
+    GoToDefinition { id: DocumentId, caret: usize },
+    /// Move to this place and remember where the jump started. Answer with
+    /// [`Workspace::jump`].
+    Jump(Destination),
+    /// Return to the place before the last jump. Answer with [`Workspace::travel`].
+    NavigateBack,
+    /// Go again to the place the last Back left. Answer with [`Workspace::travel`].
+    NavigateForward,
     /// Open this link in the program the host uses for it.
     OpenExternal(ExternalUrl),
     /// Put this text on the host's clipboard.
@@ -1119,23 +1131,64 @@ impl Workspace {
     }
 
     /// Shows `location` in the Code view: opens its script if it is not
-    /// open, puts the caret at the start of the line and scrolls to it.
+    /// open, puts the caret at the start of the line and scrolls to it. The
+    /// jump can be undone with Back.
     pub fn show_location(
         &mut self,
         code: &mut CodeSession,
         cartridge: &LoadedCartridge,
         location: &SourceLocation,
     ) {
+        let target = Destination {
+            path: location.path.clone(),
+            at: Spot::Line(location.line.saturating_sub(1) as usize),
+        };
+        self.jump(code, cartridge, &target);
+    }
+
+    /// Moves the Code view to `target`, remembering where it was, and shows it.
+    pub fn jump(
+        &mut self,
+        code: &mut CodeSession,
+        cartridge: &LoadedCartridge,
+        target: &Destination,
+    ) {
         self.switch_to(Tab::Code, None);
-        match code.open(cartridge, &location.path) {
-            Ok(_) => {
-                self.code.refresh_metrics(code);
-                self.code.reveal_active(code);
-                self.code
-                    .show_line(code, location.line.saturating_sub(1) as usize);
-            }
-            Err(err) => self.script_opened(code, &location.path, Err(err)),
+        match code.jump(cartridge, target) {
+            Ok(id) => self.code.show_arrival(code, id, None),
+            Err(err) => self.script_opened(code, &target.path, Err(err)),
         }
+    }
+
+    /// Goes back to the previous place of the Code view, or forward again, and shows
+    /// it. Says so when the place has changed since it was left.
+    pub fn travel(&mut self, code: &mut CodeSession, cartridge: &LoadedCartridge, back: bool) {
+        let arrival = if back {
+            code.go_back(cartridge)
+        } else {
+            code.go_forward(cartridge)
+        };
+        let Some(arrival) = arrival else {
+            return;
+        };
+        self.switch_to(Tab::Code, None);
+        self.code.show_arrival(code, arrival.id, arrival.top_line);
+        if arrival.landing == Landing::LineChanged {
+            self.notify(ui_text::get("code-that-place-has-changed"), PALE);
+        }
+    }
+
+    /// Tells the user, in the status bar, why a definition was not shown.
+    pub fn definition_missed(&mut self, outcome: &Definition) {
+        let text = match outcome {
+            Definition::Found(_) => return,
+            Definition::Ambiguous => ui_text::get("code-several-definitions-fit"),
+            Definition::Unresolved => ui_text::get("code-no-definition-found"),
+            Definition::ModuleMissing(name) => {
+                ui_text::get_with("code-module-not-found", &[("value", Arg::Text(name))])
+            }
+        };
+        self.notify(text, PALE);
     }
 
     /// Returns to the Code view after a run failed with `message`, showing
@@ -1402,6 +1455,12 @@ impl Workspace {
             }
             CodeRequest::Save(id) => Some(WorkspaceRequest::SaveScript(id)),
             CodeRequest::Run => Some(WorkspaceRequest::Run),
+            CodeRequest::GoToDefinition { id, caret } => {
+                Some(WorkspaceRequest::GoToDefinition { id, caret })
+            }
+            CodeRequest::Jump(target) => Some(WorkspaceRequest::Jump(target)),
+            CodeRequest::Back => Some(WorkspaceRequest::NavigateBack),
+            CodeRequest::Forward => Some(WorkspaceRequest::NavigateForward),
             CodeRequest::Copy(text) => Some(WorkspaceRequest::Copy(text)),
             CodeRequest::Paste => Some(WorkspaceRequest::Paste),
             CodeRequest::NewFile => Some(WorkspaceRequest::NewScript),
