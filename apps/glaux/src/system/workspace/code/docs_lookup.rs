@@ -27,7 +27,8 @@ fn lookup(doc: &Doc, name: &str, parameters: bool) -> Lookup {
 
 impl CodeEditor {
     /// What F1 asks of the workspace. The suggestion picked in the list
-    /// comes first, then the call being typed, then the word at the caret,
+    /// comes first, then the call being typed, then the word the popup under
+    /// the pointer describes, then the word at the caret,
     /// and with none of them the documentation's search. The popups close,
     /// and neither the text, the caret nor the history change.
     pub(super) fn docs_request(&mut self, session: &mut CodeSession) -> CodeRequest {
@@ -35,6 +36,7 @@ impl CodeEditor {
         let found = self.docs_lookup(session);
         self.completion = None;
         self.signature = None;
+        self.close_hover();
         match found {
             Lookup::Page(target) => CodeRequest::OpenDocs(target),
             Lookup::Missing(name) => CodeRequest::Notice(ui_text::get_with(
@@ -61,6 +63,14 @@ impl CodeEditor {
         let Some(document) = session.active_document() else {
             return Lookup::Nothing;
         };
+        let shown = self
+            .hover
+            .as_ref()
+            .filter(|popup| popup.is_current(document))
+            .and_then(|popup| popup.target());
+        if let Some(target) = shown {
+            return Lookup::Page(target.clone());
+        }
         let id = document.id();
         let Some(selection) = session.tabs().selection(id) else {
             return Lookup::Nothing;

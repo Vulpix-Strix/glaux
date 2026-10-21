@@ -2,7 +2,7 @@
 //! candidate.
 
 use crate::ui_text;
-use glaux_docs::{ApiCatalog, DocId, Kind, ScriptLanguage, ValueType};
+use glaux_docs::{ApiCatalog, ApiEntry, DocId, Kind, ScriptLanguage, ValueType};
 use glaux_i18n::Arg;
 use glaux_sense::{Candidate, CandidateKind, Doc};
 use glaux_syntax::{Definition, DefinitionKind, SyntaxKind};
@@ -34,13 +34,18 @@ pub struct PanelSource<'a> {
 pub fn panel_for(candidate: &Candidate, source: &PanelSource<'_>) -> Option<DocPanel> {
     match &candidate.doc {
         Doc::None => None,
-        Doc::Local(definition) => Some(local_panel(definition, source)),
+        Doc::Local(definition) => Some(local_panel(
+            definition,
+            (source.line_of)(definition.declared.start),
+        )),
         Doc::Api(id) => api_panel(candidate, id, source),
     }
 }
 
-fn local_panel(definition: &Definition, source: &PanelSource<'_>) -> DocPanel {
-    let line = (source.line_of)(definition.declared.start);
+pub(in crate::system::workspace::code) fn local_panel(
+    definition: &Definition,
+    line: usize,
+) -> DocPanel {
     let (signature, summary) = match definition.kind {
         DefinitionKind::Variable => (
             vec![(definition.name.clone(), SyntaxKind::Variable)],
@@ -90,9 +95,38 @@ fn api_panel(candidate: &Candidate, id: &DocId, source: &PanelSource<'_>) -> Opt
         summary,
         params: None,
     };
+    // A member is named under its group, as `Key.A` or `Key::A`.
+    let member = (candidate.kind == CandidateKind::Constant && candidate.label != name)
+        .then_some(candidate.label.as_str());
+    panel.signature = entry_signature(entry, language, member);
+    if entry.kind() == Kind::Function && !entry.params().is_empty() {
+        let typed: Vec<String> = entry
+            .params()
+            .iter()
+            .map(|param| {
+                let mark = if param.optional { "?" } else { "" };
+                format!("{}{mark}: {}", param.name, type_name(param.ty))
+            })
+            .collect();
+        panel.params = Some(typed.join("  "));
+    }
+    Some(panel)
+}
+
+/// The first line that describes `entry` as `language` writes it, in pieces that
+/// each take a syntax color. `member` names a member of a constant group.
+pub(in crate::system::workspace::code) fn entry_signature(
+    entry: &ApiEntry,
+    language: ScriptLanguage,
+    member: Option<&str>,
+) -> Vec<(String, SyntaxKind)> {
+    let Some(binding) = entry.binding(language) else {
+        return Vec::new();
+    };
+    let name = language.qualified_name(binding);
+    let op = |text: &str| (text.to_owned(), SyntaxKind::Operator);
     match entry.kind() {
         Kind::Function => {
-            let op = |text: &str| (text.to_owned(), SyntaxKind::Operator);
             let names: Vec<String> = entry
                 .params()
                 .iter()
@@ -104,55 +138,39 @@ fn api_panel(candidate: &Candidate, id: &DocId, source: &PanelSource<'_>) -> Opt
                     }
                 })
                 .collect();
-            panel.signature = vec![
+            let mut signature = vec![
                 (name, SyntaxKind::Function),
                 op("("),
                 (names.join(", "), SyntaxKind::Variable),
                 op(")"),
             ];
             if let Some(returns) = entry.returns(language) {
-                panel.signature.push(op(" : "));
-                panel
-                    .signature
-                    .push((type_name(returns).to_owned(), SyntaxKind::Type));
+                signature.push(op(" : "));
+                signature.push((type_name(returns).to_owned(), SyntaxKind::Type));
             }
-            if !entry.params().is_empty() {
-                let typed: Vec<String> = entry
-                    .params()
-                    .iter()
-                    .map(|param| {
-                        let mark = if param.optional { "?" } else { "" };
-                        format!("{}{mark}: {}", param.name, type_name(param.ty))
-                    })
-                    .collect();
-                panel.params = Some(typed.join("  "));
-            }
+            signature
         }
-        Kind::Namespace => panel.signature = vec![(name, SyntaxKind::Type)],
+        Kind::Namespace => vec![(name, SyntaxKind::Type)],
         Kind::ConstantGroup => {
-            // A member is named under its group, as `Key.A` or `Key::A`.
-            let member = candidate.kind == CandidateKind::Constant && candidate.label != name;
-            let shown = if member {
-                format!("{name}{}{}", language.path_separator(), candidate.label)
-            } else {
-                name
+            let shown = match member {
+                Some(member) => format!("{name}{}{member}", language.path_separator()),
+                None => name,
             };
-            panel.signature = vec![(shown, SyntaxKind::Constant)];
+            vec![(shown, SyntaxKind::Constant)]
         }
-        Kind::Keyword => panel.signature = vec![(name, SyntaxKind::Keyword)],
+        Kind::Keyword => vec![(name, SyntaxKind::Keyword)],
         Kind::Callback => {
             let keyword = match language {
                 ScriptLanguage::Luau => "function ",
                 ScriptLanguage::Rhai => "fn ",
             };
-            panel.signature = vec![
+            vec![
                 (keyword.to_owned(), SyntaxKind::Keyword),
                 (name, SyntaxKind::Function),
-                ("()".to_owned(), SyntaxKind::Operator),
-            ];
+                op("()"),
+            ]
         }
     }
-    Some(panel)
 }
 
 pub fn type_name(ty: ValueType) -> &'static str {

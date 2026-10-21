@@ -11,6 +11,7 @@ mod docs_lookup;
 mod edit;
 mod find;
 mod go_to_line;
+mod hover;
 mod layout;
 mod new_file;
 mod picker;
@@ -34,6 +35,7 @@ use actions::{CodeAction, TabTarget, file_menu, text_menu};
 use completion::{CompletionPopup, completion_hint};
 use find::{FindBar, FindLayout};
 use go_to_line::GoToLine;
+use hover::{HoverPopup, Rest, hover_hint};
 pub use layout::Metrics;
 use layout::{CodeLayout, StripHit, tab_labels};
 use new_file::{CODE_DIR, NewFile, NewFileAction};
@@ -227,6 +229,11 @@ pub struct CodeEditor {
     signature: Option<SignaturePopup>,
     /// The call whose popup Escape closed.
     signature_dismissed: Option<Dismissed>,
+    /// Over the word the pointer rests on while open. It takes Escape and
+    /// a press on itself.
+    hover: Option<HoverPopup>,
+    /// The pointer since it last moved, while it could open the popup.
+    rest: Option<Rest>,
     /// Position in tab order of the tab being dragged along the strip.
     drag: Option<usize>,
     /// Where the pointer last was, which decides what the wheel scrolls.
@@ -263,6 +270,8 @@ impl CodeEditor {
             completion: None,
             signature: None,
             signature_dismissed: None,
+            hover: None,
+            rest: None,
             drag: None,
             pointer: None,
             entry_error: None,
@@ -291,6 +300,7 @@ impl CodeEditor {
         if let Some(session) = session {
             self.autoscroll(session);
             self.refresh_find(session);
+            self.tick_hover(session);
         }
     }
 
@@ -314,12 +324,13 @@ impl CodeEditor {
 
     /// Whether Escape belongs to the view rather than leaving the
     /// workspace: an overlay is open, or the find bar, the list of
-    /// suggestions or the signature, which it closes.
+    /// suggestions, the signature or the hover, which it closes.
     pub fn claims_break(&self) -> bool {
         self.has_overlay()
             || self.find.is_some()
             || self.completion.is_some()
             || self.signature.is_some()
+            || self.hover.is_some()
     }
 
     /// Whether a part of the find bar has the keys.
@@ -349,6 +360,8 @@ impl CodeEditor {
             find_hint()
         } else if self.signature.is_some() {
             signature_hint()
+        } else if let Some(popup) = &self.hover {
+            hover_hint(popup.target().is_some())
         } else {
             view_hint()
         }
@@ -367,6 +380,11 @@ impl CodeEditor {
     #[cfg(test)]
     pub fn signature(&self) -> Option<&SignaturePopup> {
         self.signature.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn hover(&self) -> Option<&HoverPopup> {
+        self.hover.as_ref()
     }
 
     #[cfg(test)]
@@ -548,6 +566,9 @@ impl CodeEditor {
         if on_strip != StripHit::None || self.layout.settings_button().contains(at) {
             return SystemCursor::Hand;
         }
+        if self.hover_opens_at(at, Some(session)) {
+            return SystemCursor::Hand;
+        }
         if session.active_document().is_some() && self.text_area().contains(at) {
             return SystemCursor::Text;
         }
@@ -618,6 +639,7 @@ impl CodeEditor {
         self.completion = None;
         self.signature = None;
         self.signature_dismissed = None;
+        self.close_hover();
         self.end_drag();
         self.last_click = None;
         self.entry_error = None;
@@ -793,6 +815,7 @@ impl CodeEditor {
             self.settings_dialog = Some(SettingsDialog::new(self.settings));
             self.completion = None;
             self.signature = None;
+            self.close_hover();
             self.drag = None;
             return None;
         }
@@ -813,6 +836,7 @@ impl CodeEditor {
         self.sync_completion(session);
         self.request_completion(event, was_open, revision, session);
         self.update_signature(event, revision, session);
+        self.sync_hover(session);
         request
     }
 
@@ -860,6 +884,9 @@ impl CodeEditor {
         }
         if self.go_to.is_some() {
             return self.go_to_input(event, session);
+        }
+        if let Some(request) = self.hover_input(event, session) {
+            return request;
         }
         if event == InputEvent::Docs {
             return Some(self.docs_request(session));

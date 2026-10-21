@@ -118,6 +118,11 @@ impl CodeEditor {
                                 hover_pointer,
                             );
                         }
+                        if let Some((layout, _)) = self.hover_layout(session)
+                            && !self.has_overlay()
+                        {
+                            layout.render(painter.framebuffer, font, self.layout.metrics.cell_w);
+                        }
                         if let (Some(bar), Some(layout)) = (&self.find, self.find_layout()) {
                             let current =
                                 matches.iter().position(|found| *found == selection.range());

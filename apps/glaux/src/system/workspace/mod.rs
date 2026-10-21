@@ -1639,6 +1639,9 @@ impl Workspace {
     pub fn tick(&mut self, code: Option<&mut CodeSession>) {
         self.ticks = self.ticks.wrapping_add(1);
         self.sprites.tick();
+        if self.tab != Tab::Code || self.docs_open || self.has_modal() {
+            self.code.close_hover();
+        }
         self.code.tick(code);
         if let Some(notice) = &mut self.notice {
             notice.ticks_left = notice.ticks_left.saturating_sub(1);

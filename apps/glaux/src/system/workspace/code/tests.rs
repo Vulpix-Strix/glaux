@@ -14,6 +14,7 @@ mod autocomplete;
 pub(super) mod completion;
 mod editing;
 mod find;
+mod hover;
 mod indent;
 mod menus;
 mod selection;

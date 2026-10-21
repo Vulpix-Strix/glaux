@@ -13,9 +13,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use glaux_docs::{ApiCatalog, DocId, ScriptLanguage};
-use glaux_sense::{
-    Completions, Position, Request, Resolved, SignatureHelp, SignatureRequest, Trigger,
-};
+use glaux_sense::{Completions, Hover, Request, SignatureHelp, SignatureRequest, Subject, Trigger};
 
 use super::code_cursor::Caret;
 use super::code_document::{
@@ -159,6 +157,25 @@ impl CodeSession {
     /// it is now. `None` if `id` is not open, its syntax is unavailable or
     /// there is no word there to look up, as in a comment or a string.
     pub fn symbol_at(&mut self, id: DocumentId, caret: usize, api: &ApiCatalog) -> Option<Symbol> {
+        Some(match self.hover_at(id, caret, api)?.subject {
+            Subject::Entry(entry) | Subject::Constant { group: entry, .. } => {
+                Symbol::Api(entry.id().clone())
+            }
+            Subject::Local(definition) => Symbol::Local(definition.name),
+            Subject::Declared(name) => Symbol::Local(name),
+            Subject::Unknown => Symbol::Unknown,
+        })
+    }
+
+    /// The word around `offset` in `id` and what it refers to, answered from
+    /// the text as it is now. `None` under the same conditions as
+    /// [`CodeSession::symbol_at`].
+    pub fn hover_at<'a>(
+        &mut self,
+        id: DocumentId,
+        offset: usize,
+        api: &'a ApiCatalog,
+    ) -> Option<Hover<'a>> {
         let document = self.documents.get(id)?;
         let highlighter = self
             .syntax
@@ -166,28 +183,7 @@ impl CodeSession {
             .or_insert_with(|| DocumentSyntax::new(document.language()))
             .parsed(document)?;
         let language = script_language(document.language());
-        let text = document.text();
-        let context = glaux_sense::context(language, text, caret, highlighter)?;
-        let word = &text[context.anchor.clone()];
-        if word.is_empty() {
-            return None;
-        }
-        let mut path: Vec<&str> = match &context.position {
-            Position::Member { receiver, .. } => receiver.iter().map(String::as_str).collect(),
-            Position::Reference { .. } => Vec::new(),
-            // A name being declared is the script's own, though the scope
-            // that holds it does not start until the declaration ends.
-            Position::Declaration { .. } => return Some(Symbol::Local(word.to_owned())),
-            Position::Suppressed => return None,
-        };
-        path.push(word);
-        Some(
-            match glaux_sense::resolve(api, language, highlighter, caret, &path) {
-                Some(Resolved::Entry(entry)) => Symbol::Api(entry.id().clone()),
-                Some(Resolved::Local(definition)) => Symbol::Local(definition.name),
-                None => Symbol::Unknown,
-            },
-        )
+        glaux_sense::hover(api, language, document.text(), offset, highlighter)
     }
 
     /// Replaces `range` of `id`'s text with `text`, see
