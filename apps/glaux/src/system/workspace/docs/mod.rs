@@ -6,6 +6,7 @@
 //! the library, and it never touches the cartridge's documents.
 
 mod layout;
+mod menu;
 mod nav;
 mod render;
 mod search;

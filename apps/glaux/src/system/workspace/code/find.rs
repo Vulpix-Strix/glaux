@@ -108,6 +108,16 @@ impl FindBar {
         self.focus
     }
 
+    /// The text field holding the keys, if the focus is on one rather than
+    /// on a button or an option.
+    pub fn focused_field(&self) -> Option<&TextField> {
+        match self.focus? {
+            FindFocus::Query => Some(&self.query),
+            FindFocus::Replacement => Some(&self.replacement),
+            _ => None,
+        }
+    }
+
     pub fn is_replacing(&self) -> bool {
         self.replacing
     }

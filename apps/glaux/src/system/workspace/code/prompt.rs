@@ -70,6 +70,10 @@ impl Prompt {
         self.field.text()
     }
 
+    pub fn field(&self) -> &TextField {
+        &self.field
+    }
+
     pub fn paste(&mut self, text: &str) {
         self.field.paste(text);
     }

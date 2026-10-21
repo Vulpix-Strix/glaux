@@ -12,6 +12,7 @@ mod code;
 mod context_menu;
 mod dialog;
 mod docs;
+mod menu;
 mod sprites;
 mod text_field;
 
@@ -227,6 +228,46 @@ pub enum Tab {
     Map,
     Sfx,
     Music,
+}
+
+/// Who receives an input event that is not a tab or docs shortcut: the
+/// first of these that applies, in the order [`Workspace::handle_input`]
+/// tries them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route {
+    /// The workspace's own dialog.
+    Modal,
+    /// One of the sprite editor's dialogs, or its wait for the host's file
+    /// dialog.
+    SpriteDialog,
+    /// One of the Code view's overlays.
+    CodeOverlay,
+    /// The documentation browser over the selected view.
+    Docs,
+    Sprites,
+    Code,
+    /// A view with no editor of its own.
+    Inert,
+}
+
+impl Workspace {
+    fn route(&self) -> Route {
+        if self.modal.is_some() {
+            Route::Modal
+        } else if self.sprites.has_dialog() {
+            Route::SpriteDialog
+        } else if self.code.has_overlay() {
+            Route::CodeOverlay
+        } else if self.docs_open {
+            Route::Docs
+        } else {
+            match self.tab {
+                Tab::Sprites => Route::Sprites,
+                Tab::Code => Route::Code,
+                Tab::Map | Tab::Sfx | Tab::Music => Route::Inert,
+            }
+        }
+    }
 }
 
 impl Tab {
@@ -1119,10 +1160,11 @@ impl Workspace {
                 _ => None,
             };
         }
-        if self.sprites.has_dialog() {
+        let route = self.route();
+        if route == Route::SpriteDialog {
             return self.sprite_input(event, sprites);
         }
-        if self.code.has_overlay() {
+        if route == Route::CodeOverlay {
             return self.code_input(event, code);
         }
         match event {
@@ -1153,9 +1195,9 @@ impl Workspace {
             InputEvent::Docs if !self.docs_open && !(self.tab == Tab::Code && code.is_some()) => {
                 self.toggle_docs(sprites)
             }
-            _ if self.docs_open => return self.docs_input(event),
-            _ if self.tab == Tab::Sprites => return self.sprite_input(event, sprites),
-            _ if self.tab == Tab::Code => return self.code_input(event, code),
+            _ if route == Route::Docs => return self.docs_input(event),
+            _ if route == Route::Sprites => return self.sprite_input(event, sprites),
+            _ if route == Route::Code => return self.code_input(event, code),
             _ => {}
         }
         None
@@ -1360,7 +1402,10 @@ impl Workspace {
     /// Whether a dialog, one of the sprite editor's, or one of the Code
     /// view's overlays is open and taking all input.
     pub fn has_modal(&self) -> bool {
-        self.modal.is_some() || self.sprites.has_dialog() || self.code.has_overlay()
+        matches!(
+            self.route(),
+            Route::Modal | Route::SpriteDialog | Route::CodeOverlay
+        )
     }
 
     /// Whether Escape stays in the workspace, closing what is open there,

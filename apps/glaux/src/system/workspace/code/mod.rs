@@ -13,6 +13,7 @@ mod find;
 mod go_to_line;
 mod hover;
 mod layout;
+mod menu;
 mod new_file;
 mod picker;
 mod popup;

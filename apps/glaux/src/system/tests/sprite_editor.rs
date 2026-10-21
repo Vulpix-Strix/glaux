@@ -154,7 +154,7 @@ pub(super) fn document(system: &System) -> &SpriteDocument {
 
 /// Opens the sprite editor on assets from `write_video_assets` and
 /// draws local 1, the starting color, over pixel (0, 0) of tile 0.
-fn edited(fixture: &Fixture) -> System {
+pub(super) fn edited(fixture: &Fixture) -> System {
     let system = click_pixel(open_sprites(with_video_assets(fixture)), 0, 0);
     assert!(document(&system).is_modified());
     system

@@ -4,5 +4,7 @@
 
 pub mod external;
 pub mod file_picker;
+#[cfg(target_os = "macos")]
+pub mod menu;
 pub mod single_instance;
 pub mod window_state;

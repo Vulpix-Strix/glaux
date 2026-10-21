@@ -27,6 +27,8 @@ use desktop::file_picker::FilePicker;
 use desktop::single_instance::{self, PrimaryInstance, SecondaryLaunch, Startup};
 use desktop::window_state::{self, WindowSnapshot, WindowTracker};
 use glaux_host_raylib::{AudioDevice, AudioOutput, Presentation, RaylibHost};
+#[cfg(target_os = "macos")]
+use glaux_input::InputEvent;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::machine::Machine;
 use glaux_machine::psg::{SAMPLE_RATE, SAMPLES_PER_TICK};
@@ -143,6 +145,14 @@ fn run(
     let mut host = RaylibHost::new("Glaux", size, PRESENTATION)?;
     let placement = window_state::plan(session, saved.as_ref(), &host.monitors());
     host.place(placement);
+    // Installed once the window exists. Declared after `host` so it is
+    // dropped before the window.
+    #[cfg(target_os = "macos")]
+    let mut native_menu = desktop::menu::NativeMenu::install()
+        .inspect_err(
+            |err| tracing::error!(error = %format!("{err:#}"), "native menu not installed"),
+        )
+        .ok();
     let mut maximize_pending = saved.is_some_and(|state| state.maximized);
     let mut tracker = WindowTracker::new(session, saved.as_ref(), placement);
 
@@ -201,6 +211,10 @@ fn run(
             host.maximize();
         }
         pending.extend(host.poll_input(system.input_mode()));
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut native_menu {
+            system = run_menu_commands(system, menu, &mut pending);
+        }
 
         let now = Instant::now();
         let ticks = clock.advance(now - last);
@@ -216,6 +230,10 @@ fn run(
             }
         }
         pump_audio(&mut audio);
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut native_menu {
+            menu.sync(system.menu_state());
+        }
         if let Some(picked) = picker.poll() {
             system.file_picked(picked);
         }
@@ -230,6 +248,32 @@ fn run(
         }
     }
     Ok(())
+}
+
+/// Carries out the commands chosen in the menu bar since the last frame.
+///
+/// A command the system no longer offers is dropped: the menu shows what it
+/// offered a frame ago, and a shortcut can arrive before it catches up.
+/// The others send the event the keyboard shortcut sends, except
+/// documentation, which the system opens itself.
+#[cfg(target_os = "macos")]
+fn run_menu_commands(
+    mut system: System,
+    menu: &mut desktop::menu::NativeMenu,
+    pending: &mut Vec<InputEvent>,
+) -> System {
+    for command in menu.drain() {
+        if !command.is_enabled(system.menu_state()) {
+            tracing::debug!(?command, "menu command dropped, not available now");
+            continue;
+        }
+        tracing::debug!(?command, "menu command chosen");
+        match command.input_event() {
+            Some(event) => pending.push(event),
+            None => system = system.open_documentation(),
+        }
+    }
+    system
 }
 
 /// The desktop clipboard, as the system reads and writes it.

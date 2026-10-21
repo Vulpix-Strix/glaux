@@ -247,6 +247,14 @@ impl CodeEditor {
     }
 }
 
+/// Whether the active document has a selection to cut or copy.
+pub(super) fn has_selection(session: &CodeSession) -> bool {
+    session
+        .active_document()
+        .and_then(|document| session.tabs().selection(document.id()))
+        .is_some_and(|selection| !selection.is_empty())
+}
+
 /// The text selected in the active document, `None` when nothing is.
 pub(super) fn selected_text(session: &CodeSession) -> Option<String> {
     let document = session.active_document()?;

@@ -83,6 +83,14 @@ impl TextField {
         self.editor.text()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.editor.chars().is_empty()
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.editor.selection().is_some()
+    }
+
     /// Replaces the text with what of `text` the field accepts, selecting
     /// it all so typing replaces it.
     pub fn set_text(&mut self, text: &str) {

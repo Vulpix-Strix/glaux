@@ -17,6 +17,7 @@ clap = { version = "4.5", features = ["derive"] }
 png = "0.18"
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 open = { version = "5.4", features = ["shellexecute-on-windows"] }
+muda = { version = "0.21", default-features = false }
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

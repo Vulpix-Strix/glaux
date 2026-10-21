@@ -22,6 +22,7 @@ mod docs;
 mod editor_settings;
 mod external_url;
 mod line_editor;
+mod menu_state;
 mod pause;
 mod running;
 mod sfx;
@@ -45,10 +46,11 @@ use credits::CreditsView;
 pub use editor_settings::IndentStyle;
 pub use editor_settings::{EditorSettings, INDENT_SIZES, TAB_SIZES};
 pub use external_url::{ExternalUrl, ExternalUrlError};
+pub use menu_state::MenuState;
 pub use shell::Shell;
 use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
-use workspace::{DocsApart, Tab, Workspace, WorkspaceRequest, WorkspaceVideo};
+use workspace::{DocsApart, DocsStart, Tab, Workspace, WorkspaceRequest, WorkspaceVideo};
 
 use glaux_i18n::Arg;
 use glaux_input::{InputEvent, InputMode, Point};
@@ -333,6 +335,28 @@ impl System {
         } else {
             self.exiting = true;
         }
+    }
+
+    /// Opens the documentation browser on its front page, as the `docs`
+    /// command and the Docs button do, if [`menu_state`](Self::menu_state)
+    /// offers it. Unlike F1, it does not look up the symbol under the
+    /// caret.
+    pub fn open_documentation(mut self) -> Self {
+        if !self.menu_state().documentation {
+            return self;
+        }
+        match self.state {
+            SystemState::Shell { shell, loaded } => {
+                self.state = open_docs_apart(&mut self.workspace, shell, loaded, DocsStart::Home);
+            }
+            state => {
+                self.state = state;
+                if self.workspace.show_docs(self.sprites.as_mut()) {
+                    tracing::info!("opening the documentation");
+                }
+            }
+        }
+        self
     }
 
     /// Whether Glaux should quit now: asked to, and its edits saved or
@@ -945,15 +969,25 @@ fn shell_request(
             );
         }
         Some(ShellRequest::Docs(start)) => {
-            tracing::info!("opening the documentation");
-            ctx.workspace.show_docs_apart(start);
-            return (SystemState::Docs { shell, loaded }, false);
+            return (open_docs_apart(ctx.workspace, shell, loaded, start), false);
         }
         Some(_request @ (ShellRequest::Resume | ShellRequest::Stop)) => {
             unreachable!("{_request:?} was requested without a paused cartridge")
         }
     }
     (SystemState::Shell { shell, loaded }, true)
+}
+
+/// The documentation browser on `start`, filling the screen over the shell.
+fn open_docs_apart(
+    workspace: &mut Workspace,
+    shell: Box<Shell>,
+    loaded: Option<LoadedCartridge>,
+    start: DocsStart,
+) -> SystemState {
+    tracing::info!("opening the documentation");
+    workspace.show_docs_apart(start);
+    SystemState::Docs { shell, loaded }
 }
 
 /// Asks what to do with unsaved edits before quitting, or confirms
