@@ -22,6 +22,7 @@ mod code_productivity;
 mod code_tabs;
 mod credits_view;
 mod docs_browser;
+mod docs_shell;
 mod drawing;
 mod input;
 mod lifecycle;

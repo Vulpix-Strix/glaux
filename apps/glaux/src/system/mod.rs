@@ -48,7 +48,7 @@ pub use external_url::{ExternalUrl, ExternalUrlError};
 pub use shell::Shell;
 use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
-use workspace::{Tab, Workspace, WorkspaceRequest, WorkspaceVideo};
+use workspace::{DocsApart, Tab, Workspace, WorkspaceRequest, WorkspaceVideo};
 
 use glaux_i18n::Arg;
 use glaux_input::{InputEvent, InputMode, Point};
@@ -109,6 +109,13 @@ pub enum SystemState {
         shell: Box<Shell>,
         loaded: Option<LoadedCartridge>,
         view: Box<CreditsView>,
+    },
+    /// The documentation browser is the active UI, the one the workspace
+    /// keeps, filling the screen. The shell keeps its state, taking no
+    /// input, and Escape on the page returns to it.
+    Docs {
+        shell: Box<Shell>,
+        loaded: Option<LoadedCartridge>,
     },
     /// The editor workspace is the active UI, working on the loaded
     /// cartridge without starting it. The shell keeps its state, taking no
@@ -359,7 +366,9 @@ impl System {
             SystemState::Running { .. } => InputMode::Game,
             // The credits view reads the same keys as the workspace, but
             // draws no pointer.
-            SystemState::Workspace { .. } | SystemState::Credits { .. } => InputMode::Workspace,
+            SystemState::Workspace { .. }
+            | SystemState::Credits { .. }
+            | SystemState::Docs { .. } => InputMode::Workspace,
             SystemState::Boot { .. } | SystemState::Shell { .. } | SystemState::Paused { .. } => {
                 InputMode::Text
             }
@@ -381,7 +390,10 @@ impl System {
         rom: &SystemRom,
         pointer: Option<Point>,
     ) {
-        if !matches!(self.state, SystemState::Workspace { .. }) {
+        if !matches!(
+            self.state,
+            SystemState::Workspace { .. } | SystemState::Docs { .. }
+        ) {
             return;
         }
         let (cursor, frame) = match (pointer, &self.unsaved) {
@@ -391,6 +403,9 @@ impl System {
                     Some(_) => (SystemCursor::Hand, 0),
                     None => (SystemCursor::Arrow, 0),
                 }
+            }
+            (Some(at), None) if matches!(self.state, SystemState::Docs { .. }) => {
+                (self.workspace.docs_apart_cursor(at), 0)
             }
             (Some(at), None) => self.workspace.cursor(at, self.code.as_ref()),
             (None, _) => (SystemCursor::Arrow, 0),
@@ -466,6 +481,14 @@ impl System {
                     loaded,
                     view,
                 } => credits_tick(shell, loaded, view, input),
+                SystemState::Docs { shell, loaded } => docs_tick(
+                    shell,
+                    loaded,
+                    ctx.workspace,
+                    input,
+                    clipboard,
+                    &mut host_requests,
+                ),
                 SystemState::Workspace {
                     shell,
                     cartridge,
@@ -604,7 +627,8 @@ impl System {
                 ..
             }
             | SystemState::Workspace { .. }
-            | SystemState::Credits { .. } => AudioSource::Silent,
+            | SystemState::Credits { .. }
+            | SystemState::Docs { .. } => AudioSource::Silent,
         };
         let fresh = source != self.audio_source;
         if fresh {
@@ -625,7 +649,8 @@ impl System {
                 ..
             }
             | SystemState::Workspace { .. }
-            | SystemState::Credits { .. } => {}
+            | SystemState::Credits { .. }
+            | SystemState::Docs { .. } => {}
         }
     }
 
@@ -645,6 +670,7 @@ impl System {
             SystemState::Boot { .. }
             | SystemState::Shell { .. }
             | SystemState::Credits { .. }
+            | SystemState::Docs { .. }
             | SystemState::Paused {
                 view: PausedView::Shell,
                 ..
@@ -708,6 +734,10 @@ impl System {
             }
             SystemState::Credits { view, .. } => {
                 view.render(framebuffer, rom);
+                return;
+            }
+            SystemState::Docs { .. } => {
+                self.workspace.render_docs_apart(framebuffer, pointer);
                 return;
             }
             SystemState::Running { running, .. } => {
@@ -914,6 +944,11 @@ fn shell_request(
                 false,
             );
         }
+        Some(ShellRequest::Docs(start)) => {
+            tracing::info!("opening the documentation");
+            ctx.workspace.show_docs_apart(start);
+            return (SystemState::Docs { shell, loaded }, false);
+        }
         Some(_request @ (ShellRequest::Resume | ShellRequest::Stop)) => {
             unreachable!("{_request:?} was requested without a paused cartridge")
         }
@@ -1011,7 +1046,9 @@ fn unsaved_tick(
 fn cartridge_of(state: &SystemState) -> Option<&LoadedCartridge> {
     match state {
         SystemState::Boot { .. } => None,
-        SystemState::Shell { loaded, .. } | SystemState::Credits { loaded, .. } => loaded.as_ref(),
+        SystemState::Shell { loaded, .. }
+        | SystemState::Credits { loaded, .. }
+        | SystemState::Docs { loaded, .. } => loaded.as_ref(),
         SystemState::Workspace { cartridge, .. } => Some(cartridge),
         SystemState::Running { running, .. } | SystemState::Paused { running, .. } => {
             Some(running.cartridge())
@@ -1027,7 +1064,10 @@ fn report(state: &mut SystemState, workspace: &mut Workspace, message: String) {
             shell.report(message);
         }
         SystemState::Workspace { .. } => workspace.report(message),
-        SystemState::Boot { .. } | SystemState::Running { .. } | SystemState::Credits { .. } => {}
+        SystemState::Boot { .. }
+        | SystemState::Running { .. }
+        | SystemState::Credits { .. }
+        | SystemState::Docs { .. } => {}
     }
 }
 
@@ -1452,6 +1492,36 @@ fn credits_tick(
     }
 }
 
+/// Feeds `input` to the documentation browser the workspace keeps, which
+/// closes on its own Escape and leaves the shell as it was. Nothing reaches
+/// the shell or the workspace, whatever keys `InputMode::Workspace` lets
+/// through, and events after the close are dropped.
+fn docs_tick(
+    shell: Box<Shell>,
+    loaded: Option<LoadedCartridge>,
+    workspace: &mut Workspace,
+    input: &[InputEvent],
+    clipboard: &mut dyn Clipboard,
+    host_requests: &mut VecDeque<HostRequest>,
+) -> SystemState {
+    workspace.tick(None);
+    for &event in input {
+        match workspace.docs_apart_input(event) {
+            DocsApart::Stay => {}
+            DocsApart::Close => return SystemState::Shell { shell, loaded },
+            DocsApart::Request(WorkspaceRequest::OpenExternal(url)) => {
+                host_requests.push_back(HostRequest::OpenExternal(url));
+            }
+            DocsApart::Request(WorkspaceRequest::Copy(text)) => clipboard.set_text(&text),
+            DocsApart::Request(WorkspaceRequest::Paste) => {
+                workspace.docs_apart_paste(clipboard.text());
+            }
+            DocsApart::Request(_) => {}
+        }
+    }
+    SystemState::Docs { shell, loaded }
+}
+
 /// Feeds `input` to the shell while the cartridge stays paused, and carries
 /// out a `resume` or `stop`. Events after either in the same tick are
 /// dropped.
@@ -1473,6 +1543,7 @@ fn paused_shell_tick(
                 | ShellRequest::Unload
                 | ShellRequest::Run
                 | ShellRequest::Credits
+                | ShellRequest::Docs(_)
                 | ShellRequest::ConfirmUnsaved { .. }),
             ) => {
                 unreachable!("{_request:?} was requested while a cartridge is paused")

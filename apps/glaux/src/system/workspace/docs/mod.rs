@@ -238,6 +238,15 @@ impl DocsBrowser {
         }
     }
 
+    /// Moves the first row of the browser, which sits below the workspace's
+    /// tab bar there and at the top of the screen anywhere else.
+    pub fn set_top(&mut self, top: i32) {
+        let metrics = self.geometry.metrics;
+        if metrics.top != top {
+            self.geometry = Geometry::new(Metrics { top, ..metrics });
+        }
+    }
+
     /// Whether SEARCH DOCS or the list of tabs is open over the page.
     pub fn has_overlay(&self) -> bool {
         self.search.is_some() || self.menu.is_some()
@@ -328,6 +337,14 @@ impl DocsBrowser {
     pub fn show_search(&mut self, source: Source<'_>) {
         self.show(source);
         self.open_search(source);
+    }
+
+    /// Like [`Self::show_search`], with `query` already typed.
+    pub fn show_search_for(&mut self, source: Source<'_>, query: &str) {
+        self.show_search(source);
+        if let Some(search) = &mut self.search {
+            search.paste(query, source);
+        }
     }
 
     fn navigate(

@@ -10,12 +10,15 @@ use glaux_machine::psg::{
 };
 
 use super::super::{SystemInfo, identity_line};
+use super::docs_topic::{self, Topic};
 use super::parser::{Invocation, OptionError, Split, quote, split_options};
 use super::scrollback::{Entry, Scrollback};
 use super::{CartridgeSlot, LoadOrigin, ShellRequest, Tone, Voice};
 use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::{CartridgeStorage, EntryKind};
 use crate::cartridge_template::{self, CreateError, NewCartridge};
+use crate::system::docs::{chain as docs_chain, library as docs_library};
+use crate::system::workspace::DocsStart;
 use crate::ui_text;
 
 /// What a command can see and change while it runs.
@@ -128,6 +131,17 @@ pub(super) static COMMANDS: &[Command] = &[
         min_args: 0,
         max_args: 0,
         handler: credits,
+        takes_path: false,
+        flags: &[],
+    },
+    Command {
+        name: "docs",
+        aliases: &[],
+        usage: "docs [<topic>]",
+        description_id: "shell-open-the-documentation",
+        min_args: 0,
+        max_args: 1,
+        handler: docs,
         takes_path: false,
         flags: &[],
     },
@@ -784,6 +798,31 @@ fn credits(_: &Invocation<'_>, ctx: &mut Context<'_>) {
             *ctx.request = Some(ShellRequest::Credits);
         }
     }
+}
+
+/// Asks the system to open the documentation browser on the page, or the
+/// search, that `topic` names. A topic nothing answers to stays in the shell.
+/// A paused cartridge keeps the shell, as for `credits`.
+fn docs(invocation: &Invocation<'_>, ctx: &mut Context<'_>) {
+    if matches!(ctx.slot, CartridgeSlot::Paused(_)) {
+        ctx.error(paused_error());
+        return;
+    }
+    let start = match invocation.args.first() {
+        None => DocsStart::Home,
+        Some(topic) => match docs_topic::resolve(topic, docs_library(), docs_chain()) {
+            Topic::Page(id) => DocsStart::Page(id),
+            Topic::Search(query) => DocsStart::Search(query),
+            Topic::NotFound => {
+                ctx.suggest(
+                    ui_text::get_with("shell-no-documentation-for", &[("value", Arg::Text(topic))]),
+                    "docs",
+                );
+                return;
+            }
+        },
+    };
+    *ctx.request = Some(ShellRequest::Docs(start));
 }
 
 /// Asks the system to start the loaded cartridge. A paused cartridge is

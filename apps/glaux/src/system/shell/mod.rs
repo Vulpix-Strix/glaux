@@ -2,6 +2,7 @@
 
 mod commands;
 mod completion;
+mod docs_topic;
 mod errors;
 mod history;
 mod parser;
@@ -19,6 +20,7 @@ use super::line_editor::LineEditor;
 use super::{ACCENT, BACKGROUND, DIM, ERROR, Line, SystemInfo, TEXT, TRACE, WARN};
 use crate::cartridge::{CartridgeManifest, Language, LoadedCartridge};
 use crate::cartridge_fs::CartridgeStorage;
+use crate::system::workspace::DocsStart;
 use crate::ui_text;
 use commands::{COMMANDS, Context};
 
@@ -81,6 +83,8 @@ pub enum ShellRequest {
     Run,
     /// Open the credits view over the shell.
     Credits,
+    /// Open the documentation browser over the shell.
+    Docs(DocsStart),
     /// Remove the loaded cartridge from the shell.
     Unload,
     /// Continue the paused cartridge with the VM it had.

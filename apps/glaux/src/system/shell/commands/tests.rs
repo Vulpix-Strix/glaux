@@ -106,6 +106,7 @@ fn help_lists_every_command() {
             "clear    Clear the console",
             "info     Show system information",
             "credits  Show the credits and licenses",
+            "docs     Open the documentation",
             "version  Show the System ROM version",
             "pwd      Show the current directory",
             "ls       List a directory",
@@ -1117,4 +1118,62 @@ fn gate_rejects_bad_arguments_and_keeps_the_voices() {
         assert_eq!(run_voice(line, &mut voices), message, "{line}");
         assert_eq!(voices, before, "{line}");
     }
+}
+
+fn docs_request(line: &str) -> (Vec<Entry>, Option<ShellRequest>) {
+    execute_line(
+        line,
+        Version::new(0, 3, 1),
+        &mut no_cartridges(),
+        CartridgeSlot::Empty,
+    )
+}
+
+#[test]
+fn docs_opens_the_front_page_or_the_page_it_names() {
+    assert_eq!(
+        docs_request("docs"),
+        (Vec::new(), Some(ShellRequest::Docs(DocsStart::Home)))
+    );
+    let (entries, request) = docs_request("docs guide/getting-started");
+    assert_eq!(entries, Vec::new());
+    let Some(ShellRequest::Docs(DocsStart::Page(id))) = request else {
+        panic!("expected a page, got {request:?}");
+    };
+    assert_eq!(id.as_str(), "guide/getting-started");
+    let (_, request) = docs_request("docs spr");
+    let Some(ShellRequest::Docs(DocsStart::Page(id))) = request else {
+        panic!("expected a page, got {request:?}");
+    };
+    assert_eq!(id.as_str(), "api/graphics/spr");
+}
+
+#[test]
+fn docs_on_an_unknown_topic_stays_in_the_shell() {
+    assert_eq!(
+        docs_request("docs zzzzqq"),
+        (
+            vec![
+                Entry::Error("No documentation for zzzzqq".into()),
+                Entry::Output("Try: docs".into()),
+            ],
+            None
+        )
+    );
+}
+
+#[test]
+fn docs_takes_at_most_one_topic() {
+    let (entries, request) = docs_request("docs spr gate");
+    assert_eq!(request, None);
+    assert_eq!(entries[0], Entry::Error("Too many arguments".into()));
+}
+
+#[test]
+fn docs_waits_for_a_paused_cartridge() {
+    let (fixture, pong) = pong("cmd-docs-paused");
+    assert_eq!(
+        execute_paused("docs", &fixture, &pong),
+        (error("Cartridge paused: resume or stop it first"), None)
+    );
 }

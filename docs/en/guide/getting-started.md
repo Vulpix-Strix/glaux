@@ -30,6 +30,10 @@ Press Escape to pause. Escape again resumes. Enter on the pause screen returns t
 
 Type `credits` in the shell to see who made Glaux, facts about the system, and the license of every library and resource inside it. F1 to F4 switch between the Credits, System, Libraries and Licenses pages, `?` lists the keys, and Escape goes back one level and finally returns to the shell.
 
+## Read the documentation
+
+Type `docs` in the shell to open the documentation browser without loading a cartridge. `docs spr` opens the page of `spr`, and `docs guide/getting-started` opens a page by its id. When a name could mean several pages, such as `index`, the browser opens its search instead, so you choose. Escape closes the search, then returns to the shell. The tabs and history you left open are still there the next time.
+
 ## Edit the script
 
 With the shell showing, press Escape to open the editor on your cartridge. Replace the whole script with this minimal game, which moves a square and counts the times you press Z:

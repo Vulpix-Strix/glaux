@@ -1155,3 +1155,27 @@ fn showing_the_search_keeps_the_tabs_and_opens_the_query() {
     assert_eq!(browser.active_tab(), 1);
     assert!(browser.search_hits().is_some());
 }
+
+#[test]
+fn moving_the_top_keeps_the_pages_and_shifts_the_rows() {
+    let mut case = Case::new();
+    case.open("guide/a", true);
+    let below_bar = case.browser.geometry.strip.y;
+    assert_eq!(below_bar, METRICS.top);
+
+    case.browser.set_top(0);
+    assert_eq!(case.browser.geometry.strip.y, 0);
+    assert_eq!(case.browser.tab_count(), 2);
+    assert_eq!(case.browser.current().map(DocId::as_str), Some("guide/a"));
+}
+
+#[test]
+fn search_can_open_with_its_query_typed() {
+    let mut case = Case::new();
+    let source = Source {
+        library: &case.library,
+        chain: &case.chain,
+    };
+    case.browser.show_search_for(source, "gamma");
+    assert_eq!(case.browser.search_hits(), Some(1));
+}
