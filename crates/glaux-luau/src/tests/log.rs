@@ -1,6 +1,7 @@
 //! The `log` functions.
 
 use super::*;
+use glaux_script::MAX_ORDINARY_ENTRIES;
 use pretty_assertions::assert_eq;
 
 #[test]
@@ -75,4 +76,31 @@ fn take_output_drains_the_buffer() {
     runtime.tick(NO_INPUT).unwrap();
     assert_eq!(texts(runtime.take_output()), ["t", "t"]);
     assert_eq!(texts(runtime.take_output()), Vec::<String>::new());
+}
+
+#[test]
+fn entries_past_the_allowance_are_refused_before_their_arguments_are_converted() {
+    let source = format!(
+        r#"
+        local converted = 0
+        local counted = setmetatable({{}}, {{ __tostring = function()
+            converted = converted + 1
+            return "x"
+        end }})
+        function tick()
+            for _ = 1, {} do log.info(counted) end
+            log.warn(converted)
+        end
+    "#,
+        MAX_ORDINARY_ENTRIES + 50
+    );
+    let mut runtime = started(&source);
+    runtime.tick(NO_INPUT).unwrap();
+    let output = runtime.take_output();
+    assert_eq!(output.len() as u32, MAX_ORDINARY_ENTRIES + 1);
+    // Only the entries kept were converted, and the warn still fit.
+    let warn = output.last().unwrap();
+    assert_eq!(warn.level, LogLevel::Warn);
+    assert_eq!(warn.text, MAX_ORDINARY_ENTRIES.to_string());
+    assert_eq!(runtime.take_dropped(), 50);
 }

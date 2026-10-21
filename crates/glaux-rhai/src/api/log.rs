@@ -1,29 +1,27 @@
 //! The `log` module: `log::trace`, `log::info` and `log::warn`. Each takes
-//! one value and records it as a [`LogEntry`]. Several values are combined
+//! one value and records it as a [`LogEntry`](glaux_script::LogEntry). Several values are combined
 //! with string interpolation, as in ``log::info(`x = ${x}`)``.
 //!
 //! There is no `log::debug`. `debug` is a Rhai keyword, and no function name
 //! may be a keyword, even inside a module. Rhai's own `debug(value)` records
 //! at debug level instead.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
-use glaux_script::{LogEntry, LogLevel};
+use glaux_script::{LogLevel, LogSink};
 use rhai::{Dynamic, Engine, FuncRegistration, Module, Shared};
 
 use crate::args::to_text;
 
 /// Registers the `log` module.
-pub(crate) fn install(engine: &mut Engine, output: &Rc<RefCell<Vec<LogEntry>>>) {
+pub(crate) fn install(engine: &mut Engine, output: &Rc<LogSink>) {
     let mut log = Module::new();
     for level in [LogLevel::Trace, LogLevel::Info, LogLevel::Warn] {
         let output = Rc::clone(output);
         FuncRegistration::new(level.name()).set_into_module(&mut log, move |value: Dynamic| {
-            output.borrow_mut().push(LogEntry {
-                level,
-                text: to_text(&value),
-            });
+            if output.admit(level) {
+                output.push(level, to_text(&value));
+            }
         });
     }
     engine.register_static_module("log", Shared::new(log));

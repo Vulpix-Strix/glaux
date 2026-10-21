@@ -8,7 +8,8 @@ use glaux_audio::AudioState;
 use glaux_input::InputState;
 use glaux_modules::ModuleSource;
 use glaux_script::{
-    DrawCommand, LogEntry, LogLevel, Phase, Recording, RuntimeError, ScriptError, StartFailure,
+    DrawCommand, LogEntry, LogLevel, LogSink, Phase, Recording, RuntimeError, ScriptError,
+    StartFailure,
 };
 use rhai::{AST, CallFnOptions, Dynamic, Engine, EvalAltResult, FnAccess, Map, Module, Scope};
 
@@ -123,7 +124,7 @@ pub struct Runtime {
     callbacks: [Callback; 3],
     /// The object bound as `this` in every callback.
     state: Dynamic,
-    output: Rc<RefCell<Vec<LogEntry>>>,
+    output: Rc<LogSink>,
     pending: PendingFrame,
     frame: Vec<DrawCommand>,
     input: Rc<Cell<InputState>>,
@@ -160,7 +161,7 @@ impl Runtime {
             exhausted: Cell::new(false),
             module: RefCell::default(),
         });
-        let output: Rc<RefCell<Vec<LogEntry>>> = Rc::default();
+        let output: Rc<LogSink> = Rc::default();
         let pending: PendingFrame = Rc::default();
         let input: Rc<Cell<InputState>> = Rc::default();
         let ticks: Rc<Cell<u64>> = Rc::default();
@@ -186,7 +187,8 @@ impl Runtime {
                 tracing::debug!(chunk = chunk_name, %error, "script failed to start");
                 return Err(StartFailure {
                     error,
-                    output: std::mem::take(&mut *output.borrow_mut()),
+                    output: output.take(),
+                    dropped: output.take_dropped(),
                 });
             }
         };
@@ -212,6 +214,7 @@ impl Runtime {
                 Err(StartFailure {
                     error,
                     output: runtime.take_output(),
+                    dropped: runtime.take_dropped(),
                 })
             }
         }
@@ -256,7 +259,13 @@ impl Runtime {
 
     /// Entries logged since the last call, oldest first.
     pub fn take_output(&mut self) -> Vec<LogEntry> {
-        std::mem::take(&mut *self.output.borrow_mut())
+        self.output.take()
+    }
+
+    /// Takes how many log entries were refused since the last call because
+    /// the script logged more than the output keeps per take.
+    pub fn take_dropped(&mut self) -> u32 {
+        self.output.take_dropped()
     }
 
     /// The audio the script has written. It persists for the life of the
@@ -380,7 +389,7 @@ fn finish<T>(
 /// Applies the limits, the execution budget and the logging hooks, and
 /// removes what would let a script reach outside its cartridge or around
 /// its source locations.
-fn configure(engine: &mut Engine, meter: &Rc<Meter>, output: &Rc<RefCell<Vec<LogEntry>>>) {
+fn configure(engine: &mut Engine, meter: &Rc<Meter>, output: &Rc<LogSink>) {
     let progress = Rc::clone(meter);
     // Once exhausted the call keeps failing: Rhai reports termination as a
     // system error that `try`/`catch` cannot catch, and every further
@@ -410,16 +419,14 @@ fn configure(engine: &mut Engine, meter: &Rc<Meter>, output: &Rc<RefCell<Vec<Log
 
     let log = Rc::clone(output);
     engine.on_print(move |text| {
-        log.borrow_mut().push(LogEntry {
-            level: LogLevel::Info,
-            text: text.to_owned(),
-        });
+        if log.admit(LogLevel::Info) {
+            log.push(LogLevel::Info, text.to_owned());
+        }
     });
     let log = Rc::clone(output);
     engine.on_debug(move |text, _, _| {
-        log.borrow_mut().push(LogEntry {
-            level: LogLevel::Debug,
-            text: text.to_owned(),
-        });
+        if log.admit(LogLevel::Debug) {
+            log.push(LogLevel::Debug, text.to_owned());
+        }
     });
 }

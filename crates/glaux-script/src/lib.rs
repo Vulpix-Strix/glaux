@@ -16,7 +16,10 @@ pub use draw::{
     DrawBudgetExceeded, DrawCommand, MAX_DRAW_COMMANDS, Recording, SPRITE_TILE_COST, TEXT_CHAR_COST,
 };
 pub use error::{Phase, RequireError, RequireFailure, RuntimeError, ScriptError, StartFailure};
-pub use log::{LogEntry, LogLevel};
+pub use log::{
+    LogEntry, LogLevel, LogSink, MAX_ENTRY_BYTES, MAX_ENTRY_LINES, MAX_ORDINARY_ENTRIES,
+    MAX_WARN_ENTRIES, cut_entry,
+};
 
 #[cfg(test)]
 mod tests;

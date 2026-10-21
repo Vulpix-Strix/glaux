@@ -11,7 +11,7 @@ use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, Value, VmState};
 
 use glaux_script::{
-    DrawCommand, LogEntry, Phase, Recording, RuntimeError, ScriptError, StartFailure,
+    DrawCommand, LogEntry, LogSink, Phase, Recording, RuntimeError, ScriptError, StartFailure,
 };
 
 use crate::api;
@@ -69,7 +69,7 @@ impl Meter {
 /// script may have been interrupted halfway through updating its own state.
 pub struct Runtime {
     lua: Lua,
-    output: Rc<RefCell<Vec<LogEntry>>>,
+    output: Rc<LogSink>,
     pending: PendingFrame,
     frame: Vec<DrawCommand>,
     /// The buttons and keys of the tick in progress.
@@ -140,6 +140,7 @@ impl Runtime {
                 Err(StartFailure {
                     error,
                     output: runtime.take_output(),
+                    dropped: runtime.take_dropped(),
                 })
             }
         }
@@ -184,7 +185,13 @@ impl Runtime {
 
     /// Entries logged since the last call, oldest first.
     pub fn take_output(&mut self) -> Vec<LogEntry> {
-        std::mem::take(&mut *self.output.borrow_mut())
+        self.output.take()
+    }
+
+    /// Takes how many log entries were refused since the last call because
+    /// the script logged more than the output keeps per take.
+    pub fn take_dropped(&mut self) -> u32 {
+        self.output.take_dropped()
     }
 
     /// The audio the script has written. It persists for the life of the

@@ -47,6 +47,40 @@ pub enum ScriptError {
     Require(Box<RequireFailure>),
 }
 
+impl ScriptError {
+    /// The `file` and 1-based `line` the error names, when its message
+    /// starts with a `file:line:` position as the runtimes write it.
+    /// Errors without a position, such as an exhausted budget, give `None`.
+    ///
+    /// The file is whatever the message names. The caller decides whether
+    /// it is a script it knows.
+    pub fn location(&self) -> Option<(&str, u32)> {
+        match self {
+            Self::Syntax(message) | Self::Runtime(message) => leading_position(message),
+            Self::Require(failure) => failure.at.as_deref().and_then(trailing_position),
+            Self::LimitExceeded | Self::ModuleLimitExceeded(_) => None,
+        }
+    }
+}
+
+/// `file` and `line` of a message starting with `file:line:`.
+fn leading_position(message: &str) -> Option<(&str, u32)> {
+    let (file, rest) = message.split_once(':')?;
+    let (line, _) = rest.split_once(':')?;
+    position(file, line)
+}
+
+/// `file` and `line` of a text that is exactly `file:line`.
+fn trailing_position(at: &str) -> Option<(&str, u32)> {
+    let (file, line) = at.rsplit_once(':')?;
+    position(file, line)
+}
+
+fn position<'a>(file: &'a str, line: &str) -> Option<(&'a str, u32)> {
+    let line: u32 = line.parse().ok()?;
+    (line > 0 && !file.is_empty() && !file.contains(char::is_whitespace)).then_some((file, line))
+}
+
 /// Why `require` could not provide a module. Paths are cartridge-relative.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequireError {
@@ -148,4 +182,6 @@ impl std::error::Error for RuntimeError {}
 pub struct StartFailure {
     pub error: RuntimeError,
     pub output: Vec<LogEntry>,
+    /// Entries refused because the log allowance was spent.
+    pub dropped: u32,
 }
