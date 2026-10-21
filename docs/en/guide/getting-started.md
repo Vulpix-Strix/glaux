@@ -83,7 +83,15 @@ fn draw() {
 }
 ```
 
-Save with Ctrl+S, press Escape to go back to the shell and type `run` again.
+Press F5 or the play button above the script to run it from the editor. The game fills the screen, and Escape pauses it. On the pause screen Escape resumes, R starts it over and Enter stops it and returns to the editor, with your tabs, cursor and undo history as you left them. By default every unsaved edit is saved before a run. The Save before running setting in the editor's settings turns that off, and the cartridge then runs the files as they are on disk.
+
+You can also save with Ctrl+S, press Escape to go back to the shell and type `run` again.
+
+## Read the log
+
+While a cartridge runs, F12 shows the log panel over the lower half of the screen and hides it again. The game keeps running and does not receive your keys while the panel is open. It lists what your scripts logged with `log` and what Glaux itself reports. Up and Down move through the messages, End follows the newest one, L hides the less severe levels and S switches between your messages and Glaux's. Escape closes the panel.
+
+When a run ends with an error that names a line of your script, the editor opens on that line. Open the log panel there and press Enter on the error to come back to the line later. A script that logs more than a few hundred messages in one tick has the rest dropped, and the log says how many.
 
 ## How it works
 

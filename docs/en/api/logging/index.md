@@ -6,6 +6,8 @@ Records messages in the cartridge log. The functions work in any phase.
 
 Levels from quietest to loudest are `trace`, `debug`, `info` and `warn`.
 
+Glaux keeps a bounded log. A tick keeps a few hundred messages, a few more for `warn` so a flood of quieter ones cannot hide it, and a very long message is cut. What does not fit is dropped, and the log panel (F12 while the cartridge runs) says how many.
+
 ### Luau
 
 Functions are fields of the `log` table, such as `log.info(...)`. Each accepts any number of values and joins them with tabs.

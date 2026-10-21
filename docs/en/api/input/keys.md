@@ -4,7 +4,7 @@ Physical keyboard keys: the letters `A` to `Z`, `Num0` to `Num9`, `F1` to `F12`,
 
 ## Notes
 
-Keys are opaque constants for [key](glaux://api/input/key) and [keyp](glaux://api/input/keyp). Escape is not a key, because the host reserves it to break out of a running cartridge.
+Keys are opaque constants for [key](glaux://api/input/key) and [keyp](glaux://api/input/keyp). Escape is not a key, because the host reserves it to break out of a running cartridge. `F12` is reserved too: it opens the log panel, so a cartridge never sees it pressed.
 
 ### Luau
 
