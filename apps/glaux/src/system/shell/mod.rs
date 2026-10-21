@@ -281,6 +281,10 @@ impl Shell {
             | InputEvent::Back
             | InputEvent::Forward
             | InputEvent::ToggleSidebar
+            | InputEvent::Run
+            | InputEvent::Stop
+            | InputEvent::Restart
+            | InputEvent::ToggleLogs
             | InputEvent::Copy
             | InputEvent::Cut
             | InputEvent::Paste

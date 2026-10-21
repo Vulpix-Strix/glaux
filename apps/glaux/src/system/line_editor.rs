@@ -158,6 +158,10 @@ impl LineEditor {
             | InputEvent::SignatureHelp
             | InputEvent::Docs
             | InputEvent::Function(_)
+            | InputEvent::Run
+            | InputEvent::Stop
+            | InputEvent::Restart
+            | InputEvent::ToggleLogs
             | InputEvent::Back
             | InputEvent::Forward
             | InputEvent::ToggleSidebar

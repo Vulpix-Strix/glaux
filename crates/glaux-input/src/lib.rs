@@ -128,6 +128,17 @@ pub enum InputEvent {
     /// A function key other than F1, which is [`Docs`](Self::Docs). The
     /// number is the key's own: `2` for F2 up to `4` for F4.
     Function(u8),
+    /// Run the cartridge from its entry point (F5 or Ctrl+R on desktop).
+    Run,
+    /// End the running cartridge and return to where it was started from
+    /// (Ctrl+. on desktop).
+    Stop,
+    /// End the running cartridge and start it again from scratch
+    /// (Ctrl+Shift+R on desktop).
+    Restart,
+    /// Show or hide the log panel over the running cartridge (F12 on
+    /// desktop).
+    ToggleLogs,
     /// Go back to the page shown before this one (Alt+Left on desktop).
     Back,
     /// Go forward again after going back (Alt+Right on desktop).

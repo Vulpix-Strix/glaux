@@ -220,6 +220,43 @@ fn view_and_pointer_events_are_kept_only_in_workspace_mode() {
     assert_eq!(kept(InputMode::Workspace), all[..6]);
 }
 
+#[test]
+fn the_run_keys_work_in_the_workspace_and_f12_never_reaches_a_game() {
+    assert_eq!(press(&[KeyboardKey::KEY_F5], false), [InputEvent::Run]);
+    assert_eq!(
+        press(&[KeyboardKey::KEY_F12], false),
+        [InputEvent::ToggleLogs]
+    );
+    assert_eq!(shortcuts(&[KEY_R], false, true), [InputEvent::Run]);
+    assert_eq!(shortcuts(&[KEY_R], true, true), [InputEvent::Restart]);
+    assert_eq!(
+        shortcuts(&[KeyboardKey::KEY_PERIOD], false, true),
+        [InputEvent::Stop]
+    );
+
+    let all = [
+        InputEvent::Run,
+        InputEvent::Stop,
+        InputEvent::Restart,
+        InputEvent::ToggleLogs,
+        InputEvent::KeyDown(Key::F5),
+        InputEvent::KeyDown(Key::F12),
+        InputEvent::KeyUp(Key::F12),
+    ];
+    let kept = |mode| {
+        let mut events = all.to_vec();
+        retain_for_mode(mode, &mut events);
+        events
+    };
+    // A game keeps F5 as a key but F12 is the system's.
+    assert_eq!(
+        kept(InputMode::Game),
+        [InputEvent::ToggleLogs, InputEvent::KeyDown(Key::F5)]
+    );
+    assert_eq!(kept(InputMode::Workspace), all[..4]);
+    assert_eq!(kept(InputMode::Text), Vec::<InputEvent>::new());
+}
+
 fn shortcuts(keys: &[KeyboardKey], shift: bool, ctrl: bool) -> Vec<InputEvent> {
     let mut out = Vec::new();
     shortcut_events(

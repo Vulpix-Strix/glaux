@@ -43,7 +43,7 @@ struct EditKey {
     plain_only: bool,
 }
 
-const EDIT_KEYS: [EditKey; 18] = [
+const EDIT_KEYS: [EditKey; 20] = [
     EditKey {
         key: KeyboardKey::KEY_LEFT,
         event: |m| {
@@ -186,6 +186,24 @@ const EDIT_KEYS: [EditKey; 18] = [
         plain_only: false,
     },
     EditKey {
+        key: KeyboardKey::KEY_F5,
+        event: |m| {
+            if m.shift {
+                InputEvent::Stop
+            } else {
+                InputEvent::Run
+            }
+        },
+        repeats: false,
+        plain_only: false,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_F12,
+        event: |_| InputEvent::ToggleLogs,
+        repeats: false,
+        plain_only: false,
+    },
+    EditKey {
         key: KeyboardKey::KEY_ESCAPE,
         event: |_| InputEvent::Break,
         repeats: false,
@@ -197,7 +215,7 @@ const EDIT_KEYS: [EditKey; 18] = [
 /// press and never repeated. Raylib key codes name physical positions, so on
 /// layouts other than QWERTY the shortcut follows the key where the letter
 /// sits on QWERTY.
-const SHORTCUTS: [(KeyboardKey, KeyEvent); 17] = [
+const SHORTCUTS: [(KeyboardKey, KeyEvent); 19] = [
     (KeyboardKey::KEY_Z, |m| {
         if m.shift {
             InputEvent::Redo
@@ -224,6 +242,14 @@ const SHORTCUTS: [(KeyboardKey, KeyEvent); 17] = [
             InputEvent::Complete
         }
     }),
+    (KeyboardKey::KEY_R, |m| {
+        if m.shift {
+            InputEvent::Restart
+        } else {
+            InputEvent::Run
+        }
+    }),
+    (KeyboardKey::KEY_PERIOD, |_| InputEvent::Stop),
     (KeyboardKey::KEY_C, |_| InputEvent::Copy),
     (KeyboardKey::KEY_X, |_| InputEvent::Cut),
     (KeyboardKey::KEY_V, |_| InputEvent::Paste),
@@ -569,7 +595,8 @@ impl GameKeys {
 }
 
 /// Drops the events `mode` does not consume. [`InputEvent::Break`] is kept
-/// in every mode. View switching, editing and document commands and pointer
+/// in every mode, and [`InputEvent::ToggleLogs`] while a cartridge runs or
+/// the workspace is open. The F12 key never reaches a cartridge. View switching, editing and document commands and pointer
 /// events are kept only in [`InputMode::Workspace`].
 pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
     events.retain(|event| {
@@ -600,6 +627,9 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::Complete
                     | InputEvent::SignatureHelp
                     | InputEvent::Docs
+                    | InputEvent::Run
+                    | InputEvent::Stop
+                    | InputEvent::Restart
                     | InputEvent::Function(_)
                     | InputEvent::Back
                     | InputEvent::Forward
@@ -608,9 +638,16 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::Cut
                     | InputEvent::Paste
             );
+        // F12 belongs to the system's log panel. A running cartridge never
+        // sees it as a key, so it cannot use it as a game control.
+        let reserved = matches!(
+            event,
+            InputEvent::KeyDown(Key::F12) | InputEvent::KeyUp(Key::F12)
+        );
+        let logs = *event == InputEvent::ToggleLogs;
         match mode {
-            InputMode::Text => !game && !workspace,
-            InputMode::Game => game || *event == InputEvent::Break,
+            InputMode::Text => !game && !workspace && !logs,
+            InputMode::Game => (game && !reserved) || matches!(event, InputEvent::Break) || logs,
             InputMode::Workspace => !game,
         }
     });
