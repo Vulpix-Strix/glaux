@@ -13,6 +13,7 @@ fn saved_settings_load_back() {
         ligatures: false,
         indent: IndentStyle::Spaces,
         indent_size: 3,
+        save_before_running: false,
     };
     save(&dir.join("nested"), &settings).unwrap();
     assert_eq!(load(&dir.join("nested")), settings);

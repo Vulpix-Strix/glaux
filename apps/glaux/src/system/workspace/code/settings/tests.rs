@@ -129,6 +129,7 @@ fn clicks_toggle_rows_and_step_the_arrows() {
             ligatures: false,
             indent: IndentStyle::Spaces,
             indent_size: 3,
+            ..EditorSettings::default()
         }
     );
 }

@@ -47,7 +47,7 @@ impl IndentStyle {
     }
 }
 
-/// The Code view's display preferences.
+/// The Code view's preferences.
 ///
 /// Missing fields take their default when read, and unknown ones are
 /// ignored, so files written by other versions still load.
@@ -70,6 +70,9 @@ pub struct EditorSettings {
     /// doesn't show its own. Within [`INDENT_SIZES`] unless read from a
     /// file that says otherwise.
     pub indent_size: u8,
+    /// Write every modified document to the cartridge before it runs from
+    /// the Code view. When off, a run uses what the cartridge's files hold.
+    pub save_before_running: bool,
 }
 
 impl Default for EditorSettings {
@@ -81,6 +84,7 @@ impl Default for EditorSettings {
             ligatures: true,
             indent: IndentStyle::Detect,
             indent_size: 4,
+            save_before_running: true,
         }
     }
 }

@@ -261,6 +261,7 @@ code-replace = Replace...
 code-replace-2 = Replace
 code-replaced = Replaced { $value }
 code-select-all = Select all
+code-save-before-running = Save before running
 code-show-line-numbers = Show line numbers
 code-signature-declaration = Declared on line { $line }.
 code-skipped-link-to-a-listed-folder = Skipped link to a listed folder: { $value }
