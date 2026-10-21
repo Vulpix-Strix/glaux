@@ -287,6 +287,9 @@ impl Shell {
             | InputEvent::ToggleLogs
             | InputEvent::Back
             | InputEvent::Forward
+            | InputEvent::GoToDefinition
+            | InputEvent::GoToSymbol
+            | InputEvent::GoToDefinitionAt(_)
             | InputEvent::ToggleSidebar
             | InputEvent::Copy
             | InputEvent::Cut

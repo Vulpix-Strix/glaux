@@ -150,6 +150,7 @@ fn frame(position: (f32, f32), primary: ButtonFrame) -> PointerFrame {
         wheel: 0.0,
         wheel_x: 0.0,
         shift: false,
+        follow: false,
         focused: true,
     }
 }
@@ -428,6 +429,38 @@ fn wheel_reports_whole_notches_over_the_viewport() {
     bar.window = (1280, 720);
     bar.wheel = 5.0;
     assert_eq!(step(&mut tracker, bar), [InputEvent::PointerMove(None)]);
+}
+
+#[test]
+fn a_press_with_the_follow_modifier_asks_for_a_definition_and_nothing_else() {
+    let mut tracker = enabled();
+    let mut press = frame(INSIDE, PRESS);
+    press.follow = true;
+    assert_eq!(
+        step(&mut tracker, press),
+        [InputEvent::GoToDefinitionAt(INSIDE_PIXEL)]
+    );
+    // The release of that press is not reported either.
+    let mut held = frame(INSIDE, HOLD);
+    held.follow = true;
+    assert_eq!(step(&mut tracker, held), []);
+    assert_eq!(step(&mut tracker, frame(INSIDE, RELEASE)), []);
+}
+
+#[test]
+fn only_the_primary_button_follows() {
+    let mut tracker = enabled();
+    let mut press = frame(INSIDE, UP);
+    press.buttons[1] = PRESS;
+    press.follow = true;
+    assert_eq!(
+        step(&mut tracker, press),
+        [InputEvent::PointerDown {
+            button: PointerButton::Secondary,
+            at: INSIDE_PIXEL,
+            select: false,
+        }]
+    );
 }
 
 #[test]

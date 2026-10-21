@@ -139,10 +139,16 @@ pub enum InputEvent {
     /// Show or hide the log panel over the running cartridge (F12 on
     /// desktop).
     ToggleLogs,
-    /// Go back to the page shown before this one (Alt+Left on desktop).
+    /// Go back to the page or code location shown before this one (Alt+Left on
+    /// desktop).
     Back,
     /// Go forward again after going back (Alt+Right on desktop).
     Forward,
+    /// Go to the definition of the name at the caret (F11 on desktop).
+    GoToDefinition,
+    /// Open the list of the symbols the open document declares (Ctrl+O or
+    /// Ctrl+Shift+O on desktop).
+    GoToSymbol,
     /// Show or hide a view's side panel (Ctrl+B on desktop).
     ToggleSidebar,
     /// Put the selection on the clipboard (Ctrl+C on desktop).
@@ -200,6 +206,11 @@ pub enum InputEvent {
     WheelHorizontal {
         delta: i8,
     },
+    /// A primary press with the follow modifier held (Ctrl, or Command on
+    /// macOS), asking to go to the definition of the name under the pointer.
+    /// It stands in for the press, so no [`PointerDown`](Self::PointerDown)
+    /// or release is reported for it.
+    GoToDefinitionAt(Point),
 }
 
 impl InputEvent {
@@ -213,6 +224,7 @@ impl InputEvent {
                 | Self::PointerCancel
                 | Self::Wheel { .. }
                 | Self::WheelHorizontal { .. }
+                | Self::GoToDefinitionAt(_)
         )
     }
 }

@@ -302,6 +302,21 @@ fn ctrl_shortcuts_become_document_commands() {
     assert_eq!(shortcuts(&[KEY_H], false, true), [InputEvent::Replace]);
     assert_eq!(shortcuts(&[KEY_G], false, true), [InputEvent::GoToLine]);
     assert_eq!(shortcuts(&[KEY_SPACE], false, true), [InputEvent::Complete]);
+    for shift in [false, true] {
+        assert_eq!(shortcuts(&[KEY_O], shift, true), [InputEvent::GoToSymbol]);
+    }
+}
+
+#[test]
+fn f11_goes_to_the_definition_and_f12_still_toggles_the_logs() {
+    assert_eq!(
+        press(&[KeyboardKey::KEY_F11], false),
+        [InputEvent::GoToDefinition]
+    );
+    assert_eq!(
+        press(&[KeyboardKey::KEY_F12], false),
+        [InputEvent::ToggleLogs]
+    );
 }
 
 #[test]
@@ -379,6 +394,7 @@ fn shortcut_keys_without_ctrl_are_not_commands() {
                     KEY_F,
                     KEY_H,
                     KEY_G,
+                    KEY_O,
                     KEY_SPACE,
                     KEY_C,
                     KEY_X,
@@ -412,6 +428,8 @@ fn editing_commands_are_kept_only_in_workspace_mode() {
         InputEvent::Docs,
         InputEvent::Back,
         InputEvent::Forward,
+        InputEvent::GoToDefinition,
+        InputEvent::GoToSymbol,
         InputEvent::ToggleSidebar,
         InputEvent::Copy,
         InputEvent::Cut,

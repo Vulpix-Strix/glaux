@@ -115,6 +115,9 @@ pub(crate) struct PointerFrame {
     /// Whether Shift is held, which turns the vertical wheel sideways and
     /// makes presses extend the selection.
     pub(crate) shift: bool,
+    /// Whether the modifier that follows a name to its definition is held:
+    /// Ctrl, or Command on macOS.
+    pub(crate) follow: bool,
     /// Whether the window has input focus. Losing it cancels captures,
     /// since the release may never reach the window.
     pub(crate) focused: bool,
@@ -180,6 +183,12 @@ impl PointerTracker {
                 continue;
             }
             match located {
+                Some(at) if frame.follow && button == PointerButton::Primary => {
+                    // Reported once as a command, so the editor never sees a press
+                    // that would move the caret or start a selection.
+                    self.ignored[i] = true;
+                    out.push(InputEvent::GoToDefinitionAt(at));
+                }
                 Some(at) => {
                     self.captured[i] = true;
                     self.grip = at;

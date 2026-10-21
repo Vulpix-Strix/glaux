@@ -388,6 +388,10 @@ impl RaylibHost {
             wheel_x: rl.get_mouse_wheel_move_v().x,
             shift: rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT)
                 || rl.is_key_down(KeyboardKey::KEY_RIGHT_SHIFT),
+            follow: rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL)
+                || rl.is_key_down(KeyboardKey::KEY_RIGHT_CONTROL)
+                || rl.is_key_down(KeyboardKey::KEY_LEFT_SUPER)
+                || rl.is_key_down(KeyboardKey::KEY_RIGHT_SUPER),
             focused: rl.is_window_focused(),
         }
     }

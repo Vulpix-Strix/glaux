@@ -43,7 +43,7 @@ struct EditKey {
     plain_only: bool,
 }
 
-const EDIT_KEYS: [EditKey; 20] = [
+const EDIT_KEYS: [EditKey; 21] = [
     EditKey {
         key: KeyboardKey::KEY_LEFT,
         event: |m| {
@@ -198,6 +198,12 @@ const EDIT_KEYS: [EditKey; 20] = [
         plain_only: false,
     },
     EditKey {
+        key: KeyboardKey::KEY_F11,
+        event: |_| InputEvent::GoToDefinition,
+        repeats: false,
+        plain_only: false,
+    },
+    EditKey {
         key: KeyboardKey::KEY_F12,
         event: |_| InputEvent::ToggleLogs,
         repeats: false,
@@ -215,7 +221,7 @@ const EDIT_KEYS: [EditKey; 20] = [
 /// press and never repeated. Raylib key codes name physical positions, so on
 /// layouts other than QWERTY the shortcut follows the key where the letter
 /// sits on QWERTY.
-const SHORTCUTS: [(KeyboardKey, KeyEvent); 19] = [
+const SHORTCUTS: [(KeyboardKey, KeyEvent); 20] = [
     (KeyboardKey::KEY_Z, |m| {
         if m.shift {
             InputEvent::Redo
@@ -235,6 +241,7 @@ const SHORTCUTS: [(KeyboardKey, KeyEvent); 19] = [
     (KeyboardKey::KEY_H, |_| InputEvent::Replace),
     (KeyboardKey::KEY_G, |_| InputEvent::GoToLine),
     (KeyboardKey::KEY_B, |_| InputEvent::ToggleSidebar),
+    (KeyboardKey::KEY_O, |_| InputEvent::GoToSymbol),
     (KeyboardKey::KEY_SPACE, |m| {
         if m.shift {
             InputEvent::SignatureHelp
@@ -633,6 +640,8 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::Function(_)
                     | InputEvent::Back
                     | InputEvent::Forward
+                    | InputEvent::GoToDefinition
+                    | InputEvent::GoToSymbol
                     | InputEvent::ToggleSidebar
                     | InputEvent::Copy
                     | InputEvent::Cut
