@@ -31,6 +31,7 @@
 
 mod complete;
 mod context;
+mod definition;
 mod hover;
 mod lexical;
 mod resolve;
@@ -41,6 +42,7 @@ pub use complete::{
     Trigger, complete,
 };
 pub use context::{Context, Position, Separator, context};
+pub use definition::{Resolution, definition};
 pub use hover::{Hover, Subject, hover};
 pub use resolve::{Resolved, constant_members, resolve};
 pub use signature::{ParamInfo, Signature, SignatureHelp, SignatureRequest, signature_help};
