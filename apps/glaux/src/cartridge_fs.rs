@@ -1163,7 +1163,12 @@ fn rename_no_replace(from: &Path, to: &Path) -> io::Result<()> {
 /// Logs `err` and reports a failed write against the virtual path only.
 fn write_failure(err: io::Error, components: &[String]) -> FsError {
     let path = virtual_path(components);
-    tracing::warn!(path = %path, error = %err, "cartridge directory write failed");
+    tracing::warn!(
+        target: crate::logging::DIAGNOSTIC_TARGET,
+        path = %path,
+        error = %err,
+        "cartridge directory write failed"
+    );
     FsError::Unwritable(path)
 }
 

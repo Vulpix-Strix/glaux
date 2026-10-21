@@ -7,12 +7,14 @@
 //! with the index of the nearest color in the cartridge palette. A cartridge
 //! palette without anything close to them shows the indicator approximately.
 
-use glaux_machine::framebuffer::{Framebuffer, WIDTH};
+use glaux_machine::font::BitmapFont;
+use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::palette::Palette;
-use glaux_video::draw::{fill_rect, remap};
+use glaux_video::draw::{draw_text, fill_rect, remap};
 use glaux_video::shade::{nearest_index, shade_table};
 
 use super::{BACKGROUND, DIM, PALE, TEXT};
+use crate::ui_text;
 
 /// How much of each color channel the darkened cartridge frame keeps.
 const KEEP_PERCENT: u8 = 65;
@@ -38,11 +40,42 @@ pub const PLATE_ORIGIN: (i32, i32) = (WIDTH as i32 - MARGIN - PLATE, MARGIN);
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PauseOverlay {
     ticks: u32,
+    /// Whether the screen also lists the keys that resume, restart or stop
+    /// the run, as it does for a run started from the Code view.
+    controls: bool,
 }
 
 impl PauseOverlay {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An overlay that lists the keys for resuming, restarting and stopping.
+    pub fn with_controls() -> Self {
+        Self {
+            controls: true,
+            ..Self::default()
+        }
+    }
+
+    /// Draws the list of keys along the bottom edge, if the overlay has
+    /// one, in the colors of `system` resolved to `palette`.
+    pub fn render_controls(
+        &self,
+        framebuffer: &mut Framebuffer,
+        font: &BitmapFont,
+        palette: &Palette,
+        system: &Palette,
+    ) {
+        if !self.controls {
+            return;
+        }
+        let color = |index| nearest_index(palette, system.get(index));
+        let text = ui_text::get("system-esc-resume-r-restart-enter-stop");
+        let height = i32::from(font.metrics().cell_height()) + 4;
+        let y = HEIGHT as i32 - height;
+        fill_rect(framebuffer, 0, y, WIDTH as i32, height, color(BACKGROUND));
+        draw_text(framebuffer, font, &text, MARGIN, y + 2, color(TEXT));
     }
 
     /// Advances the indicator animation by one system tick.

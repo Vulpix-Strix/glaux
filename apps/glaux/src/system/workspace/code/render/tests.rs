@@ -428,7 +428,7 @@ fn modified_tabs_show_a_dot_where_close_is_until_hovered() {
 }
 
 #[test]
-fn the_options_bar_ends_with_the_caret_position_beside_the_settings_button() {
+fn the_options_bar_ends_with_the_caret_position_beside_the_run_plates() {
     let fixture = Fixture::new("code-render-options");
     let editor = editor();
     let session = showing(&fixture, &editor, "x");
@@ -436,17 +436,17 @@ fn the_options_bar_ends_with_the_caret_position_beside_the_settings_button() {
 
     let layout = editor.layout();
     let bar = layout.options;
-    let gear = layout.settings_button();
+    let plates = layout.run_button();
     let y = bar.y + (bar.height - 1 - CELL_H) / 2 + 1;
-    // "Ln 1  Col 1" ends one cell left of the settings button.
+    // "Ln 1  Col 1" ends one cell left of the run plate.
     assert_eq!(
-        ink(&framebuffer, (gear.x - 2 * CELL_W, y), PALE),
+        ink(&framebuffer, (plates.x - 2 * CELL_W, y), PALE),
         glyph('1')
     );
-    assert_eq!(ink(&framebuffer, (gear.x - CELL_W, y), PALE), blank());
-    // Nothing dim is written left of the button: no Read-only label.
+    assert_eq!(ink(&framebuffer, (plates.x - CELL_W, y), PALE), blank());
+    // Nothing dim is written left of the plates: no Read-only label.
     for y in bar.y..bar.bottom() - 1 {
-        for x in 0..gear.x - SETTINGS_MARGIN {
+        for x in 0..plates.x {
             assert_ne!(framebuffer.pixel(x, y), Some(DIM), "({x}, {y})");
         }
     }

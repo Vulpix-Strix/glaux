@@ -1,6 +1,8 @@
 use super::*;
 use crate::cartridge::fixture::{manifest_ron, write_cartridge, write_manifest};
 use crate::cartridge_fs::fixture::Fixture;
+use crate::system::logs::LogStore;
+use glaux_script::LogEntry;
 use pretty_assertions::assert_eq;
 use semver::Version;
 
@@ -545,44 +547,82 @@ fn break_is_ignored() {
     assert_eq!(shell, before);
 }
 
+/// The records a cartridge's `entries` become, as the system makes them.
+fn logged<T: Into<String>>(entries: impl IntoIterator<Item = (LogLevel, T)>) -> Vec<Rc<LogRecord>> {
+    let entries = entries
+        .into_iter()
+        .map(|(level, text)| LogEntry {
+            level,
+            text: text.into(),
+        })
+        .collect();
+    LogStore::default().push_cartridge(entries, 0)
+}
+
 #[test]
 fn logged_text_is_split_and_tab_expanded() {
     let mut shell = new_shell();
     shell.scrollback.clear();
-    let entry = |level, text: &str| LogEntry {
-        level,
-        text: text.into(),
-    };
-    shell.log([
-        entry(LogLevel::Info, "hello"),
-        entry(LogLevel::Debug, "a\t1\ttrue\tnil"),
-    ]);
-    shell.log([entry(LogLevel::Warn, "ab\tc\nnext")]);
+    shell.log(logged([
+        (LogLevel::Info, "hello"),
+        (LogLevel::Debug, "a\t1\ttrue\tnil"),
+    ]));
+    shell.log(logged([(LogLevel::Warn, "ab\tc\nnext\n\nlast")]));
     assert_eq!(
-        entries(&shell),
+        shell.transcript(),
+        ["hello", "a   1   true    nil", "ab  c", "next", "", "last"]
+    );
+    let levels: Vec<_> = entries(&shell)
+        .into_iter()
+        .map(|entry| match entry {
+            Entry::Log(level, ..) => level,
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        levels,
         [
-            Entry::Log(LogLevel::Info, "hello".into()),
-            Entry::Log(LogLevel::Debug, "a   1   true    nil".into()),
-            Entry::Log(LogLevel::Warn, "ab  c".into()),
-            Entry::Log(LogLevel::Warn, "next".into()),
+            LogLevel::Info,
+            LogLevel::Debug,
+            LogLevel::Warn,
+            LogLevel::Warn,
+            LogLevel::Warn,
+            LogLevel::Warn
         ]
     );
+}
+
+#[test]
+fn a_logged_record_wraps_and_counts_toward_the_limit_line_by_line() {
+    let mut shell = new_shell();
+    shell.scrollback.clear();
+    let long = "x".repeat(30);
+    shell.log(logged([(LogLevel::Info, "ab\ncd")]));
+    shell.log(logged([(LogLevel::Info, long)]));
+    // Three columns of text fit 10 per row: the long line takes 3 rows.
+    let rows: Vec<_> = shell
+        .lines(&font(), 10, 20)
+        .into_iter()
+        .filter(|line| line.text.starts_with(['a', 'c', 'x']))
+        .map(|line| line.text)
+        .collect();
+    assert_eq!(rows, ["ab", "cd", "xxxxxxxxxx", "xxxxxxxxxx", "xxxxxxxxxx"]);
+
+    let many = vec!["line"; scrollback::SCROLLBACK_LIMIT + 3].join("\n");
+    shell.log(logged([(LogLevel::Info, many)]));
+    assert_eq!(shell.scrollback.iter().len(), scrollback::SCROLLBACK_LIMIT);
 }
 
 #[test]
 fn log_levels_render_in_distinct_colors() {
     let mut shell = new_shell();
     shell.scrollback.clear();
-    let levels = [
-        LogLevel::Trace,
-        LogLevel::Debug,
-        LogLevel::Info,
-        LogLevel::Warn,
-    ];
-    shell.log(levels.map(|level| LogEntry {
-        level,
-        text: "x".into(),
-    }));
+    shell.log(logged([
+        (LogLevel::Trace, "x"),
+        (LogLevel::Debug, "x"),
+        (LogLevel::Info, "x"),
+        (LogLevel::Warn, "x"),
+    ]));
     let colors: Vec<u8> = shell
         .lines(&font(), 40, 20)
         .into_iter()

@@ -35,6 +35,7 @@ use super::code_document::{
 use super::code_session::{CodeSession, MoveScriptError};
 use super::docs as library_docs;
 use super::editor_settings::EditorSettings;
+use super::logs::SourceLocation;
 use super::sprite_document::{
     Conflict, ConflictKind, DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile,
     SpriteDocument, file_list,
@@ -122,6 +123,9 @@ pub enum WorkspaceRequest {
     /// Open this script in a tab, or show its tab if it has one. Answer
     /// with [`Workspace::script_opened`].
     OpenScript(SourcePath),
+    /// Run the cartridge from its entry point. The system saves what the
+    /// editors hold first when told to, and cancels the run if that fails.
+    Run,
     /// Keep the Code view's settings for the next launch.
     SaveEditorSettings(EditorSettings),
     /// Write this script document to its file. Answer with
@@ -566,7 +570,7 @@ fn fit_name(font: &BitmapFont, name: &str, cells: usize) -> Option<String> {
 
 /// `text` broken into lines of at most `columns` of `font`'s cells, at
 /// spaces where possible.
-fn wrap(font: &BitmapFont, text: &str, columns: usize) -> Vec<String> {
+pub(in crate::system) fn wrap(font: &BitmapFont, text: &str, columns: usize) -> Vec<String> {
     let columns = columns.max(1);
     let mut lines = Vec::new();
     let mut line = String::new();
@@ -1109,6 +1113,47 @@ impl Workspace {
         self.tab
     }
 
+    /// The Code view's settings, the ones kept across launches.
+    pub fn editor_settings(&self) -> EditorSettings {
+        self.code.settings()
+    }
+
+    /// Shows `location` in the Code view: opens its script if it is not
+    /// open, puts the caret at the start of the line and scrolls to it.
+    pub fn show_location(
+        &mut self,
+        code: &mut CodeSession,
+        cartridge: &LoadedCartridge,
+        location: &SourceLocation,
+    ) {
+        self.switch_to(Tab::Code, None);
+        match code.open(cartridge, &location.path) {
+            Ok(_) => {
+                self.code.refresh_metrics(code);
+                self.code.reveal_active(code);
+                self.code
+                    .show_line(code, location.line.saturating_sub(1) as usize);
+            }
+            Err(err) => self.script_opened(code, &location.path, Err(err)),
+        }
+    }
+
+    /// Returns to the Code view after a run failed with `message`, showing
+    /// where when the failure points at a line of a script.
+    pub fn run_failed(
+        &mut self,
+        code: &mut CodeSession,
+        cartridge: &LoadedCartridge,
+        message: &str,
+        location: Option<&SourceLocation>,
+    ) {
+        match location {
+            Some(location) => self.show_location(code, cartridge, location),
+            None => self.switch_to(Tab::Code, None),
+        }
+        self.notify(message.lines().next().unwrap_or_default(), ERROR);
+    }
+
     /// Applies `event`, letting the sprite editor change `sprites` and the
     /// Code view change `code`, and returns the file work it calls for, if
     /// any.
@@ -1194,6 +1239,9 @@ impl Workspace {
             // With a script open, the Code view decides what F1 shows.
             InputEvent::Docs if !self.docs_open && !(self.tab == Tab::Code && code.is_some()) => {
                 self.toggle_docs(sprites)
+            }
+            InputEvent::Run if matches!(route, Route::Code | Route::Sprites) => {
+                return Some(WorkspaceRequest::Run);
             }
             _ if route == Route::Docs => return self.docs_input(event),
             _ if route == Route::Sprites => return self.sprite_input(event, sprites),
@@ -1353,6 +1401,7 @@ impl Workspace {
                 Some(WorkspaceRequest::SaveEditorSettings(settings))
             }
             CodeRequest::Save(id) => Some(WorkspaceRequest::SaveScript(id)),
+            CodeRequest::Run => Some(WorkspaceRequest::Run),
             CodeRequest::Copy(text) => Some(WorkspaceRequest::Copy(text)),
             CodeRequest::Paste => Some(WorkspaceRequest::Paste),
             CodeRequest::NewFile => Some(WorkspaceRequest::NewScript),

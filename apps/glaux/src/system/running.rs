@@ -37,6 +37,17 @@ pub struct FailedStart {
     pub error: StartError,
 }
 
+/// Where a run was started from, which decides where it returns to when it
+/// ends.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RunOrigin {
+    /// The shell's `run` command. A run that ends returns to the shell.
+    #[default]
+    Shell,
+    /// The Code editor. A run that ends returns to the editor.
+    Code,
+}
+
 /// The runtime of the language a cartridge's manifest names.
 #[derive(Debug)]
 enum ScriptRuntime {
@@ -86,6 +97,13 @@ impl ScriptRuntime {
         }
     }
 
+    fn take_dropped(&mut self) -> u32 {
+        match self {
+            Self::Luau(runtime) => runtime.take_dropped(),
+            Self::Rhai(runtime) => runtime.take_dropped(),
+        }
+    }
+
     fn audio_mut(&mut self) -> RefMut<'_, AudioState> {
         match self {
             Self::Luau(runtime) => runtime.audio_mut(),
@@ -104,6 +122,7 @@ pub struct RunningCartridge {
     /// previous run reaches this one, and is reset whenever the system
     /// resumes the cartridge from a pause.
     input: InputLatch,
+    origin: RunOrigin,
 }
 
 impl RunningCartridge {
@@ -140,9 +159,20 @@ impl RunningCartridge {
                 runtime,
                 video,
                 input: InputLatch::new(),
+                origin: RunOrigin::default(),
             }),
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
         }
+    }
+
+    /// Marks the run as started from `origin`.
+    pub fn with_origin(mut self, origin: RunOrigin) -> Self {
+        self.origin = origin;
+        self
+    }
+
+    pub fn origin(&self) -> RunOrigin {
+        self.origin
     }
 
     pub fn cartridge(&self) -> &LoadedCartridge {
@@ -170,6 +200,12 @@ impl RunningCartridge {
     /// Entries the cartridge logged since the last call.
     pub fn take_output(&mut self) -> Vec<LogEntry> {
         self.runtime.take_output()
+    }
+
+    /// How many entries the cartridge logged that were refused since the
+    /// last call, because it logged more than a tick keeps.
+    pub fn take_dropped(&mut self) -> u32 {
+        self.runtime.take_dropped()
     }
 
     /// Redraws the cartridge's last completed frame: a screen cleared to

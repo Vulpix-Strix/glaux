@@ -22,6 +22,7 @@ mod docs;
 mod editor_settings;
 mod external_url;
 mod line_editor;
+mod logs;
 mod menu_state;
 mod pause;
 mod running;
@@ -46,6 +47,7 @@ use credits::CreditsView;
 pub use editor_settings::IndentStyle;
 pub use editor_settings::{EditorSettings, INDENT_SIZES, TAB_SIZES};
 pub use external_url::{ExternalUrl, ExternalUrlError};
+use logs::{Category, LogPanel, LogStore, PanelAction, Severity, SourceLocation};
 pub use menu_state::MenuState;
 pub use shell::Shell;
 use sprite_document::SpriteDocument;
@@ -60,10 +62,10 @@ use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
 use glaux_machine::system_rom::{SystemCursor, SystemRom, SystemSounds};
-use glaux_script::RuntimeError;
+use glaux_script::{RuntimeError, ScriptError};
 use glaux_video::draw::{clear, draw_text, fill_rect};
 use pause::PauseOverlay;
-use running::{FailedStart, RunningCartridge, StartError};
+use running::{FailedStart, RunOrigin, RunningCartridge, StartError};
 use semver::Version;
 use sfx::SystemSound;
 use shell::{CartridgeSlot, ShellRequest, cartridge_identity};
@@ -75,6 +77,7 @@ use std::path::PathBuf;
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge_fs::CartridgeStorage;
+use crate::logging::Diagnostics;
 use crate::sprite_import::SheetSource;
 use crate::ui_text;
 
@@ -252,6 +255,12 @@ pub struct System {
     /// is dropped only once another cartridge has loaded or this one is
     /// unloaded, so a failed `load` keeps it.
     code: Option<CodeSession>,
+    /// What the current or last run logged, shared with the shell.
+    logs: LogStore,
+    /// The overlay that shows `logs`.
+    log_panel: LogPanel,
+    /// Where the diagnostics meant for the log panel arrive from.
+    diagnostics: Option<Diagnostics>,
     /// Host work asked for and not yet taken by the host, oldest first.
     host_requests: VecDeque<HostRequest>,
     /// The question about unsaved edits that holds up quitting or a shell
@@ -270,6 +279,8 @@ struct Context<'a> {
     workspace: &'a mut Workspace,
     sprites: &'a mut Option<SpriteDocument>,
     code: &'a mut Option<CodeSession>,
+    logs: &'a mut LogStore,
+    log_panel: &'a mut LogPanel,
     unsaved: &'a mut Option<UnsavedFlow>,
 }
 
@@ -309,6 +320,9 @@ impl System {
             workspace: Workspace::new(font, palette),
             sprites: None,
             code: None,
+            logs: LogStore::default(),
+            log_panel: LogPanel::default(),
+            diagnostics: None,
             host_requests: VecDeque::new(),
             unsaved: None,
             exit_requested: false,
@@ -368,6 +382,13 @@ impl System {
     #[cfg(test)]
     fn unsaved_flow(&self) -> Option<&UnsavedFlow> {
         self.unsaved.as_ref()
+    }
+
+    /// Shows the diagnostics that arrive from `diagnostics` in the log panel
+    /// from now on.
+    pub fn with_diagnostics(mut self, diagnostics: Diagnostics) -> Self {
+        self.diagnostics = Some(diagnostics);
+        self
     }
 
     /// Shows code in the workspace with `settings`, the ones kept from an
@@ -461,6 +482,9 @@ impl System {
             mut workspace,
             mut sprites,
             mut code,
+            mut logs,
+            mut log_panel,
+            diagnostics,
             mut host_requests,
             mut unsaved,
             exit_requested,
@@ -471,9 +495,14 @@ impl System {
             workspace: &mut workspace,
             sprites: &mut sprites,
             code: &mut code,
+            logs: &mut logs,
+            log_panel: &mut log_panel,
             unsaved: &mut unsaved,
         };
         let mut state = state;
+        if let Some(diagnostics) = &diagnostics {
+            receive_diagnostics(diagnostics, ctx.logs);
+        }
         if exit_requested {
             state = guard_exit(state, &mut ctx, &mut exiting);
         }
@@ -518,7 +547,8 @@ impl System {
                     cartridge,
                     video,
                 } => {
-                    let (state, requests) = workspace_tick(
+                    let routed = route_logs(&mut ctx, input, true);
+                    let (state, requests, run) = workspace_tick(
                         shell,
                         cartridge,
                         video,
@@ -528,26 +558,46 @@ impl System {
                             code: ctx.code,
                         },
                         ctx.video_defaults,
-                        input,
+                        &routed.forward,
                         clipboard,
                     );
                     host_requests.extend(requests);
-                    state
+                    if let (Some(location), SystemState::Workspace { cartridge, .. }) =
+                        (&routed.jump, &state)
+                    {
+                        ctx.log_panel.close();
+                        let code = ctx.code.get_or_insert_default();
+                        ctx.workspace.show_location(code, cartridge, location);
+                    }
+                    if run {
+                        run_from_workspace(state, &mut ctx)
+                    } else {
+                        state
+                    }
                 }
-                SystemState::Running { shell, running } => running_tick(shell, running, input),
+                SystemState::Running { shell, mut running } => {
+                    let routed = route_logs(&mut ctx, input, false);
+                    if routed.toggled {
+                        // Nothing held while the panel took the keys may
+                        // reach the cartridge as a press.
+                        running.reset_input();
+                    }
+                    running_tick(shell, running, &routed.forward, &mut ctx)
+                }
                 SystemState::Paused {
                     shell,
                     running,
                     view: PausedView::Game(overlay),
-                } => paused_game_tick(shell, running, overlay, input),
+                } => paused_game_tick(shell, running, overlay, input, &mut ctx),
                 SystemState::Paused {
                     shell,
                     running,
                     view: PausedView::Shell,
-                } => paused_shell_tick(shell, running, input),
+                } => paused_shell_tick(shell, running, input, &mut ctx),
             }
         };
         sound.tick();
+        log_panel.sync(&logs);
         Self {
             state,
             info,
@@ -557,6 +607,9 @@ impl System {
             workspace,
             sprites,
             code,
+            logs,
+            log_panel,
+            diagnostics,
             host_requests,
             unsaved,
             exit_requested: false,
@@ -718,6 +771,35 @@ impl System {
         flow.dialog().render(framebuffer, rom.font(), &layout);
     }
 
+    /// Draws the log panel over the frame, if it is open. Over a running
+    /// cartridge the panel's colors are resolved to the cartridge's palette,
+    /// which the frame is presented with.
+    fn render_log_panel(
+        &self,
+        framebuffer: &mut Framebuffer,
+        rom: &SystemRom,
+        running: Option<&RunningCartridge>,
+    ) {
+        if !self.log_panel.is_open() {
+            return;
+        }
+        let colors: [u8; 32] = std::array::from_fn(|n| match running {
+            Some(running) => {
+                let color = rom.palette().get(n as u8);
+                glaux_video::shade::nearest_index(running.palette(), color)
+            }
+            None => n as u8,
+        });
+        self.log_panel.render(
+            framebuffer,
+            rom.font(),
+            &|color| colors[usize::from(color)],
+            // Only the editor can show a script, and only a run that has
+            // ended leaves a located record.
+            running.is_none(),
+        );
+    }
+
     fn render_state(&self, framebuffer: &mut Framebuffer, rom: &SystemRom, pointer: Option<Point>) {
         let font = rom.font();
         let metrics = font.metrics();
@@ -754,6 +836,7 @@ impl System {
                     self.code.as_ref(),
                     pointer,
                 );
+                self.render_log_panel(framebuffer, rom, None);
                 return;
             }
             SystemState::Credits { view, .. } => {
@@ -766,6 +849,7 @@ impl System {
             }
             SystemState::Running { running, .. } => {
                 running.render(framebuffer, font);
+                self.render_log_panel(framebuffer, rom, Some(running));
                 return;
             }
             SystemState::Paused {
@@ -775,6 +859,7 @@ impl System {
             } => {
                 running.render(framebuffer, font);
                 overlay.render(framebuffer, running.palette(), rom.palette());
+                overlay.render_controls(framebuffer, font, running.palette(), rom.palette());
                 return;
             }
         };
@@ -931,7 +1016,7 @@ fn shell_request(
             let Some(cartridge) = loaded else {
                 unreachable!("RUN was requested without a loaded cartridge");
             };
-            let state = match start(shell, cartridge, ctx.video_defaults, ctx.sprites.as_ref()) {
+            let state = match start(shell, cartridge, RunOrigin::Shell, ctx) {
                 SystemState::Shell { shell, loaded } => shell_input(shell, loaded, rest, ctx),
                 state => state,
             };
@@ -1008,7 +1093,7 @@ fn guard_exit(state: SystemState, ctx: &mut Context<'_>, exiting: &mut bool) -> 
     };
     *ctx.unsaved = Some(flow);
     let (shell, running) = match state {
-        SystemState::Running { shell, running } => match pause(shell, running) {
+        SystemState::Running { shell, running } => match pause(shell, running, ctx) {
             SystemState::Paused { shell, running, .. } => (shell, running),
             state => return state,
         },
@@ -1123,6 +1208,64 @@ struct Documents<'a> {
     code: &'a mut Option<CodeSession>,
 }
 
+impl Documents<'_> {
+    /// Writes every modified document of the loaded cartridge: the open
+    /// scripts first, then the sprite document's changed assets. Returns
+    /// whether all of them were written. At the first failure it stops and
+    /// shows the failure through `workspace`. What was written before it
+    /// stays written, and nothing is rolled back.
+    ///
+    /// Every editable document of the cartridge belongs in here, so a run
+    /// from Code never starts from files that miss an edit.
+    fn save_all(
+        self,
+        cartridge: &LoadedCartridge,
+        workspace: &mut Workspace,
+        logs: &mut LogStore,
+    ) -> bool {
+        let Self { sprites, code } = self;
+        if let Some(code) = code.as_mut() {
+            let modified: Vec<_> = code
+                .modified()
+                .iter()
+                .map(|document| document.id())
+                .collect();
+            for id in modified {
+                if let Err(err) = code.save(cartridge, id) {
+                    tracing::info!("run cancelled: a script could not be saved");
+                    let path = code
+                        .document(id)
+                        .map(|document| document.path().to_string())
+                        .unwrap_or_default();
+                    logs.push_terminal(
+                        Category::Save,
+                        ui_text::get_with(
+                            "logs-run-cancelled-script-not-saved",
+                            &[("path", Arg::Text(&path))],
+                        ),
+                        None,
+                    );
+                    workspace.script_saved(id, Err(err));
+                    return false;
+                }
+            }
+        }
+        if let Some(document) = sprites.as_mut().filter(|document| document.is_modified())
+            && let Err(err) = document.save(cartridge)
+        {
+            tracing::info!("run cancelled: the graphics could not be saved");
+            logs.push_terminal(
+                Category::Save,
+                ui_text::get("logs-run-cancelled-graphics-not-saved"),
+                None,
+            );
+            workspace.saved(Err(err));
+            return false;
+        }
+        true
+    }
+}
+
 /// Drops the documents of a cartridge that was replaced or unloaded, and
 /// everything the workspace showed of them.
 fn discard_documents(
@@ -1205,12 +1348,13 @@ fn workspace_tick(
     video_defaults: &CartridgeVideoDefaults,
     input: &[InputEvent],
     clipboard: &mut dyn Clipboard,
-) -> (SystemState, Vec<HostRequest>) {
+) -> (SystemState, Vec<HostRequest>, bool) {
     let Documents { sprites, code } = documents;
     let code = code.get_or_insert_default();
     workspace.set_entry_script(&cartridge.manifest().runtime.entry);
     workspace.tick(Some(code));
     let mut host_requests = Vec::new();
+    let mut run_requested = false;
     for &event in input {
         if event == InputEvent::Break && !workspace.claims_break() {
             workspace.end_stroke(sprites.as_mut());
@@ -1219,7 +1363,7 @@ fn workspace_tick(
                 shell,
                 loaded: Some(cartridge),
             };
-            return (state, host_requests);
+            return (state, host_requests, false);
         }
         // The editors only change what they can show.
         let document = sprites.as_mut().filter(|_| video.is_ready());
@@ -1241,6 +1385,12 @@ fn workspace_tick(
             WorkspaceRequest::SaveEditorSettings(settings) => {
                 host_requests.push(HostRequest::SaveEditorSettings(settings));
                 continue;
+            }
+            WorkspaceRequest::Run => {
+                // Events after a run is asked for are dropped, as after any
+                // change of screen.
+                run_requested = true;
+                break;
             }
             WorkspaceRequest::SaveScript(id) => {
                 workspace.script_saved(id, code.save(&cartridge, id));
@@ -1342,6 +1492,7 @@ fn workspace_tick(
                 });
             }
             WorkspaceRequest::ListScripts
+            | WorkspaceRequest::Run
             | WorkspaceRequest::OpenScript(_)
             | WorkspaceRequest::SaveEditorSettings(_)
             | WorkspaceRequest::SaveScript(_)
@@ -1367,7 +1518,7 @@ fn workspace_tick(
         cartridge,
         video,
     };
-    (state, host_requests)
+    (state, host_requests, run_requested)
 }
 
 /// Opens the cartridge's entry script in `code` the first time the Code
@@ -1388,22 +1539,67 @@ fn open_entry_once(workspace: &mut Workspace, code: &mut CodeSession, cartridge:
     workspace.entry_opened(code, result);
 }
 
-/// Starts `cartridge`, reporting its start or failure and what it logged.
-/// A cartridge that fails to start stays loaded in the shell. When
-/// `sprites` holds unsaved changes, the cartridge runs with the changed
-/// assets instead of their files.
+/// Moves what the cartridge logged into the log store and the shell.
+fn drain_logs(shell: &mut Shell, logs: &mut LogStore, running: &mut RunningCartridge) {
+    let entries = running.take_output();
+    let dropped = running.take_dropped();
+    if !entries.is_empty() || dropped > 0 {
+        shell.log(logs.push_cartridge(entries, dropped));
+    }
+}
+
+/// How a run ended in failure, as the editor shows it.
+struct RunFailure {
+    message: String,
+    location: Option<SourceLocation>,
+}
+
+/// The script position `error` names, provided it is a script of
+/// `cartridge`. Anything else is left unlocated rather than guessed.
+fn verified_location(cartridge: &LoadedCartridge, error: &ScriptError) -> Option<SourceLocation> {
+    let (file, line) = error.location()?;
+    let path = SourcePath::parse(file).ok()?;
+    cartridge.read_source(&path).ok()?;
+    Some(SourceLocation { path, line })
+}
+
+/// What a failed script is about: its source not compiling, or its code
+/// failing while it ran.
+fn script_category(error: &ScriptError) -> Category {
+    match error {
+        ScriptError::Syntax(_) => Category::Compile,
+        _ => Category::Runtime,
+    }
+}
+
+/// Starts `cartridge` from `origin`, reporting its start or failure and
+/// what it logged. A cartridge that fails to start stays loaded, in the
+/// shell or in the Code view according to `origin`.
+///
+/// A run from the shell uses unsaved graphics changes instead of their
+/// files. A run from Code uses the files only: saving what it should run
+/// is [`run_from_code`]'s job.
 fn start(
     mut shell: Box<Shell>,
     cartridge: LoadedCartridge,
-    video_defaults: &CartridgeVideoDefaults,
-    sprites: Option<&SpriteDocument>,
+    origin: RunOrigin,
+    ctx: &mut Context<'_>,
 ) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
-    let overrides = sprites.map(SpriteDocument::unsaved).unwrap_or_default();
+    let overrides = match origin {
+        RunOrigin::Shell => ctx
+            .sprites
+            .as_ref()
+            .map(SpriteDocument::unsaved)
+            .unwrap_or_default(),
+        RunOrigin::Code => Default::default(),
+    };
     let edited = !overrides.is_empty();
-    match RunningCartridge::start(cartridge, video_defaults, overrides) {
-        Ok(mut running) => {
-            tracing::info!(cartridge = %identity, edited, "cartridge started");
+    ctx.logs.begin_run();
+    match RunningCartridge::start(cartridge, ctx.video_defaults, overrides) {
+        Ok(running) => {
+            let mut running = running.with_origin(origin);
+            tracing::info!(cartridge = %identity, edited, ?origin, "cartridge started");
             if edited {
                 shell.report(ui_text::get_with(
                     "system-running-with-unsaved-graphics-changes",
@@ -1416,84 +1612,275 @@ fn start(
                 ));
             }
             shell.warn_if_experimental(running.cartridge().manifest().runtime.language);
-            shell.log(running.take_output());
+            drain_logs(&mut shell, ctx.logs, &mut running);
             SystemState::Running { shell, running }
         }
         Err(failed) => {
             let FailedStart { cartridge, error } = *failed;
-            match error {
-                StartError::Cartridge(err) => shell.report_error(ui_errors::cartridge(&err)),
-                StartError::Video(err) => shell.report_error(ui_errors::video::video_asset(&err)),
+            let (message, category, location) = match error {
+                StartError::Cartridge(err) => (ui_errors::cartridge(&err), Category::Load, None),
+                StartError::Video(err) => {
+                    (ui_errors::video::video_asset(&err), Category::Load, None)
+                }
                 StartError::Script(failure) => {
                     tracing::info!(
                         cartridge = %identity,
                         error = %failure.error,
                         "cartridge failed to start"
                     );
-                    shell.log(failure.output);
-                    shell.report_error(ui_errors::runtime::runtime(&failure.error));
+                    shell.log(ctx.logs.push_cartridge(failure.output, failure.dropped));
+                    (
+                        ui_errors::runtime::runtime(&failure.error),
+                        script_category(&failure.error.error),
+                        verified_location(&cartridge, &failure.error.error),
+                    )
+                }
+            };
+            shell.report_error(message.clone());
+            ctx.logs
+                .push_terminal(category, message.clone(), location.clone());
+            match origin {
+                RunOrigin::Shell => SystemState::Shell {
+                    shell,
+                    loaded: Some(cartridge),
+                },
+                RunOrigin::Code => {
+                    let failure = RunFailure { message, location };
+                    back_to_code(shell, cartridge, Some(failure), ctx)
                 }
             }
-            SystemState::Shell {
-                shell,
-                loaded: Some(cartridge),
-            }
         }
+    }
+}
+
+/// Returns to the Code view on `cartridge`, as the editor was left, showing
+/// `failure` when the run that ended there failed.
+fn back_to_code(
+    shell: Box<Shell>,
+    cartridge: LoadedCartridge,
+    failure: Option<RunFailure>,
+    ctx: &mut Context<'_>,
+) -> SystemState {
+    let state = open_workspace(
+        shell,
+        cartridge,
+        ctx.workspace,
+        Documents {
+            sprites: ctx.sprites,
+            code: ctx.code,
+        },
+        ctx.video_defaults,
+    );
+    if let (Some(failure), SystemState::Workspace { cartridge, .. }) = (failure, &state) {
+        let code = ctx.code.get_or_insert_default();
+        ctx.workspace
+            .run_failed(code, cartridge, &failure.message, failure.location.as_ref());
+    }
+    state
+}
+
+/// Runs the workspace's cartridge from its entry point, as the Code view
+/// asks. With Save Before Running on, every modified document is written
+/// first and the run is cancelled, with the failure shown, if one cannot
+/// be.
+fn run_from_workspace(state: SystemState, ctx: &mut Context<'_>) -> SystemState {
+    let SystemState::Workspace {
+        shell,
+        cartridge,
+        video,
+    } = state
+    else {
+        return state;
+    };
+    ctx.workspace.end_stroke(ctx.sprites.as_mut());
+    if !save_before_running(&cartridge, ctx) {
+        return SystemState::Workspace {
+            shell,
+            cartridge,
+            video,
+        };
+    }
+    start(shell, cartridge, RunOrigin::Code, ctx)
+}
+
+/// Starts `cartridge` again from the beginning after a run from Code. A
+/// save that fails returns to the Code view instead.
+fn restart(shell: Box<Shell>, mut running: RunningCartridge, ctx: &mut Context<'_>) -> SystemState {
+    let mut shell = shell;
+    drain_logs(&mut shell, ctx.logs, &mut running);
+    let cartridge = running.stop();
+    tracing::info!(
+        cartridge = %cartridge_identity(cartridge.manifest()),
+        "cartridge restarted"
+    );
+    if !save_before_running(&cartridge, ctx) {
+        return back_to_code(shell, cartridge, None, ctx);
+    }
+    start(shell, cartridge, RunOrigin::Code, ctx)
+}
+
+/// Writes the modified documents when Save Before Running is on. Returns
+/// whether the run may go ahead. A failure is shown by the workspace.
+fn save_before_running(cartridge: &LoadedCartridge, ctx: &mut Context<'_>) -> bool {
+    if !ctx.workspace.editor_settings().save_before_running {
+        return true;
+    }
+    let documents = Documents {
+        sprites: ctx.sprites,
+        code: ctx.code,
+    };
+    documents.save_all(cartridge, ctx.workspace, ctx.logs)
+}
+
+/// Most diagnostics taken into the log in one tick. The rest wait for the
+/// next, in a channel that drops what does not fit.
+const DIAGNOSTICS_PER_TICK: usize = 32;
+
+/// Moves the diagnostics that arrived into the log store.
+fn receive_diagnostics(diagnostics: &Diagnostics, logs: &mut LogStore) {
+    for diagnostic in diagnostics.drain(DIAGNOSTICS_PER_TICK) {
+        let severity = match diagnostic.level {
+            tracing::Level::ERROR => Severity::Error,
+            tracing::Level::WARN => Severity::Warn,
+            tracing::Level::INFO => Severity::Info,
+            tracing::Level::DEBUG => Severity::Debug,
+            _ => Severity::Trace,
+        };
+        logs.push_diagnostic(severity, diagnostic.message, diagnostic.fields);
+    }
+    let dropped = diagnostics.take_dropped();
+    if dropped > 0 {
+        logs.push_skipped(dropped);
+    }
+}
+
+/// What is left of a tick's input after the log panel took its share.
+struct Routed<'a> {
+    /// The events for whatever is under the panel.
+    forward: std::borrow::Cow<'a, [InputEvent]>,
+    /// The panel opened or closed in this tick.
+    toggled: bool,
+    /// The script line the user asked to show, which ends the events taken.
+    jump: Option<SourceLocation>,
+}
+
+/// Gives the log panel the input it takes: everything while it is open, and
+/// the key that opens it. A tick the panel has no part in is passed on
+/// untouched and unallocated.
+fn route_logs<'a>(ctx: &mut Context<'_>, input: &'a [InputEvent], can_jump: bool) -> Routed<'a> {
+    if !ctx.log_panel.is_open() && !input.contains(&InputEvent::ToggleLogs) {
+        return Routed {
+            forward: input.into(),
+            toggled: false,
+            jump: None,
+        };
+    }
+    let mut forward = Vec::new();
+    let mut toggled = false;
+    let mut jump = None;
+    for &event in input {
+        if ctx.log_panel.is_open() {
+            let was_open = true;
+            if let PanelAction::Jump(location) = ctx.log_panel.input(event, ctx.logs, can_jump) {
+                jump = Some(location);
+                break;
+            }
+            toggled |= was_open != ctx.log_panel.is_open();
+        } else if event == InputEvent::ToggleLogs {
+            ctx.log_panel.toggle();
+            toggled = true;
+        } else {
+            forward.push(event);
+        }
+    }
+    Routed {
+        forward: forward.into(),
+        toggled,
+        jump,
     }
 }
 
 /// Advances the running cartridge by one tick, or pauses it on a break. A
 /// break wins over any button events in the same tick, which are dropped.
+/// A stop or restart asked for from outside ends the run in its place.
 fn running_tick(
     mut shell: Box<Shell>,
     mut running: RunningCartridge,
     input: &[InputEvent],
+    ctx: &mut Context<'_>,
 ) -> SystemState {
+    if running.origin() == RunOrigin::Code {
+        if input.contains(&InputEvent::Stop) {
+            return stop(shell, running, StopReason::Stopped, ctx);
+        }
+        if input.contains(&InputEvent::Restart) {
+            return restart(shell, running, ctx);
+        }
+    }
     if input.contains(&InputEvent::Break) {
-        return pause(shell, running);
+        return pause(shell, running, ctx);
     }
     match running.tick(input) {
         Ok(()) => {
-            shell.log(running.take_output());
+            drain_logs(&mut shell, ctx.logs, &mut running);
             SystemState::Running { shell, running }
         }
-        Err(err) => stop(shell, running, StopReason::Failed(err)),
+        Err(err) => stop(shell, running, StopReason::Failed(err), ctx),
     }
 }
 
 /// Keeps the cartridge's VM without ticking it and shows the pause screen.
-fn pause(mut shell: Box<Shell>, mut running: RunningCartridge) -> SystemState {
-    shell.log(running.take_output());
+fn pause(
+    mut shell: Box<Shell>,
+    mut running: RunningCartridge,
+    ctx: &mut Context<'_>,
+) -> SystemState {
+    drain_logs(&mut shell, ctx.logs, &mut running);
+    ctx.log_panel.close();
     let identity = cartridge_identity(running.cartridge().manifest());
     tracing::info!(cartridge = %identity, "cartridge paused");
     shell.report(ui_text::get_with(
         "system-paused",
         &[("identity", Arg::Text(&identity.to_string()))],
     ));
+    let overlay = match running.origin() {
+        RunOrigin::Shell => PauseOverlay::new(),
+        RunOrigin::Code => PauseOverlay::with_controls(),
+    };
     SystemState::Paused {
         shell,
         running,
-        view: PausedView::Game(PauseOverlay::new()),
+        view: PausedView::Game(overlay),
     }
 }
 
-/// Handles the pause screen: Break resumes the cartridge and Enter opens the
-/// shell, which takes the events after it. Other events are ignored, and
-/// only the overlay's own animation advances.
+/// Handles the pause screen. Break resumes the cartridge. For a run from
+/// the shell Enter opens the shell, which takes the events after it. For a
+/// run from Code Enter stops the run and returns to the editor, and R
+/// restarts it. Other events are ignored, and only the overlay's own
+/// animation advances.
 fn paused_game_tick(
     mut shell: Box<Shell>,
     running: RunningCartridge,
     mut overlay: PauseOverlay,
     input: &[InputEvent],
+    ctx: &mut Context<'_>,
 ) -> SystemState {
+    let from_code = running.origin() == RunOrigin::Code;
     for (index, &event) in input.iter().enumerate() {
         match event {
             InputEvent::Break => return resume(shell, running),
+            InputEvent::Enter | InputEvent::Stop if from_code => {
+                return stop(shell, running, StopReason::Stopped, ctx);
+            }
+            InputEvent::Text('r' | 'R') | InputEvent::Restart if from_code => {
+                return restart(shell, running, ctx);
+            }
             InputEvent::Enter => {
                 let identity = cartridge_identity(running.cartridge().manifest());
                 tracing::info!(cartridge = %identity, "shell opened with the cartridge paused");
                 shell.report(paused_shell_hint());
-                return paused_shell_tick(shell, running, &input[index + 1..]);
+                return paused_shell_tick(shell, running, &input[index + 1..], ctx);
             }
             _ => {}
         }
@@ -1563,13 +1950,14 @@ fn paused_shell_tick(
     mut shell: Box<Shell>,
     running: RunningCartridge,
     input: &[InputEvent],
+    ctx: &mut Context<'_>,
 ) -> SystemState {
     shell.tick();
     for &event in input {
         match shell.handle_input(event, CartridgeSlot::Paused(running.cartridge())) {
             None => {}
             Some(ShellRequest::Resume) => return resume(shell, running),
-            Some(ShellRequest::Stop) => return stop(shell, running, StopReason::Stopped),
+            Some(ShellRequest::Stop) => return stop(shell, running, StopReason::Stopped, ctx),
             // `load`, `unload`, `new` and `run` refuse to replace a paused
             // cartridge before asking about unsaved edits.
             Some(
@@ -1605,28 +1993,48 @@ fn resume(mut shell: Box<Shell>, mut running: RunningCartridge) -> SystemState {
     SystemState::Running { shell, running }
 }
 
-/// Disposes of the cartridge's VM and returns to the shell with the
-/// cartridge still loaded. Every way a VM ends goes through here.
-fn stop(mut shell: Box<Shell>, mut running: RunningCartridge, reason: StopReason) -> SystemState {
-    shell.log(running.take_output());
+/// Disposes of the cartridge's VM and returns to where the run started,
+/// the shell or the Code view, with the cartridge still loaded. Every way a
+/// VM ends goes through here.
+fn stop(
+    mut shell: Box<Shell>,
+    mut running: RunningCartridge,
+    reason: StopReason,
+    ctx: &mut Context<'_>,
+) -> SystemState {
+    drain_logs(&mut shell, ctx.logs, &mut running);
+    ctx.log_panel.close();
     let identity = cartridge_identity(running.cartridge().manifest());
+    let origin = running.origin();
     let cartridge = running.stop();
-    match reason {
+    let failure = match reason {
         StopReason::Stopped => {
             tracing::info!(cartridge = %identity, "cartridge stopped");
             shell.report(ui_text::get_with(
                 "system-stopped",
                 &[("identity", Arg::Text(&identity.to_string()))],
             ));
+            None
         }
         StopReason::Failed(err) => {
             tracing::info!(cartridge = %identity, error = %err, "cartridge failed");
-            shell.report_error(ui_errors::runtime::runtime(&err));
+            let message = ui_errors::runtime::runtime(&err);
+            shell.report_error(message.clone());
+            let location = verified_location(&cartridge, &err.error);
+            ctx.logs.push_terminal(
+                script_category(&err.error),
+                message.clone(),
+                location.clone(),
+            );
+            Some(RunFailure { message, location })
         }
-    }
-    SystemState::Shell {
-        shell,
-        loaded: Some(cartridge),
+    };
+    match origin {
+        RunOrigin::Shell => SystemState::Shell {
+            shell,
+            loaded: Some(cartridge),
+        },
+        RunOrigin::Code => back_to_code(shell, cartridge, failure, ctx),
     }
 }
 

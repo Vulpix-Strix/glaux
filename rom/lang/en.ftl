@@ -25,6 +25,7 @@ boot-system-rom = SYSTEM ROM { $version }
 boot-video = VIDEO
 system-detect = Detect
 system-did-not-run = { $action } did not run.
+system-esc-resume-r-restart-enter-stop = Esc: resume  R: restart  Enter: stop
 system-glaux-did-not-quit = Glaux did not quit.
 system-graphics = graphics
 system-identity = { $name } { $generation }  SYSTEM ROM { $rom-version }
@@ -260,8 +261,8 @@ code-rename-script-2 = RENAME SCRIPT
 code-replace = Replace...
 code-replace-2 = Replace
 code-replaced = Replaced { $value }
-code-select-all = Select all
 code-save-before-running = Save before running
+code-select-all = Select all
 code-show-line-numbers = Show line numbers
 code-signature-declaration = Declared on line { $line }.
 code-skipped-link-to-a-listed-folder = Skipped link to a listed folder: { $value }
@@ -280,6 +281,19 @@ code-up-down-pick-enter-toggle-esc-close = Up/Down: pick  Enter: toggle  Esc: cl
 code-up-down-pick-tab-accept-esc-close = Up/Down: pick  Tab: accept  Esc: close
 code-use-names-joined-by-without-or = Use names joined by /, without .., \ or :
 code-word-wrap = Word wrap
+
+## Log panel
+
+logs-all = All
+logs-cartridge = Cartridge
+logs-enter-open = Enter: open { $path }:{ $line }
+logs-header = LOGS  >={ $level }  { $source }  { $count }
+logs-messages-skipped = { $count } log messages skipped
+logs-nothing-logged = Nothing logged yet.
+logs-run-cancelled-graphics-not-saved = Run cancelled: the graphics could not be saved.
+logs-run-cancelled-script-not-saved = Run cancelled: { $path } could not be saved.
+logs-system = System
+logs-up-down-scroll-l-level-s-source-f12-close = Up/Down: scroll  L: level  S: source  F12: close
 
 ## Sprite editor
 

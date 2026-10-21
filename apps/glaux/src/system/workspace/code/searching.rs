@@ -259,7 +259,7 @@ impl CodeEditor {
 
     /// Puts the caret at the start of `line` of the active document, the
     /// line shown a third of the way down the view.
-    fn go_to_line(&mut self, session: &mut CodeSession, line: usize) {
+    pub(super) fn go_to_line(&mut self, session: &mut CodeSession, line: usize) {
         let Some(document) = session.active_document() else {
             return;
         };

@@ -147,6 +147,8 @@ pub enum CodeRequest {
     OpenDocs(DocTarget),
     /// Show the documentation with its search open.
     SearchDocs,
+    /// Run the cartridge from its entry point.
+    Run,
 }
 
 /// The list of every open tab, dropped from the strip's right end.
@@ -433,9 +435,14 @@ impl CodeEditor {
         &self.layout
     }
 
-    #[cfg(test)]
     pub fn settings(&self) -> EditorSettings {
         self.settings
+    }
+
+    /// Puts the caret at the start of `line`, counted from 0, in the
+    /// active document and scrolls to it.
+    pub fn show_line(&mut self, session: &mut CodeSession, line: usize) {
+        self.go_to_line(session, line);
     }
 
     /// Shows code with `settings` from now on. Documents already open are
@@ -556,7 +563,9 @@ impl CodeEditor {
             };
         }
         let Some(session) = session else {
-            return hand(self.layout.settings_button().contains(at));
+            return hand(
+                self.layout.settings_button().contains(at) || self.layout.run_button().contains(at),
+            );
         };
         if let Some(menu) = self.menu {
             let (_, rows) = self.menu_rows(session.tabs().len(), menu.focus);
@@ -564,7 +573,10 @@ impl CodeEditor {
         }
         let labels = labels(&self.layout.font, session);
         let on_strip = self.layout.strip_hit(&labels, session.tabs().scroll(), at);
-        if on_strip != StripHit::None || self.layout.settings_button().contains(at) {
+        if on_strip != StripHit::None
+            || self.layout.settings_button().contains(at)
+            || self.layout.run_button().contains(at)
+        {
             return SystemCursor::Hand;
         }
         if self.hover_opens_at(at, Some(session)) {
@@ -803,6 +815,16 @@ impl CodeEditor {
                 self.refresh_metrics(session);
             }
             return request;
+        }
+        if let InputEvent::PointerDown {
+            button: PointerButton::Primary,
+            at,
+            ..
+        } = event
+            && !self.has_overlay()
+            && self.layout.run_button().contains(at)
+        {
+            return Some(CodeRequest::Run);
         }
         if let InputEvent::PointerDown {
             button: PointerButton::Primary,

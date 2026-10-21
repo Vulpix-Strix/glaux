@@ -8,15 +8,18 @@ mod history;
 mod parser;
 mod scrollback;
 
+use std::borrow::Cow;
 use std::ops::Range;
+use std::rc::Rc;
 
 use glaux_i18n::Arg;
 use glaux_input::InputEvent;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::psg::{Adsr, CHANNELS, Waveform};
-use glaux_script::{LogEntry, LogLevel};
+use glaux_script::LogLevel;
 
 use super::line_editor::LineEditor;
+use super::logs::LogRecord;
 use super::{ACCENT, BACKGROUND, DIM, ERROR, Line, SystemInfo, TEXT, TRACE, WARN};
 use crate::cartridge::{CartridgeManifest, Language, LoadedCartridge};
 use crate::cartridge_fs::CartridgeStorage;
@@ -278,13 +281,13 @@ impl Shell {
             | InputEvent::SignatureHelp
             | InputEvent::Docs
             | InputEvent::Function(_)
-            | InputEvent::Back
-            | InputEvent::Forward
-            | InputEvent::ToggleSidebar
             | InputEvent::Run
             | InputEvent::Stop
             | InputEvent::Restart
             | InputEvent::ToggleLogs
+            | InputEvent::Back
+            | InputEvent::Forward
+            | InputEvent::ToggleSidebar
             | InputEvent::Copy
             | InputEvent::Cut
             | InputEvent::Paste
@@ -298,12 +301,17 @@ impl Shell {
         None
     }
 
-    /// Adds entries logged by a cartridge to the scrollback, keeping their
-    /// levels.
-    pub(super) fn log(&mut self, entries: impl IntoIterator<Item = LogEntry>) {
-        for entry in entries {
-            for line in log_lines(&entry.text) {
-                self.scrollback.push(Entry::Log(entry.level, line));
+    /// Adds log records to the scrollback, one entry per line and keeping
+    /// their levels.
+    pub(super) fn log(&mut self, records: impl IntoIterator<Item = Rc<LogRecord>>) {
+        for record in records {
+            let level = record.severity.shell_level();
+            let mut start = 0;
+            for line in record.message.split('\n') {
+                let end = start + line.len();
+                self.scrollback
+                    .push(Entry::Log(level, Rc::clone(&record), start..end));
+                start = end + 1;
             }
         }
     }
@@ -373,7 +381,8 @@ impl Shell {
         self.scrollback
             .iter()
             .map(|entry| match entry {
-                Entry::Banner(text) | Entry::Output(text) | Entry::Log(_, text) => text.clone(),
+                Entry::Banner(text) | Entry::Output(text) => text.clone(),
+                Entry::Log(_, record, lines) => expand_tabs(&record.message[lines.clone()]),
                 Entry::Command(text) => format!("{PROMPT}{text}"),
                 Entry::Error(text) => format!("! {text}"),
                 Entry::Warning(text) => {
@@ -557,13 +566,17 @@ struct EntryText {
 
 impl EntryText {
     fn new(entry: &Entry, prompt: &[char]) -> Self {
-        let (text, color, prompted) = match entry {
-            Entry::Banner(text) => (text, ACCENT, false),
-            Entry::Command(text) => (text, TEXT, true),
-            Entry::Output(text) => (text, TEXT, false),
-            Entry::Error(text) => (text, ERROR, false),
-            Entry::Warning(text) => (text, WARN, false),
-            Entry::Log(level, text) => (text, log_color(*level), false),
+        let (text, color, prompted): (Cow<'_, str>, _, _) = match entry {
+            Entry::Banner(text) => (text.into(), ACCENT, false),
+            Entry::Command(text) => (text.into(), TEXT, true),
+            Entry::Output(text) => (text.into(), TEXT, false),
+            Entry::Error(text) => (text.into(), ERROR, false),
+            Entry::Warning(text) => (text.into(), WARN, false),
+            Entry::Log(level, record, lines) => (
+                expand_tabs(&record.message[lines.clone()]).into(),
+                log_color(*level),
+                false,
+            ),
         };
         let prompted = if prompted { prompt.len() } else { 0 };
         let chars = prompt[..prompted]
@@ -675,24 +688,22 @@ fn log_color(level: LogLevel) -> u8 {
     }
 }
 
-/// Scrollback lines for one log entry: split at newlines, with tabs expanded
-/// to spaces because the shell wraps by character and has no tab glyph.
-fn log_lines(text: &str) -> impl Iterator<Item = String> + '_ {
-    text.split('\n').map(|line| {
-        let mut expanded = String::with_capacity(line.len());
-        let mut column = 0;
-        for ch in line.chars() {
-            if ch == '\t' {
-                let spaces = TAB_WIDTH - column % TAB_WIDTH;
-                expanded.extend(std::iter::repeat_n(' ', spaces));
-                column += spaces;
-            } else {
-                expanded.push(ch);
-                column += 1;
-            }
+/// `line` with tabs expanded to spaces, because the shell wraps by
+/// character and has no tab glyph.
+fn expand_tabs(line: &str) -> String {
+    let mut expanded = String::with_capacity(line.len());
+    let mut column = 0;
+    for ch in line.chars() {
+        if ch == '\t' {
+            let spaces = TAB_WIDTH - column % TAB_WIDTH;
+            expanded.extend(std::iter::repeat_n(' ', spaces));
+            column += spaces;
+        } else {
+            expanded.push(ch);
+            column += 1;
         }
-        expanded
-    })
+    }
+    expanded
 }
 
 #[cfg(test)]

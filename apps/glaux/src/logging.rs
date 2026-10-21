@@ -6,6 +6,10 @@ use std::io::{self, ErrorKind};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod diagnostics;
+
+pub use diagnostics::{Diagnostics, Field, TARGET as DIAGNOSTIC_TARGET};
+
 use anyhow::Context;
 use tracing::Subscriber;
 use tracing::level_filters::LevelFilter;
@@ -26,6 +30,14 @@ const SESSION_SUFFIX: &str = ".log";
 /// dropped under heavy load.
 pub struct Logging {
     _file_guard: Option<WorkerGuard>,
+    diagnostics: Option<Diagnostics>,
+}
+
+impl Logging {
+    /// Takes the diagnostics meant for the log panel, once.
+    pub fn take_diagnostics(&mut self) -> Option<Diagnostics> {
+        self.diagnostics.take()
+    }
 }
 
 /// Installs the global subscriber. INFO and above go to stderr, and DEBUG
@@ -58,9 +70,11 @@ pub fn init(data_dir: Option<&Path>) -> Logging {
         None => (None, None, Vec::new()),
     };
 
+    let (diagnostic_layer, diagnostics) = diagnostics::layer();
     let installed = tracing_subscriber::registry()
         .with(stderr_layer())
         .with(file_layer)
+        .with(diagnostic_layer)
         .try_init();
     if let Err(err) = installed {
         eprintln!("glaux: failed to install the log subscriber: {err}");
@@ -73,7 +87,10 @@ pub fn init(data_dir: Option<&Path>) -> Logging {
         tracing::warn!(error = %format!("{err:#}"), "failed to remove an old session log");
     }
 
-    Logging { _file_guard: guard }
+    Logging {
+        _file_guard: guard,
+        diagnostics: Some(diagnostics),
+    }
 }
 
 /// Installs the global subscriber with only the stderr output of [`init`],
@@ -85,7 +102,10 @@ pub fn init_stderr() -> Logging {
     if let Err(err) = installed {
         eprintln!("glaux: failed to install the log subscriber: {err}");
     }
-    Logging { _file_guard: None }
+    Logging {
+        _file_guard: None,
+        diagnostics: None,
+    }
 }
 
 /// INFO and above to stderr, unless `RUST_LOG` says otherwise.

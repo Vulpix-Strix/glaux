@@ -24,7 +24,7 @@ use crate::system::editor_settings::EditorSettings;
 use crate::system::syntax_theme;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
-use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
 use crate::ui_text;
 
 /// Side of the dot marking a tab whose document has unsaved edits.
@@ -58,6 +58,7 @@ impl CodeEditor {
         let hover_pointer = pointer.filter(|_| !self.has_overlay());
         let settings_lit = self.settings_dialog.is_some()
             || hover_pointer.is_some_and(|at| self.layout.settings_button().contains(at));
+        let run_lit = hover_pointer.is_some_and(|at| self.layout.run_button().contains(at));
         match session {
             Some(session) => {
                 painter.strip(session, hover_pointer, self.menu.is_some());
@@ -153,6 +154,7 @@ impl CodeEditor {
                 painter.empty_state(self.entry_error.as_deref());
             }
         }
+        painter.run_buttons(run_lit);
         painter.settings_button(ui, settings_lit);
         let hint = self.hint();
         let (status, color) = notice.unwrap_or((&hint, PALE));
@@ -366,7 +368,7 @@ impl Painter<'_> {
                 ("column", Arg::Text(&(caret.column + 1).to_string())),
             ],
         );
-        let position_x = self.layout.settings_button().x
+        let position_x = self.layout.run_button().x
             - self.cell_w()
             - self.layout.cells(&position) * self.cell_w();
         let path_x = tag_rect.right() + self.cell_w();
@@ -378,6 +380,28 @@ impl Painter<'_> {
 
     fn options_bar_empty(&mut self) {
         self.options_rule();
+    }
+
+    /// The plates that run and stop the cartridge, `run_lit` while the
+    /// pointer is over the first. Stop is drawn disabled: nothing runs
+    /// while the editor is shown.
+    fn run_buttons(&mut self, run_lit: bool) {
+        let run = self.layout.run_button();
+        let stop = self.layout.stop_button();
+        self.fill(run, if run_lit { HOVER_SHADE } else { BAR });
+        self.fill(stop, BAR);
+        // A right-pointing triangle, four columns wide and seven tall.
+        for column in 0..4 {
+            fill_rect(
+                self.framebuffer,
+                run.x + 3 + column,
+                run.y + 1 + column,
+                1,
+                7 - 2 * column,
+                OK,
+            );
+        }
+        fill_rect(self.framebuffer, stop.x + 2, stop.y + 2, 5, 5, IDLE_SHADE);
     }
 
     /// The cogwheel opening EDITOR SETTINGS, `lit` while hovered or open.

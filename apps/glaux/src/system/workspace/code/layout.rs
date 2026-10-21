@@ -33,6 +33,9 @@ pub const SETTINGS_ART: i32 = 12;
 /// Transparent margin around the settings icon's art.
 pub const SETTINGS_MARGIN: i32 = (ICON_SIZE as i32 - SETTINGS_ART) / 2;
 
+/// Side of the plates for running and stopping the cartridge.
+pub const RUN_PLATE: i32 = 9;
+
 /// Cell size of the system font and where the view starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Metrics {
@@ -106,6 +109,25 @@ impl CodeLayout {
             y: self.options.y,
             width: SETTINGS_ART,
             height: SETTINGS_ART,
+        }
+    }
+
+    /// The plate that stops the cartridge, left of the settings button.
+    /// Nothing runs while the view is shown, so it only marks the state.
+    pub fn stop_button(&self) -> Rect {
+        Rect {
+            x: self.settings_button().x - STRIP_PAD - RUN_PLATE,
+            y: self.options.y + (self.options.height - 1 - RUN_PLATE) / 2,
+            width: RUN_PLATE,
+            height: RUN_PLATE,
+        }
+    }
+
+    /// The plate that runs the cartridge, left of the stop plate.
+    pub fn run_button(&self) -> Rect {
+        Rect {
+            x: self.stop_button().x - STRIP_PAD - RUN_PLATE,
+            ..self.stop_button()
         }
     }
 

@@ -21,7 +21,7 @@ fn started_rhai(fixture: &Fixture, script: &str) -> System {
 }
 
 /// A system at the shell navigating `fixture`'s cartridge root.
-fn shell_with_cartridge_root(fixture: &Fixture) -> System {
+pub(super) fn shell_with_cartridge_root(fixture: &Fixture) -> System {
     let mut system = System::new(
         info(),
         sounds(),

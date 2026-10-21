@@ -55,7 +55,7 @@ fn main() -> anyhow::Result<()> {
 
     let data_dir = app_dirs::data_dir();
     // Held until `main` returns so the file log is flushed on exit.
-    let _logging = match startup {
+    let mut logging = match startup {
         Startup::Primary(_) => logging::init(data_dir.as_deref()),
         Startup::Forwarded | Startup::ForwardFailed(_) => logging::init_stderr(),
     };
@@ -101,6 +101,7 @@ fn main() -> anyhow::Result<()> {
         config_dir.as_deref(),
         data_dir.as_deref(),
         &instance,
+        logging.take_diagnostics(),
     );
     match &result {
         Ok(()) => tracing::info!("clean shutdown"),
@@ -114,6 +115,7 @@ fn run(
     config_dir: Option<&Path>,
     data_dir: Option<&Path>,
     instance: &PrimaryInstance,
+    diagnostics: Option<logging::Diagnostics>,
 ) -> anyhow::Result<()> {
     let cartridges = CartridgeStorage::open(data_dir);
 
@@ -136,6 +138,9 @@ fn run(
             .map(editor_settings_file::load)
             .unwrap_or_default(),
     );
+    if let Some(diagnostics) = diagnostics {
+        system = system.with_diagnostics(diagnostics);
+    }
 
     let saved = config_dir.and_then(window_state::load);
     let size = saved.map_or(
@@ -158,12 +163,16 @@ fn run(
 
     // Declared before the output that borrows it, so it is dropped after.
     let audio_device = AudioDevice::open()
-        .inspect_err(|err| tracing::warn!(error = %err, "audio unavailable, running silent"))
+        .inspect_err(|err| {
+            tracing::warn!(target: logging::DIAGNOSTIC_TARGET, error = %err, "audio unavailable, running silent");
+        })
         .ok();
     let mut audio = audio_device.as_ref().and_then(|device| {
         device
             .output(SAMPLE_RATE)
-            .inspect_err(|err| tracing::warn!(error = %err, "audio unavailable, running silent"))
+            .inspect_err(|err| {
+            tracing::warn!(target: logging::DIAGNOSTIC_TARGET, error = %err, "audio unavailable, running silent");
+        })
             .ok()
     });
     let mut samples = [0; SAMPLES_PER_TICK];
@@ -309,6 +318,7 @@ fn serve_host_requests(system: &mut System, picker: &mut FilePicker, config_dir:
                 match editor_settings_file::save(dir, &settings) {
                     Ok(()) => tracing::debug!(?settings, "editor settings saved"),
                     Err(err) => tracing::warn!(
+                        target: logging::DIAGNOSTIC_TARGET,
                         error = %format!("{err:#}"),
                         "failed to save the editor settings"
                     ),
@@ -324,7 +334,11 @@ fn pump_audio(audio: &mut Option<AudioOutput<'_>>) {
     if let Some(output) = audio
         && let Err(err) = output.pump()
     {
-        tracing::warn!(error = %err, "audio stream failed, running silent");
+        tracing::warn!(
+            target: logging::DIAGNOSTIC_TARGET,
+            error = %err,
+            "audio stream failed, running silent"
+        );
         *audio = None;
     }
 }
