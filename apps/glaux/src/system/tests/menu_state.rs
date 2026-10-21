@@ -74,8 +74,42 @@ fn code_idle() -> MenuState {
         replace: true,
         go_to_line: true,
         documentation: true,
+        run: true,
+        toggle_logs: true,
         ..none()
     }
+}
+
+/// What the sprite editor offers with nothing edited.
+fn sprites_idle() -> MenuState {
+    MenuState {
+        run: true,
+        toggle_logs: true,
+        ..only_documentation()
+    }
+}
+
+#[test]
+fn a_run_from_code_offers_stop_restart_and_the_log() {
+    let fixture = Fixture::new("sys-menu-run-from-code");
+    let running = in_code(&fixture, "-- main\n").update(&[InputEvent::Run]);
+    assert!(is_running(&running));
+    let offered = MenuState {
+        stop: true,
+        restart: true,
+        toggle_logs: true,
+        ..none()
+    };
+    assert_eq!(running.menu_state(), offered);
+    // The log panel is closed on the pause screen, which lists its own keys.
+    let paused = press_break(running);
+    assert_eq!(
+        paused.menu_state(),
+        MenuState {
+            toggle_logs: false,
+            ..offered
+        }
+    );
 }
 
 #[test]
@@ -91,7 +125,14 @@ fn boot_credits_and_cartridges_offer_nothing() {
     let fixture = Fixture::new("sys-menu-cartridge");
     let running = started(&fixture, "-- main\n");
     assert!(is_running(&running));
-    assert_eq!(running.menu_state(), none());
+    // Only the log panel is offered over a run from the shell.
+    assert_eq!(
+        running.menu_state(),
+        MenuState {
+            toggle_logs: true,
+            ..none()
+        }
+    );
     let paused = press_break(running);
     assert!(is_paused_game(&paused));
     assert_eq!(paused.menu_state(), none());
@@ -318,7 +359,7 @@ fn the_sprite_editor_offers_save_and_history_and_the_other_views_nothing() {
     let fixture = Fixture::new("sys-menu-sprites");
     let system = open_sprites(with_video_assets(&fixture));
     assert_eq!(workspace_tab(&system), Tab::Sprites);
-    assert_eq!(system.menu_state(), only_documentation());
+    assert_eq!(system.menu_state(), sprites_idle());
 
     let fixture = Fixture::new("sys-menu-sprites-edited");
     let system = edited(&fixture);
@@ -327,8 +368,7 @@ fn the_sprite_editor_offers_save_and_history_and_the_other_views_nothing() {
         MenuState {
             save: true,
             undo: true,
-            documentation: true,
-            ..none()
+            ..sprites_idle()
         }
     );
     let system = system.update(&[InputEvent::Undo]);
@@ -336,14 +376,20 @@ fn the_sprite_editor_offers_save_and_history_and_the_other_views_nothing() {
         system.menu_state(),
         MenuState {
             redo: true,
-            documentation: true,
-            ..none()
+            ..sprites_idle()
         }
     );
 
     let map = system.update(&click(tab_centre(Tab::Map)));
     assert_eq!(workspace_tab(&map), Tab::Map);
-    assert_eq!(map.menu_state(), only_documentation());
+    // Nothing runs from a view that edits nothing yet, but the log can be read.
+    assert_eq!(
+        map.menu_state(),
+        MenuState {
+            toggle_logs: true,
+            ..only_documentation()
+        }
+    );
 }
 
 #[test]

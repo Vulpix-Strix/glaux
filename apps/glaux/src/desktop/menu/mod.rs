@@ -35,10 +35,14 @@ pub enum MenuCommand {
     /// Opens the documentation browser on its front page. F1 is not the
     /// same: in the Code view it looks up the symbol under the caret.
     Documentation,
+    Run,
+    Stop,
+    Restart,
+    ToggleLogs,
 }
 
 impl MenuCommand {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 19] = [
         Self::NewFile,
         Self::OpenFile,
         Self::CloseDocument,
@@ -54,6 +58,10 @@ impl MenuCommand {
         Self::GoToLine,
         Self::ToggleSidebar,
         Self::Documentation,
+        Self::Run,
+        Self::Stop,
+        Self::Restart,
+        Self::ToggleLogs,
     ];
 
     pub fn id(self) -> &'static str {
@@ -73,6 +81,10 @@ impl MenuCommand {
             Self::GoToLine => "edit.go-to-line",
             Self::ToggleSidebar => "view.toggle-sidebar",
             Self::Documentation => "help.documentation",
+            Self::Run => "run.run",
+            Self::Stop => "run.stop",
+            Self::Restart => "run.restart",
+            Self::ToggleLogs => "run.toggle-logs",
         }
     }
 
@@ -93,6 +105,10 @@ impl MenuCommand {
             Self::GoToLine => "Go to Line",
             Self::ToggleSidebar => "Toggle Sidebar",
             Self::Documentation => "Documentation",
+            Self::Run => "Run",
+            Self::Stop => "Stop",
+            Self::Restart => "Restart",
+            Self::ToggleLogs => "Toggle Logs",
         }
     }
 
@@ -114,6 +130,10 @@ impl MenuCommand {
             Self::GoToLine => (command, Code::KeyL),
             Self::ToggleSidebar => (command, Code::KeyB),
             Self::Documentation => (command | Modifiers::SHIFT, Code::Slash),
+            Self::Run => (command, Code::KeyR),
+            Self::Stop => (command, Code::Period),
+            Self::Restart => (command | Modifiers::SHIFT, Code::KeyR),
+            Self::ToggleLogs => (command | Modifiers::SHIFT, Code::KeyL),
         }
     }
 
@@ -136,6 +156,10 @@ impl MenuCommand {
             Self::GoToLine => InputEvent::GoToLine,
             Self::ToggleSidebar => InputEvent::ToggleSidebar,
             Self::Documentation => return None,
+            Self::Run => InputEvent::Run,
+            Self::Stop => InputEvent::Stop,
+            Self::Restart => InputEvent::Restart,
+            Self::ToggleLogs => InputEvent::ToggleLogs,
         })
     }
 
@@ -157,6 +181,10 @@ impl MenuCommand {
             Self::GoToLine => state.go_to_line,
             Self::ToggleSidebar => state.toggle_sidebar,
             Self::Documentation => state.documentation,
+            Self::Run => state.run,
+            Self::Stop => state.stop,
+            Self::Restart => state.restart,
+            Self::ToggleLogs => state.toggle_logs,
         }
     }
 }
@@ -211,6 +239,10 @@ mod tests {
                 Some(InputEvent::GoToLine),
                 Some(InputEvent::ToggleSidebar),
                 None,
+                Some(InputEvent::Run),
+                Some(InputEvent::Stop),
+                Some(InputEvent::Restart),
+                Some(InputEvent::ToggleLogs),
             ]
         );
     }
@@ -251,6 +283,10 @@ mod tests {
             MenuCommand::GoToLine => state.go_to_line = true,
             MenuCommand::ToggleSidebar => state.toggle_sidebar = true,
             MenuCommand::Documentation => state.documentation = true,
+            MenuCommand::Run => state.run = true,
+            MenuCommand::Stop => state.stop = true,
+            MenuCommand::Restart => state.restart = true,
+            MenuCommand::ToggleLogs => state.toggle_logs = true,
         }
         state
     }

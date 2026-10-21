@@ -88,6 +88,16 @@ impl NativeMenu {
         view.append_items(&[&item(MenuCommand::ToggleSidebar)])
             .context("failed to fill the View menu")?;
 
+        let run = Submenu::new("Run", true);
+        run.append_items(&[
+            &item(MenuCommand::Run),
+            &item(MenuCommand::Restart),
+            &item(MenuCommand::Stop),
+            &PredefinedMenuItem::separator(),
+            &item(MenuCommand::ToggleLogs),
+        ])
+        .context("failed to fill the Run menu")?;
+
         let window = Submenu::new("Window", true);
         window
             .append_items(&[
@@ -102,7 +112,7 @@ impl NativeMenu {
         help.append_items(&[&item(MenuCommand::Documentation)])
             .context("failed to fill the Help menu")?;
 
-        menu.append_items(&[&app, &file, &edit, &view, &window, &help])
+        menu.append_items(&[&app, &file, &edit, &view, &run, &window, &help])
             .context("failed to fill the menu bar")?;
 
         menu.init_for_nsapp();

@@ -35,21 +35,33 @@ impl Workspace {
             documentation: true,
             ..MenuState::default()
         };
+        // Running comes from the Code and Sprites views, where F5 does the
+        // same. The log panel opens wherever no dialog is up.
+        let running = MenuState {
+            run: true,
+            toggle_logs: true,
+            ..documentation
+        };
         match self.route() {
             Route::Modal | Route::SpriteDialog => MenuState::default(),
             Route::CodeOverlay => self.code.menu_state(code),
             Route::Docs => self.docs.menu_state(),
             Route::Code => MenuState {
                 documentation: true,
+                run: true,
+                toggle_logs: true,
                 ..self.code.menu_state(code)
             },
-            Route::Sprites => sprites.map_or(documentation, |document| MenuState {
+            Route::Sprites => sprites.map_or(running, |document| MenuState {
                 save: document.is_modified(),
                 undo: document.can_undo(),
                 redo: document.can_redo(),
-                ..documentation
+                ..running
             }),
-            Route::Inert => documentation,
+            Route::Inert => MenuState {
+                toggle_logs: true,
+                ..documentation
+            },
         }
     }
 
