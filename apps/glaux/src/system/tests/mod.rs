@@ -27,6 +27,7 @@ mod docs_shell;
 mod drawing;
 mod input;
 mod lifecycle;
+mod log_perf;
 mod menu_state;
 mod new_cartridge;
 mod pausing;
