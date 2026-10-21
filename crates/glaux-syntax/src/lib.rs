@@ -20,4 +20,4 @@ pub use grammar::Grammar;
 pub use highlighter::{Highlighter, HighlighterError};
 pub use kind::SyntaxKind;
 pub use resolve::Span;
-pub use scope::{Definition, DefinitionKind, Site};
+pub use scope::{Definition, DefinitionKind, Export, Exports, Import, Site, Symbol, SymbolKind};

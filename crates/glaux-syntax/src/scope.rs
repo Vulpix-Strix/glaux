@@ -601,5 +601,9 @@ fn fields<'t>(node: Node<'t>) -> Vec<(Node<'t>, Option<&'t str>)> {
     children
 }
 
+mod symbols;
+
+pub use symbols::{Export, Exports, Import, Symbol, SymbolKind};
+
 #[cfg(test)]
 mod tests;
