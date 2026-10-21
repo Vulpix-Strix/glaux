@@ -20,6 +20,8 @@ impl DocsBrowser {
         MenuState {
             close_document: !self.tabs.is_empty(),
             find: true,
+            navigate_back: self.can_go(true),
+            navigate_forward: self.can_go(false),
             toggle_sidebar: true,
             ..MenuState::default()
         }

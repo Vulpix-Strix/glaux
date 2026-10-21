@@ -73,6 +73,8 @@ fn code_idle() -> MenuState {
         find: true,
         replace: true,
         go_to_line: true,
+        go_to_definition: true,
+        go_to_symbol: true,
         documentation: true,
         run: true,
         toggle_logs: true,
@@ -469,4 +471,24 @@ fn documentation_opens_only_where_it_is_offered() {
     let system = in_code(&fixture, "-- main\n").update(&[InputEvent::GoToLine]);
     let system = system.open_documentation();
     assert!(!docs_open(&system));
+}
+
+#[test]
+fn back_and_forward_are_offered_only_with_a_place_to_go_to() {
+    let fixture = Fixture::new("sys-menu-navigate");
+    let system = in_code(&fixture, "local function f() end\nf()\n");
+    let state = system.menu_state();
+    assert!(state.go_to_definition && state.go_to_symbol);
+    assert!(!state.navigate_back && !state.navigate_forward);
+
+    let system = system.update(&[
+        InputEvent::Down { select: false },
+        InputEvent::GoToDefinition,
+    ]);
+    let state = system.menu_state();
+    assert!(state.navigate_back && !state.navigate_forward);
+
+    let system = system.update(&[InputEvent::Back]);
+    let state = system.menu_state();
+    assert!(!state.navigate_back && state.navigate_forward);
 }

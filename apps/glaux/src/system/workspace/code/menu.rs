@@ -37,6 +37,10 @@ impl CodeEditor {
         state.find = true;
         state.replace = true;
         state.go_to_line = true;
+        state.go_to_definition = true;
+        state.go_to_symbol = true;
+        state.navigate_back = session.can_go_back();
+        state.navigate_forward = session.can_go_forward();
         match self.find.as_ref().filter(|bar| bar.focus().is_some()) {
             Some(bar) => {
                 let editing = bar.focused_field().map(in_field).unwrap_or_default();

@@ -84,6 +84,16 @@ impl NativeMenu {
         ])
         .context("failed to fill the Edit menu")?;
 
+        let go = Submenu::new("Go", true);
+        go.append_items(&[
+            &item(MenuCommand::GoToDefinition),
+            &item(MenuCommand::GoToSymbol),
+            &PredefinedMenuItem::separator(),
+            &item(MenuCommand::NavigateBack),
+            &item(MenuCommand::NavigateForward),
+        ])
+        .context("failed to fill the Go menu")?;
+
         let view = Submenu::new("View", true);
         view.append_items(&[&item(MenuCommand::ToggleSidebar)])
             .context("failed to fill the View menu")?;
@@ -112,7 +122,7 @@ impl NativeMenu {
         help.append_items(&[&item(MenuCommand::Documentation)])
             .context("failed to fill the Help menu")?;
 
-        menu.append_items(&[&app, &file, &edit, &view, &run, &window, &help])
+        menu.append_items(&[&app, &file, &edit, &go, &view, &run, &window, &help])
             .context("failed to fill the menu bar")?;
 
         menu.init_for_nsapp();
