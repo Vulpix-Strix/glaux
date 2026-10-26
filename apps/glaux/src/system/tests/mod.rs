@@ -5,16 +5,18 @@ use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use glaux_input::{Button, Key, Point, PointerButton};
 use glaux_machine::font::{BitmapFont, FontMetrics};
-use glaux_machine::framebuffer::{HEIGHT, WIDTH};
+use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::ink_image::InkImage;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::{
     Adsr, CHANNELS, ENVELOPE_FULL, EnvelopeStage, SAMPLES_PER_TICK, Waveform,
 };
-use glaux_machine::system_rom::{Cursor, SystemSfx, SystemUi};
+use glaux_machine::system_rom::{Cursor, SystemRom, SystemSfx, SystemUi};
+use glaux_video::draw::{clear, draw_text};
 use pretty_assertions::assert_eq;
 use screen::*;
 use semver::Version;
+use shell::CartridgeSlot;
 use workspace::Tab;
 
 mod boot_sequence;
