@@ -56,6 +56,9 @@
 - Use property-based, snapshot, or mutation testing only when they provide meaningful value.
 - Never weaken assertions merely to make tests pass.
 - Do not add tests solely to increase coverage or test count.
+- Place unit tests by size. Keep a short set (roughly under 60 lines) in an inline `#[cfg(test)] mod tests { ... }`. Use `foo/tests.rs` for longer ones, or `foo/tests/` split by topic when the tests are large. Do not use `#[path]` for tests.
+- Move tests to a crate's `tests/` directory only when they use nothing but its public API and need no `cfg(test)` fixtures. `apps/glaux` is a binary crate, so its tests stay inside the crate.
+- Do not widen visibility, or add a `lib.rs`, only to move tests.
 
 ## Tooling and validation
 
