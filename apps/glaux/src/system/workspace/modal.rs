@@ -1,4 +1,4 @@
-//! What the workspace asks in a modal dialog, and the advice the dialogs carry.
+//! The modal dialogs the workspace opens and the advice they carry.
 
 use super::answers::phrase;
 use super::dialog::{Dialog, DialogLayout};

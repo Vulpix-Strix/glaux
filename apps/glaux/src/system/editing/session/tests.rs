@@ -6,6 +6,7 @@ use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::system::editing::cursor::Caret;
 use crate::system::editing::document::CodeDocumentError;
+use glaux_docs::DocId;
 use pretty_assertions::assert_eq;
 
 /// A Luau cartridge at `/games/pong` with `files` written into it.

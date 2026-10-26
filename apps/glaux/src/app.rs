@@ -1,9 +1,8 @@
-//! The running application: the machine and system, the window that shows
-//! them and the loop that moves one into the other.
+//! The running application. [`run`] builds the machine, the system and the
+//! window, and [`App`] moves frames between them until the system quits.
 //!
-//! [`run`] builds everything and [`App`] drives it one frame at a time. The
-//! platform pieces it uses (dialogs, links, the menu bar, window state)
-//! live in [`crate::desktop`] and know nothing about this module.
+//! Dialogs, links, the menu bar and the saved window state come from
+//! [`crate::desktop`], which does not depend on this module.
 
 mod audio;
 mod host_work;
@@ -54,10 +53,9 @@ pub fn run(launch: Launch<'_>) -> anyhow::Result<()> {
     let machine = Machine::new(rom::load()?);
     let system = new_system(&machine, config_dir, data_dir, diagnostics);
 
-    // The window outlives everything that draws on it or hangs off it, and
-    // the audio device outlives the stream `App` plays through it. Locals
-    // drop in reverse order, so the app goes first, then the device, then
-    // the window.
+    // `App` borrows the window and the audio device instead of owning them.
+    // Locals drop in reverse order, so the app (with its audio stream and
+    // menu bar) goes first, then the device, then the window.
     let (mut host, window) = WindowLifecycle::open(session, config_dir)?;
     let menu = Menu::install();
     let audio_device = audio::open_device();
@@ -113,7 +111,8 @@ struct Shared<'a> {
     instance: &'a PrimaryInstance,
 }
 
-/// The machine, and what presents it and plays it.
+/// The machine and the host resources a frame needs. The system itself is
+/// passed through each frame by value.
 struct App<'a> {
     // The menu bar hangs off the window, so it is dropped first.
     menu: Menu,
@@ -237,8 +236,8 @@ impl<'a> App<'a> {
         Ok(())
     }
 
-    /// Advances the system by the ticks due since the last frame, carrying
-    /// out what it asks of the host and playing what it sounds after each.
+    /// Runs the ticks due since the last frame. After each tick it serves the
+    /// system's host requests and queues the audio the tick produced.
     fn advance(&mut self, mut system: System) -> System {
         let now = Instant::now();
         let ticks = self.clock.advance(now - self.last);

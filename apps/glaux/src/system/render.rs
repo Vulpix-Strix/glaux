@@ -1,4 +1,4 @@
-//! Drawing the system.
+//! Drawing the system into the machine's framebuffer.
 
 use crate::system::running::RunningCartridge;
 use crate::system::screen::{BACKGROUND, text_columns, text_rows};

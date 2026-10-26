@@ -1,4 +1,5 @@
-//! The shell as the active UI.
+//! Transitions out of the shell, including the commands that start a
+//! cartridge, load one or open another screen.
 
 use super::running::start;
 use super::workspace::open_workspace;

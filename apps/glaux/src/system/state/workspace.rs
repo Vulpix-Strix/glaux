@@ -1,4 +1,5 @@
-//! The editor workspace as the active UI.
+//! Opening the editor workspace and serving the requests it makes while it
+//! is the active UI.
 
 use super::running::{save_before_running, start};
 use super::{Context, Documents};

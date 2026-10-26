@@ -1,5 +1,4 @@
-//! The tab bar: which views there are, where the bar draws them and what it
-//! calls them.
+//! The workspace's views and the tab bar that switches between them.
 
 use super::{
     DOCS_MARGIN, DOCS_PAD, ELLIPSIS, HINT_GAP, MIN_NAME_CELLS, NAME_GAP, NAME_PAD, PLATE_PAD,

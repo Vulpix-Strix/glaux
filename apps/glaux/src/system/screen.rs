@@ -1,4 +1,4 @@
-//! The system UI's palette indices and the text lines it draws with them.
+//! The palette indices of the system UI and the text lines drawn with them.
 
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 

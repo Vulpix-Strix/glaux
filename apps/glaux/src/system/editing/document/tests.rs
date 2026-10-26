@@ -2,7 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::*;
+use crate::cartridge::LoadedCartridge;
 use crate::cartridge::fixture::write_cartridge;
+use crate::cartridge_fs::FsError;
 use crate::cartridge_fs::fixture::Fixture;
 use pretty_assertions::assert_eq;
 

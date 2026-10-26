@@ -1,9 +1,8 @@
 //! What the workspace asks of the system, grouped by what carries it out.
 //!
-//! The workspace never touches the cartridge's files or the host. It asks
-//! with a [`WorkspaceRequest`], and the system answers through the methods
-//! its docs name, so a request is complete once the answer has reached the
-//! workspace.
+//! The workspace never touches the cartridge's files or the host. It returns
+//! a [`WorkspaceRequest`], and the system carries it out and reports the
+//! outcome through the `Workspace` method each variant names.
 
 use crate::cartridge::VideoAsset;
 use crate::cartridge::source::SourcePath;

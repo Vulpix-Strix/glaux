@@ -1,5 +1,5 @@
-//! Where an input event goes: the modal dialog, the tab bar, the documentation
-//! browser or the open view's editor.
+//! Routing of input events to the modal dialog, the tab bar, the
+//! documentation browser or the open view's editor.
 
 use super::code::CodeRequest;
 use super::docs::{DocTarget, DocsRequest};

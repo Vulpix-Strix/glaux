@@ -1,5 +1,5 @@
-//! The Glaux window from opening to the last frame: where it opens, how its
-//! state is kept between launches, and when it maximizes.
+//! Opening the Glaux window where it was last left, and saving that state
+//! when the application ends.
 
 use std::path::Path;
 
