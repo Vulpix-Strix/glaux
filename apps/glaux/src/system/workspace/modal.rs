@@ -1,12 +1,13 @@
 //! What the workspace asks in a modal dialog, and the advice the dialogs carry.
 
-use super::super::code_document::{DocumentId, SourceConflict, SourceConflictKind};
-use super::super::sprite_document::{Conflict, ConflictKind, DiskAsset};
+use super::answers::phrase;
 use super::dialog::{Dialog, DialogLayout};
-use super::{Rect, Route, Workspace, phrase};
+use super::{Rect, Route, Workspace};
 use crate::cartridge::CartridgeError;
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge_fs::FsError;
+use crate::system::code_document::{DocumentId, SourceConflict, SourceConflictKind};
+use crate::system::sprite_document::{Conflict, ConflictKind, DiskAsset};
 use crate::ui_text;
 use glaux_i18n::Arg;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};

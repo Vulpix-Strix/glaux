@@ -2,6 +2,7 @@ use std::cell::Cell;
 
 use super::*;
 use crate::ui_text;
+use glaux_input::Point;
 
 thread_local! {
     /// The documentation the browser reads on this thread instead of the

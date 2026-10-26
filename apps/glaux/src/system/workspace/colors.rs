@@ -1,8 +1,8 @@
 //! How the workspace shows the cartridge's colors.
 
-use super::super::sprite_document::SpriteDocument;
 use super::sprites::SpriteSource;
 use super::{SYSTEM_COLORS, Workspace};
+use crate::system::sprite_document::SpriteDocument;
 use crate::ui_text;
 use glaux_machine::obj_palette::ObjPalettes;
 use glaux_machine::palette::Palette;

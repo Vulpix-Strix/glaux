@@ -1,5 +1,9 @@
+use super::tab::text_width;
 use super::*;
+use crate::cartridge::{Language, LoadedCartridge};
 use crate::system::test_font::LAYOUT_FONT;
+use glaux_input::{InputEvent, Point, PointerButton};
+use glaux_machine::framebuffer::WIDTH;
 use pretty_assertions::assert_eq;
 
 mod cursor;
