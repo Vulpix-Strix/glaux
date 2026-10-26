@@ -12,7 +12,8 @@ use glaux_machine::system_rom::{SystemRom, SystemSfx};
 use glaux_video::draw::{clear, draw_text_scaled, fill_rect};
 use semver::Version;
 
-use super::{ACCENT, BACKGROUND, DIM, Line, OK, TEXT, identity_line};
+use super::identity_line;
+use super::screen::{ACCENT, BACKGROUND, DIM, Line, OK, TEXT};
 use crate::ui_text;
 
 /// Ticks spent on the power-on intro before the diagnostic screen.

@@ -13,8 +13,9 @@ use glaux_machine::font::BitmapFont;
 use glaux_syntax::{Grammar, Highlighter, SyntaxKind};
 
 use super::LanguageFilter;
+use crate::system::screen::{ACCENT, DIM, PALE, TEXT, WARN};
+use crate::system::syntax_theme;
 use crate::system::workspace::{BAR, take_cells};
-use crate::system::{ACCENT, DIM, PALE, TEXT, WARN, syntax_theme};
 use crate::ui_text;
 
 /// Pixels between two blocks.

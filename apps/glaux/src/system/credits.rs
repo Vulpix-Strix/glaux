@@ -23,7 +23,7 @@ use paint::{Painter, ROW};
 use roll::Roll;
 use system_page::SystemPage;
 
-use super::BACKGROUND;
+use super::screen::BACKGROUND;
 
 const KEYS: [(&str, &str); 12] = [
     ("Up/Down", "credits-key-move"),

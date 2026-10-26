@@ -23,8 +23,8 @@ use super::layout::{
 use super::sheet::{SheetView, Visible, grid_position};
 use super::{EditorDialog, SpriteEditor, SpriteSource};
 use crate::rom::ICON_SIZE;
+use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
-use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::ui_text;
 
 /// The two colors of the checkerboard behind transparent pixels.

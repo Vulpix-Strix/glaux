@@ -4,8 +4,8 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
+use crate::system::screen::{BACKGROUND, DIM};
 use crate::system::workspace::{BAR, Rect};
-use crate::system::{BACKGROUND, DIM};
 
 /// Space the hard shadow takes right of and below a box.
 pub const SHADOW: i32 = 2;

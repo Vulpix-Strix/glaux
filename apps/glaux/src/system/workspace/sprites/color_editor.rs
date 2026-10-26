@@ -16,7 +16,7 @@ use glaux_video::draw::{ObjPaletteChoice, draw_obj_tile_scaled, draw_text, fill_
 use super::SpriteSource;
 use super::layout::Metrics;
 use super::render::{checker, contrasting, outline};
-use crate::system::ERROR;
+use crate::system::screen::ERROR;
 use crate::system::sprite_document::{
     CODE_COLORS, ColorScope, ColorTarget, ColorUses, Spare, spare_master,
 };

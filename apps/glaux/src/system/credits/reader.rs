@@ -7,7 +7,7 @@ use glaux_machine::framebuffer::WIDTH;
 
 use super::catalog::Catalog;
 use super::paint::{BAR, Painter, ROW};
-use crate::system::{BACKGROUND, TEXT};
+use crate::system::screen::{BACKGROUND, TEXT};
 use crate::ui_text;
 use glaux_i18n::Arg;
 

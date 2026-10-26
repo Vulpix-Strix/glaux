@@ -6,7 +6,7 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 
 use super::prompt::{Prompt, PromptInput, PromptLayout};
-use crate::system::ERROR;
+use crate::system::screen::ERROR;
 use crate::system::workspace::dialog::INK;
 use crate::system::workspace::text_field::{Accepts, TextField};
 use crate::ui_text;

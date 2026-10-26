@@ -21,7 +21,7 @@ use super::color_editor::fit;
 use super::layout::Metrics;
 use super::render::{checker, outline};
 use crate::sprite_import::{FitSummary, Fitted, SheetSource};
-use crate::system::DIM;
+use crate::system::screen::DIM;
 use crate::system::sprite_document::{ReplaceImpact, SpriteDocument};
 use crate::system::video::{CartridgeVideo, CartridgeVideoDefaults};
 use crate::system::workspace::dialog::{

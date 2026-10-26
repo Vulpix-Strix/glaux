@@ -27,6 +27,7 @@ mod logs;
 mod menu_state;
 mod pause;
 mod running;
+mod screen;
 mod sfx;
 mod shell;
 mod sprite_document;
@@ -59,7 +60,7 @@ use workspace::{DocsApart, DocsStart, Tab, Workspace, WorkspaceRequest, Workspac
 use glaux_i18n::Arg;
 use glaux_input::{InputEvent, InputMode, Point};
 use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
+use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::machine::{GENERATION, NAME};
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
@@ -68,6 +69,7 @@ use glaux_script::{RuntimeError, ScriptError};
 use glaux_video::draw::{clear, draw_text, fill_rect};
 use pause::PauseOverlay;
 use running::{FailedStart, RunOrigin, RunningCartridge, StartError};
+use screen::{BACKGROUND, text_columns, text_rows};
 use semver::Version;
 use sfx::SystemSound;
 use shell::{CartridgeSlot, ShellRequest, cartridge_identity};
@@ -82,17 +84,6 @@ use crate::cartridge_fs::CartridgeStorage;
 use crate::logging::Diagnostics;
 use crate::sprite_import::SheetSource;
 use crate::ui_text;
-
-// System UI colors, as indices into the system palette (Zughy 32).
-const BACKGROUND: u8 = 11;
-const TEXT: u8 = 16;
-const DIM: u8 = 14;
-const PALE: u8 = 15;
-const OK: u8 = 8;
-const ACCENT: u8 = 18;
-const ERROR: u8 = 28;
-const TRACE: u8 = 13;
-const WARN: u8 = 26;
 
 /// Where the system is in its own navigation. Each variant owns exactly the
 /// state that phase needs, and transitions consume one variant to build the
@@ -2031,54 +2022,6 @@ fn stop(
             loaded: Some(cartridge),
         },
         RunOrigin::Code => back_to_code(shell, cartridge, failure, ctx),
-    }
-}
-
-/// Character cells that fit across the screen inside the margin left by
-/// [`Line::origin`].
-fn text_columns(cell_w: i32) -> usize {
-    let cells = WIDTH as i32 / cell_w.max(1);
-    usize::try_from(cells - 2).unwrap_or(0)
-}
-
-/// Character rows that fit down the screen inside the margin left by
-/// [`Line::origin`].
-fn text_rows(cell_h: i32) -> usize {
-    let cells = HEIGHT as i32 / cell_h.max(1);
-    usize::try_from(cells - 2).unwrap_or(0)
-}
-
-/// One line of system text, positioned in character cells.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Line {
-    col: i32,
-    row: i32,
-    text: String,
-    color: u8,
-    /// Fills the cells covered by the text before drawing it.
-    background: Option<u8>,
-}
-
-impl Line {
-    fn new(col: i32, row: i32, text: impl Into<String>, color: u8) -> Self {
-        Self {
-            col,
-            row,
-            text: text.into(),
-            color,
-            background: None,
-        }
-    }
-
-    fn with_background(mut self, color: u8) -> Self {
-        self.background = Some(color);
-        self
-    }
-
-    /// Top-left pixel of the line, leaving a one-cell margin around the
-    /// screen.
-    fn origin(&self, cell_w: i32, cell_h: i32) -> (i32, i32) {
-        ((self.col + 1) * cell_w, (self.row + 1) * cell_h)
     }
 }
 

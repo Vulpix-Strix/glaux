@@ -4,7 +4,7 @@ use glaux_machine::framebuffer::WIDTH;
 
 use super::catalog::{Catalog, LicenseFilter};
 use super::paint::{BAR, Painter, ROW};
-use crate::system::{BACKGROUND, DIM, PALE, TEXT, WARN};
+use crate::system::screen::{BACKGROUND, DIM, PALE, TEXT, WARN};
 use crate::ui_text;
 
 const LIST_TOP: i32 = 24;

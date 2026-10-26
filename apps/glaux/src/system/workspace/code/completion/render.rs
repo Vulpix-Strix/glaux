@@ -10,10 +10,10 @@ use super::layout::{
 };
 use super::panel::DocPanel;
 use super::{CompletionPopup, marker};
+use crate::system::screen::{BACKGROUND, DIM, PALE, TEXT};
 use crate::system::syntax_theme;
 use crate::system::workspace::code::popup::Canvas;
 use crate::system::workspace::{BAR, HOVER_SHADE, Rect, take_cells};
-use crate::system::{BACKGROUND, DIM, PALE, TEXT};
 use crate::ui_text;
 
 /// Space between the two keys named in the panel's foot.

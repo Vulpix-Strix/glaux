@@ -12,8 +12,8 @@ use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_video::draw::{draw_text, fill_rect};
 
 use super::{LogRecord, LogStore, Severity, Source, SourceLocation};
+use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT, TRACE, WARN};
 use crate::system::workspace::{take_cells, wrap};
-use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT, TRACE, WARN};
 use crate::ui_text;
 
 /// Rows moved by a page key.

@@ -22,10 +22,10 @@ use crate::system::code_document::CodeDocument;
 use crate::system::code_session::{CodeSession, DocumentView};
 use crate::system::code_text::{Spot, TextMetrics, spot, visual_rows};
 use crate::system::editor_settings::EditorSettings;
+use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
 use crate::system::syntax_theme;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
-use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
 use crate::ui_text;
 
 /// Side of the dot marking a tab whose document has unsaved edits.

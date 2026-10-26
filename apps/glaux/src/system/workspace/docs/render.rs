@@ -11,11 +11,11 @@ use super::search::{Scope, Search, SearchLayout};
 use super::tabs::{CHEVRON_WIDTH, CLOSE_SIZE, LABEL_PAD, MARKER, StripHit};
 use super::view::{Geometry, nav_label, search_label};
 use super::{DocsBrowser, PanelKind, Source};
+use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::system::workspace::code::text_view::thumb;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::text_field::FieldColors;
 use crate::system::workspace::{BAR, ELLIPSIS, HOVER_SHADE, IDLE_SHADE, Rect, take_cells};
-use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::ui_text;
 
 /// Thickness of the box around a code block or a table, in pixels from the

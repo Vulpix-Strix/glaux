@@ -14,9 +14,9 @@ use glaux_video::draw::{draw_text, fill_rect};
 
 use crate::system::code_document::{CodeDocument, DocumentId};
 use crate::system::code_search::{SearchOptions, find_all};
+use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::system::workspace::text_field::{FieldColors, FieldInput, TextField};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};
-use crate::system::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::ui_text;
 
 /// Most characters a query or replacement holds.

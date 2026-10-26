@@ -4,10 +4,10 @@ use glaux_syntax::SyntaxKind;
 use pretty_assertions::assert_eq;
 
 use super::*;
+use crate::system::screen::{DIM, PALE};
 use crate::system::workspace::BAR;
 use crate::system::workspace::code::completion::DocPanel;
 use crate::system::workspace::code::tests::completion::list_with_panel;
-use crate::system::{DIM, PALE};
 
 fn panel() -> DocPanel {
     DocPanel {

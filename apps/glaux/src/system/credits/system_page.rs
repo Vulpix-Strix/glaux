@@ -12,7 +12,7 @@ use glaux_machine::system_rom::SystemRom;
 use super::catalog::Catalog;
 use super::paint::{Painter, ROW};
 use crate::licenses::Category;
-use crate::system::{DIM, TEXT};
+use crate::system::screen::{DIM, TEXT};
 use crate::ui_text;
 
 const TOP: i32 = 30;

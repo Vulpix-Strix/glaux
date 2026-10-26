@@ -1,7 +1,7 @@
 use glaux_machine::palette::{Rgb, ZUGHY_32};
 
 use super::*;
-use crate::system::{BACKGROUND, TEXT};
+use crate::system::screen::{BACKGROUND, TEXT};
 
 /// The editor mockup's `--syn-*` tokens.
 fn mockup(kind: SyntaxKind) -> Rgb {

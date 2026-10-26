@@ -28,6 +28,7 @@ use glaux_machine::system_rom::{Cursor, SystemCursor, SystemIcon, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 use glaux_video::preview::ObjPreviewPalette;
 
+use super::ExternalUrl;
 use super::code_document::{
     CodeDocumentError, CodeSaveError, CodeSaved, DiskState, DocumentId, SourceConflict,
     SourceConflictKind,
@@ -38,12 +39,12 @@ use super::definition::Definition;
 use super::docs as library_docs;
 use super::editor_settings::EditorSettings;
 use super::logs::SourceLocation;
+use super::screen::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
 use super::sprite_document::{
     Conflict, ConflictKind, DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile,
     SpriteDocument, file_list,
 };
 use super::video::CartridgeVideoDefaults;
-use super::{ACCENT, BACKGROUND, DIM, ERROR, ExternalUrl, OK, PALE, TEXT};
 use crate::cartridge::source::{ScriptListing, SourceEditError, SourcePath};
 use crate::cartridge::{CartridgeError, Language, LoadedCartridge, VideoAsset};
 use crate::cartridge_fs::FsError;

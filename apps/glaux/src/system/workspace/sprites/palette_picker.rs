@@ -12,7 +12,7 @@ use glaux_video::draw::{ObjPaletteChoice, draw_obj_tile_scaled, draw_text};
 use super::SpriteSource;
 use super::layout::Metrics;
 use super::render::{bank_name, checker, outline};
-use crate::system::PALE;
+use crate::system::screen::PALE;
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
     BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,

@@ -4,9 +4,10 @@ use glaux_machine::font::BitmapFont;
 use glaux_syntax::SyntaxKind;
 
 use super::view::HoverView;
+use crate::system::screen::{DIM, PALE};
+use crate::system::syntax_theme;
 use crate::system::workspace::code::popup::{Place, SHADOW};
 use crate::system::workspace::{Rect, take_cells, wrap};
-use crate::system::{DIM, PALE, syntax_theme};
 use crate::ui_text;
 
 /// Space around the popup's text.

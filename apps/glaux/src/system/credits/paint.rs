@@ -2,7 +2,7 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, WIDTH};
 use glaux_video::draw::{draw_text, fill_rect};
 
-use crate::system::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
+use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 
 pub(super) const ROW: i32 = 12;
 pub(super) const BAR: u8 = 12;

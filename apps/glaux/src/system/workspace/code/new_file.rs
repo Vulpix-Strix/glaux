@@ -11,7 +11,7 @@ use glaux_machine::framebuffer::Framebuffer;
 use super::prompt::{Prompt, PromptInput, PromptLayout};
 use crate::cartridge::Language;
 use crate::cartridge::source::{SourcePath, SourcePathError};
-use crate::system::ERROR;
+use crate::system::screen::ERROR;
 use crate::system::workspace::dialog::INK;
 use crate::system::workspace::text_field::TextField;
 use crate::ui_text;

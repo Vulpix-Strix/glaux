@@ -5,6 +5,7 @@ use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use glaux_input::{Button, Key, Point, PointerButton};
 use glaux_machine::font::{BitmapFont, FontMetrics};
+use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::ink_image::InkImage;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::{
@@ -12,6 +13,7 @@ use glaux_machine::psg::{
 };
 use glaux_machine::system_rom::{Cursor, SystemSfx, SystemUi};
 use pretty_assertions::assert_eq;
+use screen::*;
 use semver::Version;
 use workspace::Tab;
 

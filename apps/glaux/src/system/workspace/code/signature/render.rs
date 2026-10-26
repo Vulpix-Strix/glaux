@@ -6,7 +6,7 @@ use glaux_syntax::SyntaxKind;
 
 use super::SignaturePopup;
 use super::layout::{Segment, SignatureLayout};
-use crate::system::PALE;
+use crate::system::screen::PALE;
 use crate::system::syntax_theme;
 use crate::system::workspace::code::popup::Canvas;
 use crate::system::workspace::{BAR, Rect, take_cells};

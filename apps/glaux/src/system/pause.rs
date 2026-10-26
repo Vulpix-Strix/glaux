@@ -13,7 +13,7 @@ use glaux_machine::palette::Palette;
 use glaux_video::draw::{draw_text, fill_rect, remap};
 use glaux_video::shade::{nearest_index, shade_table};
 
-use super::{BACKGROUND, DIM, PALE, TEXT};
+use super::screen::{BACKGROUND, DIM, PALE, TEXT};
 use crate::ui_text;
 
 /// How much of each color channel the darkened cartridge frame keeps.

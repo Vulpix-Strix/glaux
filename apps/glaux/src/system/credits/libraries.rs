@@ -7,7 +7,7 @@ use super::paint::{BAR, Painter, ROW, clip, wrap};
 use super::reader::Reader;
 use super::spdx::Terms;
 use crate::licenses::{Category, Entry};
-use crate::system::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
+use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::ui_text;
 
 const LIST_TOP: i32 = 24;

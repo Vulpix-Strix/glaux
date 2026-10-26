@@ -18,9 +18,10 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::psg::{Adsr, CHANNELS, Waveform};
 use glaux_script::LogLevel;
 
+use super::SystemInfo;
 use super::line_editor::LineEditor;
 use super::logs::LogRecord;
-use super::{ACCENT, BACKGROUND, DIM, ERROR, Line, SystemInfo, TEXT, TRACE, WARN};
+use super::screen::{ACCENT, BACKGROUND, DIM, ERROR, Line, TEXT, TRACE, WARN};
 use crate::cartridge::{CartridgeManifest, Language, LoadedCartridge};
 use crate::cartridge_fs::CartridgeStorage;
 use crate::system::workspace::DocsStart;

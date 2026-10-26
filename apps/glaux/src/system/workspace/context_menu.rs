@@ -12,7 +12,7 @@ use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
 use super::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};
-use crate::system::{DIM, PALE, TEXT};
+use crate::system::screen::{DIM, PALE, TEXT};
 use crate::ui_text;
 
 /// The status bar hint while a context menu is open.

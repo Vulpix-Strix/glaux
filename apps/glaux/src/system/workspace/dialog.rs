@@ -11,7 +11,7 @@ use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
 use super::{BAR, Rect, take_cells, wrap};
-use crate::system::{BACKGROUND, ERROR, TEXT};
+use crate::system::screen::{BACKGROUND, ERROR, TEXT};
 
 /// Window body.
 pub const BODY: u8 = TEXT;

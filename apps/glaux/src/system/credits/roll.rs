@@ -5,7 +5,7 @@ use super::catalog::Catalog;
 use super::editorial::{Editorial, Item};
 use super::paint::{IDLE, Painter, ROW};
 use crate::licenses::Category;
-use crate::system::{DIM, PALE, TEXT};
+use crate::system::screen::{DIM, PALE, TEXT};
 use crate::ui_text;
 use glaux_i18n::Arg;
 
@@ -266,7 +266,7 @@ impl Roll {
         let (x, y, w) = (110, 162, 99);
         fill_rect(p.fb, x, y, w, 6, super::paint::BAR);
         let filled = w * (INTRO_TICKS - self.intro) as i32 / INTRO_TICKS as i32;
-        fill_rect(p.fb, x, y, filled, 6, crate::system::ACCENT);
+        fill_rect(p.fb, x, y, filled, 6, crate::system::screen::ACCENT);
     }
 }
 
