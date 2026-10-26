@@ -30,7 +30,7 @@ const IDENTIFIER: &str = "dev.cuervolu.Glaux";
 
 /// What a later launch hands to the primary instance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SecondaryLaunch {
+pub(crate) struct SecondaryLaunch {
     /// The full command line, program name first.
     pub args: Vec<String>,
     /// The working directory the launch ran in.
@@ -42,7 +42,7 @@ impl SecondaryLaunch {
     ///
     /// Arguments and the directory are converted lossily so the payload is
     /// always valid UTF-8 for every transport.
-    pub fn current() -> Self {
+    pub(crate) fn current() -> Self {
         let cwd = std::env::current_dir()
             .map(|dir| PathBuf::from(dir.to_string_lossy().into_owned()))
             .unwrap_or_default();
@@ -66,7 +66,7 @@ impl SecondaryLaunch {
 }
 
 /// How this process should proceed after looking for a running instance.
-pub enum Startup {
+pub(crate) enum Startup {
     /// No other instance is running, so this process continues as Glaux.
     Primary(PrimaryInstance),
     /// The launch was handed to the running instance. Exit successfully.
@@ -78,7 +78,7 @@ pub enum Startup {
 }
 
 /// The running primary instance.
-pub struct PrimaryInstance {
+pub(crate) struct PrimaryInstance {
     // Held only for its `Drop`, which releases ownership. Declared first so
     // listeners stop before the receiving end of their channel goes away.
     _owner: Option<Box<dyn Any>>,
@@ -90,7 +90,7 @@ pub struct PrimaryInstance {
 impl PrimaryInstance {
     /// The launches received since the previous call, oldest first. Never
     /// blocks.
-    pub fn drain(&self) -> impl Iterator<Item = SecondaryLaunch> + '_ {
+    pub(crate) fn drain(&self) -> impl Iterator<Item = SecondaryLaunch> + '_ {
         self.launches.try_iter()
     }
 }
@@ -122,7 +122,7 @@ impl<O: 'static> Claim<O> {
 ///
 /// Failing to set up any exclusivity mechanism is not fatal. The process
 /// becomes a primary with [`PrimaryInstance::degraded`] set.
-pub fn start(launch: &SecondaryLaunch) -> Startup {
+pub(crate) fn start(launch: &SecondaryLaunch) -> Startup {
     let (sender, launches) = mpsc::channel();
     match claim(launch, sender) {
         Claim::Owner(owner) => Startup::Primary(PrimaryInstance {

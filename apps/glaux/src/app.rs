@@ -4,6 +4,8 @@
 //! Dialogs, links, the menu bar and the saved window state come from
 //! [`crate::desktop`], which does not depend on this module.
 
+#![warn(unreachable_pub)]
+
 mod audio;
 mod host_work;
 mod menu;
@@ -33,7 +35,7 @@ use menu::Menu;
 use window::WindowLifecycle;
 
 /// What the process learned before the application starts.
-pub struct Launch<'a> {
+pub(crate) struct Launch<'a> {
     pub session: SessionKind,
     pub config_dir: Option<&'a Path>,
     pub data_dir: Option<&'a Path>,
@@ -42,7 +44,7 @@ pub struct Launch<'a> {
 }
 
 /// Runs Glaux until the system confirms it should quit.
-pub fn run(launch: Launch<'_>) -> anyhow::Result<()> {
+pub(crate) fn run(launch: Launch<'_>) -> anyhow::Result<()> {
     let Launch {
         session,
         config_dir,

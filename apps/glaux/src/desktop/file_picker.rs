@@ -12,13 +12,13 @@ use crate::ui_text;
 
 /// A native dialog choosing one PNG file, at most one open at a time.
 #[derive(Debug, Default)]
-pub struct FilePicker {
+pub(crate) struct FilePicker {
     /// Where the open dialog's answer arrives.
     pending: Option<Receiver<Option<PathBuf>>>,
 }
 
 impl FilePicker {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -30,7 +30,7 @@ impl FilePicker {
     /// once it closes. The panel keeps the window's events flowing
     /// meanwhile. Elsewhere it runs on a thread of its own, so the window
     /// keeps redrawing and answering the compositor while it is open.
-    pub fn open_png(&mut self, directory: &Path) -> bool {
+    pub(crate) fn open_png(&mut self, directory: &Path) -> bool {
         if self.pending.is_some() {
             return false;
         }
@@ -58,7 +58,7 @@ impl FilePicker {
     /// rfd answers `None` both when the user cancels and when no dialog
     /// could be shown (on Linux, neither an XDG desktop portal nor zenity
     /// is available), so both read as [`PickedFile::Cancelled`].
-    pub fn poll(&mut self) -> Option<PickedFile> {
+    pub(crate) fn poll(&mut self) -> Option<PickedFile> {
         let answer = match self.pending.as_ref()?.try_recv() {
             Ok(Some(path)) => PickedFile::Chosen(path),
             Ok(None) => {

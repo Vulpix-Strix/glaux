@@ -9,7 +9,7 @@ use crate::system::ExternalUrl;
 /// Opens `url` in the default application for its scheme, without waiting
 /// for that application. A failure, such as a machine with no web browser
 /// or no graphical session, is logged and does not affect the session.
-pub fn open_url(url: &ExternalUrl) {
+pub(crate) fn open_url(url: &ExternalUrl) {
     match open::that_detached(url.as_str()) {
         Ok(()) => tracing::info!(url = url.as_str(), "opened an external link"),
         Err(err) => tracing::warn!(

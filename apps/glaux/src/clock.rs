@@ -1,5 +1,7 @@
 //! Fixed-rate logical time, decoupled from host presentation.
 
+#![warn(unreachable_pub)]
+
 use std::time::Duration;
 
 use glaux_machine::machine::TICK_RATE;
@@ -14,14 +16,14 @@ const STEP: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
 /// Converts elapsed host wall-clock time into whole [`TICK_RATE`] machine
 /// ticks.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TickClock {
+pub(crate) struct TickClock {
     /// Time not yet consumed by a tick. It is always shorter than one step
     /// after [`advance`](Self::advance) returns.
     accumulated: Duration,
 }
 
 impl TickClock {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -30,7 +32,7 @@ impl TickClock {
     ///
     /// Only the sub-tick remainder carries over. Whole ticks beyond the cap
     /// are discarded so the tick phase is kept without a catch-up burst.
-    pub fn advance(&mut self, elapsed: Duration) -> u32 {
+    pub(crate) fn advance(&mut self, elapsed: Duration) -> u32 {
         let total = self.accumulated.saturating_add(elapsed);
         let step = STEP.as_nanos();
         let due = total.as_nanos() / step;

@@ -1,6 +1,8 @@
 //! The Code view's settings, kept across launches in Glaux's config
 //! directory.
 
+#![warn(unreachable_pub)]
+
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -23,7 +25,7 @@ fn path(config_dir: &Path) -> PathBuf {
 /// A missing, unreadable or malformed file is logged and gives the
 /// defaults, and a tab or indentation size out of range gives its default, so
 /// the file never stops Glaux from starting.
-pub fn load(config_dir: &Path) -> EditorSettings {
+pub(crate) fn load(config_dir: &Path) -> EditorSettings {
     let path = path(config_dir);
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -64,7 +66,7 @@ pub fn load(config_dir: &Path) -> EditorSettings {
 }
 
 /// Writes `settings` to `config_dir`, creating the directory if needed.
-pub fn save(config_dir: &Path, settings: &EditorSettings) -> anyhow::Result<()> {
+pub(crate) fn save(config_dir: &Path, settings: &EditorSettings) -> anyhow::Result<()> {
     let text =
         serde_json::to_string_pretty(settings).context("failed to encode the editor settings")?;
     config_file::write_atomically(&path(config_dir), &text)

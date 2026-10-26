@@ -7,7 +7,7 @@
 
 mod macos;
 
-pub use macos::NativeMenu;
+pub(crate) use macos::NativeMenu;
 
 use glaux_input::InputEvent;
 use muda::accelerator::{Code, Modifiers};
@@ -17,7 +17,7 @@ use crate::system::MenuState;
 /// An item of the menu bar that Glaux handles itself. The rest of the bar,
 /// such as Quit and Hide, is AppKit's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MenuCommand {
+pub(crate) enum MenuCommand {
     NewFile,
     OpenFile,
     CloseDocument,
@@ -48,7 +48,7 @@ pub enum MenuCommand {
 }
 
 impl MenuCommand {
-    pub const ALL: [Self; 23] = [
+    pub(crate) const ALL: [Self; 23] = [
         Self::NewFile,
         Self::OpenFile,
         Self::CloseDocument,
@@ -74,7 +74,7 @@ impl MenuCommand {
         Self::ToggleLogs,
     ];
 
-    pub fn id(self) -> &'static str {
+    pub(crate) fn id(self) -> &'static str {
         match self {
             Self::NewFile => "file.new",
             Self::OpenFile => "file.open",
@@ -102,7 +102,7 @@ impl MenuCommand {
         }
     }
 
-    pub fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::NewFile => "New File",
             Self::OpenFile => "Open File",
@@ -130,7 +130,7 @@ impl MenuCommand {
         }
     }
 
-    pub fn shortcut(self) -> (Modifiers, Code) {
+    pub(crate) fn shortcut(self) -> (Modifiers, Code) {
         let command = Modifiers::META;
         match self {
             Self::NewFile => (command, Code::KeyN),
@@ -161,7 +161,7 @@ impl MenuCommand {
 
     /// The event the command's keyboard shortcut sends. `None` for
     /// [`Documentation`](Self::Documentation), which has no event.
-    pub fn input_event(self) -> Option<InputEvent> {
+    pub(crate) fn input_event(self) -> Option<InputEvent> {
         Some(match self {
             Self::NewFile => InputEvent::NewFile,
             Self::OpenFile => InputEvent::OpenFile,
@@ -190,7 +190,7 @@ impl MenuCommand {
     }
 
     /// Whether `state` offers the command.
-    pub fn is_enabled(self, state: MenuState) -> bool {
+    pub(crate) fn is_enabled(self, state: MenuState) -> bool {
         match self {
             Self::NewFile => state.new_file,
             Self::OpenFile => state.open_file,

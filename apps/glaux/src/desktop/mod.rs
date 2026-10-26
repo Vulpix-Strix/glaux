@@ -2,9 +2,11 @@
 //! between launches, keeping Glaux to one running instance, and showing the
 //! host's file dialogs, and opening links in other programs.
 
-pub mod external;
-pub mod file_picker;
+#![warn(unreachable_pub)]
+
+pub(crate) mod external;
+pub(crate) mod file_picker;
 #[cfg(target_os = "macos")]
-pub mod menu;
-pub mod single_instance;
-pub mod window_state;
+pub(crate) mod menu;
+pub(crate) mod single_instance;
+pub(crate) mod window_state;

@@ -28,7 +28,7 @@ const MIN_VISIBLE: i64 = 32;
 /// `width` and `height` are always the last normal (not maximized, not
 /// minimized) size, so un-maximizing a restored window returns to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WindowState {
+pub(crate) struct WindowState {
     pub width: i32,
     pub height: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -41,7 +41,7 @@ pub struct WindowState {
 
 impl WindowState {
     /// The saved normal position, when both coordinates are present.
-    pub fn position(&self) -> Option<(i32, i32)> {
+    pub(crate) fn position(&self) -> Option<(i32, i32)> {
         self.x.zip(self.y)
     }
 
@@ -56,7 +56,7 @@ impl WindowState {
 }
 
 /// Path of the saved state inside `config_dir`.
-pub fn path(config_dir: &Path) -> PathBuf {
+pub(crate) fn path(config_dir: &Path) -> PathBuf {
     config_dir.join(FILE_NAME)
 }
 
@@ -69,7 +69,7 @@ fn parse(text: &str) -> Result<WindowState, serde_json::Error> {
 ///
 /// A missing, unreadable, malformed or out-of-range state is logged and
 /// treated as absent so it never stops Glaux from starting.
-pub fn load(config_dir: &Path) -> Option<WindowState> {
+pub(crate) fn load(config_dir: &Path) -> Option<WindowState> {
     let path = path(config_dir);
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -105,7 +105,7 @@ pub fn load(config_dir: &Path) -> Option<WindowState> {
 /// Writes `state` to `config_dir`, creating the directory if needed.
 ///
 /// An interrupted save never leaves a truncated file behind.
-pub fn save(config_dir: &Path, state: &WindowState) -> anyhow::Result<()> {
+pub(crate) fn save(config_dir: &Path, state: &WindowState) -> anyhow::Result<()> {
     let text = serde_json::to_string_pretty(state).context("failed to encode the window state")?;
     config_file::write_atomically(&path(config_dir), &text)
 }
@@ -120,7 +120,7 @@ fn positions_supported(session: SessionKind) -> bool {
 /// The saved position is used only where the session supports positions
 /// and the window would be reachable on one of `monitors`. Otherwise the
 /// session's usual placement applies.
-pub fn plan(
+pub(crate) fn plan(
     session: SessionKind,
     saved: Option<&WindowState>,
     monitors: &[MonitorArea],
@@ -163,7 +163,7 @@ fn visible_on(x: i32, y: i32, width: i32, height: i32, monitor: &MonitorArea) ->
 
 /// The window's state as observed on one frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WindowSnapshot {
+pub(crate) struct WindowSnapshot {
     pub size: (i32, i32),
     /// `None` where the session does not report positions.
     pub position: Option<(i32, i32)>,
@@ -173,7 +173,7 @@ pub struct WindowSnapshot {
 
 /// Follows the window while Glaux runs and produces the state to save.
 #[derive(Debug)]
-pub struct WindowTracker {
+pub(crate) struct WindowTracker {
     track_positions: bool,
     size: Option<(i32, i32)>,
     position: Option<(i32, i32)>,
@@ -186,7 +186,7 @@ impl WindowTracker {
     ///
     /// Where the session does not support positions, the saved position is
     /// carried over unchanged so it is not lost to sessions that do.
-    pub fn new(
+    pub(crate) fn new(
         session: SessionKind,
         saved: Option<&WindowState>,
         placement: WindowPlacement,
@@ -209,7 +209,7 @@ impl WindowTracker {
     }
 
     /// Whether snapshots should carry the window position.
-    pub fn tracks_positions(&self) -> bool {
+    pub(crate) fn tracks_positions(&self) -> bool {
         self.track_positions
     }
 
@@ -217,7 +217,7 @@ impl WindowTracker {
     ///
     /// Size and position only change while the window is in its normal
     /// state. A minimized window changes nothing.
-    pub fn observe(&mut self, snapshot: WindowSnapshot) {
+    pub(crate) fn observe(&mut self, snapshot: WindowSnapshot) {
         if snapshot.minimized {
             return;
         }
@@ -233,7 +233,7 @@ impl WindowTracker {
     }
 
     /// The state to save, or `None` if no normal size was ever observed.
-    pub fn finish(&self) -> Option<WindowState> {
+    pub(crate) fn finish(&self) -> Option<WindowState> {
         let (width, height) = self.size?;
         Some(WindowState {
             width,

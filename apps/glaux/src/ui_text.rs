@@ -3,6 +3,8 @@
 //! Catalogs live in the repository's `rom/lang/` directory and are embedded
 //! in the binary, so the interface needs no files at run time.
 
+#![warn(unreachable_pub)]
+
 use glaux_i18n::{Arg, Catalog, FallbackChain, Language, Translator};
 
 /// The English catalog. Every language falls back to it.
@@ -17,7 +19,7 @@ const CATALOGS: [(&str, &str, &str); 1] = [("en", "rom/lang/en.ftl", ENGLISH)];
 ///
 /// English is the only language so far. This is the one place that will
 /// choose the language chain once there is a language setting.
-pub fn translator() -> Translator {
+pub(crate) fn translator() -> Translator {
     let english = Catalog::parse(Language::english(), ENGLISH)
         .expect("the embedded English catalog is valid, which the tests check");
     Translator::new(FallbackChain::english(), vec![english])
@@ -29,11 +31,11 @@ thread_local! {
     static TEXT: Translator = translator();
 }
 
-pub fn get(id: &str) -> String {
+pub(crate) fn get(id: &str) -> String {
     TEXT.with(|text| text.get(id).into_owned())
 }
 
-pub fn get_with(id: &str, args: &[(&str, Arg<'_>)]) -> String {
+pub(crate) fn get_with(id: &str, args: &[(&str, Arg<'_>)]) -> String {
     TEXT.with(|text| text.get_with(id, args).into_owned())
 }
 

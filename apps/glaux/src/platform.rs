@@ -1,12 +1,14 @@
 //! Classification of the desktop session Glaux runs in.
 
+#![warn(unreachable_pub)]
+
 use std::fmt;
 
 use glaux_host_raylib::WindowPlacement;
 
 /// Windowing system of a Linux desktop session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionKind {
+pub(crate) enum SessionKind {
     Wayland,
     X11,
     Unknown,
@@ -23,7 +25,7 @@ impl fmt::Display for SessionKind {
 }
 
 /// Classifies the session from the process environment.
-pub fn detect() -> SessionKind {
+pub(crate) fn detect() -> SessionKind {
     classify(|name| std::env::var(name).ok())
 }
 
@@ -52,7 +54,7 @@ fn classify(var: impl Fn(&str) -> Option<String>) -> SessionKind {
 /// Initial window placement for `session`.
 ///
 /// Wayland has no global window positions, so the compositor chooses.
-pub fn window_placement(session: SessionKind) -> WindowPlacement {
+pub(crate) fn window_placement(session: SessionKind) -> WindowPlacement {
     match session {
         SessionKind::Wayland => WindowPlacement::PlatformDefault,
         SessionKind::X11 | SessionKind::Unknown => WindowPlacement::CenterOnMonitor,

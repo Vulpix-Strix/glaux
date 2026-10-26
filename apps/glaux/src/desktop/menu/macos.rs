@@ -11,7 +11,7 @@ use crate::system::MenuState;
 ///
 /// Dropping it tears the menu down, so it must be dropped before the
 /// window.
-pub struct NativeMenu {
+pub(crate) struct NativeMenu {
     _menu: Menu,
     items: Vec<(MenuCommand, MenuItem)>,
     commands: HashMap<MenuId, MenuCommand>,
@@ -29,7 +29,7 @@ impl NativeMenu {
     /// The editing items are plain items of Glaux's own. AppKit's
     /// predefined ones send selectors down the responder chain, and the
     /// window's view answers none of them.
-    pub fn install() -> anyhow::Result<Self> {
+    pub(crate) fn install() -> anyhow::Result<Self> {
         let menu = Menu::new();
         let mut items = Vec::with_capacity(MenuCommand::ALL.len());
         let mut item = |command: MenuCommand| {
@@ -147,7 +147,7 @@ impl NativeMenu {
     /// The commands chosen since the previous call, without blocking. Call
     /// it once per frame after the host polled the platform, which is when
     /// AppKit delivers them.
-    pub fn drain(&mut self) -> Vec<MenuCommand> {
+    pub(crate) fn drain(&mut self) -> Vec<MenuCommand> {
         let receiver = MenuEvent::receiver();
         let mut chosen = Vec::new();
         while let Ok(event) = receiver.try_recv() {
@@ -163,7 +163,7 @@ impl NativeMenu {
     /// Enables the items `state` offers and disables the others. A
     /// disabled item does not take its shortcut, so the key reaches the
     /// window as it would without the menu.
-    pub fn sync(&mut self, state: MenuState) {
+    pub(crate) fn sync(&mut self, state: MenuState) {
         if state == self.shown {
             return;
         }
