@@ -1,5 +1,6 @@
-//! What the language tooling says about an open script: its highlighting,
-//! completions, signature help, hover and symbols.
+//! Questions the Code view asks the language tooling about an open script.
+//! Answers come from the text as it is now, unsaved edits included, and a
+//! document is parsed again only after its text changed.
 
 use std::ops::Range;
 
