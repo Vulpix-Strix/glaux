@@ -474,42 +474,27 @@ impl System {
     ///
     /// Copying and pasting in the workspace read and write `clipboard` as
     /// their input is handled.
-    pub fn update_with(self, input: &[InputEvent], clipboard: &mut dyn Clipboard) -> Self {
-        let Self {
-            state,
-            info,
-            audio_source,
-            mut sound,
-            video_defaults,
-            mut workspace,
-            mut sprites,
-            mut code,
-            mut logs,
-            mut log_panel,
-            diagnostics,
-            mut host_requests,
-            mut unsaved,
-            exit_requested,
-            mut exiting,
-        } = self;
+    pub fn update_with(mut self, input: &[InputEvent], clipboard: &mut dyn Clipboard) -> Self {
+        // `Self` has no `Drop`, so the state can move out of `self` and the
+        // other fields be lent to `ctx` while it is away.
+        let mut state = self.state;
         let mut ctx = Context {
-            video_defaults: &video_defaults,
-            workspace: &mut workspace,
-            sprites: &mut sprites,
-            code: &mut code,
-            logs: &mut logs,
-            log_panel: &mut log_panel,
-            unsaved: &mut unsaved,
+            video_defaults: &self.video_defaults,
+            workspace: &mut self.workspace,
+            sprites: &mut self.sprites,
+            code: &mut self.code,
+            logs: &mut self.logs,
+            log_panel: &mut self.log_panel,
+            unsaved: &mut self.unsaved,
         };
-        let mut state = state;
-        if let Some(diagnostics) = &diagnostics {
+        if let Some(diagnostics) = &self.diagnostics {
             receive_diagnostics(diagnostics, ctx.logs);
         }
-        if exit_requested {
-            state = guard_exit(state, &mut ctx, &mut exiting);
+        if self.exit_requested {
+            state = guard_exit(state, &mut ctx, &mut self.exiting);
         }
         let state = if ctx.unsaved.is_some() {
-            unsaved_tick(state, input, &mut ctx, &mut exiting)
+            unsaved_tick(state, input, &mut ctx, &mut self.exiting)
         } else {
             match state {
                 SystemState::Boot {
@@ -517,13 +502,13 @@ impl System {
                     cartridges,
                 } => {
                     if let Some(sfx) = boot.tick() {
-                        sound.play(sfx);
+                        self.sound.play(sfx);
                     }
                     if boot.is_finished() {
                         tracing::info!("boot finished, entering shell");
-                        sound.stop();
+                        self.sound.stop();
                         SystemState::Shell {
-                            shell: Box::new(Shell::new(info.clone(), cartridges)),
+                            shell: Box::new(Shell::new(self.info.clone(), cartridges)),
                             loaded: None,
                         }
                     } else {
@@ -542,7 +527,7 @@ impl System {
                     ctx.workspace,
                     input,
                     clipboard,
-                    &mut host_requests,
+                    &mut self.host_requests,
                 ),
                 SystemState::Workspace {
                     shell,
@@ -563,7 +548,7 @@ impl System {
                         &routed.forward,
                         clipboard,
                     );
-                    host_requests.extend(requests);
+                    self.host_requests.extend(requests);
                     if let (Some(location), SystemState::Workspace { cartridge, .. }) =
                         (&routed.jump, &state)
                     {
@@ -598,25 +583,11 @@ impl System {
                 } => paused_shell_tick(shell, running, input, &mut ctx),
             }
         };
-        sound.tick();
-        log_panel.sync(&logs);
-        Self {
-            state,
-            info,
-            audio_source,
-            sound,
-            video_defaults,
-            workspace,
-            sprites,
-            code,
-            logs,
-            log_panel,
-            diagnostics,
-            host_requests,
-            unsaved,
-            exit_requested: false,
-            exiting,
-        }
+        self.sound.tick();
+        self.log_panel.sync(&self.logs);
+        self.state = state;
+        self.exit_requested = false;
+        self
     }
 
     /// [`update_with`](Self::update_with) on a clipboard that starts
