@@ -4,7 +4,7 @@
 
 use super::text_field::TextField;
 use super::{Route, Workspace};
-use crate::system::code_session::CodeSession;
+use crate::system::editing::session::CodeSession;
 use crate::system::menu_state::MenuState;
 use crate::system::sprite_document::SpriteDocument;
 

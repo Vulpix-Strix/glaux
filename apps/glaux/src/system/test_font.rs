@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use glaux_machine::font::{BitmapFont, FontMetrics};
 
-use super::code_text::Columns;
+use super::editing::metrics::Columns;
 
 /// Characters [`LAYOUT_FONT`] draws two cells wide.
 pub(crate) const WIDE: [char; 2] = ['✅', '⭕'];

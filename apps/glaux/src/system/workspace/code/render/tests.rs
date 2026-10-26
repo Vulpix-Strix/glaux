@@ -8,7 +8,7 @@ use pretty_assertions::assert_eq;
 use super::super::tests::{editor, id_of, session_with_text};
 use super::*;
 use crate::cartridge_fs::fixture::Fixture;
-use crate::system::code_history::EditKind;
+use crate::system::editing::history::EditKind;
 use crate::system::shell::BLINK_TICKS;
 
 mod completion;

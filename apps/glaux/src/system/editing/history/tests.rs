@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::system::code_edit::{self, Edit};
+use crate::system::editing::edit::{self, Edit};
 use pretty_assertions::assert_eq;
 
 /// A document with its history and selection, edited the way the Code view
@@ -50,25 +50,25 @@ impl Editing {
 
     fn type_text(&mut self, text: &str) {
         for ch in text.chars() {
-            self.apply(code_edit::typed(self.selection, ch), EditKind::Typing);
+            self.apply(edit::typed(self.selection, ch), EditKind::Typing);
         }
     }
 
     fn enter(&mut self) {
-        let edit = code_edit::newline(&self.document, self.selection);
+        let edit = edit::newline(&self.document, self.selection);
         self.apply(Some(edit), EditKind::Structural);
     }
 
     fn backspace(&mut self) {
         self.apply(
-            code_edit::backspace(&self.document, self.selection),
+            edit::backspace(&self.document, self.selection),
             EditKind::Backspace,
         );
     }
 
     fn delete(&mut self) {
         self.apply(
-            code_edit::delete(&self.document, self.selection),
+            edit::delete(&self.document, self.selection),
             EditKind::Delete,
         );
     }
@@ -95,7 +95,7 @@ impl Editing {
     }
 
     /// Applies `edit` as a structural step that leaves `after` selected.
-    fn apply_selecting(&mut self, edit: code_edit::Reselecting) {
+    fn apply_selecting(&mut self, edit: edit::Reselecting) {
         let replaced = self
             .document
             .replace(edit.edit.range, &edit.edit.text)
@@ -212,7 +212,7 @@ fn deleting_a_selection_is_a_step_of_its_own() {
     editing.backspace();
     editing.select(1, 3);
     editing.apply(
-        code_edit::backspace(&editing.document, editing.selection),
+        edit::backspace(&editing.document, editing.selection),
         EditKind::Structural,
     );
     editing.backspace();
@@ -361,7 +361,7 @@ fn edits_after_a_byte_order_mark_keep_it() {
     editing.history.seal();
     editing.select(3, 6);
     editing.apply(
-        code_edit::delete(&editing.document, editing.selection),
+        edit::delete(&editing.document, editing.selection),
         EditKind::Structural,
     );
     assert_eq!(editing.text(), "\u{feff}");
@@ -414,12 +414,8 @@ proptest! {
 fn undo_and_redo_restore_the_lines_a_block_indent_selected() {
     let mut editing = Editing::new("a\nb\nc", 0);
     editing.select(0, 3);
-    let edit = code_edit::indent_lines(
-        &editing.document,
-        editing.selection,
-        code_edit::IndentUnit::Tab,
-    )
-    .unwrap();
+    let edit =
+        edit::indent_lines(&editing.document, editing.selection, edit::IndentUnit::Tab).unwrap();
     editing.apply_selecting(edit);
     assert_eq!(editing.text(), "\ta\n\tb\nc");
     let indented = editing.selection;

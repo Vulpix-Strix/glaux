@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 use crate::cartridge_fs::fixture::Fixture;
-use crate::system::code_history::EditKind;
-use crate::system::code_session::tests::{cartridge, path};
+use crate::system::editing::history::EditKind;
+use crate::system::editing::session::tests::{cartridge, path};
 
 const A: &str = "line one\nfn target\nline three\n";
 const B: &str = "alpha\nbeta\ngamma\n";

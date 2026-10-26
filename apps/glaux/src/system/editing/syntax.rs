@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use glaux_syntax::{Grammar, Highlighter, Span};
 
-use super::code_document::CodeDocument;
+use super::document::CodeDocument;
 use crate::cartridge::Language;
 
 /// What [`Highlighter`] knows about a document and the spans of the part of it

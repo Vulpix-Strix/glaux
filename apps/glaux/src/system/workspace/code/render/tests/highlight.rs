@@ -3,8 +3,8 @@
 use glaux_syntax::SyntaxKind;
 
 use super::*;
-use crate::system::code_cursor::Caret;
-use crate::system::code_selection::Selection;
+use crate::system::editing::cursor::Caret;
+use crate::system::editing::selection::Selection;
 use crate::system::syntax_theme::color;
 use pretty_assertions::assert_eq;
 

@@ -3,12 +3,12 @@
 //!
 //! Both ends are caret positions, so a selection always starts and ends on
 //! character boundaries within lines' content or at a line's start. See
-//! [`code_cursor`](super::code_cursor).
+//! [`cursor`](super::cursor).
 
 use std::ops::Range;
 
-use super::code_cursor::Caret;
-use super::code_document::CodeDocument;
+use super::cursor::Caret;
+use super::document::CodeDocument;
 
 /// The selected range of a document, empty while the anchor and the caret
 /// meet.

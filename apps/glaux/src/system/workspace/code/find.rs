@@ -3,7 +3,7 @@
 //!
 //! The bar stays open while the text has the keys, so matches keep
 //! showing as the text is edited. Searching is literal. See
-//! [`code_search`](crate::system::code_search).
+//! [`search`](crate::system::editing::search).
 
 use std::ops::Range;
 
@@ -12,8 +12,8 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
-use crate::system::code_document::{CodeDocument, DocumentId};
-use crate::system::code_search::{SearchOptions, find_all};
+use crate::system::editing::document::{CodeDocument, DocumentId};
+use crate::system::editing::search::{SearchOptions, find_all};
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::system::workspace::text_field::{FieldColors, FieldInput, TextField};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};

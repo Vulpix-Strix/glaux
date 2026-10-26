@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::system::code_text::MetricsKey;
+use crate::system::editing::metrics::MetricsKey;
 use crate::system::test_font::LAYOUT_FONT;
 use pretty_assertions::assert_eq;
 

@@ -521,7 +521,7 @@ fn presses_land_on_edges_of_tabs_and_wide_glyphs_however_lines_fold() {
 /// caret positions, and covers each whole script.
 #[test]
 fn signal_lost_scripts_select_on_valid_positions() {
-    use crate::system::code_cursor::{line_at, word_at};
+    use crate::system::editing::cursor::{line_at, word_at};
 
     let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
     let storage = crate::cartridge_fs::CartridgeStorage::Available(

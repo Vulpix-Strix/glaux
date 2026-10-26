@@ -12,8 +12,8 @@ use std::collections::VecDeque;
 use glaux_i18n::Arg;
 use glaux_input::InputEvent;
 
-use super::code_document::{CodeSaveError, CodeSaved, DocumentId};
-use super::code_session::CodeSession;
+use super::editing::document::{CodeSaveError, CodeSaved, DocumentId};
+use super::editing::session::CodeSession;
 use super::sprite_document::{SaveError, SaveFailure, Saved, SpriteDocument};
 use super::video::CartridgeVideoDefaults;
 use super::workspace::{

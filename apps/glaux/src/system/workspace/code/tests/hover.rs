@@ -272,7 +272,7 @@ fn a_changed_text_drops_the_popup() {
         id,
         0..0,
         "x",
-        crate::system::code_history::EditKind::Typing,
+        crate::system::editing::history::EditKind::Typing,
         None,
     );
     feed(&mut editor, &mut session, &[InputEvent::PointerMove(None)]);

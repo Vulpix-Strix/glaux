@@ -8,13 +8,13 @@ use glaux_input::{InputEvent, PointerButton};
 use super::find::{FindAction, FindBar};
 use super::go_to_line::{GoToAction, GoToLine};
 use super::{CodeEditor, CodeRequest};
-use crate::system::code_cursor::Caret;
-use crate::system::code_document::DocumentId;
-use crate::system::code_edit::Edit;
-use crate::system::code_history::EditKind;
-use crate::system::code_search::{next_from, previous_from};
-use crate::system::code_selection::Selection;
-use crate::system::code_session::CodeSession;
+use crate::system::editing::cursor::Caret;
+use crate::system::editing::document::DocumentId;
+use crate::system::editing::edit::Edit;
+use crate::system::editing::history::EditKind;
+use crate::system::editing::search::{next_from, previous_from};
+use crate::system::editing::selection::Selection;
+use crate::system::editing::session::CodeSession;
 use crate::ui_text;
 
 /// Most bytes of a selection that becomes the query when the bar opens.

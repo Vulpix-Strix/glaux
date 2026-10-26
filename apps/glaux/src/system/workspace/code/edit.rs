@@ -4,13 +4,13 @@ use glaux_input::InputEvent;
 use glaux_machine::font::BitmapFont;
 
 use super::{CodeEditor, CodeRequest, UNDO_IDLE_TICKS};
-use crate::system::code_cursor::Caret;
-use crate::system::code_document::{CodeDocument, DocumentId, EditError};
-use crate::system::code_edit::{self, Edit, IndentUnit, Reselecting};
-use crate::system::code_history::EditKind;
-use crate::system::code_selection::Selection;
-use crate::system::code_session::CodeSession;
-use crate::system::code_text::MetricsKey;
+use crate::system::editing::cursor::Caret;
+use crate::system::editing::document::{CodeDocument, DocumentId, EditError};
+use crate::system::editing::edit::{self, Edit, IndentUnit, Reselecting};
+use crate::system::editing::history::EditKind;
+use crate::system::editing::metrics::MetricsKey;
+use crate::system::editing::selection::Selection;
+use crate::system::editing::session::CodeSession;
 
 impl CodeEditor {
     /// Applies `event` to the active document if it is an editing key,
@@ -24,24 +24,24 @@ impl CodeEditor {
         match event {
             InputEvent::Text(ch) => {
                 self.edit(session, EditKind::Typing, |_, selection, _, _| {
-                    code_edit::typed(selection, ch)
+                    edit::typed(selection, ch)
                 });
             }
             InputEvent::Enter => {
                 self.edit(
                     session,
                     EditKind::Structural,
-                    |document, selection, _, _| Some(code_edit::newline(document, selection)),
+                    |document, selection, _, _| Some(edit::newline(document, selection)),
                 );
             }
             InputEvent::Backspace => {
                 self.edit(session, EditKind::Backspace, |document, selection, _, _| {
-                    code_edit::backspace(document, selection)
+                    edit::backspace(document, selection)
                 });
             }
             InputEvent::Delete => {
                 self.edit(session, EditKind::Delete, |document, selection, _, _| {
-                    code_edit::delete(document, selection)
+                    edit::delete(document, selection)
                 });
             }
             InputEvent::Tab { reverse } => self.indent(session, reverse),
@@ -54,7 +54,7 @@ impl CodeEditor {
                     self.edit(
                         session,
                         EditKind::Structural,
-                        |document, selection, _, _| code_edit::delete(document, selection),
+                        |document, selection, _, _| edit::delete(document, selection),
                     );
                 }
                 return Some(text.map(CodeRequest::Copy));
@@ -74,7 +74,7 @@ impl CodeEditor {
         self.edit(
             session,
             EditKind::Structural,
-            |document, selection, _, _| code_edit::paste(document, selection, text),
+            |document, selection, _, _| edit::paste(document, selection, text),
         );
     }
 
@@ -97,11 +97,11 @@ impl CodeEditor {
             return;
         };
         let lines = if reverse {
-            code_edit::outdent_lines(document, selection, unit, key.tab_size)
-        } else if code_edit::spans_lines(document, selection) {
-            code_edit::indent_lines(document, selection, unit)
+            edit::outdent_lines(document, selection, unit, key.tab_size)
+        } else if edit::spans_lines(document, selection) {
+            edit::indent_lines(document, selection, unit)
         } else {
-            let edit = code_edit::tab(document, selection, unit, key, &self.layout.font);
+            let edit = edit::tab(document, selection, unit, key, &self.layout.font);
             self.commit(session, id, edit, EditKind::Structural, None);
             return;
         };

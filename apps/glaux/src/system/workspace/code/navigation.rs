@@ -3,8 +3,8 @@
 
 use super::symbols::{PanelAction, PanelLayout, Row, SymbolPanel};
 use super::{CodeEditor, CodeRequest};
-use crate::system::code_document::DocumentId;
-use crate::system::code_session::{CodeSession, DocumentView};
+use crate::system::editing::document::DocumentId;
+use crate::system::editing::session::{CodeSession, DocumentView};
 
 impl CodeEditor {
     /// Where the symbol panel's parts sit, while it is open.

@@ -1,6 +1,6 @@
 use super::selection::caret;
 use super::*;
-use crate::system::code_history::EditKind;
+use crate::system::editing::history::EditKind;
 use pretty_assertions::assert_eq;
 
 const TAB: InputEvent = InputEvent::Tab { reverse: false };
@@ -154,8 +154,8 @@ fn a_callback_is_offered_once_at_the_top_level() {
         let inside = text.find("\n  ").unwrap() + 3;
         let id = session.tabs().active().unwrap();
         let document = session.document(id).unwrap();
-        let at = crate::system::code_selection::Selection::collapsed(
-            crate::system::code_cursor::Caret::at(document, inside),
+        let at = crate::system::editing::selection::Selection::collapsed(
+            crate::system::editing::cursor::Caret::at(document, inside),
         );
         session.tabs_mut().set_selection(id, at);
         type_str(&mut editor, &mut session, "tic");

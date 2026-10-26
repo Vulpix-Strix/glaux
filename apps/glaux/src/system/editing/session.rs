@@ -19,14 +19,14 @@ use glaux_sense::{
     Completions, Hover, Request, Resolution, SignatureHelp, SignatureRequest, Subject, Trigger,
 };
 
-use super::code_cursor::Caret;
-use super::code_document::{
+use super::cursor::Caret;
+use super::document::{
     CodeDocument, CodeDocumentError, CodeDocuments, CodeRenameError, CodeSaveError, CodeSaved,
     DiskState, DocumentId, EditError, Replaced,
 };
-use super::code_history::{EditHistory, EditKind};
-use super::code_selection::Selection;
-use super::code_syntax::DocumentSyntax;
+use super::history::{EditHistory, EditKind};
+use super::selection::Selection;
+use super::syntax::DocumentSyntax;
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge::{Language, LoadedCartridge};
 use crate::cartridge_fs::FsError;
@@ -467,4 +467,4 @@ fn script_language(language: Language) -> ScriptLanguage {
 }
 
 #[cfg(test)]
-pub(super) mod tests;
+pub(in crate::system) mod tests;

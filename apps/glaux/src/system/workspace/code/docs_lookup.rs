@@ -3,8 +3,8 @@
 use glaux_sense::Doc;
 
 use super::{CodeEditor, CodeRequest};
-use crate::system::code_session::{CodeSession, Symbol};
 use crate::system::docs;
+use crate::system::editing::session::{CodeSession, Symbol};
 use crate::system::workspace::docs::DocTarget;
 use crate::ui_text;
 

@@ -2,9 +2,9 @@ use crate::ui_text;
 use glaux_i18n::Arg;
 
 pub(in crate::system) fn document(
-    error: &crate::system::code_document::CodeDocumentError,
+    error: &crate::system::editing::document::CodeDocumentError,
 ) -> String {
-    use crate::system::code_document::CodeDocumentError;
+    use crate::system::editing::document::CodeDocumentError;
     match error {
         CodeDocumentError::NotFound(value) => ui_text::get_with(
             "error-document-not-found",
@@ -28,8 +28,10 @@ pub(in crate::system) fn document(
     }
 }
 
-pub(in crate::system) fn rename(error: &crate::system::code_document::CodeRenameError) -> String {
-    use crate::system::code_document::CodeRenameError;
+pub(in crate::system) fn rename(
+    error: &crate::system::editing::document::CodeRenameError,
+) -> String {
+    use crate::system::editing::document::CodeRenameError;
     match error {
         CodeRenameError::NotOpen => ui_text::get("error-rename-not-open"),
         CodeRenameError::PathTaken(value) => ui_text::get_with(
@@ -66,9 +68,9 @@ pub(in crate::system) fn source_edit(error: &crate::cartridge::source::SourceEdi
 }
 
 pub(in crate::system) fn move_script(
-    error: &crate::system::code_session::MoveScriptError,
+    error: &crate::system::editing::session::MoveScriptError,
 ) -> String {
-    use crate::system::code_session::MoveScriptError;
+    use crate::system::editing::session::MoveScriptError;
     match error {
         MoveScriptError::Document(value) => rename(value),
         MoveScriptError::Changed(value) => ui_text::get_with(

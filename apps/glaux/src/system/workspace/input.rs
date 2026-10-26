@@ -10,7 +10,7 @@ use super::{
     AssetRequest, HostWork, NavigationRequest, ScriptRequest, Workspace, WorkspaceRequest,
     docs_source,
 };
-use crate::system::code_session::CodeSession;
+use crate::system::editing::session::CodeSession;
 use crate::system::screen::PALE;
 use crate::system::sprite_document::SpriteDocument;
 use crate::ui_text;

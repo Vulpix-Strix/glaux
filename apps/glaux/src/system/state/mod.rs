@@ -14,7 +14,7 @@ pub(super) mod workspace;
 
 use crate::cartridge::LoadedCartridge;
 use crate::system::SystemState;
-use crate::system::code_session::CodeSession;
+use crate::system::editing::session::CodeSession;
 use crate::system::logs::{Category, LogPanel, LogStore};
 use crate::system::sprite_document::SpriteDocument;
 use crate::system::unsaved::UnsavedFlow;

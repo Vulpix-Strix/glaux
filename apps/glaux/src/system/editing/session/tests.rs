@@ -4,8 +4,8 @@ use super::*;
 use crate::cartridge::Language;
 use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
-use crate::system::code_cursor::Caret;
-use crate::system::code_document::CodeDocumentError;
+use crate::system::editing::cursor::Caret;
+use crate::system::editing::document::CodeDocumentError;
 use pretty_assertions::assert_eq;
 
 /// A Luau cartridge at `/games/pong` with `files` written into it.
@@ -196,8 +196,8 @@ fn documents_keep_separate_histories_until_closed() {
 
 mod moving {
     use super::*;
-    use crate::system::code_document::{CodeRenameError, DiskState};
-    use crate::system::code_history::EditKind;
+    use crate::system::editing::document::{CodeRenameError, DiskState};
+    use crate::system::editing::history::EditKind;
     use pretty_assertions::assert_eq;
 
     fn host(fixture: &Fixture, file: &str) -> std::path::PathBuf {

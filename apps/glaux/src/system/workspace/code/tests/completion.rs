@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use crate::system::code_history::EditKind;
+use crate::system::editing::history::EditKind;
 use glaux_sense::{Candidate, CandidateKind, Completions, Doc, Insertion, Origin};
 
 use super::selection::{caret, open, plain, right};
@@ -55,8 +55,9 @@ pub(in crate::system::workspace::code) fn list_with_panel(
         items: labels.iter().map(|label| suggestion(label)).collect(),
     };
     let document = session.document(id).unwrap();
-    let selection =
-        Selection::collapsed(crate::system::code_cursor::Caret::at(document, anchor.end));
+    let selection = Selection::collapsed(crate::system::editing::cursor::Caret::at(
+        document, anchor.end,
+    ));
     session.tabs_mut().set_selection(id, selection);
     let panels = labels.iter().map(|_| panel.clone()).collect();
     editor.show_completions(id, completions, panels);

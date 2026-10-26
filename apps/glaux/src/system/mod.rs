@@ -8,18 +8,10 @@
 mod audio;
 mod boot;
 mod clipboard;
-mod code_cursor;
-mod code_document;
-mod code_edit;
-mod code_history;
-mod code_search;
-mod code_selection;
-mod code_session;
-mod code_syntax;
-mod code_text;
 mod credits;
 mod definition;
 mod docs;
+mod editing;
 mod editor_settings;
 mod external_url;
 mod line_editor;
@@ -45,8 +37,8 @@ mod workspace;
 
 pub use boot::Boot;
 pub use clipboard::Clipboard;
-use code_session::CodeSession;
 use credits::CreditsView;
+use editing::session::CodeSession;
 #[cfg(test)]
 pub use editor_settings::IndentStyle;
 pub use editor_settings::{EditorSettings, INDENT_SIZES, TAB_SIZES};

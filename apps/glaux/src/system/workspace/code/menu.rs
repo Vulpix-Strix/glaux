@@ -4,7 +4,7 @@
 
 use super::CodeEditor;
 use super::edit::has_selection;
-use crate::system::code_session::CodeSession;
+use crate::system::editing::session::CodeSession;
 use crate::system::menu_state::MenuState;
 use crate::system::workspace::menu::in_field;
 

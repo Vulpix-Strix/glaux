@@ -2,16 +2,16 @@
 //! replacement it makes, which [`CodeDocument::replace`] then applies.
 //!
 //! Ranges come from selections and caret moves, so their ends are always
-//! valid caret positions. See [`code_cursor`](super::code_cursor).
+//! valid caret positions. See [`cursor`](super::cursor).
 
 use std::ops::Range;
 
 use glaux_machine::font::BitmapFont;
 
-use super::code_document::{CodeDocument, Indent};
-use super::code_selection::Selection;
-use super::code_text::{MetricsKey, spot};
-use super::editor_settings::IndentStyle;
+use super::document::{CodeDocument, Indent};
+use super::metrics::{MetricsKey, spot};
+use super::selection::Selection;
+use crate::system::editor_settings::IndentStyle;
 
 /// One replacement of a document's text.
 #[derive(Debug, Clone, PartialEq, Eq)]

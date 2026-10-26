@@ -6,7 +6,7 @@ use super::{Rect, Route, Workspace};
 use crate::cartridge::CartridgeError;
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge_fs::FsError;
-use crate::system::code_document::{DocumentId, SourceConflict, SourceConflictKind};
+use crate::system::editing::document::{DocumentId, SourceConflict, SourceConflictKind};
 use crate::system::sprite_document::{Conflict, ConflictKind, DiskAsset};
 use crate::ui_text;
 use glaux_i18n::Arg;

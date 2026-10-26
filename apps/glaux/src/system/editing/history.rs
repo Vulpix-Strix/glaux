@@ -7,9 +7,9 @@
 
 use std::collections::VecDeque;
 
-use super::code_cursor::Caret;
-use super::code_document::{CodeDocument, EditError, Replaced};
-use super::code_selection::Selection;
+use super::cursor::Caret;
+use super::document::{CodeDocument, EditError, Replaced};
+use super::selection::Selection;
 
 /// Steps the history keeps. Older ones are forgotten first.
 const STEP_LIMIT: usize = 1024;

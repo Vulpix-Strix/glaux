@@ -31,8 +31,8 @@ use glaux_machine::machine::TICK_RATE;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS};
 use glaux_machine::palette::Palette;
 
-use super::code_session::CodeSession;
 use super::docs as library_docs;
+use super::editing::session::CodeSession;
 use super::editor_settings::EditorSettings;
 use super::screen::PALE;
 use crate::ui_text;

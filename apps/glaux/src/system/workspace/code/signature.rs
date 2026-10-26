@@ -11,10 +11,10 @@ use glaux_sense::{Signature, SignatureHelp};
 
 use super::popup::Place;
 use super::{CodeEditor, CodeRequest};
-use crate::system::code_document::{CodeDocument, DocumentId};
-use crate::system::code_session::CodeSession;
-use crate::system::code_text::spot;
 use crate::system::docs;
+use crate::system::editing::document::{CodeDocument, DocumentId};
+use crate::system::editing::metrics::spot;
+use crate::system::editing::session::CodeSession;
 use crate::system::workspace::Rect;
 use crate::ui_text;
 pub(super) use layout::SignatureLayout;

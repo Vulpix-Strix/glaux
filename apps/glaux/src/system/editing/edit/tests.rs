@@ -1,8 +1,8 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::system::code_cursor::Caret;
-use crate::system::code_document::EditError;
+use crate::system::editing::cursor::Caret;
+use crate::system::editing::document::EditError;
 use crate::system::editor_settings::IndentStyle;
 use crate::system::test_font::LAYOUT_FONT;
 use pretty_assertions::assert_eq;

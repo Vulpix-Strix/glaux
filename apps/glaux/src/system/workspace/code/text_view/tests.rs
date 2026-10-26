@@ -1,5 +1,5 @@
 use super::*;
-use crate::system::code_document::CodeDocument;
+use crate::system::editing::document::CodeDocument;
 use crate::system::test_font::LAYOUT_FONT;
 use pretty_assertions::assert_eq;
 
@@ -165,7 +165,7 @@ fn the_thumb_never_shrinks_out_of_sight() {
 
 /// Where byte `byte` of `document` shows in `geometry`.
 fn spot_of(document: &CodeDocument, geometry: &TextGeometry, byte: usize) -> Spot {
-    crate::system::code_text::spot(document, byte, geometry.metrics_key(), &LAYOUT_FONT)
+    crate::system::editing::metrics::spot(document, byte, geometry.metrics_key(), &LAYOUT_FONT)
 }
 
 /// Whether the 1×`cell_h` caret drawn from `point` stays in the viewport.

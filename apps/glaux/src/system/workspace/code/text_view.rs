@@ -5,9 +5,9 @@ use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 
 use super::layout::CodeLayout;
-use crate::system::code_document::CodeDocument;
-use crate::system::code_session::DocumentView;
-use crate::system::code_text::{MetricsKey, Spot, TextMetrics, visual_rows};
+use crate::system::editing::document::CodeDocument;
+use crate::system::editing::metrics::{MetricsKey, Spot, TextMetrics, visual_rows};
+use crate::system::editing::session::DocumentView;
 use crate::system::editor_settings::EditorSettings;
 use crate::system::workspace::Rect;
 

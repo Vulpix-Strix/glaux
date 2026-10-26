@@ -1,9 +1,9 @@
 //! The order of the Code view's document tabs, which one is active, and
 //! how each document is shown.
 
-use crate::system::code_document::DocumentId;
-use crate::system::code_selection::Selection;
-use crate::system::code_text::TextMetrics;
+use crate::system::editing::document::DocumentId;
+use crate::system::editing::metrics::TextMetrics;
+use crate::system::editing::selection::Selection;
 
 /// How one open document is shown, kept per tab so switching documents
 /// returns to each where it was left.

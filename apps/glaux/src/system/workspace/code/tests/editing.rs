@@ -4,7 +4,7 @@ use super::selection::{
     caret, cell, click, down, geometry, left, open, plain, right, select, selected,
 };
 use super::*;
-use crate::system::code_text::spot;
+use crate::system::editing::metrics::spot;
 use pretty_assertions::assert_eq;
 
 fn text(session: &CodeSession) -> &str {

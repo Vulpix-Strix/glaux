@@ -7,8 +7,8 @@
 
 use crate::cartridge::VideoAsset;
 use crate::cartridge::source::SourcePath;
-use crate::system::code_document::DocumentId;
-use crate::system::code_session::Destination;
+use crate::system::editing::document::DocumentId;
+use crate::system::editing::session::Destination;
 use crate::system::editor_settings::EditorSettings;
 use crate::system::external_url::ExternalUrl;
 use crate::system::sprite_document::DiskAsset;

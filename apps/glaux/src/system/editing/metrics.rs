@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use glaux_machine::font::BitmapFont;
 
-use super::code_document::CodeDocument;
+use super::document::CodeDocument;
 
 /// How many columns characters take: a tab reaches the next tab stop, and
 /// anything else takes the cells of the glyph `font` draws it with, so a

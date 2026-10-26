@@ -2,7 +2,7 @@
 
 use super::selection::caret;
 use super::*;
-use crate::system::code_history::EditKind;
+use crate::system::editing::history::EditKind;
 use pretty_assertions::assert_eq;
 
 const LEFT: InputEvent = InputEvent::Left { select: false };

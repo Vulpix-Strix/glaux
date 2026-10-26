@@ -7,8 +7,8 @@ use glaux_machine::font::BitmapFont;
 use glaux_syntax::{Symbol, SymbolKind};
 
 use super::layout::CodeLayout;
-use crate::system::code_document::DocumentId;
-use crate::system::code_session::{Destination, Spot};
+use crate::system::editing::document::DocumentId;
+use crate::system::editing::session::{Destination, Spot};
 use crate::system::workspace::Rect;
 
 /// Width of the panel, as drawn in the design for the 320x240 screen.

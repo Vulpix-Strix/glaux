@@ -11,9 +11,9 @@
 use super::CodeSession;
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::SourcePath;
-use crate::system::code_cursor::Caret;
-use crate::system::code_document::{CodeDocument, DocumentId};
-use crate::system::code_selection::Selection;
+use crate::system::editing::cursor::Caret;
+use crate::system::editing::document::{CodeDocument, DocumentId};
+use crate::system::editing::selection::Selection;
 
 /// The most places each direction remembers.
 const CAPACITY: usize = 100;

@@ -3,7 +3,7 @@ use glaux_sense::{Candidate, CandidateKind, Doc, Origin};
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::system::code_document::DocumentId;
+use crate::system::editing::document::DocumentId;
 
 pub(super) fn candidate(label: &str) -> Candidate {
     Candidate {

@@ -8,7 +8,7 @@ use super::{
 };
 use crate::cartridge::LoadedCartridge;
 use crate::rom::ICON_SIZE;
-use crate::system::code_session::CodeSession;
+use crate::system::editing::session::CodeSession;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::ui_text;
 use glaux_input::Point;

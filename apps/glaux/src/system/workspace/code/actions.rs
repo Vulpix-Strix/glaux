@@ -5,8 +5,8 @@ use glaux_input::{InputEvent, Point};
 
 use super::rename::RenameScript;
 use super::{CodeEditor, CodeRequest, close_tab};
-use crate::system::code_document::DocumentId;
-use crate::system::code_session::CodeSession;
+use crate::system::editing::document::DocumentId;
+use crate::system::editing::session::CodeSession;
 use crate::system::workspace::context_menu::{ContextMenu, MenuEntry};
 use crate::ui_text;
 

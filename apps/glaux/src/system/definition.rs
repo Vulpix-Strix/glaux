@@ -9,8 +9,8 @@ use glaux_modules::ModuleName;
 use glaux_sense::Resolution;
 use glaux_syntax::{Exports, Grammar, Highlighter};
 
-use super::code_document::DocumentId;
-use super::code_session::{CodeSession, Destination, Spot};
+use super::editing::document::DocumentId;
+use super::editing::session::{CodeSession, Destination, Spot};
 use crate::cartridge::source::SourcePath;
 use crate::cartridge::{Language, LoadedCartridge};
 

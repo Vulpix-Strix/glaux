@@ -1,18 +1,18 @@
 //! The text caret of a code document and how keys move it.
 //!
 //! Positions are byte offsets into the document's unaltered text, the same
-//! offsets [`Cell::byte`](super::code_text::Cell::byte) names, and always
+//! offsets [`Cell::byte`](super::metrics::Cell::byte) names, and always
 //! sit on a character boundary within a line's content: never inside a
 //! byte order mark, between a `\r` and its `\n`, or inside a multi-byte
 //! character. How a position shows on screen is left to
-//! [`code_text`](super::code_text).
+//! [`metrics`](super::metrics).
 
 use std::ops::Range;
 
 use glaux_machine::font::BitmapFont;
 
-use super::code_document::CodeDocument;
-use super::code_text::{TextMetrics, spot, visual_rows};
+use super::document::CodeDocument;
+use super::metrics::{TextMetrics, spot, visual_rows};
 
 /// Where the caret sits in a document, and the column vertical moves aim
 /// for.

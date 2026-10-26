@@ -8,11 +8,11 @@ use crate::cartridge::source::{ScriptListing, SourceEditError, SourcePath};
 use crate::cartridge::{Language, LoadedCartridge, VideoAsset};
 use crate::cartridge_fs::FsError;
 use crate::sprite_import::SheetSource;
-use crate::system::code_document::{
+use crate::system::definition::Definition;
+use crate::system::editing::document::{
     CodeDocumentError, CodeSaveError, CodeSaved, DiskState, DocumentId,
 };
-use crate::system::code_session::{CodeSession, Destination, Landing, MoveScriptError, Spot};
-use crate::system::definition::Definition;
+use crate::system::editing::session::{CodeSession, Destination, Landing, MoveScriptError, Spot};
 use crate::system::logs::SourceLocation;
 use crate::system::screen::{ERROR, OK, PALE};
 use crate::system::sprite_document::{

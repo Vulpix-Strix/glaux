@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use super::code_cursor::is_word_char;
+use super::cursor::is_word_char;
 
 /// Most matches one search reports. Past it the rest of the text is not
 /// searched, so a short query in a large file stays quick.

@@ -3,8 +3,8 @@
 use std::ops::Range;
 
 use super::*;
-use crate::system::code_cursor::Caret;
-use crate::system::code_selection::Selection;
+use crate::system::editing::cursor::Caret;
+use crate::system::editing::selection::Selection;
 use pretty_assertions::assert_eq;
 
 fn select(session: &mut CodeSession, range: Range<usize>) {
