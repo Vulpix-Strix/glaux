@@ -9,30 +9,31 @@
 //! modal [`Dialog`].
 
 mod code;
+mod colors;
 mod context_menu;
 mod dialog;
 mod docs;
 mod menu;
+mod modal;
 mod sprites;
+mod tab;
 mod text_field;
 
-use glaux_i18n::{Arg, Translator};
+use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
-use glaux_machine::font::{BitmapFont, FontMetrics};
-use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
+use glaux_machine::font::BitmapFont;
+#[cfg(test)]
+use glaux_machine::font::FontMetrics;
+use glaux_machine::framebuffer::{Framebuffer, WIDTH};
 use glaux_machine::ink_image::INK_SLOTS;
 use glaux_machine::machine::TICK_RATE;
-use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjPalettes};
+use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS};
 use glaux_machine::palette::Palette;
-use glaux_machine::system_rom::{Cursor, SystemCursor, SystemIcon, SystemUi};
+use glaux_machine::system_rom::{Cursor, SystemCursor, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
-use glaux_video::preview::ObjPreviewPalette;
 
 use super::ExternalUrl;
-use super::code_document::{
-    CodeDocumentError, CodeSaveError, CodeSaved, DiskState, DocumentId, SourceConflict,
-    SourceConflictKind,
-};
+use super::code_document::{CodeDocumentError, CodeSaveError, CodeSaved, DiskState, DocumentId};
 use super::code_session::{CodeSession, MoveScriptError};
 use super::code_session::{Destination, Landing, Spot};
 use super::definition::Definition;
@@ -41,26 +42,34 @@ use super::editor_settings::EditorSettings;
 use super::logs::SourceLocation;
 use super::screen::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
 use super::sprite_document::{
-    Conflict, ConflictKind, DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile,
-    SpriteDocument, file_list,
+    DiskAsset, Reopened, SaveError, SaveFailure, Saved, SavedFile, SpriteDocument, file_list,
 };
 use super::video::CartridgeVideoDefaults;
 use crate::cartridge::source::{ScriptListing, SourceEditError, SourcePath};
-use crate::cartridge::{CartridgeError, Language, LoadedCartridge, VideoAsset};
+use crate::cartridge::{Language, LoadedCartridge, VideoAsset};
 use crate::cartridge_fs::FsError;
 use crate::rom::ICON_SIZE;
 use crate::sprite_import::SheetSource;
 use crate::ui_text;
 use code::{CodeEditor, CodeRequest};
+pub use colors::WorkspaceVideo;
 pub(super) use dialog::{Dialog, DialogLayout};
 use docs::{DocTarget, DocsBrowser, DocsRequest, Source};
 use glaux_docs::DocId;
+pub(super) use modal::{
+    Choice, Target, asset_conflict_dialog, message_dialog, script_conflict_dialog,
+    source_write_advice, unsaved_dialog, write_advice,
+};
+use modal::{Modal, close_dialog, delete_dialog, edit_failure};
 #[cfg(test)]
 pub use sprites::ImportPreview;
 #[cfg(not(test))]
 use sprites::ImportPreview;
 pub use sprites::SpriteSource;
 use sprites::{SpriteEditor, SpriteRequest};
+pub(crate) use tab::take_cells;
+use tab::{Layout, fit_name, text_width};
+pub use tab::{Rect, Tab, TabLabels};
 
 /// Entries of the workspace's frame palette that keep the system palette's
 /// colors. Every UI color index is below it. The cartridge's object colors
@@ -182,69 +191,12 @@ pub enum WorkspaceRequest {
     Paste,
 }
 
-/// What a dialog's buttons do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Choice {
-    /// Save unsaved edits, then go on with what asked.
-    Save,
-    /// Drop unsaved edits and go on with what asked.
-    Discard,
-    Overwrite,
-    Reload,
-    /// Delete the script's file.
-    Delete,
-    Cancel,
-    /// Close a message that offers no decision.
-    Dismiss,
-}
-
-/// The open dialog and what its choice acts on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Modal {
-    dialog: Dialog<Choice>,
-    target: Target,
-}
-
-/// What a dialog's choice acts on, as the dialog showed it: what Overwrite
-/// may replace, Reload reads again, or Save and Discard close.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Target {
-    /// The dialog acts on nothing.
-    None,
-    /// Asset files of the sprite document.
-    Assets(Vec<DiskAsset>),
-    /// The file of one script document, holding `seen` (`None` means absent).
-    Script {
-        id: DocumentId,
-        seen: Option<Vec<u8>>,
-    },
-    /// The tab of a script document with unsaved edits.
-    CloseScript(DocumentId),
-    /// The file of a script document to delete, holding `seen` when the
-    /// dialog was shown (`None` means absent).
-    DeleteScript {
-        id: DocumentId,
-        seen: Option<Vec<u8>>,
-    },
-}
-
 /// A short message in the status bar answering what the user just did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Notice {
     text: String,
     color: u8,
     ticks_left: u32,
-}
-
-/// One editor view of the workspace.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Tab {
-    #[default]
-    Code,
-    Sprites,
-    Map,
-    Sfx,
-    Music,
 }
 
 /// Who receives an input event that is not a tab or docs shortcut: the
@@ -287,300 +239,6 @@ impl Workspace {
     }
 }
 
-impl Tab {
-    pub const ALL: [Self; 5] = [Self::Code, Self::Sprites, Self::Map, Self::Sfx, Self::Music];
-
-    /// The id of the message holding the tab's name.
-    pub fn message_id(self) -> &'static str {
-        match self {
-            Self::Code => "tab-code",
-            Self::Sprites => "tab-sprites",
-            Self::Map => "tab-map",
-            Self::Sfx => "tab-sfx",
-            Self::Music => "tab-music",
-        }
-    }
-
-    fn icon(self) -> SystemIcon {
-        match self {
-            Self::Code => SystemIcon::Code,
-            Self::Sprites => SystemIcon::Sprites,
-            Self::Map => SystemIcon::Map,
-            Self::Sfx => SystemIcon::Sfx,
-            Self::Music => SystemIcon::Music,
-        }
-    }
-
-    /// What the view will edit, shown while it has no editor.
-    fn purpose(self) -> String {
-        match self {
-            Self::Code => ui_text::get("workspace-edit-the-cartridge-s-luau-and-rhai-scripts"),
-            Self::Sprites => ui_text::get("workspace-draw-object-tiles-and-their-palettes"),
-            Self::Map => ui_text::get("workspace-lay-out-tiles-into-maps"),
-            Self::Sfx => ui_text::get("workspace-shape-sound-effects-for-the-psg"),
-            Self::Music => ui_text::get("workspace-arrange-sound-effects-into-songs"),
-        }
-    }
-
-    fn index(self) -> usize {
-        self as usize
-    }
-
-    /// The next tab, wrapping from the last to the first.
-    pub fn next(self) -> Self {
-        Self::ALL[(self.index() + 1) % Self::ALL.len()]
-    }
-
-    /// The previous tab, wrapping from the first to the last.
-    pub fn previous(self) -> Self {
-        Self::ALL[(self.index() + Self::ALL.len() - 1) % Self::ALL.len()]
-    }
-}
-
-/// A screen rectangle in logical pixels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Rect {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-}
-
-impl Rect {
-    fn contains(self, point: Point) -> bool {
-        let (x, y) = (i32::from(point.x), i32::from(point.y));
-        (self.x..self.x + self.width).contains(&x) && (self.y..self.y + self.height).contains(&y)
-    }
-
-    fn right(self) -> i32 {
-        self.x + self.width
-    }
-
-    fn bottom(self) -> i32 {
-        self.y + self.height
-    }
-
-    /// The rectangle shrunk by `by` pixels on every side, or grown when
-    /// `by` is negative.
-    fn inset(self, by: i32) -> Self {
-        Self {
-            x: self.x + by,
-            y: self.y + by,
-            width: self.width - 2 * by,
-            height: self.height - 2 * by,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn contains_xy(self, x: i32, y: i32) -> bool {
-        (self.x..self.right()).contains(&x) && (self.y..self.bottom()).contains(&y)
-    }
-
-    #[cfg(test)]
-    fn overlaps(self, other: Self) -> bool {
-        self.x < other.right()
-            && other.x < self.right()
-            && self.y < other.bottom()
-            && other.y < self.bottom()
-    }
-}
-
-/// Where the workspace chrome sits for one font.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Layout {
-    cell_w: i32,
-    cell_h: i32,
-}
-
-impl Layout {
-    const fn new(metrics: FontMetrics) -> Self {
-        Self {
-            cell_w: metrics.cell_width() as i32,
-            cell_h: metrics.cell_height() as i32,
-        }
-    }
-
-    /// Height of the tab bar: an icon, or one text row with a pixel above
-    /// and below, whichever is taller.
-    const fn bar_height(self) -> i32 {
-        let text = self.cell_h + 2;
-        let icon = ICON_SIZE as i32;
-        if text > icon { text } else { icon }
-    }
-
-    /// The cell size and top of the Code view, below the tab bar.
-    const fn code_metrics(self) -> code::Metrics {
-        code::Metrics {
-            cell_w: self.cell_w,
-            cell_h: self.cell_h,
-            top: self.bar_height(),
-        }
-    }
-
-    /// The cell size and top of the documentation browser, below the tab
-    /// bar.
-    const fn docs_metrics(self) -> docs::Metrics {
-        docs::Metrics {
-            cell_w: self.cell_w,
-            cell_h: self.cell_h,
-            top: self.bar_height(),
-        }
-    }
-
-    /// The cell size and top of the sprite editor, below the tab bar.
-    const fn sprite_metrics(self) -> sprites::Metrics {
-        sprites::Metrics {
-            cell_w: self.cell_w,
-            cell_h: self.cell_h,
-            top: self.bar_height(),
-        }
-    }
-
-    /// Each tab's clickable plate, left to right. Rendering and hit-testing
-    /// both use these.
-    fn tabs(self) -> [(Tab, Rect); 5] {
-        let width = ICON_SIZE as i32 + 2 * PLATE_PAD;
-        let mut x = TAB_GAP;
-        Tab::ALL.map(|tab| {
-            let rect = Rect {
-                x,
-                y: 0,
-                width,
-                height: self.bar_height(),
-            };
-            x += width + TAB_GAP;
-            (tab, rect)
-        })
-    }
-
-    fn tab_at(self, point: Point) -> Option<Tab> {
-        self.tabs()
-            .into_iter()
-            .find(|(_, rect)| rect.contains(point))
-            .map(|(tab, _)| tab)
-    }
-
-    /// Where the hint naming a tab starts, right of the last tab.
-    fn hint_x(self) -> i32 {
-        let [.., (_, last)] = self.tabs();
-        last.right() + HINT_GAP
-    }
-
-    /// The screen below the tab bar, where the views and dialogs go.
-    fn view_area(self) -> Rect {
-        let top = self.bar_height();
-        Rect {
-            x: 0,
-            y: top,
-            width: WIDTH as i32,
-            height: HEIGHT as i32 - top,
-        }
-    }
-
-    /// Text row origin within the bar.
-    fn text_y(self) -> i32 {
-        (self.bar_height() - self.cell_h) / 2 + 1
-    }
-
-    /// The Docs button at the bar's right end, showing `label`.
-    fn docs_button(self, label: &str, font: &BitmapFont) -> Rect {
-        let width = text_width(font, label) + 2 * DOCS_PAD;
-        Rect {
-            x: WIDTH as i32 - DOCS_MARGIN - width,
-            y: 0,
-            width,
-            height: self.bar_height(),
-        }
-    }
-
-    /// Where the cartridge name ends: left of the Docs button.
-    fn name_right(self, labels: &TabLabels, font: &BitmapFont) -> i32 {
-        self.docs_button(labels.docs(), font).x - NAME_PAD
-    }
-
-    /// Cells available to the cartridge name, right of the longest hint.
-    fn name_cells(self, labels: &TabLabels, font: &BitmapFont) -> usize {
-        let longest = i32::try_from(labels.longest_cells()).unwrap_or(0) * self.cell_w;
-        let start = self.hint_x() + longest + NAME_GAP;
-        let space = self.name_right(labels, font) - start;
-        usize::try_from(space / self.cell_w.max(1)).unwrap_or(0)
-    }
-}
-
-/// The tabs' names in the interface language, resolved once because the
-/// language does not change while the workspace exists.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TabLabels {
-    tabs: [String; Tab::ALL.len()],
-    /// The Docs button's label, and the hint naming it.
-    docs: String,
-    docs_hint: String,
-}
-
-impl TabLabels {
-    pub fn new(text: &Translator) -> Self {
-        Self {
-            tabs: Tab::ALL.map(|tab| text.get(tab.message_id()).into_owned()),
-            docs: text.get("docs-button").into_owned(),
-            docs_hint: text.get("docs-button-hint").into_owned(),
-        }
-    }
-
-    pub fn get(&self, tab: Tab) -> &str {
-        &self.tabs[tab.index()]
-    }
-
-    /// The Docs button's label.
-    fn docs(&self) -> &str {
-        &self.docs
-    }
-
-    /// The hint shown while the pointer is over the Docs button.
-    fn docs_hint(&self) -> &str {
-        &self.docs_hint
-    }
-
-    /// The width in cells of the longest name the hint area shows.
-    fn longest_cells(&self) -> usize {
-        self.tabs
-            .iter()
-            .chain([&self.docs_hint])
-            .map(|label| label.chars().count())
-            .max()
-            .unwrap_or(0)
-    }
-}
-
-/// Width in pixels of `text` drawn on one line with `font`.
-fn text_width(font: &BitmapFont, text: &str) -> i32 {
-    let cells = i32::try_from(font.text_cells(text)).unwrap_or(i32::MAX);
-    cells.saturating_mul(i32::from(font.metrics().cell_width()))
-}
-
-/// The longest start of `text` that takes at most `cells` of `font`'s
-/// cells.
-pub(crate) fn take_cells<'a>(font: &BitmapFont, text: &'a str, cells: usize) -> &'a str {
-    let mut used = 0;
-    for (at, ch) in text.char_indices() {
-        used += font.cells(ch);
-        if used > cells {
-            return &text[..at];
-        }
-    }
-    text
-}
-
-/// `name` as it fits in `cells` of `font`'s cells: whole, cut short with
-/// [`ELLIPSIS`], or `None` when too little of it would show.
-fn fit_name(font: &BitmapFont, name: &str, cells: usize) -> Option<String> {
-    if font.text_cells(name) <= cells {
-        return Some(name.to_owned());
-    }
-    let room = cells.checked_sub(font.text_cells(ELLIPSIS))?;
-    let kept = take_cells(font, name, room);
-    (font.text_cells(kept) >= MIN_NAME_CELLS).then(|| format!("{kept}{ELLIPSIS}"))
-}
-
 /// `text` broken into lines of at most `columns` of `font`'s cells, at
 /// spaces where possible.
 pub(in crate::system) fn wrap(font: &BitmapFont, text: &str, columns: usize) -> Vec<String> {
@@ -615,56 +273,6 @@ pub(in crate::system) fn wrap(font: &BitmapFont, text: &str, columns: usize) -> 
         lines.push(line);
     }
     lines
-}
-
-/// What to tell the user when saving an asset file failed.
-pub(super) fn write_advice(err: &CartridgeError) -> String {
-    match err {
-        CartridgeError::AssetReadOnly(asset) => ui_text::get_with(
-            "workspace-is-read-only-make-it-writable-then-save-again-2",
-            &[("path", Arg::Text(&asset.to_string()))],
-        ),
-        CartridgeError::AssetUnwritable(asset) => ui_text::get_with(
-            "workspace-glaux-could-not-write-check-the-cartridge-folder-s-permissions-an-2",
-            &[("path", Arg::Text(&asset.to_string()))],
-        ),
-        CartridgeError::AssetUnreadable(asset) => ui_text::get_with(
-            "workspace-glaux-could-not-read-to-check-it-for-outside-changes-check-its-pe-2",
-            &[("path", Arg::Text(&asset.to_string()))],
-        ),
-        CartridgeError::AssetNotAFile(asset) => ui_text::get_with(
-            "workspace-is-not-a-regular-file-move-it-aside-then-save-again-2",
-            &[("path", Arg::Text(&asset.to_string()))],
-        ),
-        other => crate::system::ui_errors::cartridge(other),
-    }
-}
-
-/// What to tell the user when saving the script at `path` failed.
-pub(super) fn source_write_advice(path: &SourcePath, err: &FsError) -> String {
-    match err {
-        FsError::ReadOnly(_) => ui_text::get_with(
-            "workspace-is-read-only-make-it-writable-then-save-again-2",
-            &[("path", Arg::Text(&path.to_string()))],
-        ),
-        FsError::NotAFile(_) => ui_text::get_with(
-            "workspace-is-not-a-regular-file-move-it-aside-then-save-again-2",
-            &[("path", Arg::Text(&path.to_string()))],
-        ),
-        FsError::Unreadable(_) => ui_text::get_with(
-            "workspace-glaux-could-not-read-to-check-it-for-outside-changes-check-its-pe-2",
-            &[("path", Arg::Text(&path.to_string()))],
-        ),
-        FsError::NotFound(_) | FsError::NotADirectory(_) => ui_text::get_with(
-            "workspace-save-missing-folder",
-            &[("path", Arg::Text(&path.to_string()))],
-        ),
-        FsError::Unwritable(_) | FsError::AlreadyExists(_) => ui_text::get_with(
-            "workspace-glaux-could-not-write-check-the-cartridge-folder-s-permissions-an-2",
-            &[("path", Arg::Text(&path.to_string()))],
-        ),
-        FsError::Unavailable => ui_text::get("workspace-cartridge-storage-is-unavailable"),
-    }
 }
 
 /// The line telling which files a save that stopped partway did write.
@@ -702,231 +310,6 @@ fn phrase(names: &[String]) -> String {
     }
 }
 
-/// Asks about unsaved edits before the pending command or exit.
-/// Cancel is focused so a stray Enter loses nothing.
-pub(super) fn unsaved_dialog(
-    names: &[String],
-    pending: &super::unsaved::Pending,
-) -> Dialog<Choice> {
-    use super::unsaved::Pending;
-    let count = Arg::Number(names.len() as f64);
-    let instructions = match pending {
-        Pending::Command { action, .. } => ui_text::get_with(
-            "workspace-unsaved-command",
-            &[("count", count), ("action", Arg::Text(action))],
-        ),
-        Pending::Exit => ui_text::get_with("workspace-unsaved-exit", &[("count", count)]),
-    };
-    Dialog::new(
-        ui_text::get("workspace-unsaved-title"),
-        vec![
-            ui_text::get_with(
-                "workspace-unsaved-names",
-                &[("names", Arg::Text(&phrase(names))), ("count", count)],
-            ),
-            instructions,
-        ],
-        vec![
-            (&ui_text::get("workspace-save-all"), Choice::Save),
-            (&ui_text::get("workspace-discard"), Choice::Discard),
-            (&ui_text::get("workspace-cancel"), Choice::Cancel),
-        ],
-        2,
-        Some(Choice::Cancel),
-    )
-}
-
-/// Asks whether to save the unsaved edits to the script at `path` before
-/// closing its tab. Cancel is focused so a stray Enter loses nothing.
-fn close_dialog(path: &SourcePath) -> Dialog<Choice> {
-    Dialog::new(
-        ui_text::get("workspace-unsaved-title"),
-        vec![
-            ui_text::get_with(
-                "workspace-has-unsaved-changes",
-                &[("path", Arg::Text(&path.to_string()))],
-            ),
-            ui_text::get("workspace-close-unsaved-instructions"),
-        ],
-        vec![
-            (&ui_text::get("workspace-save"), Choice::Save),
-            (&ui_text::get("workspace-discard"), Choice::Discard),
-            (&ui_text::get("workspace-cancel"), Choice::Cancel),
-        ],
-        2,
-        Some(Choice::Cancel),
-    )
-}
-
-/// Asks whether to delete the file at `path` of script document `id`.
-/// `modified` is whether the document has unsaved edits, `external`
-/// whether the file changed outside Glaux, and `seen` what the file holds
-/// (`None` when it is gone). Cancel is focused so a stray Enter
-/// deletes nothing.
-fn delete_dialog(
-    id: DocumentId,
-    path: &SourcePath,
-    modified: bool,
-    external: bool,
-    seen: Option<Vec<u8>>,
-) -> (Dialog<Choice>, Target) {
-    let mut lines = vec![ui_text::get_with(
-        "workspace-delete-from-the-cartridge",
-        &[("path", Arg::Text(&path.to_string()))],
-    )];
-    match &seen {
-        None => lines.push(ui_text::get_with(
-            "workspace-delete-already-missing",
-            &[("path", Arg::Text(&path.to_string()))],
-        )),
-        Some(_) => lines.push(ui_text::get("workspace-the-file-cannot-be-recovered")),
-    }
-    if external {
-        lines.push(ui_text::get("workspace-delete-external-warning"));
-    }
-    if modified {
-        lines.push(ui_text::get("workspace-delete-unsaved-warning"));
-    }
-    let dialog = Dialog::new(
-        ui_text::get("workspace-delete-script"),
-        lines,
-        vec![
-            (&ui_text::get("workspace-delete"), Choice::Delete),
-            (&ui_text::get("workspace-cancel"), Choice::Cancel),
-        ],
-        1,
-        Some(Choice::Cancel),
-    )
-    .destructive(0);
-    (dialog, Target::DeleteScript { id, seen })
-}
-
-/// What to tell the user when deleting or moving the script at `path`
-/// failed.
-fn edit_failure(path: &SourcePath, err: &SourceEditError) -> String {
-    match err {
-        SourceEditError::Fs(FsError::ReadOnly(_)) => ui_text::get_with(
-            "workspace-is-read-only-make-it-writable-then-try-again",
-            &[("path", Arg::Text(&path.to_string()))],
-        ),
-        SourceEditError::Fs(FsError::AlreadyExists(existing)) => ui_text::get_with(
-            "workspace-already-exists",
-            &[("value", Arg::Text(existing.trim_start_matches('/')))],
-        ),
-        SourceEditError::Fs(FsError::Unwritable(_)) => ui_text::get_with(
-            "workspace-edit-write-failed",
-            &[("path", Arg::Text(&path.to_string()))],
-        ),
-        err => crate::system::ui_errors::code::source_edit(err),
-    }
-}
-
-/// Asks whether to overwrite the file of script document `id` in
-/// `conflict` with the document's text or leave both as they are. `saved`,
-/// if any, tells what was saved before the conflict was found. Cancel is
-/// focused so a stray Enter loses nothing.
-pub(super) fn script_conflict_dialog(
-    id: DocumentId,
-    conflict: SourceConflict,
-    saved: Option<String>,
-) -> (Dialog<Choice>, Target) {
-    let SourceConflict { path, kind, disk } = conflict;
-    let (what, replaces) = match kind {
-        SourceConflictKind::Modified => (
-            ui_text::get_with(
-                "workspace-changed-outside-glaux",
-                &[("path", Arg::Text(&path.to_string()))],
-            ),
-            &ui_text::get("workspace-overwrite-disk-replaces-the-file-with-your-edits"),
-        ),
-        SourceConflictKind::Deleted => (
-            ui_text::get_with(
-                "workspace-was-deleted-outside-glaux",
-                &[("path", Arg::Text(&path.to_string()))],
-            ),
-            &ui_text::get("workspace-overwrite-disk-writes-your-edits-to-it-again"),
-        ),
-    };
-    let mut lines = vec![what];
-    lines.extend(saved);
-    lines.push(ui_text::get("workspace-unsaved-edits-kept"));
-    lines.push(replaces.to_owned());
-    let dialog = Dialog::new(
-        ui_text::get("workspace-file-conflict"),
-        lines,
-        vec![
-            (&ui_text::get("workspace-overwrite-disk"), Choice::Overwrite),
-            (&ui_text::get("workspace-cancel"), Choice::Cancel),
-        ],
-        1,
-        Some(Choice::Cancel),
-    );
-    (dialog, Target::Script { id, seen: disk })
-}
-
-/// Asks whether to overwrite the asset files in `conflicts`, discard the
-/// changes to them, or leave both as they are. `saved`, if any, tells what
-/// was saved before the conflict was found. Cancel is focused so a stray
-/// Enter loses nothing.
-pub(super) fn asset_conflict_dialog(
-    conflicts: Vec<Conflict>,
-    saved: Option<String>,
-) -> (Dialog<Choice>, Target) {
-    let mut lines: Vec<String> = conflicts
-        .iter()
-        .map(|conflict| {
-            let asset = conflict.asset();
-            match conflict.kind {
-                ConflictKind::Modified => ui_text::get_with(
-                    "workspace-changed-outside-glaux",
-                    &[("path", Arg::Text(&asset.to_string()))],
-                ),
-                ConflictKind::Deleted => ui_text::get_with(
-                    "workspace-was-deleted-outside-glaux",
-                    &[("path", Arg::Text(&asset.to_string()))],
-                ),
-                ConflictKind::Created => ui_text::get_with(
-                    "workspace-a-new-appeared-outside-glaux",
-                    &[("asset", Arg::Text(&asset.to_string()))],
-                ),
-            }
-        })
-        .collect();
-    lines.extend(saved);
-    lines.push(ui_text::get("workspace-unsaved-edits-kept"));
-    lines.push(ui_text::get_with(
-        "workspace-asset-conflict-instructions",
-        &[("count", Arg::Number(conflicts.len() as f64))],
-    ));
-    let dialog = Dialog::new(
-        ui_text::get("workspace-file-conflict"),
-        lines,
-        vec![
-            (&ui_text::get("workspace-overwrite-disk"), Choice::Overwrite),
-            (&ui_text::get("workspace-discard-reload"), Choice::Reload),
-            (&ui_text::get("workspace-cancel"), Choice::Cancel),
-        ],
-        2,
-        Some(Choice::Cancel),
-    );
-    let seen = conflicts
-        .into_iter()
-        .map(|conflict| conflict.disk)
-        .collect();
-    (dialog, Target::Assets(seen))
-}
-
-/// Shows `lines` under `title` until dismissed.
-pub(super) fn message_dialog(title: &str, lines: Vec<String>) -> Dialog<Choice> {
-    Dialog::new(
-        title,
-        lines,
-        vec![(&ui_text::get("boot-ok"), Choice::Dismiss)],
-        0,
-        Some(Choice::Dismiss),
-    )
-}
-
 /// Draws frame `frame` of `cursor` with its hotspot on `pointer`, if any.
 /// Drawn over the finished frame, it covers everything below it.
 pub fn draw_cursor(
@@ -946,71 +329,6 @@ pub fn draw_cursor(
         i32::from(at.y) - i32::from(hot_y),
         &[OUTLINE, TEXT, TEXT],
     );
-}
-
-/// How the workspace shows the cartridge's colors: where the frame palette
-/// holds each master color the object palettes use, or why the cartridge's
-/// video state can't be shown.
-#[derive(Debug)]
-// Boxed: a frame palette would make every system state as large as this
-// one.
-pub struct WorkspaceVideo(Result<Box<PreparedVideo>, String>);
-
-/// A frame palette with the palettes it was built from, to tell when it no
-/// longer matches the document.
-#[derive(Debug)]
-struct PreparedVideo {
-    preview: ObjPreviewPalette,
-    /// The preview's palette with the sprite editor's dialog colors, if
-    /// any, from [`sprites::SCRATCH_BASE`] on: what frames are presented
-    /// with.
-    frame: Palette,
-    master: Palette,
-    obj: ObjPalettes,
-}
-
-impl WorkspaceVideo {
-    /// The video state could not be read, for the reason in `message`.
-    pub fn unavailable(message: String) -> Self {
-        tracing::warn!(%message, "cartridge video unavailable in the workspace");
-        Self(Err(message))
-    }
-
-    /// Whether the editors can show the cartridge's video state.
-    pub fn is_ready(&self) -> bool {
-        self.0.is_ok()
-    }
-
-    /// The palette the workspace's frames are presented with, if the
-    /// cartridge's video assets loaded.
-    pub fn frame_palette(&self) -> Option<&Palette> {
-        self.0.as_ref().ok().map(|video| &video.frame)
-    }
-
-    /// What the sprite editor shows of `document`, or why it shows nothing.
-    pub fn source<'a>(
-        &'a self,
-        document: Option<&'a SpriteDocument>,
-    ) -> Result<SpriteSource<'a>, String> {
-        let video = self.0.as_deref().map_err(Clone::clone)?;
-        // The system only prepares a preview from a document it keeps.
-        let document = document
-            .ok_or_else(|| ui_text::get("workspace-the-cartridge-s-sprites-are-not-loaded"))?;
-        Ok(SpriteSource {
-            obj: document.obj(),
-            master: &document.video().palette,
-            preview: &video.preview,
-            modified: document.is_modified(),
-        })
-    }
-
-    /// Whether the frame palette was built from `document`'s palettes as
-    /// they are now.
-    fn matches(&self, document: &SpriteDocument) -> bool {
-        self.0.as_ref().is_ok_and(|video| {
-            video.master == document.video().palette && video.obj == *document.obj().palettes()
-        })
-    }
 }
 
 /// The workspace's UI state.
@@ -1059,51 +377,6 @@ impl Workspace {
             notice: None,
             ticks: 0,
             system_palette,
-        }
-    }
-
-    /// Prepares to show `document` in the workspace's frame palette. It
-    /// holds until the document's palettes change. See
-    /// [`refresh_video`](Self::refresh_video).
-    pub fn prepare_video(&self, document: &SpriteDocument) -> WorkspaceVideo {
-        let video = document.video();
-        match ObjPreviewPalette::new(
-            &self.system_palette,
-            SYSTEM_COLORS,
-            &video.palette,
-            video.obj.palettes(),
-        ) {
-            Ok(preview) => WorkspaceVideo(Ok(Box::new(PreparedVideo {
-                frame: preview.palette().clone(),
-                preview,
-                master: video.palette.clone(),
-                obj: video.obj.palettes().clone(),
-            }))),
-            Err(err) => WorkspaceVideo::unavailable(super::ui_errors::video::preview_palette(&err)),
-        }
-    }
-
-    /// Prepares `video` again if `document`'s palettes changed since it was
-    /// prepared, so the frame palette never shows stale colors, and gives
-    /// the frame palette the colors of the sprite editor's open dialog.
-    /// Video that could not be prepared stays as it is.
-    pub fn refresh_video(&self, video: &mut WorkspaceVideo, document: &SpriteDocument) {
-        if video.is_ready() && !video.matches(document) {
-            *video = self.prepare_video(document);
-        }
-        if let Ok(prepared) = &mut video.0 {
-            if let Some(palette) = self.sprites.import_frame_palette() {
-                prepared.frame = palette.clone();
-                return;
-            }
-            let mut frame = prepared.preview.palette().clone();
-            if let Some(colors) = self.sprites.scratch_colors() {
-                for (offset, color) in colors.into_iter().enumerate() {
-                    // Scratch entries end at the palette's end, so fit u8.
-                    frame.set((sprites::SCRATCH_BASE + offset) as u8, color);
-                }
-            }
-            prepared.frame = frame;
         }
     }
 
@@ -1508,15 +781,6 @@ impl Workspace {
         }
     }
 
-    /// Whether a dialog, one of the sprite editor's, or one of the Code
-    /// view's overlays is open and taking all input.
-    pub fn has_modal(&self) -> bool {
-        matches!(
-            self.route(),
-            Route::Modal | Route::SpriteDialog | Route::CodeOverlay
-        )
-    }
-
     /// Whether Escape stays in the workspace, closing what is open there,
     /// rather than returning to the shell.
     pub fn claims_break(&self) -> bool {
@@ -1886,11 +1150,6 @@ impl Workspace {
         self.code.reveal_active(code);
     }
 
-    fn open_script_conflict(&mut self, id: DocumentId, conflict: SourceConflict) {
-        let (dialog, target) = script_conflict_dialog(id, conflict, None);
-        self.modal = Some(Modal { dialog, target });
-    }
-
     /// Reports how discarding the changes to `assets` and reading their
     /// files again went.
     pub fn reloaded(&mut self, assets: &[VideoAsset], result: Result<(), String>) {
@@ -1981,44 +1240,6 @@ impl Workspace {
         if !reopened.conflicts.is_empty() {
             self.open_conflict(reopened.conflicts, None);
         }
-    }
-
-    fn open_conflict(&mut self, conflicts: Vec<Conflict>, saved: Option<String>) {
-        let (dialog, target) = asset_conflict_dialog(conflicts, saved);
-        self.modal = Some(Modal { dialog, target });
-    }
-
-    fn open_error(&mut self, title: &str, mut lines: Vec<String>) {
-        lines.push(ui_text::get("workspace-your-edits-are-still-in-memory"));
-        self.open_message(title, lines);
-    }
-
-    /// Shows `lines` under `title` until dismissed.
-    fn open_message(&mut self, title: &str, lines: Vec<String>) {
-        self.modal = Some(Modal {
-            dialog: message_dialog(title, lines),
-            target: Target::None,
-        });
-    }
-
-    /// Lays `dialog` out over the views, or over the whole screen when
-    /// `whole_screen`.
-    pub(super) fn dialog_layout(
-        &self,
-        dialog: &Dialog<Choice>,
-        whole_screen: bool,
-    ) -> DialogLayout {
-        let area = if whole_screen {
-            Rect {
-                x: 0,
-                y: 0,
-                width: WIDTH as i32,
-                height: HEIGHT as i32,
-            }
-        } else {
-            self.layout.view_area()
-        };
-        dialog.layout(&self.font, area, self.layout.cell_w, self.layout.cell_h)
     }
 
     /// Shows `text` in the status bar for a while.
