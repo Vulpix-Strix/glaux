@@ -70,6 +70,7 @@ use pause::PauseOverlay;
 use running::RunningCartridge;
 use semver::Version;
 use sfx::SystemSound;
+use state::Context;
 use state::confirm::{guard_exit, unsaved_tick};
 use state::logs::{receive_diagnostics, route_logs};
 use state::paused::{paused_game_tick, paused_shell_tick};
@@ -77,7 +78,6 @@ use state::running::running_tick;
 use state::screens::{credits_tick, docs_tick};
 use state::shell::{open_docs_apart, shell_audio, shell_tick};
 use state::workspace::{run_from_workspace, workspace_tick};
-use state::{Context, Documents};
 use unsaved::UnsavedFlow;
 
 use std::collections::VecDeque;
@@ -475,12 +475,7 @@ impl System {
                         shell,
                         cartridge,
                         video,
-                        ctx.workspace,
-                        Documents {
-                            sprites: ctx.sprites,
-                            code: ctx.code,
-                        },
-                        ctx.video_defaults,
+                        &mut ctx,
                         &routed.forward,
                         clipboard,
                     );

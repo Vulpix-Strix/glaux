@@ -1,7 +1,7 @@
 //! The documentation browser shown apart from the workspace, filling the screen.
 
 use super::docs::{DocTarget, DocsRequest};
-use super::{Workspace, WorkspaceRequest, docs_source};
+use super::{HostWork, Workspace, docs_source};
 use crate::system::screen::BACKGROUND;
 use glaux_docs::DocId;
 use glaux_input::{InputEvent, Point};
@@ -24,7 +24,7 @@ pub enum DocsApart {
     Stay,
     Close,
     /// Work for the system: a link to open or the clipboard.
-    Request(WorkspaceRequest),
+    Request(HostWork),
 }
 
 impl Workspace {

@@ -4,7 +4,7 @@ use crate::cartridge::LoadedCartridge;
 use crate::system::clipboard::Clipboard;
 use crate::system::credits::CreditsView;
 use crate::system::shell::Shell;
-use crate::system::workspace::{DocsApart, Workspace, WorkspaceRequest};
+use crate::system::workspace::{DocsApart, HostWork, Workspace};
 use crate::system::{HostRequest, SystemState};
 use glaux_input::InputEvent;
 use std::collections::VecDeque;
@@ -46,14 +46,13 @@ pub(in crate::system) fn docs_tick(
         match workspace.docs_apart_input(event) {
             DocsApart::Stay => {}
             DocsApart::Close => return SystemState::Shell { shell, loaded },
-            DocsApart::Request(WorkspaceRequest::OpenExternal(url)) => {
+            DocsApart::Request(HostWork::OpenExternal(url)) => {
                 host_requests.push_back(HostRequest::OpenExternal(url));
             }
-            DocsApart::Request(WorkspaceRequest::Copy(text)) => clipboard.set_text(&text),
-            DocsApart::Request(WorkspaceRequest::Paste) => {
+            DocsApart::Request(HostWork::Copy(text)) => clipboard.set_text(&text),
+            DocsApart::Request(HostWork::Paste) => {
                 workspace.docs_apart_paste(clipboard.text());
             }
-            DocsApart::Request(_) => {}
         }
     }
     SystemState::Docs { shell, loaded }

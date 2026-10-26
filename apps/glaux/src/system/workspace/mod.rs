@@ -19,6 +19,7 @@ mod input;
 mod menu;
 mod modal;
 mod render;
+mod request;
 mod sprites;
 mod tab;
 mod text_field;
@@ -30,16 +31,10 @@ use glaux_machine::machine::TICK_RATE;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS};
 use glaux_machine::palette::Palette;
 
-use super::ExternalUrl;
-use super::code_document::DocumentId;
 use super::code_session::CodeSession;
-use super::code_session::Destination;
 use super::docs as library_docs;
 use super::editor_settings::EditorSettings;
 use super::screen::PALE;
-use super::sprite_document::DiskAsset;
-use crate::cartridge::VideoAsset;
-use crate::cartridge::source::SourcePath;
 use crate::ui_text;
 pub(super) use answers::saved_before_stopping;
 use code::CodeEditor;
@@ -54,6 +49,7 @@ pub(super) use modal::{
     source_write_advice, unsaved_dialog, write_advice,
 };
 pub use render::draw_cursor;
+pub use request::{AssetRequest, HostWork, NavigationRequest, ScriptRequest, WorkspaceRequest};
 #[cfg(test)]
 pub use sprites::ImportPreview;
 use sprites::SpriteEditor;
@@ -102,84 +98,6 @@ const NOTICE_TICKS: u32 = 3 * TICK_RATE;
 /// Ticks each frame of an animated cursor shows, as long as each of the
 /// busy hourglass's source frames.
 const CURSOR_FRAME_TICKS: u32 = TICK_RATE * 15 / 100;
-
-/// File work the workspace asks the system to do on the loaded cartridge.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkspaceRequest {
-    /// Save every modified asset of the sprite document.
-    Save,
-    /// Save the sprite document, writing over these files, which changed
-    /// outside Glaux, provided each still holds what the user was shown.
-    Overwrite(Vec<DiskAsset>),
-    /// Discard the changes to these assets, and the history steps involving
-    /// them, and read their files again.
-    Reload(Vec<VideoAsset>),
-    /// Ask the host's file dialog for a PNG spritesheet to import. The
-    /// workspace takes no other input until [`Workspace::sheet_read`] or
-    /// [`Workspace::file_dialog_closed`] answers it, or Escape stops the
-    /// wait.
-    PickSpritesheet,
-    /// List the cartridge's scripts for OPEN FILE. Answer with
-    /// [`Workspace::scripts_listed`].
-    ListScripts,
-    /// Open this script in a tab, or show its tab if it has one. Answer
-    /// with [`Workspace::script_opened`].
-    OpenScript(SourcePath),
-    /// Run the cartridge from its entry point. The system saves what the
-    /// editors hold first when told to, and cancels the run if that fails.
-    Run,
-    /// Keep the Code view's settings for the next launch.
-    SaveEditorSettings(EditorSettings),
-    /// Write this script document to its file. Answer with
-    /// [`Workspace::script_saved`].
-    SaveScript(DocumentId),
-    /// Write this script document over its file, which changed outside
-    /// Glaux, provided it still holds `seen` (`None` means it is still
-    /// absent). Answer with [`Workspace::script_saved`].
-    OverwriteScript {
-        id: DocumentId,
-        seen: Option<Vec<u8>>,
-    },
-    /// Write this script document to its file and, once it is written,
-    /// close its tab. Answer with [`Workspace::script_saved`] and, if it
-    /// closed, [`Workspace::script_closed`].
-    SaveAndCloseScript(DocumentId),
-    /// Ask for a new script's path. Answer with
-    /// [`Workspace::open_new_script`] and the cartridge's language.
-    NewScript,
-    /// Create this empty script and open it in a tab. Answer with
-    /// [`Workspace::script_created`].
-    CreateScript(SourcePath),
-    /// Read the state of this script's file for DELETE SCRIPT. Answer with
-    /// [`Workspace::delete_prompt`].
-    PrepareDelete(DocumentId),
-    /// Delete this script's file and close its tab, provided the file still
-    /// holds `seen` (`None` means it is still absent). Answer with
-    /// [`Workspace::script_deleted`].
-    DeleteScript {
-        id: DocumentId,
-        seen: Option<Vec<u8>>,
-    },
-    /// Move this script's file to this path. Answer with
-    /// [`Workspace::script_renamed`].
-    RenameScript { id: DocumentId, to: SourcePath },
-    /// Go to the definition of the name at byte `caret` of this script. Answer with
-    /// [`Workspace::jump`], or [`Workspace::definition_missed`] when there is none.
-    GoToDefinition { id: DocumentId, caret: usize },
-    /// Move to this place and remember where the jump started. Answer with
-    /// [`Workspace::jump`].
-    Jump(Destination),
-    /// Return to the place before the last jump. Answer with [`Workspace::travel`].
-    NavigateBack,
-    /// Go again to the place the last Back left. Answer with [`Workspace::travel`].
-    NavigateForward,
-    /// Open this link in the program the host uses for it.
-    OpenExternal(ExternalUrl),
-    /// Put this text on the host's clipboard.
-    Copy(String),
-    /// Read the host's clipboard. Answer with [`Workspace::paste`].
-    Paste,
-}
 
 /// A short message in the status bar answering what the user just did.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,5 +1,6 @@
 use super::tab::text_width;
 use super::*;
+use crate::cartridge::source::SourcePath;
 use crate::cartridge::{Language, LoadedCartridge};
 use crate::system::test_font::LAYOUT_FONT;
 use glaux_input::{InputEvent, Point, PointerButton};

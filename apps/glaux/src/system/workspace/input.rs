@@ -6,7 +6,10 @@ use super::docs::{DocTarget, DocsRequest};
 use super::modal::{Choice, Modal, Target, close_dialog};
 use super::sprites::SpriteRequest;
 use super::tab::{Rect, Tab};
-use super::{Workspace, WorkspaceRequest, docs_source};
+use super::{
+    AssetRequest, HostWork, NavigationRequest, ScriptRequest, Workspace, WorkspaceRequest,
+    docs_source,
+};
 use crate::system::code_session::CodeSession;
 use crate::system::screen::PALE;
 use crate::system::sprite_document::SpriteDocument;
@@ -79,19 +82,25 @@ impl Workspace {
             let modal = self.modal.take()?;
             return match (choice, modal.target) {
                 (Choice::Overwrite, Target::Assets(seen)) => {
-                    Some(WorkspaceRequest::Overwrite(seen))
+                    Some(WorkspaceRequest::Assets(AssetRequest::Overwrite(seen)))
                 }
                 (Choice::Overwrite, Target::Script { id, seen }) => {
-                    Some(WorkspaceRequest::OverwriteScript { id, seen })
+                    Some(WorkspaceRequest::Scripts(ScriptRequest::Overwrite {
+                        id,
+                        seen,
+                    }))
                 }
-                (Choice::Reload, Target::Assets(seen)) => Some(WorkspaceRequest::Reload(
-                    seen.iter().map(|disk| disk.asset).collect(),
+                (Choice::Reload, Target::Assets(seen)) => Some(WorkspaceRequest::Assets(
+                    AssetRequest::Reload(seen.iter().map(|disk| disk.asset).collect()),
                 )),
                 (Choice::Delete, Target::DeleteScript { id, seen }) => {
-                    Some(WorkspaceRequest::DeleteScript { id, seen })
+                    Some(WorkspaceRequest::Scripts(ScriptRequest::Delete {
+                        id,
+                        seen,
+                    }))
                 }
                 (Choice::Save, Target::CloseScript(id)) => {
-                    Some(WorkspaceRequest::SaveAndCloseScript(id))
+                    Some(WorkspaceRequest::Scripts(ScriptRequest::SaveAndClose(id)))
                 }
                 (Choice::Discard, Target::CloseScript(id)) => {
                     if let Some(code) = code {
@@ -211,11 +220,11 @@ impl Workspace {
     /// asks.
     fn docs_input(&mut self, event: InputEvent) -> Option<WorkspaceRequest> {
         let request = self.docs.handle_input(event, docs_source())?;
-        self.docs_request(request)
+        self.docs_request(request).map(WorkspaceRequest::Host)
     }
 
     /// Carries out what the documentation browser asked for.
-    pub(super) fn docs_request(&mut self, request: DocsRequest) -> Option<WorkspaceRequest> {
+    pub(super) fn docs_request(&mut self, request: DocsRequest) -> Option<HostWork> {
         match request {
             DocsRequest::Close => {
                 self.docs_open = false;
@@ -230,10 +239,10 @@ impl Workspace {
                     ui_text::get_with("workspace-opening", &[("value", Arg::Text(url.as_str()))]),
                     PALE,
                 );
-                Some(WorkspaceRequest::OpenExternal(url))
+                Some(HostWork::OpenExternal(url))
             }
-            DocsRequest::Copy(text) => Some(WorkspaceRequest::Copy(text)),
-            DocsRequest::Paste => Some(WorkspaceRequest::Paste),
+            DocsRequest::Copy(text) => Some(HostWork::Copy(text)),
+            DocsRequest::Paste => Some(HostWork::Paste),
         }
     }
 
@@ -245,25 +254,33 @@ impl Workspace {
         mut code: Option<&mut CodeSession>,
     ) -> Option<WorkspaceRequest> {
         match self.code.handle_input(event, code.as_deref_mut())? {
-            CodeRequest::ListScripts => Some(WorkspaceRequest::ListScripts),
-            CodeRequest::Open(path) => Some(WorkspaceRequest::OpenScript(path)),
+            CodeRequest::ListScripts => Some(WorkspaceRequest::Scripts(ScriptRequest::List)),
+            CodeRequest::Open(path) => Some(WorkspaceRequest::Scripts(ScriptRequest::Open(path))),
             CodeRequest::SaveSettings(settings) => {
                 Some(WorkspaceRequest::SaveEditorSettings(settings))
             }
-            CodeRequest::Save(id) => Some(WorkspaceRequest::SaveScript(id)),
+            CodeRequest::Save(id) => Some(WorkspaceRequest::Scripts(ScriptRequest::Save(id))),
             CodeRequest::Run => Some(WorkspaceRequest::Run),
-            CodeRequest::GoToDefinition { id, caret } => {
-                Some(WorkspaceRequest::GoToDefinition { id, caret })
+            CodeRequest::GoToDefinition { id, caret } => Some(WorkspaceRequest::Navigate(
+                NavigationRequest::GoToDefinition { id, caret },
+            )),
+            CodeRequest::Jump(target) => {
+                Some(WorkspaceRequest::Navigate(NavigationRequest::Jump(target)))
             }
-            CodeRequest::Jump(target) => Some(WorkspaceRequest::Jump(target)),
-            CodeRequest::Back => Some(WorkspaceRequest::NavigateBack),
-            CodeRequest::Forward => Some(WorkspaceRequest::NavigateForward),
-            CodeRequest::Copy(text) => Some(WorkspaceRequest::Copy(text)),
-            CodeRequest::Paste => Some(WorkspaceRequest::Paste),
-            CodeRequest::NewFile => Some(WorkspaceRequest::NewScript),
-            CodeRequest::Create(path) => Some(WorkspaceRequest::CreateScript(path)),
-            CodeRequest::DeleteScript(id) => Some(WorkspaceRequest::PrepareDelete(id)),
-            CodeRequest::Rename { id, to } => Some(WorkspaceRequest::RenameScript { id, to }),
+            CodeRequest::Back => Some(WorkspaceRequest::Navigate(NavigationRequest::Back)),
+            CodeRequest::Forward => Some(WorkspaceRequest::Navigate(NavigationRequest::Forward)),
+            CodeRequest::Copy(text) => Some(WorkspaceRequest::Host(HostWork::Copy(text))),
+            CodeRequest::Paste => Some(WorkspaceRequest::Host(HostWork::Paste)),
+            CodeRequest::NewFile => Some(WorkspaceRequest::Scripts(ScriptRequest::New)),
+            CodeRequest::Create(path) => {
+                Some(WorkspaceRequest::Scripts(ScriptRequest::Create(path)))
+            }
+            CodeRequest::DeleteScript(id) => {
+                Some(WorkspaceRequest::Scripts(ScriptRequest::PrepareDelete(id)))
+            }
+            CodeRequest::Rename { id, to } => {
+                Some(WorkspaceRequest::Scripts(ScriptRequest::Rename { id, to }))
+            }
             CodeRequest::Notice(text) => {
                 self.notify(text, PALE);
                 None
@@ -295,8 +312,8 @@ impl Workspace {
         sprites: Option<&mut SpriteDocument>,
     ) -> Option<WorkspaceRequest> {
         match self.sprites.handle_input(event, sprites)? {
-            SpriteRequest::Save => Some(WorkspaceRequest::Save),
-            SpriteRequest::Import => Some(WorkspaceRequest::PickSpritesheet),
+            SpriteRequest::Save => Some(WorkspaceRequest::Assets(AssetRequest::Save)),
+            SpriteRequest::Import => Some(WorkspaceRequest::Assets(AssetRequest::PickSpritesheet)),
             SpriteRequest::Notice(text) => {
                 self.notify(text, PALE);
                 None

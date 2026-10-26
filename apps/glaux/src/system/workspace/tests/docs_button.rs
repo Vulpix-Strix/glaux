@@ -150,7 +150,7 @@ fn pasting_goes_to_the_open_search_and_not_to_the_script() {
     assert_eq!(send(&mut workspace, InputEvent::Find), None);
     assert_eq!(
         send(&mut workspace, InputEvent::Paste),
-        Some(WorkspaceRequest::Paste)
+        Some(WorkspaceRequest::Host(HostWork::Paste))
     );
     workspace.paste(&mut session, Some("game".to_owned()));
     assert!(workspace.docs.search_hits().unwrap() > 0);
