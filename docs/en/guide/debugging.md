@@ -20,7 +20,7 @@ A cartridge under the debugger runs slower than one started with F5, so use it t
 
 ## While the cartridge is stopped
 
-The scripts are read-only. You can still move the caret, select, search, open other scripts and use Go to Definition.
+The scripts are read-only, and creating, renaming or deleting a script is blocked too, because the cartridge runs the files as they were when it started. You can still move the caret, select, search, open other scripts and use Go to Definition.
 
 | Key      | Plate         | What it does                                              |
 |----------|---------------|-----------------------------------------------------------|
@@ -34,7 +34,7 @@ You can set and clear breakpoints while stopped. They apply when the cartridge g
 
 ### Variables and the call stack
 
-The panel on the right lists the variables of the selected frame. Press a row marked with a plus sign to open a table, and again to close it. Values are shown without running any of your code, so a table with a metamethod is shown as it is stored.
+The panel on the right lists the variables of the selected frame. Drag its left edge to make it wider, up to half the view. It keeps the width you chose for the next stop. Press a row marked with a plus sign to open a table, and again to close it. Values are shown without running any of your code, so a table with a metamethod is shown as it is stored.
 
 Below it, the call stack lists the frames from the innermost. Press a frame to move to its line and see its variables. A frame shown as the engine is not script code.
 

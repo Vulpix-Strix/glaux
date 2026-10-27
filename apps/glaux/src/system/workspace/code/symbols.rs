@@ -61,11 +61,16 @@ pub struct PanelLayout {
 impl PanelLayout {
     /// The panel at the right edge of `layout`'s text area.
     pub fn new(layout: &CodeLayout) -> Self {
+        Self::with_width(layout, WIDTH)
+    }
+
+    /// The panel `width` wide at the right edge of `layout`'s text area.
+    pub fn with_width(layout: &CodeLayout, width: i32) -> Self {
         let text = layout.text;
         let area = Rect {
-            x: text.right() - WIDTH,
+            x: text.right() - width,
             y: text.y,
-            width: WIDTH,
+            width,
             height: text.height,
         };
         let cell_h = layout.metrics.cell_h;

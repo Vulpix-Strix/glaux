@@ -285,3 +285,112 @@ fn a_press_in_the_text_still_moves_the_caret_during_a_stop() {
     editor.handle_input(release(at), Some(&mut session));
     assert_eq!(caret(&session), 3);
 }
+
+fn drag_edge_to(editor: &mut CodeEditor, session: &mut CodeSession, x: i32) {
+    let handle = editor.debug_layout().unwrap().handle;
+    let from = Point::new((handle.x + 1) as u16, (handle.y + 20) as u16);
+    let to = Point::new(x as u16, from.y);
+    editor.handle_input(press(PointerButton::Primary, from), Some(session));
+    editor.handle_input(InputEvent::PointerMove(Some(to)), Some(session));
+    editor.handle_input(release(to), Some(session));
+}
+
+#[test]
+fn dragging_the_panels_edge_resizes_it_and_the_text_gives_way() {
+    let fixture = Fixture::new("code-stop-resize");
+    let (mut editor, _, mut session) = open(&fixture, "a\nb", EditorSettings::default());
+    editor.show_stop(stop());
+    let narrow = editor.debug_layout().unwrap().area.width;
+    let columns = geometry(&editor, &session).columns;
+
+    let right = editor.layout().text.right();
+    drag_edge_to(&mut editor, &mut session, right - narrow - 40);
+    let wide = editor.debug_layout().unwrap().area;
+    assert_eq!(wide.width, narrow + 40);
+    assert_eq!(editor.text_area().right(), wide.x);
+    assert!(geometry(&editor, &session).columns < columns);
+    assert!(!editor.is_dragging(), "the release ended the drag");
+}
+
+#[test]
+fn the_panel_never_gets_narrower_than_it_starts_or_wider_than_half_the_view() {
+    let fixture = Fixture::new("code-stop-resize-limits");
+    let (mut editor, _, mut session) = open(&fixture, "a\nb", EditorSettings::default());
+    editor.show_stop(stop());
+    let start = editor.debug_layout().unwrap().area.width;
+    let text = editor.layout().text;
+
+    drag_edge_to(&mut editor, &mut session, text.right() - 10);
+    assert_eq!(editor.debug_layout().unwrap().area.width, start);
+    drag_edge_to(&mut editor, &mut session, text.x);
+    assert_eq!(editor.debug_layout().unwrap().area.width, text.width / 2);
+}
+
+#[test]
+fn the_width_the_user_chose_is_kept_for_the_next_stop() {
+    let fixture = Fixture::new("code-stop-resize-kept");
+    let (mut editor, _, mut session) = open(&fixture, "a\nb", EditorSettings::default());
+    editor.show_stop(stop());
+    let right = editor.layout().text.right();
+    drag_edge_to(&mut editor, &mut session, right - 100);
+    editor.end_stop();
+    editor.show_stop(stop());
+    assert_eq!(editor.debug_layout().unwrap().area.width, 100);
+}
+
+#[test]
+fn pressing_next_to_the_edge_is_not_a_resize() {
+    let fixture = Fixture::new("code-stop-resize-miss");
+    let (mut editor, _, mut session) = open(&fixture, "a\nb", EditorSettings::default());
+    editor.show_stop(stop());
+    let area = editor.debug_layout().unwrap().area;
+    let at = Point::new((area.x - 2) as u16, (area.y + 20) as u16);
+    press_at(&mut editor, &mut session, at);
+    let to = Point::new((area.x - 30) as u16, at.y);
+    editor.handle_input(InputEvent::PointerMove(Some(to)), Some(&mut session));
+    editor.handle_input(release(to), Some(&mut session));
+    assert_eq!(editor.debug_layout().unwrap().area.width, area.width);
+}
+
+#[test]
+fn the_panel_edge_shows_a_hand_and_losing_the_pointer_ends_a_resize() {
+    let fixture = Fixture::new("code-stop-resize-cursor");
+    let (mut editor, _, mut session) = open(&fixture, "a\nb", EditorSettings::default());
+    editor.show_stop(stop());
+    let handle = editor.debug_layout().unwrap().handle;
+    let at = Point::new((handle.x + 1) as u16, (handle.y + 20) as u16);
+    assert_eq!(editor.cursor(at, Some(&session)), SystemCursor::Hand);
+    editor.handle_input(press(PointerButton::Primary, at), Some(&mut session));
+    assert_eq!(editor.cursor(at, Some(&session)), SystemCursor::Grab);
+    editor.handle_input(InputEvent::PointerCancel, Some(&mut session));
+    assert!(!editor.is_dragging());
+}
+
+#[test]
+fn files_cannot_be_created_renamed_or_deleted_while_the_session_is_read_only() {
+    let fixture = Fixture::new("code-read-only-structure");
+    let (mut editor, _, mut session) = open(&fixture, "abc", EditorSettings::default());
+    let id = session.tabs().active().unwrap();
+    session.set_read_only(true);
+
+    let asked = requests(&mut editor, &mut session, &[InputEvent::NewFile]);
+    assert!(
+        matches!(asked.as_slice(), [CodeRequest::Notice(_)]),
+        "{asked:?}"
+    );
+    assert!(editor.new_file().is_none());
+
+    for action in [CodeAction::RenameScript(id), CodeAction::DeleteScript(id)] {
+        let asked = editor.run_action(action, &mut session);
+        assert!(matches!(asked, Some(CodeRequest::Notice(_))), "{asked:?}");
+    }
+    assert!(editor.rename().is_none());
+
+    session.set_read_only(false);
+    let asked = requests(&mut editor, &mut session, &[InputEvent::NewFile]);
+    assert_eq!(asked, [CodeRequest::NewFile]);
+    assert_eq!(
+        editor.run_action(CodeAction::DeleteScript(id), &mut session),
+        Some(CodeRequest::DeleteScript(id))
+    );
+}

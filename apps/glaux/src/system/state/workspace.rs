@@ -17,6 +17,7 @@ use crate::system::workspace::{
     WorkspaceVideo,
 };
 use crate::system::{HostRequest, SystemState};
+use crate::ui_text;
 use glaux_input::InputEvent;
 
 /// Makes the workspace the active UI on `cartridge`.
@@ -162,6 +163,19 @@ pub(super) fn serve_scripts(
     code: &mut CodeSession,
     cartridge: &LoadedCartridge,
 ) {
+    let changes_files = matches!(
+        request,
+        ScriptRequest::New
+            | ScriptRequest::Create(_)
+            | ScriptRequest::PrepareDelete(_)
+            | ScriptRequest::Delete { .. }
+            | ScriptRequest::Rename { .. }
+    );
+    if changes_files && code.is_read_only() {
+        // The runtime holds the scripts as they were when it started.
+        workspace.report(ui_text::get("code-read-only-while-debugging"));
+        return;
+    }
     match request {
         ScriptRequest::List => workspace.scripts_listed(cartridge.script_files()),
         ScriptRequest::Open(path) => {

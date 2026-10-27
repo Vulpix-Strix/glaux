@@ -13,6 +13,12 @@ use crate::system::editing::selection::Selection;
 use crate::system::editing::session::CodeSession;
 use crate::ui_text;
 
+/// What the view says when something that changes the scripts is tried
+/// while a debugged cartridge is stopped.
+pub(super) fn read_only_notice() -> CodeRequest {
+    CodeRequest::Notice(ui_text::get("code-read-only-while-debugging"))
+}
+
 impl CodeEditor {
     /// Applies `event` to the active document if it is an editing key,
     /// returning `None` if it is not one, and otherwise the work it asks
@@ -36,8 +42,7 @@ impl CodeEditor {
                     | InputEvent::Paste
             )
         {
-            let notice = ui_text::get("code-read-only-while-debugging");
-            return Some(Some(CodeRequest::Notice(notice)));
+            return Some(Some(read_only_notice()));
         }
         match event {
             InputEvent::Text(ch) => {

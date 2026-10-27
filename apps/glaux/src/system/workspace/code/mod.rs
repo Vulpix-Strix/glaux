@@ -11,6 +11,7 @@ mod completion;
 mod debugging;
 mod docs_lookup;
 mod edit;
+use edit::read_only_notice;
 mod find;
 mod go_to_line;
 mod hover;
@@ -278,6 +279,11 @@ pub struct CodeEditor {
     /// What a stopped cartridge shows, docked right of the text while it
     /// is stopped. The scripts cannot be edited meanwhile.
     debug: Option<DebugView>,
+    /// Width of the panel of a stopped cartridge, which the user resizes and
+    /// which is kept from one stop to the next.
+    debug_width: i32,
+    /// Whether the panel's edge is being dragged.
+    resizing: bool,
     /// Ticks since the caret blink last restarted in its visible phase.
     blink: u32,
     /// The selection being dragged out in the text, while its press is held.
@@ -314,6 +320,8 @@ impl CodeEditor {
             entry: None,
             symbols: None,
             debug: None,
+            debug_width: debugging::MIN_WIDTH,
+            resizing: false,
             blink: 0,
             selecting: None,
             last_click: None,
@@ -511,7 +519,9 @@ impl CodeEditor {
     /// find bar leaves below it.
     fn text_area(&self) -> Rect {
         let mut text = self.layout.text;
-        if self.symbols.is_some() || self.debug.is_some() {
+        if self.debug.is_some() {
+            text.width -= self.debug_width;
+        } else if self.symbols.is_some() {
             text.width -= symbols::WIDTH;
         }
         match self.find_layout() {
@@ -544,7 +554,7 @@ impl CodeEditor {
     /// Whether a tab or a selection is being dragged, which keeps its
     /// pointer wherever the pointer goes.
     pub fn is_dragging(&self) -> bool {
-        self.drag.is_some() || self.selecting.is_some()
+        self.drag.is_some() || self.selecting.is_some() || self.resizing
     }
 
     /// The pointer for `at`, with `session` shown: a closed hand while a
@@ -558,8 +568,14 @@ impl CodeEditor {
                 SystemCursor::Arrow
             }
         };
-        if self.drag.is_some() {
+        if self.drag.is_some() || self.resizing {
             return SystemCursor::Grab;
+        }
+        if self
+            .debug_layout()
+            .is_some_and(|panel| panel.handle.contains(at))
+        {
+            return SystemCursor::Hand;
         }
         if self.selecting.is_some() {
             return SystemCursor::Text;
@@ -861,6 +877,9 @@ impl CodeEditor {
             && !self.has_overlay()
             && let Some(request) = self.debug_pointer(event)
         {
+            if let Some(session) = session {
+                self.refresh_metrics(session);
+            }
             return request;
         }
         if let InputEvent::PointerDown {
@@ -989,6 +1008,7 @@ impl CodeEditor {
         let ids: Vec<_> = session.tabs().ids().collect();
         match event {
             InputEvent::OpenFile => return Some(CodeRequest::ListScripts),
+            InputEvent::NewFile if session.is_read_only() => return Some(read_only_notice()),
             InputEvent::NewFile => return Some(CodeRequest::NewFile),
             InputEvent::Find => self.open_find(session, false),
             InputEvent::Replace => self.open_find(session, true),

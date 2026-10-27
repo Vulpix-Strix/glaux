@@ -3,6 +3,7 @@
 
 use glaux_input::{InputEvent, Point};
 
+use super::edit::read_only_notice;
 use super::rename::RenameScript;
 use super::{CodeEditor, CodeRequest, close_tab};
 use crate::system::editing::document::DocumentId;
@@ -183,6 +184,11 @@ impl CodeEditor {
             Some(event) => self.input(event, session),
             None => match action {
                 CodeAction::CloseTab(id) => close_tab(session, id),
+                CodeAction::RenameScript(_) | CodeAction::DeleteScript(_)
+                    if session.is_read_only() =>
+                {
+                    Some(read_only_notice())
+                }
                 CodeAction::RenameScript(id) => {
                     let path = session.document(id)?.path().clone();
                     self.rename = RenameScript::new(id, path);

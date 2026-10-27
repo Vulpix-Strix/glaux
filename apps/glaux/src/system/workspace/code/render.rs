@@ -115,7 +115,9 @@ impl CodeEditor {
                             painter.symbol_panel(panel, &layout, hover_pointer);
                         }
                         if let (Some(view), Some(layout)) = (&self.debug, self.debug_layout()) {
-                            painter.debug_panel(view, &layout, hover_pointer);
+                            let grip = self.resizing
+                                || hover_pointer.is_some_and(|at| layout.handle.contains(at));
+                            painter.debug_panel(view, &layout, hover_pointer, grip);
                         }
                         if let (Some(popup), Some(layout)) =
                             (&self.signature, self.signature_layout(session))

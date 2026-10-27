@@ -8,9 +8,15 @@ use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_script::debug::{Frame, Resume, Step, Stop, Variable};
 
 use super::layout::CodeLayout;
-use super::symbols::PanelLayout;
+use super::symbols::{PanelLayout, WIDTH};
 use super::{CodeEditor, CodeRequest};
 use crate::system::workspace::Rect;
+
+/// Width of the strip that resizes the panel.
+const HANDLE: i32 = 3;
+
+/// Narrowest the panel gets, which is also its width at first.
+pub const MIN_WIDTH: i32 = WIDTH;
 
 /// Most rows of the call stack the panel takes from the variables.
 const MAX_STACK_ROWS: usize = 5;
@@ -196,6 +202,8 @@ impl DebugView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DebugLayout {
     pub area: Rect,
+    /// The strip along the panel's left edge that is dragged to resize it.
+    pub handle: Rect,
     pub locals_title: Rect,
     pub first_local: Rect,
     pub visible_locals: usize,
@@ -205,10 +213,10 @@ pub struct DebugLayout {
 }
 
 impl DebugLayout {
-    /// The panel at the right edge of `layout`'s text area, with room for
-    /// `frames` call stack rows at its foot.
-    pub fn new(layout: &CodeLayout, frames: usize) -> Self {
-        let panel = PanelLayout::new(layout);
+    /// The panel `width` wide at the right edge of `layout`'s text area,
+    /// with room for `frames` call stack rows at its foot.
+    pub fn new(layout: &CodeLayout, frames: usize, width: i32) -> Self {
+        let panel = PanelLayout::with_width(layout, width);
         let cell_h = layout.metrics.cell_h.max(1);
         let visible_frames = frames.clamp(1, MAX_STACK_ROWS);
         let stack_height = (visible_frames as i32 + 1) * cell_h + 3;
@@ -226,6 +234,10 @@ impl DebugLayout {
             usize::try_from((stack_title.y - panel.first_row.y) / cell_h).unwrap_or(0);
         Self {
             area: panel.area,
+            handle: Rect {
+                width: HANDLE,
+                ..panel.area
+            },
             locals_title: panel.title,
             first_local: panel.first_row,
             visible_locals,
@@ -269,6 +281,7 @@ impl CodeEditor {
     }
 
     pub fn end_stop(&mut self) {
+        self.resizing = false;
         self.debug = None;
     }
 
@@ -282,7 +295,16 @@ impl CodeEditor {
 
     pub fn debug_layout(&self) -> Option<DebugLayout> {
         let view = self.debug.as_ref()?;
-        Some(DebugLayout::new(&self.layout, view.frames.len()))
+        Some(DebugLayout::new(
+            &self.layout,
+            view.frames.len(),
+            self.debug_width,
+        ))
+    }
+
+    /// Widest the panel gets: half the text area.
+    fn max_debug_width(&self) -> i32 {
+        (self.layout.text.width / 2).max(MIN_WIDTH)
     }
 
     /// Presses on the plates and the panel of a stopped cartridge, and the
@@ -291,6 +313,34 @@ impl CodeEditor {
     pub(super) fn debug_pointer(&mut self, event: InputEvent) -> Option<Option<CodeRequest>> {
         let layout = self.debug_layout()?;
         match event {
+            InputEvent::PointerDown {
+                button: PointerButton::Primary,
+                at,
+                ..
+            } if layout.handle.contains(at) => {
+                self.resizing = true;
+                Some(None)
+            }
+            InputEvent::PointerMove(at) if self.resizing => {
+                self.pointer = at;
+                if let Some(at) = at {
+                    let right = self.layout.text.right();
+                    self.debug_width =
+                        (right - i32::from(at.x)).clamp(MIN_WIDTH, self.max_debug_width());
+                }
+                Some(None)
+            }
+            InputEvent::PointerUp {
+                button: PointerButton::Primary,
+                ..
+            } if self.resizing => {
+                self.resizing = false;
+                Some(None)
+            }
+            InputEvent::PointerCancel => {
+                self.resizing = false;
+                None
+            }
             InputEvent::PointerDown {
                 button: PointerButton::Primary,
                 at,

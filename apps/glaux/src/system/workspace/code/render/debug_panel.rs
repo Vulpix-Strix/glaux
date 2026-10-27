@@ -5,7 +5,7 @@ use glaux_input::Point;
 use glaux_script::debug::Frame;
 use glaux_video::draw::{fill_rect, pixel};
 
-use super::{BACKGROUND, DIM, ERROR, OK, PALE, Painter, TEXT, WARN};
+use super::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, Painter, TEXT, WARN};
 use crate::system::workspace::code::debugging::{DebugLayout, DebugView, Row};
 use crate::system::workspace::code::symbols::{PAD, clip_name};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};
@@ -17,10 +17,14 @@ impl Painter<'_> {
         view: &DebugView,
         layout: &DebugLayout,
         pointer: Option<Point>,
+        grip_lit: bool,
     ) {
         let area = layout.area;
         self.fill(area, BACKGROUND);
-        self.fill(Rect { width: 1, ..area }, BAR);
+        self.fill(
+            Rect { width: 1, ..area },
+            if grip_lit { ACCENT } else { BAR },
+        );
         self.panel_title(&ui_text::get("code-debug-locals"), layout.locals_title);
         self.variables(view, layout, pointer);
         self.panel_title(&ui_text::get("code-debug-stack"), layout.stack_title);
