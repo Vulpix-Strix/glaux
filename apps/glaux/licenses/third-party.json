@@ -810,7 +810,7 @@
     },
     {
       "name": "comrak",
-      "version": "0.56.0",
+      "version": "0.57.0",
       "license": "BSD-2-Clause",
       "repository": "https://github.com/kivikakk/comrak",
       "category": "library",
