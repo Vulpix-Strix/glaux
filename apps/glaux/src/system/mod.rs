@@ -35,7 +35,7 @@ mod unsaved;
 mod video;
 mod workspace;
 
-pub use boot::Boot;
+use boot::Boot;
 pub use clipboard::Clipboard;
 use credits::CreditsView;
 use editing::session::CodeSession;
@@ -45,7 +45,7 @@ pub use editor_settings::{EditorSettings, INDENT_SIZES, TAB_SIZES};
 pub use external_url::{ExternalUrl, ExternalUrlError};
 use logs::{LogPanel, LogStore};
 pub use menu_state::MenuState;
-pub use shell::Shell;
+use shell::Shell;
 use sprite_document::SpriteDocument;
 pub use video::CartridgeVideoDefaults;
 use workspace::{DocsStart, Workspace, WorkspaceVideo};
@@ -85,7 +85,7 @@ use crate::ui_text;
 /// state that phase needs, and transitions consume one variant to build the
 /// next.
 #[derive(Debug)]
-pub enum SystemState {
+pub(crate) enum SystemState {
     /// The boot sequence. The cartridge storage waits here for the shell.
     Boot {
         boot: Boot,
@@ -139,7 +139,7 @@ pub enum SystemState {
 
 /// What the system shows while a cartridge is paused.
 #[derive(Debug)]
-pub enum PausedView {
+pub(crate) enum PausedView {
     /// The cartridge's last frame under the system's pause overlay. Break
     /// resumes the cartridge and Enter opens the shell.
     Game(PauseOverlay),
@@ -367,7 +367,7 @@ impl System {
     }
 
     #[cfg(test)]
-    pub fn state(&self) -> &SystemState {
+    pub(crate) fn state(&self) -> &SystemState {
         &self.state
     }
 
