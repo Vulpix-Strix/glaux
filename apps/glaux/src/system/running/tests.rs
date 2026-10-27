@@ -10,6 +10,8 @@ use super::*;
 use crate::cartridge::fixture::{write_cartridge, write_rhai_cartridge};
 use crate::cartridge_fs::fixture::Fixture;
 
+mod debugging;
+
 fn defaults() -> CartridgeVideoDefaults {
     CartridgeVideoDefaults::from_rom(&crate::rom::load().unwrap())
 }
