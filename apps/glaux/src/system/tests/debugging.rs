@@ -337,3 +337,29 @@ fn centre_of(rect: crate::system::workspace::Rect) -> Point {
         (rect.y + rect.height / 2) as u16,
     )
 }
+
+#[test]
+fn a_debugged_run_can_be_paused_and_resumed_like_any_other() {
+    let fixture = Fixture::new("sys-debug-pause");
+    let system = debugged(in_code(&fixture, SCRIPT));
+    assert!(is_running(&system));
+    let system = press_break(system);
+    assert!(is_paused_game(&system));
+    let system = press_break(system);
+    assert!(is_running(&system));
+    let (_, lines) = logged_per_tick(system, &[&[]]);
+    assert_eq!(lines, ["42"]);
+}
+
+#[test]
+fn the_log_panel_shows_what_the_cartridge_logged_before_it_stopped() {
+    let fixture = Fixture::new("sys-debug-logs");
+    let script = "function tick()\n  log.info('before')\n  local x = 1\nend\n";
+    let system = debugged(with_breakpoints(in_code(&fixture, script), &[3]));
+    assert!(is_debugging(&system));
+    assert!(transcript(&system).contains(&"before".to_owned()));
+
+    let system = system.update(&[InputEvent::ToggleLogs]);
+    assert!(system.log_panel.is_open());
+    assert!(is_debugging(&system));
+}
