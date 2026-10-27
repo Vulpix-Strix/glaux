@@ -1,4 +1,4 @@
-//! How the system moves from one [`SystemState`](super::SystemState) to the
+//! How the system moves from one [`SystemState`] to the
 //! next, one module per state.
 //!
 //! Each transition takes the state it leaves by value and returns the one

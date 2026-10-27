@@ -590,6 +590,65 @@ fn load_and_run_refuse_to_replace_a_paused_cartridge() {
     assert!(!fixture.root().join("paused-game").exists());
 }
 
+/// The system treats a request its state cannot receive as unreachable, so
+/// no command may make one for a slot that cannot receive it.
+#[test]
+fn commands_only_make_requests_the_slot_can_receive() {
+    let (fixture, pong) = pong("cmd-slot-requests");
+    let slots = [
+        CartridgeSlot::Empty,
+        CartridgeSlot::Loaded {
+            cartridge: &pong,
+            unsaved: false,
+        },
+        CartridgeSlot::Loaded {
+            cartridge: &pong,
+            unsaved: true,
+        },
+        CartridgeSlot::Paused(&pong),
+    ];
+    let lines = [
+        "load pong",
+        "load pong --discard",
+        "new made-game",
+        "unload",
+        "unload --discard",
+        "run",
+        "credits",
+        "docs",
+        "docs gate",
+        "resume",
+        "stop",
+    ];
+    for slot in slots {
+        for line in lines {
+            let (_, request) =
+                execute_line(line, Version::new(0, 3, 1), &mut fixture.storage(), slot);
+            let receivable = match (slot, &request) {
+                (_, None) => true,
+                (CartridgeSlot::Paused(_), Some(request)) => {
+                    matches!(request, ShellRequest::Resume | ShellRequest::Stop)
+                }
+                (_, Some(ShellRequest::Resume | ShellRequest::Stop)) => false,
+                (
+                    CartridgeSlot::Empty,
+                    Some(
+                        ShellRequest::Run
+                        | ShellRequest::Unload
+                        | ShellRequest::ConfirmUnsaved { .. },
+                    ),
+                ) => false,
+                (
+                    CartridgeSlot::Loaded { unsaved: false, .. },
+                    Some(ShellRequest::ConfirmUnsaved { .. }),
+                ) => false,
+                _ => true,
+            };
+            assert!(receivable, "{line} on {slot:?} asked for {request:?}");
+        }
+    }
+}
+
 /// Runs the `new` command `line` at the root of `fixture` and returns
 /// what it printed and the cartridge it asked to load as created.
 fn run_new(fixture: &Fixture, line: &str) -> (Vec<Entry>, Option<LoadedCartridge>) {

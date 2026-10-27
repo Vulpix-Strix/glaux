@@ -54,7 +54,7 @@ fn script_category(error: &ScriptError) -> Category {
 ///
 /// A run from the shell uses unsaved graphics changes instead of their
 /// files. A run from Code uses the files only: saving what it should run
-/// is [`run_from_code`]'s job.
+/// is [`save_before_running`]'s job.
 pub(super) fn start(
     mut shell: Box<Shell>,
     cartridge: LoadedCartridge,
