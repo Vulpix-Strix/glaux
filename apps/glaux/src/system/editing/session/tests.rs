@@ -402,3 +402,88 @@ fn the_symbol_at_a_caret_is_a_page_a_local_or_unknown_in_both_languages() {
     let caret = luau.rfind("spr").unwrap() + 1;
     assert_eq!(session.symbol_at(id, caret, api), None);
 }
+
+fn breakpoint(path: &str, line: u32) -> Breakpoint {
+    Breakpoint {
+        path: path.into(),
+        line,
+    }
+}
+
+#[test]
+fn breakpoints_are_listed_by_path_and_line_from_one() {
+    let fixture = Fixture::new("code-session-breakpoints");
+    let cart = cartridge(&fixture, &[("code/a.luau", b"a\nb\nc")]);
+    let mut session = CodeSession::default();
+    let main = session.open(&cart, &path("code/main.luau")).unwrap();
+    let a = session.open(&cart, &path("code/a.luau")).unwrap();
+
+    assert_eq!(session.toggle_breakpoint(a, 2), Some(true));
+    assert_eq!(session.toggle_breakpoint(a, 0), Some(true));
+    assert_eq!(session.toggle_breakpoint(main, 0), Some(true));
+    let mut listed = session.breakpoints();
+    listed.sort();
+    assert_eq!(
+        listed,
+        [
+            breakpoint("code/a.luau", 1),
+            breakpoint("code/a.luau", 3),
+            breakpoint("code/main.luau", 1),
+        ]
+    );
+
+    assert_eq!(session.toggle_breakpoint(a, 0), Some(false));
+    assert_eq!(session.breakpoints().len(), 2);
+}
+
+#[test]
+fn breakpoints_survive_closing_the_script_and_follow_it_back_open() {
+    let fixture = Fixture::new("code-session-breakpoints-closed");
+    let cart = cartridge(&fixture, &[("code/a.luau", b"a\nb\nc")]);
+    let mut session = CodeSession::default();
+    let a = session.open(&cart, &path("code/a.luau")).unwrap();
+    session.toggle_breakpoint(a, 1);
+    session.close(a);
+
+    assert_eq!(session.breakpoints(), [breakpoint("code/a.luau", 2)]);
+    let reopened = session.open(&cart, &path("code/a.luau")).unwrap();
+    assert_eq!(session.breakpoints(), [breakpoint("code/a.luau", 2)]);
+    assert!(
+        session
+            .document(reopened)
+            .unwrap()
+            .breakpoints()
+            .contains(1)
+    );
+    // Open again, nothing is listed twice.
+    assert_eq!(session.breakpoints().len(), 1);
+}
+
+#[test]
+fn breakpoints_of_a_script_that_no_longer_exists_are_forgotten() {
+    let fixture = Fixture::new("code-session-breakpoints-forgotten");
+    let cart = cartridge(&fixture, &[("code/a.luau", b"a\nb")]);
+    let mut session = CodeSession::default();
+    let a = session.open(&cart, &path("code/a.luau")).unwrap();
+    session.toggle_breakpoint(a, 0);
+    session.close(a);
+    session.forget_breakpoints(&path("code/a.luau"));
+    assert_eq!(session.breakpoints(), []);
+}
+
+#[test]
+fn breakpoints_follow_edits_made_through_the_session() {
+    let fixture = Fixture::new("code-session-breakpoints-edits");
+    let cart = cartridge(&fixture, &[("code/a.luau", b"one\ntwo\nthree")]);
+    let mut session = CodeSession::default();
+    let a = session.open(&cart, &path("code/a.luau")).unwrap();
+    session.toggle_breakpoint(a, 2);
+    session
+        .edit(a, 0..0, "zero\n", EditKind::Typing, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(session.breakpoints(), [breakpoint("code/a.luau", 4)]);
+    // Undoing the edit puts the line, and so its breakpoint, back.
+    session.undo(a).unwrap();
+    assert_eq!(session.breakpoints(), [breakpoint("code/a.luau", 3)]);
+}

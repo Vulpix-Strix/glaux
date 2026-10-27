@@ -3,11 +3,14 @@
 //! Documents hold file data only. Cursor, selection, scroll position and
 //! tab order are state of the views showing them.
 
+mod breakpoints;
 mod lines;
 mod store;
 
 use std::ops::Range;
 
+pub use breakpoints::Breakpoints;
+use breakpoints::LineEdit;
 use lines::{BOM, Lines};
 pub use store::{
     CodeDocumentError, CodeDocuments, CodeRenameError, CodeSaveError, CodeSaved, DiskState,
@@ -195,6 +198,8 @@ pub struct CodeDocument {
     /// Counts successful edits. It never goes back, even when an edit
     /// restores earlier text.
     revision: u64,
+    /// The lines the debugger stops at. Edits move them with the text.
+    breakpoints: Breakpoints,
 }
 
 impl CodeDocument {
@@ -219,6 +224,7 @@ impl CodeDocument {
             indent: Indent::of(&text),
             indent_width: space_width(&text),
             revision: 0,
+            breakpoints: Breakpoints::default(),
             text,
         }
     }
@@ -300,6 +306,25 @@ impl CodeDocument {
         self.text != self.origin.text
     }
 
+    /// The lines the debugger stops at.
+    pub fn breakpoints(&self) -> &Breakpoints {
+        &self.breakpoints
+    }
+
+    /// Sets the breakpoint of `line`, counted from 0, or clears it if set.
+    /// Returns whether it is set afterwards. A line past the last one gets
+    /// none.
+    pub fn toggle_breakpoint(&mut self, line: usize) -> bool {
+        line < self.line_count() && self.breakpoints.toggle(line)
+    }
+
+    /// Gives the document the breakpoints it had when it was last open,
+    /// kept to the lines it has now.
+    pub(super) fn restore_breakpoints(&mut self, lines: &[usize]) {
+        self.breakpoints = Breakpoints::from_lines(lines.iter().copied());
+        self.breakpoints.truncate(self.line_count());
+    }
+
     /// Replaces the bytes in `range` of the text with `text`.
     ///
     /// Both ends of `range` must be character boundaries outside the byte
@@ -309,14 +334,29 @@ impl CodeDocument {
     /// line endings.
     pub fn replace(&mut self, range: Range<usize>, text: &str) -> Result<Replaced, EditError> {
         self.check(&range, text)?;
+        let line_edit = self.line_edit(&range, text);
         let removed = self.text[range.clone()].to_owned();
         self.text.replace_range(range.clone(), text);
         self.lines = Lines::new(&self.text);
         self.revision += 1;
+        self.breakpoints.follow(line_edit);
         Ok(Replaced {
             range: range.start..range.start + text.len(),
             removed,
         })
+    }
+
+    /// `range` replaced by `text`, as the lines it touches.
+    fn line_edit(&self, range: &Range<usize>, text: &str) -> LineEdit {
+        let first = self.line_of(range.start);
+        LineEdit {
+            first,
+            last: self.line_of(range.end),
+            at_line_start: self
+                .line_range(first)
+                .is_some_and(|line| line.start == range.start),
+            inserted: text.matches('\n').count(),
+        }
     }
 
     fn check(&self, range: &Range<usize>, text: &str) -> Result<(), EditError> {

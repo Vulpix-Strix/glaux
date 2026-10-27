@@ -358,4 +358,70 @@ fn the_revision_counts_edits_while_modified_compares_with_the_file() {
     assert_eq!((doc.revision(), doc.is_modified()), (2, false));
 }
 
+fn marked(text: &str, lines: &[usize]) -> CodeDocument {
+    let mut doc = doc(text);
+    for &line in lines {
+        assert!(doc.toggle_breakpoint(line));
+    }
+    doc
+}
+
+fn breakpoint_lines(doc: &CodeDocument) -> Vec<usize> {
+    doc.breakpoints().lines().collect()
+}
+
+#[test]
+fn breakpoints_only_exist_on_lines_the_document_has() {
+    let mut doc = doc("a\nb");
+    assert!(!doc.toggle_breakpoint(2));
+    assert!(doc.toggle_breakpoint(1));
+    assert!(!doc.toggle_breakpoint(1));
+    assert!(doc.breakpoints().is_empty());
+}
+
+#[test]
+fn pressing_enter_before_a_marked_line_pushes_its_breakpoint_down_with_it() {
+    let mut doc = marked("one\ntwo\nthree", &[1]);
+    doc.replace(4..4, "\n").unwrap();
+    assert_eq!(doc.text(), "one\n\ntwo\nthree");
+    assert_eq!(breakpoint_lines(&doc), [2]);
+}
+
+#[test]
+fn pressing_enter_inside_a_marked_line_keeps_the_mark_on_its_first_half() {
+    let mut doc = marked("one\ntwo\nthree", &[1, 2]);
+    doc.replace(6..6, "\n").unwrap();
+    assert_eq!(doc.text(), "one\ntw\no\nthree");
+    assert_eq!(breakpoint_lines(&doc), [1, 3]);
+}
+
+#[test]
+fn deleting_a_marked_line_removes_its_breakpoint_and_moves_the_following_ones_up() {
+    let mut doc = marked("one\ntwo\nthree\nfour", &[1, 2, 3]);
+    doc.replace(4..8, "").unwrap();
+    assert_eq!(doc.text(), "one\nthree\nfour");
+    assert_eq!(breakpoint_lines(&doc), [1, 2]);
+}
+
+#[test]
+fn typing_within_a_line_leaves_the_breakpoints_alone() {
+    let mut doc = marked("one\ntwo", &[0, 1]);
+    doc.replace(1..1, "xyz").unwrap();
+    assert_eq!(breakpoint_lines(&doc), [0, 1]);
+}
+
+#[test]
+fn a_refused_edit_leaves_the_breakpoints_alone() {
+    let mut doc = marked("one\ntwo", &[1]);
+    assert!(doc.replace(0..99, "\n\n").is_err());
+    assert_eq!(breakpoint_lines(&doc), [1]);
+}
+
+#[test]
+fn restored_breakpoints_are_kept_to_the_lines_the_document_has() {
+    let mut doc = doc("a\nb\nc");
+    doc.restore_breakpoints(&[0, 2, 9]);
+    assert_eq!(breakpoint_lines(&doc), [0, 2]);
+}
+
 mod saving;

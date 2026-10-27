@@ -27,6 +27,7 @@ use super::syntax::DocumentSyntax;
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge_fs::FsError;
+use glaux_script::debug::Breakpoint;
 
 /// The Code view's documents and tabs for one cartridge.
 #[derive(Debug, Default)]
@@ -43,6 +44,9 @@ pub struct CodeSession {
     /// Whether the entry script was opened, or tried, on the first visit
     /// to the Code view. Never reset, so closing every tab stays closed.
     entry_requested: bool,
+    /// The breakpoints of the scripts that were closed, by path and line
+    /// from 0, for when they open again.
+    closed_breakpoints: Vec<(SourcePath, Vec<usize>)>,
 }
 
 impl CodeSession {
@@ -54,8 +58,15 @@ impl CodeSession {
         cartridge: &LoadedCartridge,
         path: &SourcePath,
     ) -> Result<DocumentId, CodeDocumentError> {
+        let was_open = self.is_open(path);
         let id = self.documents.open(cartridge, path)?;
         self.tabs.open(id);
+        if !was_open && let Some(at) = self.closed_breakpoints.iter().position(|(p, _)| p == path) {
+            let (_, lines) = self.closed_breakpoints.swap_remove(at);
+            if let Some(document) = self.documents.get_mut(id) {
+                document.restore_breakpoints(&lines);
+            }
+        }
         Ok(id)
     }
 
@@ -63,7 +74,15 @@ impl CodeSession {
     /// and its history. Returns whether it was open.
     pub fn close(&mut self, id: DocumentId) -> bool {
         let closed = self.tabs.close(id);
-        self.documents.close(id);
+        if let Some(document) = self.documents.close(id)
+            && !document.breakpoints().is_empty()
+        {
+            let lines = document.breakpoints().lines().collect();
+            self.closed_breakpoints
+                .retain(|(path, _)| path != document.path());
+            self.closed_breakpoints
+                .push((document.path().clone(), lines));
+        }
         self.histories.remove(&id);
         self.syntax.remove(&id);
         closed
@@ -100,6 +119,41 @@ impl CodeSession {
                 .record(replaced, text, kind, before, after);
         }
         Some(result)
+    }
+
+    /// Sets the breakpoint on `line` of `id`, counted from 0, or clears it
+    /// if set. Returns whether it is set afterwards, `None` if `id` is not
+    /// open.
+    pub fn toggle_breakpoint(&mut self, id: DocumentId, line: usize) -> Option<bool> {
+        Some(self.documents.get_mut(id)?.toggle_breakpoint(line))
+    }
+
+    /// Every breakpoint of the scripts, open or closed, for the debugger to
+    /// stop at. Lines are counted from 1, as the runtimes do.
+    pub fn breakpoints(&self) -> Vec<Breakpoint> {
+        let open = self
+            .tabs
+            .ids()
+            .filter_map(|id| self.documents.get(id))
+            .map(|document| (document.path(), document.breakpoints().lines().collect()));
+        let closed = self
+            .closed_breakpoints
+            .iter()
+            .map(|(path, lines)| (path, lines.clone()));
+        open.chain(closed)
+            .flat_map(|(path, lines): (&SourcePath, Vec<usize>)| {
+                lines.into_iter().map(|line| Breakpoint {
+                    path: path.to_string(),
+                    line: line as u32 + 1,
+                })
+            })
+            .collect()
+    }
+
+    /// Forgets the breakpoints of the script at `path`, which no longer
+    /// exists.
+    pub fn forget_breakpoints(&mut self, path: &SourcePath) {
+        self.closed_breakpoints.retain(|(at, _)| at != path);
     }
 
     /// Whether `id` has an edit to undo.

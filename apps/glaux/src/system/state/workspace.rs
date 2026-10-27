@@ -198,6 +198,7 @@ fn serve_scripts(
             let result = cartridge.delete_source(&path, seen.as_deref());
             if result.is_ok() {
                 code.close(id);
+                code.forget_breakpoints(&path);
             }
             workspace.script_deleted(code, &path, result);
         }
