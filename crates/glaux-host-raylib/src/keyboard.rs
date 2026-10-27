@@ -43,7 +43,7 @@ struct EditKey {
     plain_only: bool,
 }
 
-const EDIT_KEYS: [EditKey; 21] = [
+const EDIT_KEYS: [EditKey; 24] = [
     EditKey {
         key: KeyboardKey::KEY_LEFT,
         event: |m| {
@@ -190,10 +190,36 @@ const EDIT_KEYS: [EditKey; 21] = [
         event: |m| {
             if m.shift {
                 InputEvent::Stop
+            } else if m.ctrl {
+                InputEvent::Debug
             } else {
                 InputEvent::Run
             }
         },
+        repeats: false,
+        plain_only: false,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_F7,
+        event: |m| {
+            if m.shift {
+                InputEvent::StepOut
+            } else {
+                InputEvent::StepInto
+            }
+        },
+        repeats: false,
+        plain_only: false,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_F9,
+        event: |_| InputEvent::ToggleBreakpoint,
+        repeats: false,
+        plain_only: false,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_F10,
+        event: |_| InputEvent::StepOver,
         repeats: false,
         plain_only: false,
     },
@@ -635,6 +661,11 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::SignatureHelp
                     | InputEvent::Docs
                     | InputEvent::Run
+                    | InputEvent::Debug
+                    | InputEvent::ToggleBreakpoint
+                    | InputEvent::StepOver
+                    | InputEvent::StepInto
+                    | InputEvent::StepOut
                     | InputEvent::Stop
                     | InputEvent::Restart
                     | InputEvent::Function(_)

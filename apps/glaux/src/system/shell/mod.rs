@@ -283,6 +283,11 @@ impl Shell {
             | InputEvent::Docs
             | InputEvent::Function(_)
             | InputEvent::Run
+            | InputEvent::Debug
+            | InputEvent::ToggleBreakpoint
+            | InputEvent::StepOver
+            | InputEvent::StepInto
+            | InputEvent::StepOut
             | InputEvent::Stop
             | InputEvent::Restart
             | InputEvent::ToggleLogs

@@ -128,8 +128,23 @@ pub enum InputEvent {
     /// A function key other than F1, which is [`Docs`](Self::Docs). The
     /// number is the key's own: `2` for F2 up to `4` for F4.
     Function(u8),
-    /// Run the cartridge from its entry point (F5 or Ctrl+R on desktop).
+    /// Run the cartridge from its entry point (F5 or Ctrl+R on desktop). While
+    /// a debugged cartridge is stopped, go on running it.
     Run,
+    /// Run the cartridge from its entry point under the debugger, stopping at
+    /// its breakpoints (Ctrl+F5 on desktop).
+    Debug,
+    /// Set or clear the breakpoint on the caret's line (F9 on desktop).
+    ToggleBreakpoint,
+    /// Run a stopped cartridge to the next line of the same function, skipping
+    /// calls (F10 on desktop).
+    StepOver,
+    /// Run a stopped cartridge to the next line, entering calls (F7 on
+    /// desktop).
+    StepInto,
+    /// Run a stopped cartridge until its function returns (Shift+F7 on
+    /// desktop).
+    StepOut,
     /// End the running cartridge and return to where it was started from
     /// (Ctrl+. on desktop).
     Stop,

@@ -320,6 +320,24 @@ fn f11_goes_to_the_definition_and_f12_still_toggles_the_logs() {
 }
 
 #[test]
+fn the_debugging_keys_follow_the_usual_ones() {
+    let with_ctrl = |key| {
+        let modifiers = Modifiers {
+            ctrl: true,
+            ..Modifiers::default()
+        };
+        frame_with(&mut EditKeys::default(), &[key], PRESSED, modifiers, FRAME)
+    };
+    assert_eq!(press(&[KEY_F9], false), [InputEvent::ToggleBreakpoint]);
+    assert_eq!(press(&[KEY_F10], false), [InputEvent::StepOver]);
+    assert_eq!(press(&[KEY_F7], false), [InputEvent::StepInto]);
+    assert_eq!(press(&[KEY_F7], true), [InputEvent::StepOut]);
+    assert_eq!(press(&[KEY_F5], false), [InputEvent::Run]);
+    assert_eq!(press(&[KEY_F5], true), [InputEvent::Stop]);
+    assert_eq!(with_ctrl(KEY_F5), [InputEvent::Debug]);
+}
+
+#[test]
 fn ctrl_shift_space_asks_for_the_signature_instead_of_suggestions() {
     assert_eq!(
         shortcuts(&[KEY_SPACE], true, true),
@@ -426,6 +444,11 @@ fn editing_commands_are_kept_only_in_workspace_mode() {
         InputEvent::Complete,
         InputEvent::SignatureHelp,
         InputEvent::Docs,
+        InputEvent::Debug,
+        InputEvent::ToggleBreakpoint,
+        InputEvent::StepOver,
+        InputEvent::StepInto,
+        InputEvent::StepOut,
         InputEvent::Back,
         InputEvent::Forward,
         InputEvent::GoToDefinition,
