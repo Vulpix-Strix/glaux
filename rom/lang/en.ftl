@@ -727,6 +727,7 @@ error-script-runtime = { $phase ->
     [entry] Runtime error: { $detail }
    *[callback] Runtime error in { $callback }: { $detail }
     }
+error-script-stopped = Stopped by the debugger
 error-script-syntax = { $phase ->
     [entry] Syntax error: { $detail }
    *[callback] Syntax error in { $callback }: { $detail }

@@ -45,6 +45,9 @@ pub enum ScriptError {
     ModuleLimitExceeded(String),
     #[error("{0}")]
     Require(Box<RequireFailure>),
+    /// The debugger ended the call. It is not a failure of the script.
+    #[error("Stopped by the debugger")]
+    Stopped,
 }
 
 impl ScriptError {
@@ -58,7 +61,7 @@ impl ScriptError {
         match self {
             Self::Syntax(message) | Self::Runtime(message) => leading_position(message),
             Self::Require(failure) => failure.at.as_deref().and_then(trailing_position),
-            Self::LimitExceeded | Self::ModuleLimitExceeded(_) => None,
+            Self::LimitExceeded | Self::ModuleLimitExceeded(_) | Self::Stopped => None,
         }
     }
 }
@@ -171,6 +174,7 @@ impl fmt::Display for RuntimeError {
                 write!(f, "Execution limit exceeded in {callback}: {path}")
             }
             ScriptError::Require(failure) => f.write_str(&failure.message(Some(callback))),
+            ScriptError::Stopped => write!(f, "Stopped by the debugger in {callback}"),
         }
     }
 }

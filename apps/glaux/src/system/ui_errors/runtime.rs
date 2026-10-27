@@ -40,6 +40,7 @@ pub(in crate::system) fn runtime(error: &glaux_script::RuntimeError) -> String {
                 ("path", Arg::Text(path)),
             ],
         ),
+        ScriptError::Stopped => ui_text::get("error-script-stopped"),
         ScriptError::Require(failure) => {
             let at = failure.at.as_deref();
             let (kind, detail) = match &failure.error {

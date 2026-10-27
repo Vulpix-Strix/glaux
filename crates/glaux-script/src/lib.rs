@@ -7,6 +7,7 @@
 //! [`validate`] functions take, and wrap the detail text those return in
 //! errors located at the calling script line.
 
+pub mod debug;
 pub mod draw;
 pub mod error;
 pub mod log;
