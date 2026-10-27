@@ -11,7 +11,7 @@ glaux-input.workspace = true
 glaux-machine.workspace = true
 glaux-modules.workspace = true
 glaux-script.workspace = true
-rhai.workspace = true
+rhai = { workspace = true, features = ["debugging"] }
 thiserror.workspace = true
 tracing.workspace = true
 

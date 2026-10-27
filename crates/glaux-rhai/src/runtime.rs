@@ -7,6 +7,7 @@ use std::rc::Rc;
 use glaux_audio::AudioState;
 use glaux_input::InputState;
 use glaux_modules::ModuleSource;
+use glaux_script::debug::{Breakpoint, DebugPort};
 use glaux_script::{
     DrawCommand, LogEntry, LogLevel, LogSink, Phase, Recording, RuntimeError, ScriptError,
     StartFailure,
@@ -15,6 +16,7 @@ use rhai::{AST, CallFnOptions, Dynamic, Engine, EvalAltResult, FnAccess, Map, Mo
 
 use crate::api;
 use crate::api::draw::PendingFrame;
+use crate::debug::Debugger;
 use crate::error::{script_error, syntax_error};
 use crate::modules::Resolver;
 
@@ -131,6 +133,8 @@ pub struct Runtime {
     ticks: Rc<Cell<u64>>,
     audio: Rc<RefCell<AudioState>>,
     meter: Rc<Meter>,
+    /// Present when the engine is being debugged.
+    debug: Option<Rc<Debugger>>,
 }
 
 impl fmt::Debug for Runtime {
@@ -155,6 +159,38 @@ impl Runtime {
         modules: impl ModuleSource + 'static,
         budget: Budget,
     ) -> Result<Self, StartFailure> {
+        Self::start_with(chunk_name, source, modules, budget, None)
+    }
+
+    /// Like [`start`](Self::start), for an engine that stops at
+    /// `breakpoints` and wherever the debugger at the other end of `port`
+    /// steps.
+    ///
+    /// The script is compiled without optimizations, so every statement can
+    /// stop, and the debugger slows the engine down. Breakpoints are
+    /// cartridge-relative paths, as in `code/main.rhai`. Only the innermost
+    /// frame has variables, and a breakpoint sent while the engine runs
+    /// applies from the next call into the script.
+    pub fn start_debug(
+        chunk_name: &str,
+        source: &[u8],
+        modules: impl ModuleSource + 'static,
+        budget: Budget,
+        port: DebugPort,
+        breakpoints: Vec<Breakpoint>,
+    ) -> Result<Self, StartFailure> {
+        let debug = Some((port, breakpoints));
+        Self::start_with(chunk_name, source, modules, budget, debug)
+    }
+
+    fn start_with(
+        chunk_name: &str,
+        source: &[u8],
+        modules: impl ModuleSource + 'static,
+        budget: Budget,
+        debug: Option<(DebugPort, Vec<Breakpoint>)>,
+    ) -> Result<Self, StartFailure> {
+        let debug = debug.map(|(port, breakpoints)| Rc::new(Debugger::new(port, breakpoints)));
         let meter = Rc::new(Meter {
             budget: budget.operations,
             operations: Cell::new(0),
@@ -168,7 +204,10 @@ impl Runtime {
         let audio: Rc<RefCell<AudioState>> = Rc::default();
 
         let mut engine = Engine::new();
-        configure(&mut engine, &meter, &output);
+        configure(&mut engine, &meter, &output, debug.clone());
+        if let Some(debug) = &debug {
+            debug.attach(&mut engine);
+        }
         api::compare::install(&mut engine);
         api::draw::install(&mut engine, &pending);
         api::log::install(&mut engine, &output);
@@ -182,7 +221,11 @@ impl Runtime {
             Err(error) => {
                 let error = RuntimeError {
                     phase: Phase::Entry,
-                    error,
+                    error: if debug.as_ref().is_some_and(|debug| debug.stop_requested()) {
+                        ScriptError::Stopped
+                    } else {
+                        error
+                    },
                 };
                 tracing::debug!(chunk = chunk_name, %error, "script failed to start");
                 return Err(StartFailure {
@@ -206,6 +249,7 @@ impl Runtime {
             ticks,
             audio,
             meter,
+            debug,
         };
         match runtime.callback(Phase::Boot) {
             Ok(_) => Ok(runtime),
@@ -292,6 +336,9 @@ impl Runtime {
         }
 
         self.meter.reset();
+        if let Some(debug) = &self.debug {
+            debug.sync();
+        }
         let options = CallFnOptions::new()
             .eval_ast(false)
             .bind_this_ptr(&mut self.state);
@@ -307,6 +354,16 @@ impl Runtime {
         // after every call: otherwise it could grow without bound, a few
         // entries per tick.
         let result = result.and_then(|_| self.engine.ensure_data_size_within_limits(&self.state));
+        if self
+            .debug
+            .as_ref()
+            .is_some_and(|debug| debug.stop_requested())
+        {
+            return Err(RuntimeError {
+                phase,
+                error: ScriptError::Stopped,
+            });
+        }
         finish(&self.meter, &self.chunk_name, phase, result).map(|()| true)
     }
 }
@@ -389,12 +446,20 @@ fn finish<T>(
 /// Applies the limits, the execution budget and the logging hooks, and
 /// removes what would let a script reach outside its cartridge or around
 /// its source locations.
-fn configure(engine: &mut Engine, meter: &Rc<Meter>, output: &Rc<LogSink>) {
+fn configure(
+    engine: &mut Engine,
+    meter: &Rc<Meter>,
+    output: &Rc<LogSink>,
+    debug: Option<Rc<Debugger>>,
+) {
     let progress = Rc::clone(meter);
     // Once exhausted the call keeps failing: Rhai reports termination as a
     // system error that `try`/`catch` cannot catch, and every further
     // operation terminates again.
     engine.on_progress(move |_| {
+        if debug.as_ref().is_some_and(|debug| debug.stop_requested()) {
+            return Some(Dynamic::UNIT);
+        }
         if !progress.exhausted.get() {
             let passed = progress.operations.get() + 1;
             progress.operations.set(passed);
