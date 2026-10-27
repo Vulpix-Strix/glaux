@@ -7,6 +7,7 @@ use std::rc::Rc;
 use glaux_audio::AudioState;
 use glaux_input::InputState;
 use glaux_modules::ModuleSource;
+use glaux_script::debug::{Breakpoint, DebugPort};
 use mlua::chunk::ChunkMode;
 use mlua::{Function, Lua, Value, VmState};
 
@@ -16,6 +17,7 @@ use glaux_script::{
 
 use crate::api;
 use crate::api::draw::PendingFrame;
+use crate::debug::{self, Attachment};
 use crate::error::script_error;
 use crate::modules::{self, Modules};
 
@@ -80,6 +82,8 @@ pub struct Runtime {
     meter: Rc<Meter>,
     modules: Rc<RefCell<Modules>>,
     source: Rc<dyn ModuleSource>,
+    /// Present when the VM is being debugged.
+    debug: Option<Attachment>,
 }
 
 impl fmt::Debug for Runtime {
@@ -105,14 +109,60 @@ impl Runtime {
         modules: impl ModuleSource + 'static,
         budget: Budget,
     ) -> Result<Self, StartFailure> {
+        Self::start_with(chunk_name, source, modules, budget, None)
+    }
+
+    /// Like [`start`](Self::start), for a VM that stops at `breakpoints` and
+    /// wherever the debugger at the other end of `port` steps.
+    ///
+    /// The scripts are compiled without optimizations and with the debug
+    /// information needed to name their variables, so the VM runs slower
+    /// than one started with [`start`](Self::start). Breakpoints are
+    /// cartridge-relative paths, as in `code/main.luau`.
+    pub fn start_debug(
+        chunk_name: &str,
+        source: &[u8],
+        modules: impl ModuleSource + 'static,
+        budget: Budget,
+        port: DebugPort,
+        breakpoints: Vec<Breakpoint>,
+    ) -> Result<Self, StartFailure> {
+        let debug = Some((port, breakpoints));
+        Self::start_with(chunk_name, source, modules, budget, debug)
+    }
+
+    fn start_with(
+        chunk_name: &str,
+        source: &[u8],
+        modules: impl ModuleSource + 'static,
+        budget: Budget,
+        debug: Option<(DebugPort, Vec<Breakpoint>)>,
+    ) -> Result<Self, StartFailure> {
         let meter = Rc::new(Meter {
             budget: budget.interrupts,
             checks: Cell::new(0),
             exhausted: Cell::new(false),
             module: RefCell::default(),
         });
+        let lua = Lua::new();
+        let debug = match debug
+            .map(|(port, breakpoints)| Attachment::new(&lua, port, breakpoints))
+            .transpose()
+        {
+            Ok(debug) => debug,
+            Err(err) => {
+                return Err(StartFailure {
+                    error: RuntimeError {
+                        phase: Phase::Entry,
+                        error: script_error(&err),
+                    },
+                    output: Vec::new(),
+                    dropped: 0,
+                });
+            }
+        };
         let mut runtime = Self {
-            lua: Lua::new(),
+            lua,
             output: Rc::default(),
             pending: Rc::default(),
             frame: Vec::new(),
@@ -122,15 +172,19 @@ impl Runtime {
             meter,
             modules: Rc::default(),
             source: Rc::new(modules),
+            debug,
         };
 
         let started = runtime
             .call(Phase::Entry, |lua| {
                 runtime.install_globals()?;
-                lua.load(source)
+                let entry = lua
+                    .load(source)
                     .set_name(format!("={chunk_name}"))
                     .set_mode(ChunkMode::Text)
-                    .exec()
+                    .into_function()?;
+                debug::chunk_loaded(lua, chunk_name, source, &entry);
+                entry.call::<()>(())
             })
             .and_then(|()| runtime.callback(Phase::Boot).map(drop));
         match started {
@@ -204,9 +258,13 @@ impl Runtime {
     /// interrupt that enforces the budget.
     fn install_globals(&self) -> mlua::Result<()> {
         let meter = Rc::clone(&self.meter);
+        let stopped = self.debug.as_ref().map(Attachment::stopper);
         // The failure is sticky for the rest of the call so a `pcall` around
         // a runaway loop cannot resume it.
         self.lua.set_interrupt(move |_| {
+            if stopped.as_ref().is_some_and(|stopped| stopped()) {
+                return Err(mlua::Error::runtime("stopped by the debugger"));
+            }
             if !meter.exhausted.get() {
                 let passed = meter.checks.get() + 1;
                 meter.checks.set(passed);
@@ -258,7 +316,16 @@ impl Runtime {
         body: impl FnOnce(&Lua) -> mlua::Result<T>,
     ) -> Result<T, RuntimeError> {
         self.meter.reset();
+        if let Some(debug) = &self.debug {
+            debug.sync(&self.lua);
+        }
         let result = body(&self.lua);
+        if self.debug.as_ref().is_some_and(Attachment::stop_requested) {
+            return Err(RuntimeError {
+                phase,
+                error: ScriptError::Stopped,
+            });
+        }
         if self.meter.exhausted.get() {
             let error = match self.meter.module.borrow_mut().take() {
                 Some(path) => ScriptError::ModuleLimitExceeded(path),

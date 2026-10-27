@@ -12,6 +12,7 @@ use mlua::chunk::ChunkMode;
 use mlua::{Lua, Value};
 
 use crate::args::{bad_argument, call_site, script_type_name};
+use crate::debug;
 use crate::runtime::Meter;
 
 /// File extension of Luau modules.
@@ -126,11 +127,13 @@ fn evaluate(lua: &Lua, source: &dyn ModuleSource, path: &ModulePath) -> mlua::Re
         };
         require_error(lua, error)
     })?;
-    let value: Value = lua
-        .load(bytes)
+    let chunk = lua
+        .load(&bytes)
         .set_name(format!("={path}"))
         .set_mode(ChunkMode::Text)
-        .call(())?;
+        .into_function()?;
+    debug::chunk_loaded(lua, path.as_str(), &bytes, &chunk);
+    let value: Value = chunk.call(())?;
     Ok(if value.is_nil() {
         Value::Boolean(true)
     } else {

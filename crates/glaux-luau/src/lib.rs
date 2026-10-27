@@ -77,6 +77,7 @@
 
 mod api;
 mod args;
+mod debug;
 mod error;
 mod modules;
 mod runtime;
