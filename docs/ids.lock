@@ -32,6 +32,7 @@ api/modules/import
 api/modules/require
 api/time/frame
 api/time/t
+guide/debugging
 guide/game-loop
 guide/getting-started
 guide/index

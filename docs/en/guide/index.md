@@ -6,6 +6,8 @@ Glaux is a fantasy console. A cartridge is a folder with a manifest, a script an
 
 New to Glaux? [Getting started](glaux://guide/getting-started) creates a cartridge and runs it. [The game loop](glaux://guide/game-loop) explains `boot()`, `tick()` and `draw()`, and how state lives between them.
 
+Something not working? [Debugging a cartridge](glaux://guide/debugging) shows how to stop at a line and look at the variables.
+
 The script API is described in the [Glaux script API](glaux://api/index) reference. Each function has a page with its parameters and examples in both Luau and Rhai.
 
 ## Writing a cartridge
