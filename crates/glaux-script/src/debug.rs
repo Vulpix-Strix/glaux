@@ -16,6 +16,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::time::Duration;
 
+use crate::log::LogEntry;
+
 /// A line of a script where execution should stop.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Breakpoint {
@@ -100,11 +102,18 @@ pub enum DebugRequest {
     /// Replaces the breakpoints. A runtime applies them when it next stops
     /// or when it is next asked to.
     Breakpoints(Vec<Breakpoint>),
+    /// What the script logged since the output was last taken.
+    Output,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebugReply {
     Variables(Vec<Variable>),
+    /// The entries logged, and how many more were refused.
+    Output {
+        entries: Vec<LogEntry>,
+        dropped: u32,
+    },
     /// The runtime cannot answer, for instance for an outer Rhai frame.
     Unavailable,
 }
@@ -113,6 +122,9 @@ pub enum DebugReply {
 pub enum DebugEvent {
     Stopped(Stop),
     Reply(DebugReply),
+    /// The runtime finished what it was asked to do and waits for more. See
+    /// [`DebugNotifier::idle`].
+    Idle,
 }
 
 /// What a runtime can tell about the state it stopped in.
@@ -121,6 +133,8 @@ pub trait Inspect {
     fn expand(&mut self, frame: usize, path: &[usize]) -> DebugReply;
     /// The debugger replaced its breakpoints while the runtime was stopped.
     fn breakpoints(&mut self, breakpoints: &[Breakpoint]);
+    /// Takes what the script logged so far in the call that is stopped.
+    fn output(&mut self) -> (Vec<LogEntry>, u32);
 }
 
 /// Creates the two ends of a debugging session.
@@ -188,6 +202,22 @@ impl DebugLink {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Disconnected;
 
+/// Lets the thread that owns a runtime tell the debugger it is idle, after
+/// the runtime has taken the [`DebugPort`].
+#[derive(Debug, Clone)]
+pub struct DebugNotifier {
+    events: Sender<DebugEvent>,
+}
+
+impl DebugNotifier {
+    /// Tells the debugger the runtime finished a call and waits for the
+    /// next. The debugger waits for either this or a stop, so it needs no
+    /// other way to learn that a call ended.
+    pub fn idle(&self) {
+        let _ = self.events.send(DebugEvent::Idle);
+    }
+}
+
 /// The runtime's end.
 #[derive(Debug)]
 pub struct DebugPort {
@@ -197,6 +227,14 @@ pub struct DebugPort {
 }
 
 impl DebugPort {
+    /// A handle for reporting that the runtime is idle, which stays usable
+    /// after the port moves into the runtime.
+    pub fn notifier(&self) -> DebugNotifier {
+        DebugNotifier {
+            events: self.events.clone(),
+        }
+    }
+
     /// Whether the debugger asked to end the run. Sticky: once set it stays
     /// set, so it is safe to check from an interrupt.
     pub fn stop_requested(&self) -> bool {
@@ -226,6 +264,10 @@ impl DebugPort {
                 }
                 Ok(DebugRequest::Variables { frame }) => inspect.variables(frame),
                 Ok(DebugRequest::Expand { frame, path }) => inspect.expand(frame, &path),
+                Ok(DebugRequest::Output) => {
+                    let (entries, dropped) = inspect.output();
+                    DebugReply::Output { entries, dropped }
+                }
                 Ok(DebugRequest::Breakpoints(breakpoints)) => {
                     inspect.breakpoints(&breakpoints);
                     continue;

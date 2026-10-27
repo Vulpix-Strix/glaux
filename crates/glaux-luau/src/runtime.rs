@@ -145,8 +145,9 @@ impl Runtime {
             module: RefCell::default(),
         });
         let lua = Lua::new();
+        let output: Rc<LogSink> = Rc::default();
         let debug = match debug
-            .map(|(port, breakpoints)| Attachment::new(&lua, port, breakpoints))
+            .map(|(port, breakpoints)| Attachment::new(&lua, port, Rc::clone(&output), breakpoints))
             .transpose()
         {
             Ok(debug) => debug,
@@ -163,7 +164,7 @@ impl Runtime {
         };
         let mut runtime = Self {
             lua,
-            output: Rc::default(),
+            output,
             pending: Rc::default(),
             frame: Vec::new(),
             input: Rc::default(),

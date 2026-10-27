@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use pretty_assertions::assert_eq;
 
+use crate::LogEntry;
+use crate::LogLevel;
 use crate::debug::*;
 
 const LIMIT: Duration = Duration::from_secs(5);
@@ -57,6 +59,16 @@ impl Inspect for Recorder {
     fn breakpoints(&mut self, breakpoints: &[Breakpoint]) {
         self.breakpoints = breakpoints.to_vec();
     }
+
+    fn output(&mut self) -> (Vec<LogEntry>, u32) {
+        (
+            vec![LogEntry {
+                level: LogLevel::Info,
+                text: "hello".into(),
+            }],
+            2,
+        )
+    }
 }
 
 fn next(link: &DebugLink) -> DebugEvent {
@@ -101,6 +113,26 @@ fn requests_made_while_stopped_are_answered_without_resuming() {
 
     link.send(DebugRequest::Resume(Resume::Continue));
     assert_eq!(runtime.join().unwrap(), Resume::Continue);
+}
+
+#[test]
+fn the_output_so_far_is_asked_for_while_stopped() {
+    let (link, port) = session();
+    let runtime = thread::spawn(move || port.pause(stop_at(1), &mut Recorder::default()));
+    next(&link);
+    link.send(DebugRequest::Output);
+    assert_eq!(
+        next(&link),
+        DebugEvent::Reply(DebugReply::Output {
+            entries: vec![LogEntry {
+                level: LogLevel::Info,
+                text: "hello".into()
+            }],
+            dropped: 2
+        })
+    );
+    link.send(DebugRequest::Resume(Resume::Continue));
+    runtime.join().unwrap();
 }
 
 #[test]
@@ -192,4 +224,18 @@ fn polling_with_nothing_to_report_is_not_an_error() {
     let (link, _port) = session();
     assert_eq!(link.try_event(), Ok(None));
     assert_eq!(link.wait_event(Duration::from_millis(1)), Ok(None));
+}
+
+#[test]
+fn the_debugger_hears_when_the_runtime_goes_idle() {
+    let (link, port) = session();
+    let notifier = port.notifier();
+    thread::spawn(move || notifier.idle()).join().unwrap();
+    assert_eq!(next(&link), DebugEvent::Idle);
+    drop(port);
+    // The notifier outlived nothing: a gone debugger is not an error.
+    let (link, port) = session();
+    let notifier = port.notifier();
+    drop(link);
+    notifier.idle();
 }

@@ -108,7 +108,7 @@ impl Debugged {
             path: path.to_vec(),
         }) {
             DebugReply::Variables(variables) => variables,
-            DebugReply::Unavailable => panic!("cannot expand {path:?}"),
+            other => panic!("cannot expand {path:?}: {other:?}"),
         }
     }
 
@@ -529,5 +529,28 @@ fn an_optimizable_statement_still_stops() {
         main_at(&[3]),
     );
     assert_eq!(vm.stop().frames[0].line, Some(3));
+    assert_eq!(vm.finish(), Ok(()));
+}
+
+#[test]
+fn what_the_script_logged_so_far_can_be_read_while_it_is_stopped() {
+    let vm = debugged(
+        "fn tick() {\n  log::info(\"before\");\n  let here = 1;\n  log::info(\"after\");\n}",
+        main_at(&[3]),
+    );
+    vm.stop();
+    let DebugReply::Output { entries, dropped } = vm.ask(DebugRequest::Output) else {
+        panic!("expected the output");
+    };
+    assert_eq!(
+        entries.iter().map(|e| e.text.as_str()).collect::<Vec<_>>(),
+        ["before"]
+    );
+    assert_eq!(dropped, 0);
+    // Taking it empties the sink: only the rest is left at the end.
+    let DebugReply::Output { entries, .. } = vm.ask(DebugRequest::Output) else {
+        panic!("expected the output");
+    };
+    assert!(entries.is_empty());
     assert_eq!(vm.finish(), Ok(()));
 }

@@ -190,14 +190,16 @@ impl Runtime {
         budget: Budget,
         debug: Option<(DebugPort, Vec<Breakpoint>)>,
     ) -> Result<Self, StartFailure> {
-        let debug = debug.map(|(port, breakpoints)| Rc::new(Debugger::new(port, breakpoints)));
+        let output: Rc<LogSink> = Rc::default();
+        let debug = debug.map(|(port, breakpoints)| {
+            Rc::new(Debugger::new(port, Rc::clone(&output), breakpoints))
+        });
         let meter = Rc::new(Meter {
             budget: budget.operations,
             operations: Cell::new(0),
             exhausted: Cell::new(false),
             module: RefCell::default(),
         });
-        let output: Rc<LogSink> = Rc::default();
         let pending: PendingFrame = Rc::default();
         let input: Rc<Cell<InputState>> = Rc::default();
         let ticks: Rc<Cell<u64>> = Rc::default();

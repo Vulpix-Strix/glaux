@@ -22,6 +22,7 @@ use std::rc::Rc;
 use glaux_script::debug::{
     Breakpoint, DebugPort, DebugReply, Inspect, Resume, Step, Stop, StopReason,
 };
+use glaux_script::{LogEntry, LogSink};
 use mlua::chunk::Compiler;
 use mlua::ffi::{self, lua_Debug, lua_State};
 use mlua::{Function, Lua};
@@ -47,6 +48,7 @@ struct Chunk {
 /// The debugger state of one VM.
 pub(crate) struct Debugger {
     port: DebugPort,
+    output: Rc<LogSink>,
     main: *mut lua_State,
     mode: Cell<Mode>,
     breakpoints: RefCell<Vec<Breakpoint>>,
@@ -79,6 +81,7 @@ impl Attachment {
     pub(crate) fn new(
         lua: &Lua,
         port: DebugPort,
+        output: Rc<LogSink>,
         breakpoints: Vec<Breakpoint>,
     ) -> mlua::Result<Self> {
         lua.set_compiler(Compiler::new().set_optimization_level(0).set_debug_level(2));
@@ -89,6 +92,7 @@ impl Attachment {
         lua.set_named_registry_value(CHUNKS.to_str().unwrap_or_default(), lua.create_table()?)?;
         let debugger = Rc::new(Debugger {
             port,
+            output,
             main,
             mode: Cell::new(Mode::Run),
             breakpoints: RefCell::new(breakpoints),
@@ -283,6 +287,13 @@ impl Inspect for Inspector<'_> {
                 .and_then(|level| inspect::expand(self.l, level, path))
                 .map_or(DebugReply::Unavailable, DebugReply::Variables)
         }
+    }
+
+    fn output(&mut self) -> (Vec<LogEntry>, u32) {
+        (
+            self.debugger.output.take(),
+            self.debugger.output.take_dropped(),
+        )
     }
 
     fn breakpoints(&mut self, breakpoints: &[Breakpoint]) {

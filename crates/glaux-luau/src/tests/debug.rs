@@ -102,7 +102,7 @@ impl Debugged {
     fn variables(&self, frame: usize) -> Vec<Variable> {
         match self.ask(DebugRequest::Variables { frame }) {
             DebugReply::Variables(variables) => variables,
-            DebugReply::Unavailable => panic!("variables of frame {frame} unavailable"),
+            other => panic!("variables of frame {frame}: {other:?}"),
         }
     }
 
@@ -112,7 +112,7 @@ impl Debugged {
             path: path.to_vec(),
         }) {
             DebugReply::Variables(variables) => variables,
-            DebugReply::Unavailable => panic!("cannot expand {path:?}"),
+            other => panic!("cannot expand {path:?}: {other:?}"),
         }
     }
 
@@ -520,5 +520,28 @@ fn a_coroutine_stops_with_its_own_stack() {
     );
     let stop = vm.stop();
     assert_eq!(names(&stop.variables), [("z", "5"), ("w", "15")]);
+    assert_eq!(vm.finish(), Ok(()));
+}
+
+#[test]
+fn what_the_script_logged_so_far_can_be_read_while_it_is_stopped() {
+    let vm = debugged(
+        "function tick()\n  log.info(\"before\")\n  local here = 1\n  log.info(\"after\")\nend",
+        main_at(&[3]),
+    );
+    vm.stop();
+    let DebugReply::Output { entries, dropped } = vm.ask(DebugRequest::Output) else {
+        panic!("expected the output");
+    };
+    assert_eq!(
+        entries.iter().map(|e| e.text.as_str()).collect::<Vec<_>>(),
+        ["before"]
+    );
+    assert_eq!(dropped, 0);
+    // Taking it empties the sink: only the rest is left at the end.
+    let DebugReply::Output { entries, .. } = vm.ask(DebugRequest::Output) else {
+        panic!("expected the output");
+    };
+    assert!(entries.is_empty());
     assert_eq!(vm.finish(), Ok(()));
 }

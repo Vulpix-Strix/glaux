@@ -13,6 +13,7 @@ use std::rc::Rc;
 use glaux_script::debug::{
     Breakpoint, DebugPort, DebugReply, Frame, Inspect, Resume, Step, Stop, StopReason, Variable,
 };
+use glaux_script::{LogEntry, LogSink};
 use rhai::debugger::{BreakPoint, DebuggerCommand, DebuggerEvent};
 use rhai::{
     ASTNode, Array, Dynamic, Engine, EvalAltResult, EvalContext, Map, OptimizationLevel, Position,
@@ -46,6 +47,7 @@ enum Mode {
 /// The debugger state of one engine.
 pub(crate) struct Debugger {
     port: DebugPort,
+    output: Rc<LogSink>,
     breakpoints: RefCell<Vec<Breakpoint>>,
     mode: RefCell<Mode>,
     /// The columns already reported in the current visit of each line.
@@ -57,9 +59,10 @@ pub(crate) struct Debugger {
 }
 
 impl Debugger {
-    pub(crate) fn new(port: DebugPort, breakpoints: Vec<Breakpoint>) -> Self {
+    pub(crate) fn new(port: DebugPort, output: Rc<LogSink>, breakpoints: Vec<Breakpoint>) -> Self {
         Self {
             port,
+            output,
             breakpoints: RefCell::new(breakpoints),
             mode: RefCell::new(Mode::Run),
             visits: RefCell::default(),
@@ -402,6 +405,13 @@ impl Inspect for Inspector<'_, '_, '_, '_, '_, '_, '_> {
             .get(first)
             .and_then(|(_, value)| expand(value, rest))
             .map_or(DebugReply::Unavailable, DebugReply::Variables)
+    }
+
+    fn output(&mut self) -> (Vec<LogEntry>, u32) {
+        (
+            self.debugger.output.take(),
+            self.debugger.output.take_dropped(),
+        )
     }
 
     fn breakpoints(&mut self, breakpoints: &[Breakpoint]) {
