@@ -27,7 +27,9 @@ impl System {
     ) {
         if !matches!(
             self.state,
-            SystemState::Workspace { .. } | SystemState::Docs { .. }
+            SystemState::Workspace { .. }
+                | SystemState::Debugging { .. }
+                | SystemState::Docs { .. }
         ) {
             return;
         }
@@ -54,7 +56,9 @@ impl System {
     /// colors in the workspace, and the System ROM palette otherwise.
     pub fn frame_palette<'a>(&'a self, rom: &'a SystemRom) -> &'a Palette {
         match &self.state {
-            SystemState::Workspace { video, .. } => video.frame_palette().unwrap_or(rom.palette()),
+            SystemState::Workspace { video, .. } | SystemState::Debugging { video, .. } => {
+                video.frame_palette().unwrap_or(rom.palette())
+            }
             SystemState::Running { running, .. }
             | SystemState::Paused {
                 running,
@@ -83,7 +87,10 @@ impl System {
         };
         // Nothing under the dialog reacts to the pointer.
         self.render_state(framebuffer, rom, None);
-        let whole_screen = !matches!(self.state, SystemState::Workspace { .. });
+        let whole_screen = !matches!(
+            self.state,
+            SystemState::Workspace { .. } | SystemState::Debugging { .. }
+        );
         let layout = self.workspace.dialog_layout(flow.dialog(), whole_screen);
         flow.dialog().render(framebuffer, rom.font(), &layout);
     }
@@ -147,6 +154,23 @@ impl System {
                     font,
                     rom.ui(),
                     cartridge,
+                    video
+                        .source(self.sprites.as_ref())
+                        .as_ref()
+                        .map(|source| *source)
+                        .map_err(String::as_str),
+                    self.code.as_ref(),
+                    pointer,
+                );
+                self.render_log_panel(framebuffer, rom, None);
+                return;
+            }
+            SystemState::Debugging { running, video, .. } => {
+                self.workspace.render(
+                    framebuffer,
+                    font,
+                    rom.ui(),
+                    running.cartridge(),
                     video
                         .source(self.sprites.as_ref())
                         .as_ref()

@@ -44,11 +44,17 @@ pub(crate) enum MenuCommand {
     Run,
     Stop,
     Restart,
+    /// Runs under the debugger, stopping at the breakpoints.
+    Debug,
+    ToggleBreakpoint,
+    StepOver,
+    StepInto,
+    StepOut,
     ToggleLogs,
 }
 
 impl MenuCommand {
-    pub(crate) const ALL: [Self; 23] = [
+    pub(crate) const ALL: [Self; 28] = [
         Self::NewFile,
         Self::OpenFile,
         Self::CloseDocument,
@@ -71,6 +77,11 @@ impl MenuCommand {
         Self::Run,
         Self::Stop,
         Self::Restart,
+        Self::Debug,
+        Self::ToggleBreakpoint,
+        Self::StepOver,
+        Self::StepInto,
+        Self::StepOut,
         Self::ToggleLogs,
     ];
 
@@ -98,6 +109,11 @@ impl MenuCommand {
             Self::Run => "run.run",
             Self::Stop => "run.stop",
             Self::Restart => "run.restart",
+            Self::Debug => "run.debug",
+            Self::ToggleBreakpoint => "run.toggle-breakpoint",
+            Self::StepOver => "run.step-over",
+            Self::StepInto => "run.step-into",
+            Self::StepOut => "run.step-out",
             Self::ToggleLogs => "run.toggle-logs",
         }
     }
@@ -126,6 +142,11 @@ impl MenuCommand {
             Self::Run => "Run",
             Self::Stop => "Stop",
             Self::Restart => "Restart",
+            Self::Debug => "Debug",
+            Self::ToggleBreakpoint => "Toggle Breakpoint",
+            Self::StepOver => "Step Over",
+            Self::StepInto => "Step Into",
+            Self::StepOut => "Step Out",
             Self::ToggleLogs => "Toggle Logs",
         }
     }
@@ -155,6 +176,11 @@ impl MenuCommand {
             Self::Run => (command, Code::KeyR),
             Self::Stop => (command, Code::Period),
             Self::Restart => (command | Modifiers::SHIFT, Code::KeyR),
+            Self::Debug => (command | Modifiers::ALT, Code::KeyR),
+            Self::ToggleBreakpoint => (command, Code::Backslash),
+            Self::StepOver => (command, Code::Quote),
+            Self::StepInto => (command, Code::Semicolon),
+            Self::StepOut => (command | Modifiers::SHIFT, Code::Quote),
             Self::ToggleLogs => (command | Modifiers::SHIFT, Code::KeyL),
         }
     }
@@ -185,6 +211,11 @@ impl MenuCommand {
             Self::Run => InputEvent::Run,
             Self::Stop => InputEvent::Stop,
             Self::Restart => InputEvent::Restart,
+            Self::Debug => InputEvent::Debug,
+            Self::ToggleBreakpoint => InputEvent::ToggleBreakpoint,
+            Self::StepOver => InputEvent::StepOver,
+            Self::StepInto => InputEvent::StepInto,
+            Self::StepOut => InputEvent::StepOut,
             Self::ToggleLogs => InputEvent::ToggleLogs,
         })
     }
@@ -214,6 +245,11 @@ impl MenuCommand {
             Self::Run => state.run,
             Self::Stop => state.stop,
             Self::Restart => state.restart,
+            Self::Debug => state.debug,
+            Self::ToggleBreakpoint => state.toggle_breakpoint,
+            Self::StepOver => state.step_over,
+            Self::StepInto => state.step_into,
+            Self::StepOut => state.step_out,
             Self::ToggleLogs => state.toggle_logs,
         }
     }
@@ -276,6 +312,11 @@ mod tests {
                 Some(InputEvent::Run),
                 Some(InputEvent::Stop),
                 Some(InputEvent::Restart),
+                Some(InputEvent::Debug),
+                Some(InputEvent::ToggleBreakpoint),
+                Some(InputEvent::StepOver),
+                Some(InputEvent::StepInto),
+                Some(InputEvent::StepOut),
                 Some(InputEvent::ToggleLogs),
             ]
         );
@@ -324,6 +365,11 @@ mod tests {
             MenuCommand::Run => state.run = true,
             MenuCommand::Stop => state.stop = true,
             MenuCommand::Restart => state.restart = true,
+            MenuCommand::Debug => state.debug = true,
+            MenuCommand::ToggleBreakpoint => state.toggle_breakpoint = true,
+            MenuCommand::StepOver => state.step_over = true,
+            MenuCommand::StepInto => state.step_into = true,
+            MenuCommand::StepOut => state.step_out = true,
             MenuCommand::ToggleLogs => state.toggle_logs = true,
         }
         state

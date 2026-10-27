@@ -10,7 +10,7 @@ use crate::system::logs::{Category, Severity, SourceLocation};
 use pretty_assertions::assert_eq;
 
 /// The workspace on its Code view with `script` as `code/main.luau`.
-fn in_code(fixture: &Fixture, script: &str) -> System {
+pub(super) fn in_code(fixture: &Fixture, script: &str) -> System {
     press_break(enter(shell_with_cartridge(fixture, script), "load pong"))
 }
 

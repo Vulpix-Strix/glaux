@@ -259,14 +259,17 @@ impl DebugRuntime {
         }
     }
 
+    /// Reads what the stopped runtime logged since the last call.
+    pub fn pull_output(&mut self) {
+        if let DebugReply::Output { entries, dropped } = self.ask(DebugRequest::Output) {
+            self.output.extend(entries);
+            self.dropped += dropped;
+        }
+    }
+
     /// Sends the breakpoints the runtime should stop at from now on.
     pub fn set_breakpoints(&self, breakpoints: Vec<Breakpoint>) {
         self.link.send(DebugRequest::Breakpoints(breakpoints));
-    }
-
-    /// Whether the runtime is inside a tick that has not finished.
-    pub fn is_ticking(&self) -> bool {
-        self.ticking
     }
 
     pub fn frame(&self) -> &[DrawCommand] {

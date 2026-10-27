@@ -64,12 +64,13 @@ use semver::Version;
 use sfx::SystemSound;
 use state::Context;
 use state::confirm::{guard_exit, unsaved_tick};
+use state::debugging::{debug_from_workspace, debugging_tick};
 use state::logs::{receive_diagnostics, route_logs};
 use state::paused::{paused_game_tick, paused_shell_tick};
 use state::running::running_tick;
 use state::screens::{credits_tick, docs_tick};
 use state::shell::{open_docs_apart, shell_audio, shell_tick};
-use state::workspace::{run_from_workspace, workspace_tick};
+use state::workspace::{RunKind, run_from_workspace, workspace_tick};
 use unsaved::UnsavedFlow;
 
 use std::collections::VecDeque;
@@ -127,6 +128,16 @@ pub(crate) enum SystemState {
     Running {
         shell: Box<Shell>,
         running: RunningCartridge,
+    },
+    /// A debugged cartridge that stopped at a breakpoint or a step, and
+    /// waits in the middle of a tick. The Code view is the active UI and
+    /// shows where, but cannot edit the scripts. The shell keeps its state,
+    /// taking no input.
+    Debugging {
+        shell: Box<Shell>,
+        running: RunningCartridge,
+        /// How the workspace shows the cartridge's colors.
+        video: WorkspaceVideo,
     },
     /// A cartridge whose VM is kept alive but receives no ticks, so its
     /// state, last frame and logical time stay as they were.
@@ -380,6 +391,7 @@ impl System {
             // The credits view reads the same keys as the workspace, but
             // draws no pointer.
             SystemState::Workspace { .. }
+            | SystemState::Debugging { .. }
             | SystemState::Credits { .. }
             | SystemState::Docs { .. } => InputMode::Workspace,
             SystemState::Boot { .. } | SystemState::Shell { .. } | SystemState::Paused { .. } => {
@@ -479,11 +491,30 @@ impl System {
                         let code = ctx.code.get_or_insert_default();
                         ctx.workspace.show_location(code, cartridge, location);
                     }
-                    if run {
-                        run_from_workspace(state, &mut ctx)
-                    } else {
-                        state
+                    match run {
+                        Some(RunKind::Run) => run_from_workspace(state, &mut ctx),
+                        Some(RunKind::Debug) => debug_from_workspace(state, &mut ctx),
+                        None => state,
                     }
+                }
+                SystemState::Debugging {
+                    shell,
+                    running,
+                    video,
+                } => {
+                    let routed = route_logs(&mut ctx, input, true);
+                    let (state, requests) =
+                        debugging_tick(shell, running, video, &mut ctx, &routed.forward, clipboard);
+                    self.host_requests.extend(requests);
+                    if let (Some(location), SystemState::Debugging { running, .. }) =
+                        (&routed.jump, &state)
+                    {
+                        ctx.log_panel.close();
+                        let code = ctx.code.get_or_insert_default();
+                        ctx.workspace
+                            .show_location(code, running.cartridge(), location);
+                    }
+                    state
                 }
                 SystemState::Running { shell, mut running } => {
                     let routed = route_logs(&mut ctx, input, false);
@@ -600,6 +631,7 @@ impl System {
                 ..
             }
             | SystemState::Workspace { .. }
+            | SystemState::Debugging { .. }
             | SystemState::Credits { .. }
             | SystemState::Docs { .. } => AudioSource::Silent,
         };
@@ -622,6 +654,7 @@ impl System {
                 ..
             }
             | SystemState::Workspace { .. }
+            | SystemState::Debugging { .. }
             | SystemState::Credits { .. }
             | SystemState::Docs { .. } => {}
         }

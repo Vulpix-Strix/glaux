@@ -27,6 +27,7 @@ mod code_productivity;
 mod code_run;
 mod code_tabs;
 mod credits_view;
+mod debugging;
 mod docs_browser;
 mod docs_shell;
 mod drawing;
@@ -248,6 +249,7 @@ fn transcript(system: &System) -> Vec<String> {
         SystemState::Shell { shell, .. }
         | SystemState::Workspace { shell, .. }
         | SystemState::Running { shell, .. }
+        | SystemState::Debugging { shell, .. }
         | SystemState::Paused { shell, .. } => shell.transcript(),
         other => panic!("expected a shell, got {other:?}"),
     }

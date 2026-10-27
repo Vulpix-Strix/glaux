@@ -12,12 +12,21 @@ use crate::system::editor_settings::EditorSettings;
 use crate::system::external_url::ExternalUrl;
 use crate::system::sprite_document::DiskAsset;
 
+use super::code::DebugAction;
+
 /// Work the workspace asks the system to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceRequest {
     /// Run the cartridge from its entry point. The system saves what the
     /// editors hold first when told to, and cancels the run if that fails.
     Run,
+    /// Run the cartridge from its entry point under the debugger, stopping
+    /// at the scripts' breakpoints. Saved first like [`Run`](Self::Run), but
+    /// whatever the setting says, since the breakpoints are lines of the
+    /// files.
+    Debug,
+    /// Go on with the cartridge that stopped, as told.
+    Stopped(DebugAction),
     /// Keep the Code view's settings for the next launch.
     SaveEditorSettings(EditorSettings),
     /// File work on the sprite document.

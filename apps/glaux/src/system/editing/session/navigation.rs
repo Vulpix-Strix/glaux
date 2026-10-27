@@ -128,18 +128,9 @@ impl CodeSession {
     ) -> Result<DocumentId, super::CodeDocumentError> {
         let departure = self.here();
         let id = self.open(cartridge, &target.path)?;
-        let Some(document) = self.documents.get(id) else {
+        let Some(caret) = self.land(id, target.at) else {
             return Ok(id);
         };
-        let offset = match target.at {
-            Spot::Offset(offset) => offset,
-            Spot::Line(line) => document
-                .line_range(line)
-                .map_or(document.text().len(), |r| r.start),
-        };
-        let caret = Caret::at(document, offset);
-        let selection = Selection::collapsed(caret);
-        self.tabs.set_selection(id, selection);
         if let Some(departure) = departure
             && !(departure.document == id && departure.offset == caret.byte())
         {
@@ -147,6 +138,33 @@ impl CodeSession {
             self.navigation.forward.clear();
         }
         Ok(id)
+    }
+
+    /// Moves to `target`, opening its file if needed, without remembering
+    /// where it came from. For moves the user did not make, such as showing
+    /// where a debugged cartridge stopped.
+    pub fn reveal(
+        &mut self,
+        cartridge: &LoadedCartridge,
+        target: &Destination,
+    ) -> Result<DocumentId, super::CodeDocumentError> {
+        let id = self.open(cartridge, &target.path)?;
+        self.land(id, target.at);
+        Ok(id)
+    }
+
+    /// Puts the caret of `id`'s tab at `at`, returning it.
+    fn land(&mut self, id: DocumentId, at: Spot) -> Option<Caret> {
+        let document = self.documents.get(id)?;
+        let offset = match at {
+            Spot::Offset(offset) => offset,
+            Spot::Line(line) => document
+                .line_range(line)
+                .map_or(document.text().len(), |r| r.start),
+        };
+        let caret = Caret::at(document, offset);
+        self.tabs.set_selection(id, Selection::collapsed(caret));
+        Some(caret)
     }
 
     /// Returns to the previous place, which becomes the one [`go_forward`](Self::go_forward)

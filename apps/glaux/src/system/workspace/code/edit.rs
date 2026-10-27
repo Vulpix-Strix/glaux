@@ -11,6 +11,7 @@ use crate::system::editing::history::EditKind;
 use crate::system::editing::metrics::MetricsKey;
 use crate::system::editing::selection::Selection;
 use crate::system::editing::session::CodeSession;
+use crate::ui_text;
 
 impl CodeEditor {
     /// Applies `event` to the active document if it is an editing key,
@@ -21,6 +22,23 @@ impl CodeEditor {
         event: InputEvent,
         session: &mut CodeSession,
     ) -> Option<Option<CodeRequest>> {
+        if session.is_read_only()
+            && matches!(
+                event,
+                InputEvent::Text(_)
+                    | InputEvent::Enter
+                    | InputEvent::Backspace
+                    | InputEvent::Delete
+                    | InputEvent::Tab { .. }
+                    | InputEvent::Undo
+                    | InputEvent::Redo
+                    | InputEvent::Cut
+                    | InputEvent::Paste
+            )
+        {
+            let notice = ui_text::get("code-read-only-while-debugging");
+            return Some(Some(CodeRequest::Notice(notice)));
+        }
         match event {
             InputEvent::Text(ch) => {
                 self.edit(session, EditKind::Typing, |_, selection, _, _| {

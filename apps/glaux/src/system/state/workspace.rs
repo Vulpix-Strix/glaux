@@ -73,14 +73,14 @@ pub(in crate::system) fn workspace_tick(
     ctx: &mut Context<'_>,
     input: &[InputEvent],
     clipboard: &mut dyn Clipboard,
-) -> (SystemState, Vec<HostRequest>, bool) {
+) -> (SystemState, Vec<HostRequest>, Option<RunKind>) {
     let workspace = &mut *ctx.workspace;
     let sprites = &mut *ctx.sprites;
     let code = ctx.code.get_or_insert_default();
     workspace.set_entry_script(&cartridge.manifest().runtime.entry);
     workspace.tick(Some(code));
     let mut host_requests = Vec::new();
-    let mut run_requested = false;
+    let mut run_requested = None;
     for &event in input {
         if event == InputEvent::Break && !workspace.claims_break() {
             workspace.end_stroke(sprites.as_mut());
@@ -89,7 +89,7 @@ pub(in crate::system) fn workspace_tick(
                 shell,
                 loaded: Some(cartridge),
             };
-            return (state, host_requests, false);
+            return (state, host_requests, None);
         }
         // The editors only change what they can show.
         let document = sprites.as_mut().filter(|_| video.is_ready());
@@ -102,9 +102,15 @@ pub(in crate::system) fn workspace_tick(
             WorkspaceRequest::Run => {
                 // Events after a run is asked for are dropped, as after any
                 // change of screen.
-                run_requested = true;
+                run_requested = Some(RunKind::Run);
                 break;
             }
+            WorkspaceRequest::Debug => {
+                run_requested = Some(RunKind::Debug);
+                break;
+            }
+            // Only a stopped cartridge has anything to go on with.
+            WorkspaceRequest::Stopped(_) => {}
             WorkspaceRequest::SaveEditorSettings(settings) => {
                 host_requests.push(HostRequest::SaveEditorSettings(settings));
             }
@@ -142,8 +148,15 @@ pub(in crate::system) fn workspace_tick(
     (state, host_requests, run_requested)
 }
 
+/// How the workspace asked to start the cartridge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::system) enum RunKind {
+    Run,
+    Debug,
+}
+
 /// Carries out file work on the cartridge's scripts.
-fn serve_scripts(
+pub(super) fn serve_scripts(
     request: ScriptRequest,
     workspace: &mut Workspace,
     code: &mut CodeSession,
@@ -210,7 +223,7 @@ fn serve_scripts(
 }
 
 /// Carries out a move between places in the scripts.
-fn serve_navigation(
+pub(super) fn serve_navigation(
     request: NavigationRequest,
     workspace: &mut Workspace,
     code: &mut CodeSession,
@@ -231,7 +244,7 @@ fn serve_navigation(
 
 /// Carries out work that needs the host's links or clipboard. Links go to
 /// the host through `host_requests`.
-fn serve_host(
+pub(super) fn serve_host(
     request: HostWork,
     workspace: &mut Workspace,
     code: &mut CodeSession,

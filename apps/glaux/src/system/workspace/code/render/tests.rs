@@ -12,6 +12,7 @@ use crate::system::editing::history::EditKind;
 use crate::system::shell::BLINK_TICKS;
 
 mod completion;
+mod debugging;
 mod highlight;
 mod selection;
 mod signature;

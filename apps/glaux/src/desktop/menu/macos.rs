@@ -101,8 +101,14 @@ impl NativeMenu {
         let run = Submenu::new("Run", true);
         run.append_items(&[
             &item(MenuCommand::Run),
+            &item(MenuCommand::Debug),
             &item(MenuCommand::Restart),
             &item(MenuCommand::Stop),
+            &PredefinedMenuItem::separator(),
+            &item(MenuCommand::StepOver),
+            &item(MenuCommand::StepInto),
+            &item(MenuCommand::StepOut),
+            &item(MenuCommand::ToggleBreakpoint),
             &PredefinedMenuItem::separator(),
             &item(MenuCommand::ToggleLogs),
         ])

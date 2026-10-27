@@ -12,6 +12,7 @@ use pretty_assertions::assert_eq;
 
 mod autocomplete;
 pub(super) mod completion;
+mod debugging;
 mod editing;
 mod find;
 mod hover;

@@ -36,6 +36,11 @@ pub struct MenuState {
     pub toggle_sidebar: bool,
     pub documentation: bool,
     pub run: bool,
+    pub debug: bool,
+    pub toggle_breakpoint: bool,
+    pub step_over: bool,
+    pub step_into: bool,
+    pub step_out: bool,
     pub stop: bool,
     pub restart: bool,
     pub toggle_logs: bool,
@@ -49,7 +54,8 @@ impl System {
     /// shell only offers the documentation. A running cartridge offers the
     /// log panel and, when it was started from the Code view, stopping and
     /// restarting, none of which is a key the game could use. A paused one
-    /// offers the same two.
+    /// offers the same two. A stopped debugged one offers the steps, the
+    /// breakpoint and the commands that read the code, but none that edit it.
     pub fn menu_state(&self) -> MenuState {
         if self.unsaved.is_some() || self.exit_requested || self.exiting {
             return MenuState::default();
@@ -84,6 +90,26 @@ impl System {
                     ..MenuState::default()
                 }
             }
+            SystemState::Debugging { .. } => MenuState {
+                run: true,
+                step_over: true,
+                step_into: true,
+                step_out: true,
+                toggle_breakpoint: true,
+                stop: true,
+                restart: true,
+                toggle_logs: true,
+                copy: true,
+                select_all: true,
+                find: true,
+                go_to_line: true,
+                go_to_definition: true,
+                go_to_symbol: true,
+                navigate_back: true,
+                navigate_forward: true,
+                documentation: true,
+                ..MenuState::default()
+            },
             SystemState::Boot { .. } | SystemState::Credits { .. } | SystemState::Paused { .. } => {
                 MenuState::default()
             }

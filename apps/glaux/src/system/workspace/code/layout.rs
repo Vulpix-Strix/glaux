@@ -123,12 +123,32 @@ impl CodeLayout {
         }
     }
 
-    /// The plate that runs the cartridge, left of the stop plate.
-    pub fn run_button(&self) -> Rect {
+    /// The plate that runs the cartridge under the debugger, left of the
+    /// stop plate.
+    pub fn debug_button(&self) -> Rect {
         Rect {
             x: self.stop_button().x - STRIP_PAD - RUN_PLATE,
             ..self.stop_button()
         }
+    }
+
+    /// The plate that runs the cartridge, left of the debug plate.
+    pub fn run_button(&self) -> Rect {
+        Rect {
+            x: self.debug_button().x - STRIP_PAD - RUN_PLATE,
+            ..self.stop_button()
+        }
+    }
+
+    /// The plates that go on with a stopped cartridge, in the place of the
+    /// run, debug and stop plates: continue, step over, step into, step out
+    /// and stop, ending at the settings button.
+    pub fn step_buttons(&self) -> [Rect; 5] {
+        let stop = self.stop_button();
+        std::array::from_fn(|n| Rect {
+            x: stop.x - (4 - n as i32) * (STRIP_PAD + RUN_PLATE),
+            ..stop
+        })
     }
 
     /// The button opening the list of open tabs, at the strip's right end.

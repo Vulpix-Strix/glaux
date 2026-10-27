@@ -39,6 +39,7 @@ impl Workspace {
         // same. The log panel opens wherever no dialog is up.
         let running = MenuState {
             run: true,
+            debug: true,
             toggle_logs: true,
             ..documentation
         };
@@ -49,6 +50,8 @@ impl Workspace {
             Route::Code => MenuState {
                 documentation: true,
                 run: true,
+                debug: true,
+                toggle_breakpoint: true,
                 toggle_logs: true,
                 ..self.code.menu_state(code)
             },

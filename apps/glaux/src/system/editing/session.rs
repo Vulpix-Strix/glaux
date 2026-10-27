@@ -47,6 +47,8 @@ pub struct CodeSession {
     /// The breakpoints of the scripts that were closed, by path and line
     /// from 0, for when they open again.
     closed_breakpoints: Vec<(SourcePath, Vec<usize>)>,
+    /// Whether the text is being shown to a debugger and so cannot change.
+    read_only: bool,
 }
 
 impl CodeSession {
@@ -97,7 +99,7 @@ impl CodeSession {
     /// `kind` edit made with its tab's current selection. `after`, given
     /// as anchor and caret offsets in the edited text, is the selection
     /// redoing it restores. Without it, the caret after the inserted text.
-    /// `None` if `id` is not open.
+    /// `None` if `id` is not open, or while the session is read-only.
     pub fn edit(
         &mut self,
         id: DocumentId,
@@ -106,6 +108,9 @@ impl CodeSession {
         kind: EditKind,
         after: Option<(usize, usize)>,
     ) -> Option<Result<Replaced, EditError>> {
+        if self.read_only {
+            return None;
+        }
         let document = self.documents.get_mut(id)?;
         let result = document.replace(range, text);
         if let Ok(replaced) = &result {
@@ -156,6 +161,16 @@ impl CodeSession {
         self.closed_breakpoints.retain(|(at, _)| at != path);
     }
 
+    /// Stops or allows changes to the text. The documents can still be
+    /// read, moved around in, searched and saved while it is read-only.
+    pub fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
     /// Whether `id` has an edit to undo.
     pub fn can_undo(&self, id: DocumentId) -> bool {
         self.histories.get(&id).is_some_and(EditHistory::can_undo)
@@ -176,6 +191,9 @@ impl CodeSession {
     /// Reverses `id`'s newest undo step, returning the selection it had
     /// before it. `None` if `id` is not open or has nothing to undo.
     pub fn undo(&mut self, id: DocumentId) -> Option<Selection> {
+        if self.read_only {
+            return None;
+        }
         let document = self.documents.get_mut(id)?;
         let result = self.histories.get_mut(&id)?.undo(document)?;
         self.applied(id, result)
@@ -184,6 +202,9 @@ impl CodeSession {
     /// Makes `id`'s last undone step again, returning the selection it
     /// left. `None` if `id` is not open or has nothing to redo.
     pub fn redo(&mut self, id: DocumentId) -> Option<Selection> {
+        if self.read_only {
+            return None;
+        }
         let document = self.documents.get_mut(id)?;
         let result = self.histories.get_mut(&id)?.redo(document)?;
         self.applied(id, result)

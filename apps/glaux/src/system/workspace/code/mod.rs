@@ -6,7 +6,9 @@
 //! [`CodeSession`]. The editor keeps only what is on screen around them.
 
 mod actions;
+mod breakpoints;
 mod completion;
+mod debugging;
 mod docs_lookup;
 mod edit;
 mod find;
@@ -36,6 +38,9 @@ use glaux_machine::system_rom::SystemCursor;
 
 use actions::{CodeAction, TabTarget, file_menu, text_menu};
 use completion::{CompletionPopup, completion_hint};
+#[cfg(test)]
+pub use debugging::DebugLayout;
+pub use debugging::{DebugAction, DebugView};
 use find::{FindBar, FindLayout};
 use go_to_line::GoToLine;
 use hover::{HoverPopup, Rest, hover_hint};
@@ -84,6 +89,10 @@ const UNDO_IDLE_TICKS: u32 = TICK_RATE;
 /// The status bar hint while nothing covers the view.
 fn view_hint() -> String {
     ui_text::get("code-ctrl-s-save-ctrl-f-find-ctrl-n-new-esc-shell")
+}
+/// The status bar hint while a debugged cartridge is stopped.
+fn stopped_hint() -> String {
+    ui_text::get("code-f5-go-f10-step-shift-f5-stop")
 }
 /// The status bar hint while the find bar has the keys.
 fn find_hint() -> String {
@@ -156,6 +165,10 @@ pub enum CodeRequest {
     SearchDocs,
     /// Run the cartridge from its entry point.
     Run,
+    /// Run the cartridge from its entry point under the debugger.
+    StartDebug,
+    /// Go on with the stopped cartridge as told.
+    Debug(DebugAction),
     /// Go to the definition of the name at byte `caret` of this document.
     GoToDefinition { id: DocumentId, caret: usize },
     /// Move to this place, remembering where the jump started.
@@ -262,6 +275,9 @@ pub struct CodeEditor {
     entry: Option<SourcePath>,
     /// The declarations of the open document, docked right of the text while open.
     symbols: Option<SymbolPanel>,
+    /// What a stopped cartridge shows, docked right of the text while it
+    /// is stopped. The scripts cannot be edited meanwhile.
+    debug: Option<DebugView>,
     /// Ticks since the caret blink last restarted in its visible phase.
     blink: u32,
     /// The selection being dragged out in the text, while its press is held.
@@ -297,6 +313,7 @@ impl CodeEditor {
             entry_error: None,
             entry: None,
             symbols: None,
+            debug: None,
             blink: 0,
             selecting: None,
             last_click: None,
@@ -377,6 +394,8 @@ impl CodeEditor {
             rename_hint()
         } else if self.go_to.is_some() {
             go_to_hint()
+        } else if self.debug.is_some() {
+            stopped_hint()
         } else if self.symbols.as_ref().is_some_and(SymbolPanel::focused) {
             symbols_hint()
         } else if self.completion.is_some() {
@@ -492,7 +511,7 @@ impl CodeEditor {
     /// find bar leaves below it.
     fn text_area(&self) -> Rect {
         let mut text = self.layout.text;
-        if self.symbols.is_some() {
+        if self.symbols.is_some() || self.debug.is_some() {
             text.width -= symbols::WIDTH;
         }
         match self.find_layout() {
@@ -583,7 +602,9 @@ impl CodeEditor {
         }
         let Some(session) = session else {
             return hand(
-                self.layout.settings_button().contains(at) || self.layout.run_button().contains(at),
+                self.layout.settings_button().contains(at)
+                    || self.layout.run_button().contains(at)
+                    || self.layout.debug_button().contains(at),
             );
         };
         if let Some(menu) = self.menu {
@@ -595,6 +616,7 @@ impl CodeEditor {
         if on_strip != StripHit::None
             || self.layout.settings_button().contains(at)
             || self.layout.run_button().contains(at)
+            || self.layout.debug_button().contains(at)
         {
             return SystemCursor::Hand;
         }
@@ -835,15 +857,26 @@ impl CodeEditor {
             }
             return request;
         }
+        if self.debug.is_some()
+            && !self.has_overlay()
+            && let Some(request) = self.debug_pointer(event)
+        {
+            return request;
+        }
         if let InputEvent::PointerDown {
             button: PointerButton::Primary,
             at,
             ..
         } = event
             && !self.has_overlay()
-            && self.layout.run_button().contains(at)
+            && self.debug.is_none()
         {
-            return Some(CodeRequest::Run);
+            if self.layout.run_button().contains(at) {
+                return Some(CodeRequest::Run);
+            }
+            if self.layout.debug_button().contains(at) {
+                return Some(CodeRequest::StartDebug);
+            }
         }
         if let InputEvent::PointerDown {
             button: PointerButton::Primary,
@@ -1017,7 +1050,9 @@ impl CodeEditor {
                         }
                     }
                     StripHit::None if self.text_area().contains(at) => {
-                        self.press_text(session, at, select);
+                        if !self.press_gutter(session, at) {
+                            self.press_text(session, at, select);
+                        }
                     }
                     StripHit::None => {}
                 }
@@ -1099,6 +1134,7 @@ impl CodeEditor {
                     caret.vertical(doc, 1, metrics, &font)
                 });
             }
+            InputEvent::ToggleBreakpoint => self.toggle_breakpoint_at_caret(session),
             InputEvent::SelectAll => self.select_all(session),
             InputEvent::PageUp { select } => self.page(session, -1, select),
             InputEvent::PageDown { select } => self.page(session, 1, select),

@@ -13,16 +13,18 @@ use glaux_video::draw::{draw_glyph, draw_ink_image, draw_text, fill_rect, pixel}
 use super::layout::{
     CHEVRON_WIDTH, CLOSE_SIZE, CodeLayout, LABEL_PAD, SETTINGS_MARGIN, StripHit, shorten_start,
 };
+mod debug_panel;
+
 use super::picker::FilePicker;
 use super::symbols::{PAD, PanelLayout, SymbolPanel, clip_name, kind_letter};
 use super::text_view::{TextGeometry, thumb};
 use super::{CodeEditor, labels, picker_layout, settings_layout};
 use crate::cartridge::Language;
-use crate::system::editing::document::CodeDocument;
+use crate::system::editing::document::{Breakpoints, CodeDocument};
 use crate::system::editing::metrics::{Spot, TextMetrics, spot, visual_rows};
 use crate::system::editing::session::{CodeSession, DocumentView};
 use crate::system::editor_settings::EditorSettings;
-use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT};
+use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT, WARN};
 use crate::system::syntax_theme;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
@@ -38,6 +40,13 @@ fn open_tag() -> String {
 const MATCH: u8 = HOVER_SHADE;
 
 impl CodeEditor {
+    /// The line of `document`, counted from 0, the selected frame of a
+    /// stopped cartridge is at.
+    fn stopped_line(&self, document: &CodeDocument) -> Option<usize> {
+        let (path, line) = self.debug.as_ref()?.place()?;
+        (path == document.path().as_str()).then(|| line.saturating_sub(1) as usize)
+    }
+
     /// Draws the view for `session` below the workspace's tab bar, with
     /// what `pointer` is over highlighted. `notice`, when given, takes the
     /// status bar in its color.
@@ -54,12 +63,14 @@ impl CodeEditor {
             framebuffer,
             font,
             layout: &self.layout,
+            stopped: self.debug.is_some(),
         };
         // Nothing under an overlay reacts to the pointer.
         let hover_pointer = pointer.filter(|_| !self.has_overlay());
         let settings_lit = self.settings_dialog.is_some()
             || hover_pointer.is_some_and(|at| self.layout.settings_button().contains(at));
         let run_lit = hover_pointer.is_some_and(|at| self.layout.run_button().contains(at));
+        let debug_lit = hover_pointer.is_some_and(|at| self.layout.debug_button().contains(at));
         match session {
             Some(session) => {
                 painter.strip(session, hover_pointer, self.menu.is_some());
@@ -95,9 +106,16 @@ impl CodeEditor {
                             selection.range(),
                             matches,
                             session.syntax_spans(id),
+                            Marks {
+                                breakpoints: document.breakpoints(),
+                                stopped_at: self.stopped_line(document),
+                            },
                         );
                         if let (Some(panel), Some(layout)) = (&self.symbols, self.panel_layout()) {
                             painter.symbol_panel(panel, &layout, hover_pointer);
+                        }
+                        if let (Some(view), Some(layout)) = (&self.debug, self.debug_layout()) {
+                            painter.debug_panel(view, &layout, hover_pointer);
                         }
                         if let (Some(popup), Some(layout)) =
                             (&self.signature, self.signature_layout(session))
@@ -158,7 +176,7 @@ impl CodeEditor {
                 painter.empty_state(self.entry_error.as_deref());
             }
         }
-        painter.run_buttons(run_lit);
+        painter.run_buttons(run_lit, debug_lit, hover_pointer);
         painter.settings_button(ui, settings_lit);
         let hint = self.hint();
         let (status, color) = notice.unwrap_or((&hint, PALE));
@@ -195,10 +213,20 @@ impl CodeEditor {
 }
 
 /// Draws into one frame with one layout.
+/// What the margin marks beside the lines of the document drawn.
+struct Marks<'a> {
+    breakpoints: &'a Breakpoints,
+    /// The line, counted from 0, a stopped cartridge is at in this document.
+    stopped_at: Option<usize>,
+}
+
 struct Painter<'a> {
     framebuffer: &'a mut Framebuffer,
     font: &'a BitmapFont,
     layout: &'a CodeLayout,
+    /// Whether a debugged cartridge is stopped, which replaces the run
+    /// plates with the ones that go on with it.
+    stopped: bool,
 }
 
 impl Painter<'_> {
@@ -372,9 +400,12 @@ impl Painter<'_> {
                 ("column", Arg::Text(&(caret.column + 1).to_string())),
             ],
         );
-        let position_x = self.layout.run_button().x
-            - self.cell_w()
-            - self.layout.cells(&position) * self.cell_w();
+        let controls_x = if self.stopped {
+            self.layout.step_buttons()[0].x
+        } else {
+            self.layout.run_button().x
+        };
+        let position_x = controls_x - self.cell_w() - self.layout.cells(&position) * self.cell_w();
         let path_x = tag_rect.right() + self.cell_w();
         let room = (position_x - self.cell_w() - path_x) / self.cell_w().max(1);
         let path = shorten_start(self.font, path, usize::try_from(room).unwrap_or(0));
@@ -386,25 +417,21 @@ impl Painter<'_> {
         self.options_rule();
     }
 
-    /// The plates that run and stop the cartridge, `run_lit` while the
-    /// pointer is over the first. Stop is drawn disabled: nothing runs
-    /// while the editor is shown.
-    fn run_buttons(&mut self, run_lit: bool) {
+    /// The plates that run and stop the cartridge, `run_lit` and
+    /// `debug_lit` while the pointer is over them. Stop is drawn disabled:
+    /// nothing runs while the editor is shown, unless a debugged cartridge
+    /// is stopped, and then the plates that go on with it take their place.
+    fn run_buttons(&mut self, run_lit: bool, debug_lit: bool, pointer: Option<Point>) {
+        if self.stopped {
+            self.step_buttons(pointer);
+            return;
+        }
         let run = self.layout.run_button();
         let stop = self.layout.stop_button();
         self.fill(run, if run_lit { HOVER_SHADE } else { BAR });
         self.fill(stop, BAR);
-        // A right-pointing triangle, four columns wide and seven tall.
-        for column in 0..4 {
-            fill_rect(
-                self.framebuffer,
-                run.x + 3 + column,
-                run.y + 1 + column,
-                1,
-                7 - 2 * column,
-                OK,
-            );
-        }
+        self.play(run);
+        self.bug(self.layout.debug_button(), debug_lit);
         fill_rect(self.framebuffer, stop.x + 2, stop.y + 2, 5, 5, IDLE_SHADE);
     }
 
@@ -459,6 +486,7 @@ impl Painter<'_> {
         selected: Range<usize>,
         matches: &[Range<usize>],
         syntax: &[Span],
+        marks: Marks<'_>,
     ) {
         let geometry = *geometry;
         let found = |byte: usize| {
@@ -498,8 +526,23 @@ impl Painter<'_> {
             let y = geometry.viewport.y + index as i32 * cell_h;
             // Folds of a wrapped line leave the gutter blank, so each
             // number marks where its source line starts.
-            if row.row_in_line == 0 && geometry.gutter.is_some() {
-                self.number(row.line + 1, geometry.number_right(), y, IDLE_SHADE);
+            if marks.stopped_at == Some(row.line) {
+                // The line the cartridge stopped on, across the whole row.
+                let gutter_right = geometry.gutter.map_or(geometry.viewport.x, Rect::right);
+                fill_rect(
+                    self.framebuffer,
+                    gutter_right,
+                    y,
+                    geometry.vertical.x - gutter_right,
+                    cell_h,
+                    BAR,
+                );
+            }
+            if row.row_in_line == 0
+                && let Some(gutter) = geometry.gutter
+            {
+                let color = self.line_number(row.line, y, &gutter, &marks);
+                self.number(row.line + 1, geometry.number_right(), y, color);
             }
             let first = if geometry.wrap {
                 row.start.column
@@ -693,6 +736,38 @@ impl Painter<'_> {
             let color = if selected { TEXT } else { PALE };
             self.text(&name, x + 2 * cell_w, text_y, color);
         }
+    }
+
+    /// Draws what the margin shows of `line` besides its number, and gives
+    /// the color the number takes: a breakpoint turns it into white on red,
+    /// and the line a cartridge stopped on gets an arrow.
+    fn line_number(&mut self, line: usize, y: i32, gutter: &Rect, marks: &Marks<'_>) -> u8 {
+        let cell_h = self.cell_h();
+        if marks.stopped_at == Some(line) {
+            // A right-pointing triangle in the space left of the numbers.
+            for column in 0..3 {
+                fill_rect(
+                    self.framebuffer,
+                    gutter.x + column,
+                    y + (cell_h - 5) / 2 + column,
+                    1,
+                    5 - 2 * column,
+                    WARN,
+                );
+            }
+        }
+        if marks.breakpoints.contains(line) {
+            fill_rect(
+                self.framebuffer,
+                gutter.x + 1,
+                y,
+                gutter.width - 3,
+                cell_h,
+                ERROR,
+            );
+            return TEXT;
+        }
+        IDLE_SHADE
     }
 
     fn number(&mut self, n: usize, right: i32, y: i32, color: u8) {

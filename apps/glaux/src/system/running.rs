@@ -271,6 +271,14 @@ impl RunningCartridge {
         }
     }
 
+    /// Moves what a stopped, debugged cartridge logged so far to where
+    /// [`take_output`](Self::take_output) finds it.
+    pub fn pull_stopped_output(&mut self) {
+        if let Some(runtime) = self.debugged() {
+            runtime.pull_output();
+        }
+    }
+
     /// Tells a debugged cartridge where to stop from now on.
     pub fn set_breakpoints(&mut self, breakpoints: Vec<Breakpoint>) {
         if let Some(runtime) = self.debugged() {
@@ -299,6 +307,7 @@ impl RunningCartridge {
 
     /// Advances the cartridge by one logical tick, applying the button and
     /// key events in `input` received since the previous tick.
+    #[cfg(test)]
     pub fn tick(&mut self, input: &[InputEvent]) -> Result<(), RuntimeError> {
         let state = self.input.advance(input);
         self.runtime.tick(state)

@@ -77,6 +77,8 @@ fn code_idle() -> MenuState {
         go_to_symbol: true,
         documentation: true,
         run: true,
+        debug: true,
+        toggle_breakpoint: true,
         toggle_logs: true,
         ..none()
     }
@@ -86,6 +88,7 @@ fn code_idle() -> MenuState {
 fn sprites_idle() -> MenuState {
     MenuState {
         run: true,
+        debug: true,
         toggle_logs: true,
         ..only_documentation()
     }

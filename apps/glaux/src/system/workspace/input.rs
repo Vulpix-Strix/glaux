@@ -151,6 +151,9 @@ impl Workspace {
             InputEvent::Run if matches!(route, Route::Code | Route::Sprites) => {
                 return Some(WorkspaceRequest::Run);
             }
+            InputEvent::Debug if matches!(route, Route::Code | Route::Sprites) => {
+                return Some(WorkspaceRequest::Debug);
+            }
             _ if route == Route::Docs => return self.docs_input(event),
             _ if route == Route::Sprites => return self.sprite_input(event, sprites),
             _ if route == Route::Code => return self.code_input(event, code),
@@ -261,6 +264,8 @@ impl Workspace {
             }
             CodeRequest::Save(id) => Some(WorkspaceRequest::Scripts(ScriptRequest::Save(id))),
             CodeRequest::Run => Some(WorkspaceRequest::Run),
+            CodeRequest::StartDebug => Some(WorkspaceRequest::Debug),
+            CodeRequest::Debug(action) => Some(WorkspaceRequest::Stopped(action)),
             CodeRequest::GoToDefinition { id, caret } => Some(WorkspaceRequest::Navigate(
                 NavigationRequest::GoToDefinition { id, caret },
             )),

@@ -5,6 +5,7 @@
 //! that follows, borrowing what the states share through a [`Context`].
 
 pub(super) mod confirm;
+pub(super) mod debugging;
 pub(super) mod logs;
 pub(super) mod paused;
 pub(super) mod running;
@@ -52,9 +53,9 @@ fn cartridge_of(state: &SystemState) -> Option<&LoadedCartridge> {
         | SystemState::Credits { loaded, .. }
         | SystemState::Docs { loaded, .. } => loaded.as_ref(),
         SystemState::Workspace { cartridge, .. } => Some(cartridge),
-        SystemState::Running { running, .. } | SystemState::Paused { running, .. } => {
-            Some(running.cartridge())
-        }
+        SystemState::Running { running, .. }
+        | SystemState::Paused { running, .. }
+        | SystemState::Debugging { running, .. } => Some(running.cartridge()),
     }
 }
 
@@ -65,7 +66,7 @@ fn report(state: &mut SystemState, workspace: &mut Workspace, message: String) {
         SystemState::Shell { shell, .. } | SystemState::Paused { shell, .. } => {
             shell.report(message);
         }
-        SystemState::Workspace { .. } => workspace.report(message),
+        SystemState::Workspace { .. } | SystemState::Debugging { .. } => workspace.report(message),
         SystemState::Boot { .. }
         | SystemState::Running { .. }
         | SystemState::Credits { .. }
@@ -88,7 +89,7 @@ impl Documents<'_> {
     ///
     /// Every editable document of the cartridge belongs in here, so a run
     /// from Code never starts from files that miss an edit.
-    fn save_all(
+    pub(super) fn save_all(
         self,
         cartridge: &LoadedCartridge,
         workspace: &mut Workspace,

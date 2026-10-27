@@ -4,9 +4,10 @@ use super::workspace::open_workspace;
 use super::{Context, Documents};
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::SourcePath;
+use crate::system::editing::session::CodeSession;
 use crate::system::logs::{Category, LogStore, SourceLocation};
 use crate::system::pause::PauseOverlay;
-use crate::system::running::{FailedStart, RunOrigin, RunningCartridge, StartError};
+use crate::system::running::{FailedStart, RunOrigin, RunningCartridge, StartError, Tick};
 use crate::system::shell::{Shell, cartridge_identity};
 use crate::system::sprite_document::SpriteDocument;
 use crate::system::{PausedView, StopReason, SystemState};
@@ -16,7 +17,7 @@ use glaux_input::InputEvent;
 use glaux_script::ScriptError;
 
 /// Moves what the cartridge logged into the log store and the shell.
-fn drain_logs(shell: &mut Shell, logs: &mut LogStore, running: &mut RunningCartridge) {
+pub(super) fn drain_logs(shell: &mut Shell, logs: &mut LogStore, running: &mut RunningCartridge) {
     let entries = running.take_output();
     let dropped = running.take_dropped();
     if !entries.is_empty() || dropped > 0 {
@@ -56,9 +57,22 @@ fn script_category(error: &ScriptError) -> Category {
 /// files. A run from Code uses the files only: saving what it should run
 /// is [`save_before_running`]'s job.
 pub(super) fn start(
+    shell: Box<Shell>,
+    cartridge: LoadedCartridge,
+    origin: RunOrigin,
+    ctx: &mut Context<'_>,
+) -> SystemState {
+    launch(shell, cartridge, origin, false, ctx)
+}
+
+/// Starts `cartridge` like [`start`], under the debugger when `debug` is
+/// set. A debugged run stops at the scripts' breakpoints, and one that
+/// stops while it starts is stopped when this returns.
+pub(super) fn launch(
     mut shell: Box<Shell>,
     cartridge: LoadedCartridge,
     origin: RunOrigin,
+    debug: bool,
     ctx: &mut Context<'_>,
 ) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
@@ -72,10 +86,23 @@ pub(super) fn start(
     };
     let edited = !overrides.is_empty();
     ctx.logs.begin_run();
-    match RunningCartridge::start(cartridge, ctx.video_defaults, overrides) {
-        Ok(running) => {
+    let started = if debug {
+        let breakpoints = ctx.code.as_ref().map(CodeSession::breakpoints);
+        RunningCartridge::start_debug(
+            cartridge,
+            ctx.video_defaults,
+            overrides,
+            breakpoints.unwrap_or_default(),
+        )
+    } else {
+        RunningCartridge::start(cartridge, ctx.video_defaults, overrides)
+            .map(|running| (running, None))
+    };
+    match started {
+        Ok((running, stop)) => {
             let mut running = running.with_origin(origin);
-            tracing::info!(cartridge = %identity, edited, ?origin, "cartridge started");
+            let debugged = debug;
+            tracing::info!(cartridge = %identity, edited, debugged, ?origin, "cartridge started");
             if edited {
                 shell.report(ui_text::get_with(
                     "system-running-with-unsaved-graphics-changes",
@@ -88,8 +115,13 @@ pub(super) fn start(
                 ));
             }
             shell.warn_if_experimental(running.cartridge().manifest().runtime.language);
-            drain_logs(&mut shell, ctx.logs, &mut running);
-            SystemState::Running { shell, running }
+            match stop {
+                Some(stop) => super::debugging::stopped(shell, running, stop, ctx),
+                None => {
+                    drain_logs(&mut shell, ctx.logs, &mut running);
+                    SystemState::Running { shell, running }
+                }
+            }
         }
         Err(failed) => {
             let FailedStart { cartridge, error } = *failed;
@@ -170,15 +202,21 @@ pub(super) fn restart(
 ) -> SystemState {
     let mut shell = shell;
     drain_logs(&mut shell, ctx.logs, &mut running);
+    let debug = running.is_debugged();
     let cartridge = running.stop();
     tracing::info!(
         cartridge = %cartridge_identity(cartridge.manifest()),
         "cartridge restarted"
     );
-    if !save_before_running(&cartridge, ctx) {
+    let saved = if debug {
+        save_for_debugging(&cartridge, ctx)
+    } else {
+        save_before_running(&cartridge, ctx)
+    };
+    if !saved {
         return back_to_code(shell, cartridge, None, ctx);
     }
-    start(shell, cartridge, RunOrigin::Code, ctx)
+    launch(shell, cartridge, RunOrigin::Code, debug, ctx)
 }
 
 /// Writes the modified documents when Save Before Running is on. Returns
@@ -187,6 +225,17 @@ pub(super) fn save_before_running(cartridge: &LoadedCartridge, ctx: &mut Context
     if !ctx.workspace.editor_settings().save_before_running {
         return true;
     }
+    let documents = Documents {
+        sprites: ctx.sprites,
+        code: ctx.code,
+    };
+    documents.save_all(cartridge, ctx.workspace, ctx.logs)
+}
+
+/// Writes the modified documents before a debugged run, whatever Save
+/// Before Running says: breakpoints are lines of the files, so the run must
+/// start from the text they were set in. Returns whether it may go ahead.
+pub(super) fn save_for_debugging(cartridge: &LoadedCartridge, ctx: &mut Context<'_>) -> bool {
     let documents = Documents {
         sprites: ctx.sprites,
         code: ctx.code,
@@ -214,11 +263,12 @@ pub(in crate::system) fn running_tick(
     if input.contains(&InputEvent::Break) {
         return pause(shell, running, ctx);
     }
-    match running.tick(input) {
-        Ok(()) => {
+    match running.advance(input) {
+        Ok(Tick::Done) => {
             drain_logs(&mut shell, ctx.logs, &mut running);
             SystemState::Running { shell, running }
         }
+        Ok(Tick::Stopped(stop)) => super::debugging::stopped(shell, running, stop, ctx),
         Err(err) => stop(shell, running, StopReason::Failed(err), ctx),
     }
 }
