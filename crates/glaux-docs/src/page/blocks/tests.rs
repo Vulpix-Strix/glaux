@@ -219,3 +219,33 @@ fn anchors_follow_the_heading_title() {
     assert_eq!(anchor("  A -- B! "), "a-b");
     assert_eq!(anchor("Éxito"), "éxito");
 }
+
+/// The website computes the same anchors in TypeScript (`test/anchor.test.ts`
+/// in glaux-website lists these cases too), so a change here is a change to
+/// every published link that points at a heading.
+#[test]
+fn anchors_handle_punctuation_and_unicode() {
+    let cases = [
+        ("Don't panic", "don-t-panic"),
+        ("snake_case_name", "snake-case-name"),
+        ("A & B", "a-b"),
+        ("C++ vs. C#", "c-vs-c"),
+        ("Año nuevo", "año-nuevo"),
+        ("日本語 の 見出し", "日本語-の-見出し"),
+        ("Ⅷ chapter", "ⅷ-chapter"),
+        ("½ cup", "½-cup"),
+        ("İstanbul", "i\u{307}stanbul"),
+        ("!!!", ""),
+        ("--x--", "x"),
+        ("Emoji 🎮 time", "emoji-time"),
+        ("Cafe\u{301}", "cafe"),
+        ("हिन्दी", "हिन-दी"),
+        ("Straße", "straße"),
+        ("ΣΑΣ", "σασ"),
+        ("x\u{200b}y", "x-y"),
+        ("١٢٣ arabic digits", "١٢٣-arabic-digits"),
+    ];
+    for (title, expected) in cases {
+        assert_eq!(anchor(title), expected, "{title:?}");
+    }
+}
