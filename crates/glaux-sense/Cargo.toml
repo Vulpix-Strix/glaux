@@ -6,9 +6,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+hotpath.workspace = true
 glaux-docs.workspace = true
 glaux-input.workspace = true
 glaux-syntax.workspace = true
+
+[features]
+hotpath = ["hotpath/hotpath", "glaux-syntax/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "glaux-syntax/hotpath-alloc"]
 
 [dev-dependencies]
 pretty_assertions.workspace = true

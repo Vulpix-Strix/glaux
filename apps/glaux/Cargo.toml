@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+hotpath.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 clap.workspace = true
@@ -33,6 +34,11 @@ glaux-docs.workspace = true
 glaux-sense.workspace = true
 rfd.workspace = true
 open.workspace = true
+
+[features]
+hotpath = ["hotpath/hotpath", "glaux-sense/hotpath", "glaux-syntax/hotpath", "glaux-luau/hotpath", "glaux-rhai/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "glaux-sense/hotpath-alloc", "glaux-syntax/hotpath-alloc", "glaux-luau/hotpath-alloc", "glaux-rhai/hotpath-alloc"]
+hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"

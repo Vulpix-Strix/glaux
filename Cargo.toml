@@ -20,6 +20,9 @@ open = { version = "5.4", features = ["shellexecute-on-windows"] }
 muda = { version = "0.21", default-features = false }
 
 tracing = "0.1"
+
+# Every macro is a no-op until the `hotpath` feature of a crate turns it on.
+hotpath = "0.30"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 
@@ -113,6 +116,12 @@ incremental = true
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# Release speed with symbols, for `hotpath-cpu` attribution. See PROFILING.md.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
 
 [profile.release]
 opt-level = 3

@@ -7,6 +7,7 @@ repository.workspace = true
 build = "build.rs"
 
 [dependencies]
+hotpath.workspace = true
 thiserror.workspace = true
 tree-sitter.workspace = true
 tree-sitter-language.workspace = true
@@ -14,6 +15,10 @@ tree-sitter-luau.workspace = true
 
 [build-dependencies]
 cc.workspace = true
+
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [dev-dependencies]
 pretty_assertions.workspace = true

@@ -1261,6 +1261,26 @@
       ]
     },
     {
+      "name": "hotpath",
+      "version": "0.30.0",
+      "license": "MIT",
+      "repository": "https://github.com/hotpath-rs/hotpath",
+      "category": "library",
+      "text_ids": [
+        40
+      ]
+    },
+    {
+      "name": "hotpath-macros",
+      "version": "0.30.0",
+      "license": "MIT",
+      "repository": "https://github.com/hotpath-rs/hotpath",
+      "category": "library",
+      "text_ids": [
+        40
+      ]
+    },
+    {
       "name": "hybrid-array",
       "version": "0.4.15",
       "license": "MIT OR Apache-2.0",
