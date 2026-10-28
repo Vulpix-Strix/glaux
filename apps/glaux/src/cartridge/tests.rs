@@ -669,6 +669,7 @@ fn shipped_examples_load_with_their_assets() {
         ("tile-viewer", "code/main.luau"),
         ("signal-lost", "code/main.luau"),
         ("signal-lost-rhai", "code/main.rhai"),
+        ("loot-rain", "code/main.luau"),
         ("palettes", "code/main.luau"),
     ] {
         let cartridge = LoadedCartridge::load(&storage, example).unwrap();
