@@ -147,6 +147,25 @@ impl Documents {
         }
     }
 
+    /// Owes the server the text of every open document again.
+    ///
+    /// A server remembers a `require` that failed until the requiring
+    /// document changes, so a module that appears later is not found by the
+    /// documents that asked for it earlier.
+    pub fn resend_all(&mut self) {
+        let queued: BTreeSet<String> = self
+            .owed
+            .iter()
+            .filter(|owed| !matches!(owed, Owed::Close { .. }))
+            .map(|owed| owed.uri().to_owned())
+            .collect();
+        for uri in self.open.keys() {
+            if !queued.contains(uri) {
+                self.owed.push_back(Owed::Change { uri: uri.clone() });
+            }
+        }
+    }
+
     /// Closes a document. Closing one that is not open is ignored.
     pub fn close(&mut self, uri: &str) -> Result<(), QueueFull> {
         if !self.open.contains_key(uri) {

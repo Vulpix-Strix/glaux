@@ -182,3 +182,33 @@ proptest! {
         prop_assert_eq!(server, expected);
     }
 }
+
+#[test]
+fn resending_owes_every_open_document_once_and_skips_what_is_still_queued() {
+    let mut documents = docs();
+    documents.open("a", "luau", 1, "a").unwrap();
+    documents.open("b", "luau", 1, "b").unwrap();
+    documents.open("c", "luau", 1, "c").unwrap();
+    documents.drain();
+    documents.close("c").unwrap();
+    documents.change("a", 2, "a2");
+    documents.resend_all();
+    documents.resend_all();
+    let sent = documents.drain();
+    assert_eq!(
+        sent,
+        vec![
+            Wire::Close { uri: "c".into() },
+            Wire::Change {
+                uri: "a".into(),
+                version: 2,
+                text: "a2".into()
+            },
+            Wire::Change {
+                uri: "b".into(),
+                version: 1,
+                text: "b".into()
+            },
+        ]
+    );
+}

@@ -287,6 +287,15 @@ impl LspHandle {
         })
     }
 
+    /// Sends every open document to the server again, so that `require`s
+    /// that failed before a module existed are looked up anew.
+    pub fn resend_documents(&self, key: &SessionKey) -> Result<(), LspError> {
+        self.with_shared(key, |shared| {
+            shared.documents().resend_all();
+            Ok(())
+        })
+    }
+
     /// Asks the server for diagnostics of `uris` only, or of every open
     /// document with `None`.
     ///
