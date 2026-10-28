@@ -77,9 +77,14 @@ struct Rig {
 }
 
 fn rig(request_timeout: Duration) -> Rig {
+    rig_with(request_timeout, 64)
+}
+
+/// Like [`rig`], with room for `documents` notifications owed at once.
+fn rig_with(request_timeout: Duration, documents: usize) -> Rig {
     let (client_out, server_in) = duplex(1 << 16);
     let (server_out, client_in) = duplex(1 << 16);
-    let shared = Arc::new(Shared::new(64));
+    let shared = Arc::new(Shared::new(documents));
     let outbox = Arc::new(Outbox::default());
     let (stop, stopped) = watch::channel(false);
     let config = SessionConfig {
@@ -381,5 +386,42 @@ fn stopping_sends_shutdown_then_exit() {
             .await;
         rig.server.next_method("exit").await;
         assert!(matches!(rig.session.await.unwrap(), SessionExit::Shutdown));
+    });
+}
+
+#[test]
+fn a_burst_bigger_than_the_outgoing_queue_is_not_a_dead_server() {
+    block_on(async {
+        const DOCUMENTS: usize = 1000;
+        let mut rig = rig_with(Duration::from_secs(5), DOCUMENTS);
+        rig.edit(|documents| {
+            for n in 0..DOCUMENTS {
+                documents
+                    .open(&format!("file:///m{n}"), "luau", 1, &"x".repeat(200))
+                    .unwrap();
+            }
+        });
+        rig.server.handshake(PULL()).await;
+        // The opens arrive whole and in order, then one pull per document,
+        // even though the server reads far slower than they are produced.
+        for n in 0..DOCUMENTS {
+            let open = rig.server.next_method("textDocument/didOpen").await;
+            assert_eq!(
+                open["params"]["textDocument"]["uri"],
+                format!("file:///m{n}")
+            );
+        }
+        let mut pulled = std::collections::BTreeSet::new();
+        for _ in 0..DOCUMENTS {
+            let pull = rig.server.next_method("textDocument/diagnostic").await;
+            pulled.insert(
+                pull["params"]["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
+        assert_eq!(pulled.len(), DOCUMENTS);
+        assert!(!rig.session.is_finished(), "the session was given up on");
     });
 }

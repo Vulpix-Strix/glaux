@@ -183,9 +183,33 @@ pub struct LspHandle {
 
 const DOCUMENT_QUEUE: usize = 4096;
 
+/// A document a session starts with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentInit {
+    pub uri: String,
+    pub language: String,
+    pub version: i64,
+    pub text: String,
+}
+
 impl LspHandle {
     /// Starts a session, or does nothing if `key` already has one.
     pub fn open_session(&self, key: SessionKey, spec: ServerSpec) -> Result<(), LspError> {
+        self.open_session_with(key, spec, Vec::new())
+    }
+
+    /// Starts a session that opens `documents` as soon as the server is
+    /// ready, all in the first batch.
+    ///
+    /// A server that is asked about one document while the others it
+    /// requires are still on their way can remember the lookups that failed
+    /// and never connect the two. Handing it everything at once avoids that.
+    pub fn open_session_with(
+        &self,
+        key: SessionKey,
+        spec: ServerSpec,
+        documents: Vec<DocumentInit>,
+    ) -> Result<(), LspError> {
         let mut sessions = self.registry.sessions();
         if sessions.contains_key(&key) {
             return Ok(());
@@ -194,6 +218,18 @@ impl LspHandle {
             return Err(LspError::TooManySessions);
         }
         let shared = Arc::new(Shared::new(DOCUMENT_QUEUE));
+        {
+            let mut owed = shared.documents();
+            for document in &documents {
+                owed.open(
+                    &document.uri,
+                    &document.language,
+                    document.version,
+                    &document.text,
+                )
+                .map_err(|_| LspError::QueueFull)?;
+            }
+        }
         let (stop, stopped) = watch::channel(false);
         let task = self.registry.runtime.spawn(supervise(
             key.clone(),
@@ -270,6 +306,12 @@ impl LspHandle {
         let result = action(&shared);
         shared.wake.notify_one();
         result
+    }
+
+    /// What the session `key` has sent and received so far.
+    pub fn stats(&self, key: &SessionKey) -> Option<crate::StatsSnapshot> {
+        let sessions = self.registry.sessions();
+        Some(sessions.get(key)?.shared.stats.snapshot())
     }
 
     /// Takes every event produced since the last call. Never blocks.

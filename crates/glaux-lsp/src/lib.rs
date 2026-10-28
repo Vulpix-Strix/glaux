@@ -12,5 +12,7 @@ pub mod uri;
 
 mod runtime;
 mod session;
+mod stats;
 
-pub use runtime::{Event, LspError, LspHandle, LspRuntime, ServerSpec, SessionKey};
+pub use runtime::{DocumentInit, Event, LspError, LspHandle, LspRuntime, ServerSpec, SessionKey};
+pub use stats::StatsSnapshot;
