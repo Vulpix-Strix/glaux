@@ -37,6 +37,10 @@ pub(crate) struct Analysis {
     /// once that the analyzer gave up. Later occurrences only reach the log.
     told_unavailable: bool,
     told_stopped: bool,
+    /// Restarts and gives up within milliseconds, and waits this long for the
+    /// handshake, for tests of servers that fail.
+    #[cfg(test)]
+    quick_failures: Option<std::time::Duration>,
 }
 
 enum State {
@@ -63,6 +67,8 @@ struct Running {
     cache_dir: PathBuf,
     callbacks: Vec<String>,
     sessions_started: u32,
+    #[cfg(test)]
+    quick_failures: Option<std::time::Duration>,
     // Last, so the servers are told to stop before the thread is joined.
     _runtime: LspRuntime,
 }
@@ -100,7 +106,15 @@ impl Analysis {
             status: AnalyzerStatus::Off,
             told_unavailable: false,
             told_stopped: false,
+            #[cfg(test)]
+            quick_failures: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_quick_failures(mut self, handshake: std::time::Duration) -> Self {
+        self.quick_failures = Some(handshake);
+        self
     }
 
     /// What the analyzer is doing, with the reason when it is not working.
@@ -273,6 +287,8 @@ impl Analysis {
             cache_dir,
             callbacks: callback_names(),
             sessions_started: 0,
+            #[cfg(test)]
+            quick_failures: self.quick_failures,
             _runtime: runtime,
         })
     }
@@ -338,6 +354,13 @@ impl Running {
             "lsp".into(),
             format!("--definitions={}", self.definitions.display()).into(),
         ];
+        #[cfg(test)]
+        if let Some(handshake) = self.quick_failures {
+            spec.max_failures = 1;
+            spec.backoff_base = std::time::Duration::from_millis(20);
+            spec.backoff_cap = std::time::Duration::from_millis(20);
+            spec.handshake_timeout = handshake;
+        }
         self.handle
             .open_session(key.clone(), spec)
             .map_err(|error| format!("could not start the Luau analyzer: {error}"))?;

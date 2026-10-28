@@ -364,3 +364,155 @@ fn changing_cartridge_closes_the_session_and_leaves_no_workspace_behind() {
     analysis.sync(&mut system);
     assert_eq!(workspaces(&cache), 1);
 }
+
+/// Servers that misbehave, played by `crates/glaux-lsp/tests/fake_server.py`
+/// behind a one-line shell script named like luau-lsp.
+#[cfg(unix)]
+mod failing_servers {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    /// Starting python can take a while on a busy machine.
+    const PATIENT: Duration = Duration::from_secs(5);
+
+    fn python_available() -> bool {
+        std::process::Command::new("python3")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+
+    /// Makes `GLAUX_LUAU_LSP` name a script that runs the fake server with
+    /// `mode`, and returns the cache the analyzer should use.
+    fn serving(mode: &str, name: &str) -> ScratchDir {
+        let scratch = ScratchDir::new(name);
+        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/glaux-lsp/tests/fake_server.py");
+        let exe: PathBuf = scratch.join("luau-lsp");
+        std::fs::write(
+            &exe,
+            format!("#!/bin/sh\nexec python3 \"{}\" {mode}\n", script.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // SAFETY: each test runs in its own process under nextest, and no
+        // other thread reads the environment while it is changed.
+        unsafe {
+            std::env::set_var("GLAUX_LUAU_LSP", &exe);
+            std::env::remove_var("LUAU_LSP");
+        }
+        scratch
+    }
+
+    /// Runs frames until `done` and returns each status the analyzer went
+    /// through, without repeats.
+    fn trace(
+        mut system: System,
+        analysis: &mut Analysis,
+        done: impl Fn(&System, &[AnalyzerStatus]) -> bool,
+    ) -> (System, Vec<AnalyzerStatus>) {
+        let mut seen: Vec<AnalyzerStatus> = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done(&system, &seen) {
+            assert!(Instant::now() < deadline, "never got there: {seen:?}");
+            system = frames(system, analysis, 1);
+            if seen.last() != Some(analysis.status()) {
+                seen.push(analysis.status().clone());
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        (system, seen)
+    }
+
+    fn disabled(_: &System, seen: &[AnalyzerStatus]) -> bool {
+        matches!(seen.last(), Some(AnalyzerStatus::Disabled(_)))
+    }
+
+    fn start(
+        name: &str,
+        mode: &str,
+        handshake: Duration,
+    ) -> Option<(ScratchDir, Analysis, System)> {
+        if !python_available() {
+            eprintln!("skipped: python3 is needed to play the fake server");
+            return None;
+        }
+        let fixture = Fixture::new(name);
+        let cache = serving(mode, &format!("{name}-cache"));
+        let analysis =
+            Analysis::new(Some(cache.join("cache")), None).with_quick_failures(handshake);
+        let system = code_view(&fixture, "local x = 1\n", |_| {});
+        // The fixture lives as long as the process; the test is over by then.
+        std::mem::forget(fixture);
+        Some((cache, analysis, system))
+    }
+
+    #[test]
+    fn a_server_that_exits_is_failed_then_disabled_and_editing_goes_on() {
+        let Some((_cache, mut analysis, system)) = start("sys-lsp-exits", "exit", PATIENT) else {
+            return;
+        };
+        let (system, seen) = trace(system, &mut analysis, disabled);
+        assert_eq!(seen[0], AnalyzerStatus::Starting);
+        let Some(AnalyzerStatus::Failed { reason, .. }) = seen
+            .iter()
+            .find(|s| matches!(s, AnalyzerStatus::Failed { .. }))
+        else {
+            panic!("{seen:?}");
+        };
+        assert!(reason.contains("exit status: 3"), "{reason}");
+        assert!(reason.contains("fake server: cannot start"), "{reason}");
+        assert!(matches!(seen.last(), Some(AnalyzerStatus::Disabled(_))));
+        assert_eq!(
+            system.notice_text(),
+            Some("Diagnostics stopped, see the log (F12)")
+        );
+
+        let typed = system.update(&[InputEvent::Text('x')]);
+        assert!(code_text(&typed).starts_with('x'));
+        assert!(!has_findings(&typed));
+    }
+
+    #[test]
+    fn a_server_that_never_answers_is_given_up_on() {
+        let Some((_cache, mut analysis, system)) =
+            start("sys-lsp-silent", "silent", Duration::from_millis(300))
+        else {
+            return;
+        };
+        let (_, seen) = trace(system, &mut analysis, disabled);
+        let Some(AnalyzerStatus::Failed { reason, .. }) = seen
+            .iter()
+            .find(|s| matches!(s, AnalyzerStatus::Failed { .. }))
+        else {
+            panic!("{seen:?}");
+        };
+        assert!(
+            reason.contains("did not answer initialize in time"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_server_that_dies_after_starting_is_restarted_and_the_tab_gets_its_findings() {
+        let marker = std::env::temp_dir().join(format!("glaux-app-crash-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let mode = format!("crash-once {}", marker.display());
+        let Some((_cache, mut analysis, system)) = start("sys-lsp-crash", &mode, PATIENT) else {
+            return;
+        };
+        let (system, seen) = trace(system, &mut analysis, |system, seen| {
+            seen.iter()
+                .any(|s| matches!(s, AnalyzerStatus::Failed { .. }))
+                && seen.last() == Some(&AnalyzerStatus::Ready)
+                && has_findings(system)
+        });
+        let _ = std::fs::remove_file(&marker);
+        assert_eq!(seen.first(), Some(&AnalyzerStatus::Starting), "{seen:?}");
+        assert_eq!(errors(&system).len(), 1);
+    }
+}

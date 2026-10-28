@@ -133,6 +133,22 @@ fn a_server_that_keeps_dying_is_given_up_on() {
 }
 
 #[test]
+fn a_lost_server_says_how_it_ended_and_what_it_last_wrote() {
+    let Some(spec) = spec(&["exit"]) else { return };
+    let runtime = LspRuntime::start(2).unwrap();
+    let handle = runtime.handle();
+    handle.open_session(SessionKey::new("a"), spec).unwrap();
+    let seen = wait_for(&handle, |event| matches!(event, Event::Failed { .. })).unwrap();
+    let Some(Event::Failed { reason, .. }) =
+        seen.iter().find(|e| matches!(e, Event::Failed { .. }))
+    else {
+        unreachable!()
+    };
+    assert!(reason.contains("exit status: 3"), "{reason}");
+    assert!(reason.contains("fake server: cannot start"), "{reason}");
+}
+
+#[test]
 fn a_silent_server_fails_the_handshake_without_blocking_the_caller() {
     let Some(spec) = spec(&["silent"]) else {
         return;

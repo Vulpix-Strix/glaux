@@ -34,6 +34,7 @@ def write(message):
 
 mode = sys.argv[1]
 if mode == "exit":
+    sys.stderr.write("fake server: cannot start\n")
     sys.exit(3)
 if mode == "silent":
     time.sleep(60)

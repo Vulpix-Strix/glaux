@@ -394,10 +394,13 @@ async fn supervise(
                     stop.clone(),
                 )
                 .await;
-                reap(&mut process.child).await;
+                let status = reap(&mut process.child).await;
+                // The pipe closes with the process, so the tail is complete
+                // a moment later.
+                let _ = timeout(Duration::from_millis(200), process.stderr_task).await;
                 match exit {
                     SessionExit::Shutdown => break,
-                    SessionExit::Lost(reason) => reason,
+                    SessionExit::Lost(reason) => explain(reason, status, &process.stderr_tail),
                 }
             }
         };
@@ -434,7 +437,13 @@ struct Process {
     child: tokio::process::Child,
     stdin: tokio::process::ChildStdin,
     stdout: BufReader<tokio::process::ChildStdout>,
+    /// The last lines the server wrote to stderr, to say why it died.
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    stderr_task: tokio::task::JoinHandle<()>,
 }
+
+const STDERR_LINES: usize = 5;
+const STDERR_CHARS: usize = 300;
 
 fn start_process(spec: &ServerSpec) -> io::Result<Process> {
     let mut command = Command::new(&spec.program);
@@ -450,28 +459,64 @@ fn start_process(spec: &ServerSpec) -> io::Result<Process> {
     let missing = || io::Error::other("the server has no stdio");
     let stdin = child.stdin.take().ok_or_else(missing)?;
     let stdout = BufReader::new(child.stdout.take().ok_or_else(missing)?);
-    if let Some(stderr) = child.stderr.take() {
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                tracing::debug!(target: "glaux_lsp::stderr", "{line}");
+    let stderr_tail = Arc::new(Mutex::new(VecDeque::new()));
+    let stderr = child.stderr.take();
+    let tail = Arc::clone(&stderr_tail);
+    let stderr_task = tokio::spawn(async move {
+        let Some(stderr) = stderr else { return };
+        let mut lines = BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            tracing::debug!(target: "glaux_lsp::stderr", "{line}");
+            let mut tail = tail.lock().unwrap_or_else(|p| p.into_inner());
+            if tail.len() == STDERR_LINES {
+                tail.pop_front();
             }
-        });
-    }
+            tail.push_back(line);
+        }
+    });
     Ok(Process {
         child,
         stdin,
         stdout,
+        stderr_tail,
+        stderr_task,
     })
 }
 
-/// Gives the process a moment to exit on its own, then kills it.
-async fn reap(child: &mut tokio::process::Child) {
-    if timeout(Duration::from_millis(1000), child.wait())
-        .await
-        .is_err()
-    {
-        let _ = child.kill().await;
+/// `reason` with how the process ended and the last thing it said, so a
+/// log tells why a server was lost without running it again.
+fn explain(
+    reason: String,
+    status: Option<std::process::ExitStatus>,
+    tail: &Mutex<VecDeque<String>>,
+) -> String {
+    let mut details = Vec::new();
+    match status {
+        Some(status) => details.push(status.to_string()),
+        None => details.push("it had to be killed".to_owned()),
+    }
+    let tail = tail.lock().unwrap_or_else(|p| p.into_inner());
+    if !tail.is_empty() {
+        let text = tail
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let text: String = text.chars().take(STDERR_CHARS).collect();
+        details.push(format!("stderr: {text}"));
+    }
+    format!("{reason} ({})", details.join("; "))
+}
+
+/// Gives the process a moment to exit on its own, then kills it. Returns
+/// how it ended, or `None` if it had to be killed.
+async fn reap(child: &mut tokio::process::Child) -> Option<std::process::ExitStatus> {
+    match timeout(Duration::from_millis(1000), child.wait()).await {
+        Ok(status) => status.ok(),
+        Err(_) => {
+            let _ = child.kill().await;
+            None
+        }
     }
 }
 
