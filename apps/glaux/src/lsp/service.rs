@@ -25,6 +25,8 @@ const MAX_SESSIONS: usize = 2;
 
 pub(crate) struct Analysis {
     cache_dir: Option<PathBuf>,
+    /// Where a development copy of the executable can be dropped, `bin`.
+    config_dir: Option<PathBuf>,
     state: State,
 }
 
@@ -75,9 +77,10 @@ enum Source {
 }
 
 impl Analysis {
-    pub(crate) fn new(cache_dir: Option<PathBuf>) -> Self {
+    pub(crate) fn new(cache_dir: Option<PathBuf>, config_dir: Option<PathBuf>) -> Self {
         Self {
             cache_dir,
+            config_dir,
             state: State::Idle,
         }
     }
@@ -156,9 +159,12 @@ impl Analysis {
             tracing::debug!("no cache directory, the Luau analyzer is off");
             return State::Unavailable;
         };
-        let Some(binary) = locate::find() else {
-            tracing::debug!("luau-lsp was not found, diagnostics are off");
-            return State::Unavailable;
+        let binary = match locate::find(self.config_dir.as_deref()) {
+            Ok(binary) => binary,
+            Err(reason) => {
+                tracing::debug!(%reason, "diagnostics are off");
+                return State::Unavailable;
+            }
         };
         let definitions = match definitions::extract(&cache_dir) {
             Ok(path) => path,

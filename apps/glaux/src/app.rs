@@ -164,7 +164,10 @@ impl<'a> App<'a> {
             machine,
             rom,
             picker: FilePicker::new(),
-            analysis: Analysis::new(app_dirs::cache_dir()),
+            analysis: Analysis::new(
+                app_dirs::cache_dir(),
+                shared.config_dir.map(Path::to_path_buf),
+            ),
             instance: shared.instance,
             session: shared.session,
             config_dir: shared.config_dir,

@@ -113,7 +113,7 @@ fn nested_requires_resolve_and_findings_reach_the_editor() {
     }
     let fixture = Fixture::new("sys-lsp-nested");
     let cache = ScratchDir::new("lsp-nested-cache");
-    let mut analysis = Analysis::new(Some(cache.to_path_buf()));
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
     let system = code_view(&fixture, NESTED_MAIN, nested_modules);
     let system = settle(system, &mut analysis, has_findings);
     let found = errors(&system);
@@ -133,7 +133,7 @@ fn an_edit_hides_the_old_findings_until_the_new_ones_arrive() {
     }
     let fixture = Fixture::new("sys-lsp-edit");
     let cache = ScratchDir::new("lsp-edit-cache");
-    let mut analysis = Analysis::new(Some(cache.to_path_buf()));
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
     let system = code_view(&fixture, NESTED_MAIN, nested_modules);
     let system = settle(system, &mut analysis, has_findings);
 
@@ -160,7 +160,7 @@ fn loot_rain_reports_game_run_and_not_its_own_callbacks() {
     }
     let fixture = Fixture::new("sys-lsp-loot");
     let cache = ScratchDir::new("lsp-loot-cache");
-    let mut analysis = Analysis::new(Some(cache.to_path_buf()));
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/loot-rain/code");
     let system = code_view(&fixture, "", |fixture| {
         for entry in std::fs::read_dir(&source).unwrap() {
@@ -197,7 +197,7 @@ fn turning_the_setting_off_clears_the_findings_and_the_editor_still_works() {
     }
     let fixture = Fixture::new("sys-lsp-off");
     let cache = ScratchDir::new("lsp-off-cache");
-    let mut analysis = Analysis::new(Some(cache.to_path_buf()));
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
     let system = code_view(&fixture, NESTED_MAIN, nested_modules);
     let system = settle(system, &mut analysis, has_findings);
     let mut system = system.with_editor_settings(crate::system::EditorSettings {
@@ -213,7 +213,7 @@ fn turning_the_setting_off_clears_the_findings_and_the_editor_still_works() {
 fn without_an_executable_nothing_happens() {
     let fixture = Fixture::new("sys-lsp-none");
     let cache = ScratchDir::new("lsp-none-cache");
-    let mut analysis = Analysis::new(Some(cache.to_path_buf()));
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
     let mut system = code_view(&fixture, NESTED_MAIN, nested_modules);
     // SAFETY: tests of this module are the only readers of these variables
     // and nextest runs each test in its own process.
@@ -250,7 +250,7 @@ fn an_unsaved_edit_in_another_module_reaches_its_dependents_and_closing_it_undoe
     }
     let fixture = Fixture::new("sys-lsp-dependent");
     let cache = ScratchDir::new("lsp-dependent-cache");
-    let mut analysis = Analysis::new(Some(cache.to_path_buf()));
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
     let main = "--!strict\nlocal util = require(\"util\")\nlocal text: string = util.double(1)\nprint(text, 0, 0, 0)\n";
     let system = code_view(&fixture, main, nested_modules);
     let system = settle(system, &mut analysis, |s| {
@@ -296,7 +296,7 @@ fn changing_cartridge_closes_the_session_and_leaves_no_workspace_behind() {
     }
     let fixture = Fixture::new("sys-lsp-swap");
     let cache = ScratchDir::new("lsp-swap-cache");
-    let mut analysis = Analysis::new(Some(cache.to_path_buf()));
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
     let system = shell_with_cartridge(&fixture, NESTED_MAIN);
     nested_modules(&fixture);
     let mut system = enter(system, "load pong");
