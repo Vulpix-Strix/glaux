@@ -70,4 +70,5 @@
 - For documentation-only changes, validate documentation and diffs without running unrelated tests.
 - After changing dependencies or `Cargo.lock`, run `mise run licenses` and commit `apps/glaux/licenses/third-party.json`. `mise run verify` runs the routine checks, including `licenses-check`. See `apps/glaux/licenses/README.md`.
 - Do not run mutation testing routinely.
+- Profile with hotpath through opt-in Cargo features, never by default. See `PROFILING.md` for how to run it, what is instrumented, and how to compare reports.
 - Report validation failures and distinguish existing problems from those introduced by the changes.
