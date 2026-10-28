@@ -161,6 +161,11 @@ pub enum InputEvent {
     Forward,
     /// Go to the definition of the name at the caret (F11 on desktop).
     GoToDefinition,
+    /// Move the caret to the next problem the analyzer found, or the
+    /// previous one when `reverse` is set (F8 and Shift+F8 on desktop).
+    NextProblem {
+        reverse: bool,
+    },
     /// Open the list of the symbols the open document declares (Ctrl+O or
     /// Ctrl+Shift+O on desktop).
     GoToSymbol,

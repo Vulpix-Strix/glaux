@@ -170,6 +170,7 @@ impl LineEditor {
             | InputEvent::Back
             | InputEvent::Forward
             | InputEvent::GoToDefinition
+            | InputEvent::NextProblem { .. }
             | InputEvent::GoToSymbol
             | InputEvent::GoToDefinitionAt(_)
             | InputEvent::ToggleSidebar
