@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use super::cursor::Caret;
-use super::diagnostics::{DiagnosticStore, EditorDiagnostic, Summary};
+use super::diagnostics::{AnalyzerStatus, DiagnosticStore, EditorDiagnostic, Summary};
 use super::document::{
     CodeDocument, CodeDocumentError, CodeDocuments, CodeRenameError, CodeSaveError, CodeSaved,
     DiskState, DocumentId, EditError, Replaced,
@@ -52,6 +52,8 @@ pub struct CodeSession {
     read_only: bool,
     /// What the analyzer last said about each open document.
     diagnostics: DiagnosticStore,
+    /// What the analyzer is doing, for the tag in the options bar.
+    analyzer: AnalyzerStatus,
 }
 
 impl CodeSession {
@@ -128,6 +130,17 @@ impl CodeSession {
     pub fn diagnostic_summary(&self, id: DocumentId) -> Option<Summary> {
         self.diagnostics
             .summary(id, self.documents.get(id)?.revision())
+    }
+
+    pub fn analyzer_status(&self) -> &AnalyzerStatus {
+        &self.analyzer
+    }
+
+    /// Records what the analyzer is doing. Cheap when nothing changed.
+    pub fn set_analyzer_status(&mut self, status: &AnalyzerStatus) {
+        if &self.analyzer != status {
+            self.analyzer.clone_from(status);
+        }
     }
 
     /// Forgets every finding, for when the analyzer is gone.

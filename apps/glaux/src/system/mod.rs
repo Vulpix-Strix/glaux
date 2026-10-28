@@ -38,7 +38,7 @@ mod workspace;
 use boot::Boot;
 pub use clipboard::Clipboard;
 use credits::CreditsView;
-pub(crate) use editing::diagnostics::{EditorDiagnostic, Severity};
+pub(crate) use editing::diagnostics::{AnalyzerStatus, EditorDiagnostic, Severity};
 use editing::session::CodeSession;
 #[cfg(test)]
 pub use editor_settings::IndentStyle;
@@ -601,6 +601,24 @@ impl System {
         if let Some(code) = &mut self.code {
             code.set_diagnostics(path, made_for, items);
         }
+    }
+
+    /// Tells the Code view what the analyzer is doing.
+    pub(crate) fn analysis_status(&mut self, status: &AnalyzerStatus) {
+        if let Some(code) = &mut self.code {
+            code.set_analyzer_status(status);
+        }
+    }
+
+    /// Shows `text` briefly in the workspace's status bar.
+    pub(crate) fn analysis_notice(&mut self, text: String) {
+        self.workspace.report(text);
+    }
+
+    /// The notice the workspace is showing, if any.
+    #[cfg(test)]
+    pub(crate) fn notice_text(&self) -> Option<&str> {
+        self.workspace.notice_text()
     }
 
     /// Forgets every finding, for when the analyzer stops.

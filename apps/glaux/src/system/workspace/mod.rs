@@ -241,6 +241,11 @@ impl Workspace {
         }
     }
 
+    #[cfg(test)]
+    pub fn notice_text(&self) -> Option<&str> {
+        self.notice.as_ref().map(|notice| notice.text.as_str())
+    }
+
     /// Shows `text` in the status bar for a while.
     pub fn report(&mut self, text: String) {
         self.notify(text, PALE);

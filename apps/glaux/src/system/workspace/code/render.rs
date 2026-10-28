@@ -21,7 +21,7 @@ use super::symbols::{PAD, PanelLayout, SymbolPanel, clip_name, kind_letter};
 use super::text_view::{TextGeometry, thumb};
 use super::{CodeEditor, labels, picker_layout, settings_layout};
 use crate::cartridge::Language;
-use crate::system::editing::diagnostics::{EditorDiagnostic, Severity, Summary};
+use crate::system::editing::diagnostics::{AnalyzerStatus, EditorDiagnostic, Severity, Summary};
 use crate::system::editing::document::{Breakpoints, CodeDocument};
 use crate::system::editing::metrics::{Spot, TextMetrics, spot, visual_rows};
 use crate::system::editing::session::{CodeSession, DocumentView};
@@ -40,6 +40,23 @@ fn open_tag() -> String {
 }
 /// The ground of text the find bar matches, outside the selection.
 const MATCH: u8 = HOVER_SHADE;
+
+/// The short tag beside the language that tells the analyzer is not doing
+/// its job, or `None` when there is nothing to say: it is off by choice or
+/// working. The reason is in the log.
+fn analyzer_tag(language: Language, status: &AnalyzerStatus) -> Option<(String, u8)> {
+    if language != Language::Luau {
+        return None;
+    }
+    match status {
+        AnalyzerStatus::Off | AnalyzerStatus::Ready => None,
+        AnalyzerStatus::Unavailable(_) => Some((ui_text::get("code-analyzer-unavailable"), DIM)),
+        AnalyzerStatus::Starting => Some((ui_text::get("code-analyzer-starting"), PALE)),
+        AnalyzerStatus::Failed { .. } | AnalyzerStatus::Disabled(_) => {
+            Some((ui_text::get("code-analyzer-attention"), WARN))
+        }
+    }
+}
 
 /// The color a finding of `severity` is drawn in.
 fn severity_color(severity: Severity) -> u8 {
@@ -100,7 +117,12 @@ impl CodeEditor {
                         let key = geometry.metrics_key();
                         let caret = spot(document, selection.caret().byte(), key, font);
                         let caret_byte = selection.caret().byte();
-                        painter.options_bar(document.language(), document.path().as_str(), &caret);
+                        painter.options_bar(
+                            document.language(),
+                            document.path().as_str(),
+                            &caret,
+                            session.analyzer_status(),
+                        );
                         // The caret is hidden while something else has the
                         // keys.
                         let lit = self.caret_lit() && !self.has_overlay() && !self.find_focused();
@@ -411,7 +433,13 @@ impl Painter<'_> {
 
     /// The active document's language and path, and the line and column
     /// of its caret at `caret`.
-    fn options_bar(&mut self, language: Language, path: &str, caret: &Spot) {
+    fn options_bar(
+        &mut self,
+        language: Language,
+        path: &str,
+        caret: &Spot,
+        analyzer: &AnalyzerStatus,
+    ) {
         let bar = self.layout.options;
         self.options_rule();
         let y = self.bar_text_y(bar.y, bar.height - 1);
@@ -441,7 +469,12 @@ impl Painter<'_> {
             self.layout.run_button().x
         };
         let position_x = controls_x - self.cell_w() - self.layout.cells(&position) * self.cell_w();
-        let path_x = tag_rect.right() + self.cell_w();
+        let mut path_x = tag_rect.right() + self.cell_w();
+        // Rhai never goes through the analyzer, so only Luau shows its state.
+        if let Some((label, color)) = analyzer_tag(language, analyzer) {
+            self.text(&label, path_x, y, color);
+            path_x += (self.layout.cells(&label) + 1) * self.cell_w();
+        }
         let room = (position_x - self.cell_w() - path_x) / self.cell_w().max(1);
         let path = shorten_start(self.font, path, usize::try_from(room).unwrap_or(0));
         self.text(&path, path_x, y, PALE);

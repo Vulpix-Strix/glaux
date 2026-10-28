@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::time::Duration;
 
 use super::document::DocumentId;
 
@@ -17,6 +18,28 @@ pub enum Severity {
     Error,
     Warning,
     Info,
+}
+
+/// What the external analyzer is doing, as far as the Code view cares.
+///
+/// The reasons are for logs and tests. The view only shows a short tag.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AnalyzerStatus {
+    /// The user turned diagnostics off, or nothing has asked for them yet.
+    #[default]
+    Off,
+    /// There is no executable to run, or no place to keep its files.
+    Unavailable(String),
+    Starting,
+    Ready,
+    /// The server was lost and will be started again.
+    Failed {
+        reason: String,
+        retry_in: Duration,
+    },
+    /// The analyzer gave up. Nothing more arrives until the cartridge is
+    /// loaded again or the setting is toggled.
+    Disabled(String),
 }
 
 /// One finding, located by byte offsets into the document it was made for.

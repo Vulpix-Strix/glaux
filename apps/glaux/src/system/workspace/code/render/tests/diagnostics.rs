@@ -1,5 +1,7 @@
 use super::*;
-use crate::system::editing::diagnostics::{EditorDiagnostic, Severity};
+use std::time::Duration;
+
+use crate::system::editing::diagnostics::{AnalyzerStatus, EditorDiagnostic, Severity};
 use pretty_assertions::assert_eq;
 
 fn finding(range: Range<usize>, severity: Severity, message: &str) -> EditorDiagnostic {
@@ -183,4 +185,69 @@ fn the_scroll_rail_shows_where_the_findings_are() {
         "{} vs {expected}",
         ticks[0]
     );
+}
+
+/// How many pixels of the options bar are `color`.
+fn in_options_bar(editor: &CodeEditor, framebuffer: &Framebuffer, color: u8) -> usize {
+    let bar = editor.layout().options;
+    (bar.x..bar.right())
+        .flat_map(|x| (bar.y..bar.bottom()).map(move |y| (x, y)))
+        .filter(|&(x, y)| framebuffer.pixel(x, y) == Some(color))
+        .count()
+}
+
+#[test]
+fn the_options_bar_only_tags_an_analyzer_that_is_not_doing_its_job() {
+    let fixture = Fixture::new("code-diag-tag");
+    let editor = editor();
+    let mut session = showing(&fixture, &editor, "local x = 1\n");
+    let quiet = render(&editor, &session);
+    let (dim, warn, pale) = (
+        in_options_bar(&editor, &quiet, DIM),
+        in_options_bar(&editor, &quiet, WARN),
+        in_options_bar(&editor, &quiet, PALE),
+    );
+
+    for status in [AnalyzerStatus::Off, AnalyzerStatus::Ready] {
+        session.set_analyzer_status(&status);
+        let framebuffer = render(&editor, &session);
+        assert_eq!(
+            in_options_bar(&editor, &framebuffer, DIM),
+            dim,
+            "{status:?}"
+        );
+        assert_eq!(
+            in_options_bar(&editor, &framebuffer, WARN),
+            warn,
+            "{status:?}"
+        );
+        assert_eq!(
+            in_options_bar(&editor, &framebuffer, PALE),
+            pale,
+            "{status:?}"
+        );
+    }
+
+    session.set_analyzer_status(&AnalyzerStatus::Unavailable("no executable".into()));
+    let framebuffer = render(&editor, &session);
+    assert!(in_options_bar(&editor, &framebuffer, DIM) > dim);
+
+    session.set_analyzer_status(&AnalyzerStatus::Starting);
+    let framebuffer = render(&editor, &session);
+    assert!(in_options_bar(&editor, &framebuffer, PALE) > pale);
+
+    for status in [
+        AnalyzerStatus::Failed {
+            reason: "died".into(),
+            retry_in: Duration::from_secs(1),
+        },
+        AnalyzerStatus::Disabled("gave up".into()),
+    ] {
+        session.set_analyzer_status(&status);
+        let framebuffer = render(&editor, &session);
+        assert!(
+            in_options_bar(&editor, &framebuffer, WARN) > warn,
+            "{status:?}"
+        );
+    }
 }

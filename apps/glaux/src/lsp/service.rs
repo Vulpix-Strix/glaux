@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::time::Instant;
 
 use glaux_docs::{Kind, Library, ScriptLanguage};
 use glaux_lsp::uri::path_to_uri;
@@ -18,7 +19,8 @@ use super::workspace::{Shadow, module_name};
 use super::{definitions, locate};
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::SourcePath;
-use crate::system::{AnalysisInput, System};
+use crate::system::{AnalysisInput, AnalyzerStatus, System};
+use crate::ui_text;
 
 /// The server runs one session per cartridge, and more are never needed.
 const MAX_SESSIONS: usize = 2;
@@ -28,17 +30,29 @@ pub(crate) struct Analysis {
     /// Where a development copy of the executable can be dropped, `bin`.
     config_dir: Option<PathBuf>,
     state: State,
+    /// What the analyzer is doing while nothing is running. See
+    /// [`Analysis::status`].
+    status: AnalyzerStatus,
+    /// The user is told once per run that the executable is missing and
+    /// once that the analyzer gave up. Later occurrences only reach the log.
+    told_unavailable: bool,
+    told_stopped: bool,
 }
 
 enum State {
     /// Not started. It starts the first time a cartridge needs it.
     Idle,
-    /// There is no executable or no place to keep files. Not retried.
-    Unavailable,
+    /// There is no executable or no place to keep files. Tried again for the
+    /// next cartridge or when the setting is toggled, never every frame.
+    Unavailable {
+        for_dir: PathBuf,
+    },
     Running(Box<Running>),
 }
 
 struct Running {
+    /// Where the analyzer stands, from the events of its session.
+    status: AnalyzerStatus,
     session: Option<Session>,
     /// A cartridge whose session could not be kept, so it is not retried
     /// every frame.
@@ -55,6 +69,7 @@ struct Running {
 
 struct Session {
     key: SessionKey,
+    started_at: Instant,
     host_dir: PathBuf,
     shadow: Shadow,
     modules: HashMap<String, Module>,
@@ -82,6 +97,17 @@ impl Analysis {
             cache_dir,
             config_dir,
             state: State::Idle,
+            status: AnalyzerStatus::Off,
+            told_unavailable: false,
+            told_stopped: false,
+        }
+    }
+
+    /// What the analyzer is doing, with the reason when it is not working.
+    pub(crate) fn status(&self) -> &AnalyzerStatus {
+        match &self.state {
+            State::Running(running) => &running.status,
+            _ => &self.status,
         }
     }
 
@@ -90,98 +116,155 @@ impl Analysis {
     pub(crate) fn sync(&mut self, system: &mut System) {
         if !system.analysis_enabled() {
             if matches!(self.state, State::Running(_)) {
-                self.state = State::Idle;
                 system.analysis_lost();
             }
+            self.state = State::Idle;
+            self.status = AnalyzerStatus::Off;
             return;
         }
         let Some(input) = system.analysis_input() else {
+            // No cartridge: loading one again is a fresh chance to find the
+            // executable, even the same cartridge.
+            if matches!(self.state, State::Unavailable { .. }) {
+                self.state = State::Idle;
+            }
             if let State::Running(running) = &mut self.state {
                 running.end_session();
             }
             return;
         };
+        if let State::Unavailable { for_dir } = &self.state
+            && for_dir != input.cartridge.host_dir()
+        {
+            self.state = State::Idle;
+        }
         if matches!(self.state, State::Idle) {
-            self.state = self.start();
+            let dir = input.cartridge.host_dir().to_path_buf();
+            if let Some(text) = self.start(dir) {
+                system.analysis_notice(text);
+            }
+            // Go on in this frame, so the session opens as soon as it can.
+            if let (State::Running(running), Some(input)) =
+                (&mut self.state, system.analysis_input())
+            {
+                running.sync(&input);
+            }
+            return;
         }
         if let State::Running(running) = &mut self.state {
             running.sync(&input);
         }
     }
 
-    /// Hands the system the findings that arrived since the last frame.
+    /// Hands the system the findings that arrived since the last frame, and
+    /// what the analyzer is doing.
     #[hotpath::measure(label = "lsp::poll", impl_type = "Analysis")]
     pub(crate) fn poll(&mut self, system: &mut System) {
-        let State::Running(running) = &mut self.state else {
-            return;
-        };
-        let mut lost = false;
-        let mut arrived = Vec::new();
-        for event in running.handle.poll() {
-            match event {
-                Event::Diagnostics {
-                    key,
-                    uri,
-                    version,
-                    diagnostics,
-                } => {
-                    if let Some(found) = running.deliver(&key, &uri, version, &diagnostics, system)
-                    {
-                        arrived.push(found);
+        if let State::Running(running) = &mut self.state {
+            let mut lost = false;
+            let mut stopped = false;
+            let mut arrived = Vec::new();
+            for event in running.handle.poll() {
+                match event {
+                    Event::Diagnostics {
+                        key,
+                        uri,
+                        version,
+                        diagnostics,
+                    } => {
+                        if let Some(found) =
+                            running.deliver(&key, &uri, version, &diagnostics, system)
+                        {
+                            arrived.push(found);
+                        }
+                    }
+                    Event::Disabled { key, reason } => {
+                        tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %reason, "the Luau analyzer stopped");
+                        if running.is_current(&key) {
+                            running.status = AnalyzerStatus::Disabled(reason);
+                            lost = true;
+                            stopped = true;
+                        }
+                        running.abandon(&key);
+                    }
+                    Event::Failed {
+                        key,
+                        reason,
+                        retry_in,
+                    } => {
+                        tracing::warn!(%reason, ?retry_in, "the Luau analyzer was lost, restarting");
+                        if running.is_current(&key) {
+                            running.status = AnalyzerStatus::Failed { reason, retry_in };
+                        }
+                    }
+                    Event::Ready { key } => {
+                        if let Some(session) = running.session.as_ref().filter(|s| s.key == key) {
+                            tracing::info!(
+                                elapsed = ?session.started_at.elapsed(),
+                                "the Luau analyzer is ready"
+                            );
+                            running.status = AnalyzerStatus::Ready;
+                        }
+                    }
+                    Event::Closed { key } => {
+                        tracing::debug!(%key, "the Luau analyzer session closed");
                     }
                 }
-                Event::Disabled { key, reason } => {
-                    tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %key, %reason, "the Luau analyzer stopped");
-                    lost |= running.is_current(&key);
-                    running.abandon(&key);
-                }
-                Event::Failed {
-                    key,
-                    reason,
-                    retry_in,
-                } => {
-                    tracing::debug!(%key, %reason, ?retry_in, "the Luau analyzer was lost, restarting");
-                }
-                Event::Ready { key } => tracing::debug!(%key, "the Luau analyzer is ready"),
-                Event::Closed { key } => tracing::debug!(%key, "the Luau analyzer session closed"),
+            }
+            if lost {
+                system.analysis_lost();
+            }
+            for (path, revision, items) in arrived {
+                system.analysis_arrived(&path, revision, items);
+            }
+            if stopped && !std::mem::replace(&mut self.told_stopped, true) {
+                system.analysis_notice(ui_text::get("code-analyzer-stopped"));
             }
         }
-        if lost {
-            system.analysis_lost();
-        }
-        for (path, revision, items) in arrived {
-            system.analysis_arrived(&path, revision, items);
+        system.analysis_status(self.status());
+    }
+
+    /// Looks for the executable and starts the runtime. On failure the
+    /// analyzer waits for the next cartridge, and the returned text is the
+    /// notice to show, the first time only.
+    fn start(&mut self, dir: PathBuf) -> Option<String> {
+        let began = Instant::now();
+        match self.try_start() {
+            Ok(running) => {
+                tracing::info!(
+                    binary = %running.binary.display(),
+                    elapsed = ?began.elapsed(),
+                    "diagnostics from luau-lsp are on"
+                );
+                self.state = State::Running(Box::new(running));
+                None
+            }
+            Err(reason) => {
+                let first = !std::mem::replace(&mut self.told_unavailable, true);
+                if first {
+                    tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %reason, "diagnostics are off");
+                } else {
+                    tracing::debug!(%reason, "diagnostics are still off");
+                }
+                self.status = AnalyzerStatus::Unavailable(reason);
+                self.state = State::Unavailable { for_dir: dir };
+                first.then(|| ui_text::get("code-analyzer-not-found"))
+            }
         }
     }
 
-    fn start(&self) -> State {
-        let Some(cache_dir) = self.cache_dir.clone() else {
-            tracing::debug!("no cache directory, the Luau analyzer is off");
-            return State::Unavailable;
-        };
-        let binary = match locate::find(self.config_dir.as_deref()) {
-            Ok(binary) => binary,
-            Err(reason) => {
-                tracing::debug!(%reason, "diagnostics are off");
-                return State::Unavailable;
-            }
-        };
-        let definitions = match definitions::extract(&cache_dir) {
-            Ok(path) => path,
-            Err(error) => {
-                tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %error, "could not write the Luau definitions");
-                return State::Unavailable;
-            }
-        };
-        let runtime = match LspRuntime::start(MAX_SESSIONS) {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %error, "could not start the analyzer runtime");
-                return State::Unavailable;
-            }
-        };
-        tracing::info!(binary = %binary.display(), "diagnostics from luau-lsp are on");
-        State::Running(Box::new(Running {
+    fn try_start(&self) -> Result<Running, String> {
+        let cache_dir = self
+            .cache_dir
+            .clone()
+            .ok_or("there is no cache directory to keep files in")?;
+        let binary = locate::find(self.config_dir.as_deref()).map_err(|error| error.to_string())?;
+        let definitions = definitions::extract(&cache_dir)
+            .map_err(|error| format!("could not write the Luau definitions: {error}"))?;
+        let runtime = LspRuntime::start(MAX_SESSIONS)
+            .map_err(|error| format!("could not start the analyzer runtime: {error}"))?;
+        Ok(Running {
+            status: AnalyzerStatus::Starting,
             session: None,
             gave_up_on: None,
             handle: runtime.handle(),
@@ -191,7 +274,7 @@ impl Analysis {
             callbacks: callback_names(),
             sessions_started: 0,
             _runtime: runtime,
-        }))
+        })
     }
 }
 
@@ -222,8 +305,13 @@ impl Running {
             }
             self.gave_up_on = None;
             match self.begin_session(input.cartridge) {
-                Some(session) => self.session = Some(session),
-                None => {
+                Ok(session) => {
+                    self.status = AnalyzerStatus::Starting;
+                    self.session = Some(session);
+                }
+                Err(reason) => {
+                    tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %reason, "the Luau analyzer could not start");
+                    self.status = AnalyzerStatus::Disabled(reason);
                     self.gave_up_on = Some(host_dir.to_path_buf());
                     return;
                 }
@@ -234,7 +322,8 @@ impl Running {
         }
     }
 
-    fn begin_session(&mut self, cartridge: &LoadedCartridge) -> Option<Session> {
+    fn begin_session(&mut self, cartridge: &LoadedCartridge) -> Result<Session, String> {
+        let began = Instant::now();
         self.sessions_started += 1;
         let key = SessionKey::new(format!("luau-{}", self.sessions_started));
         let root = self.cache_dir.join("lsp").join("workspaces").join(format!(
@@ -242,37 +331,35 @@ impl Running {
             std::process::id(),
             self.sessions_started
         ));
-        let shadow = match Shadow::create(root) {
-            Ok(shadow) => shadow,
-            Err(error) => {
-                tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %error, "could not prepare the analyzer workspace");
-                return None;
-            }
-        };
+        let shadow = Shadow::create(root)
+            .map_err(|error| format!("could not prepare the analyzer workspace: {error}"))?;
         let mut spec = ServerSpec::new(&self.binary, shadow.root());
         spec.args = vec![
             "lsp".into(),
             format!("--definitions={}", self.definitions.display()).into(),
         ];
-        if let Err(error) = self.handle.open_session(key.clone(), spec) {
-            tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %error, "could not start the Luau analyzer");
-            return None;
-        }
+        self.handle
+            .open_session(key.clone(), spec)
+            .map_err(|error| format!("could not start the Luau analyzer: {error}"))?;
         let mut session = Session {
             key,
+            started_at: began,
             host_dir: cartridge.host_dir().to_path_buf(),
             shadow,
             modules: HashMap::new(),
             by_uri: HashMap::new(),
         };
+        let mut modules = 0;
         if let Ok(listing) = cartridge.script_files() {
             for path in listing.paths {
                 if let Some(text) = read_text(cartridge, &path) {
                     session.add(&self.handle, &path, &text, Source::Disk);
+                    modules += 1;
                 }
             }
         }
-        Some(session)
+        tracing::info!(modules, elapsed = ?began.elapsed(), "the Luau analyzer's workspace is prepared");
+        Ok(session)
     }
 
     fn end_session(&mut self) {

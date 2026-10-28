@@ -10,8 +10,8 @@ use super::*;
 use crate::lsp::Analysis;
 use crate::scratch_dir::ScratchDir;
 use crate::system::EditorDiagnostic;
-use crate::system::Severity;
 use crate::system::editing::history::EditKind;
+use crate::system::{AnalyzerStatus, Severity};
 use pretty_assertions::assert_eq;
 
 fn analyzer() -> Option<&'static str> {
@@ -205,29 +205,62 @@ fn turning_the_setting_off_clears_the_findings_and_the_editor_still_works() {
         ..Default::default()
     });
     analysis.sync(&mut system);
+    analysis.poll(&mut system);
+    assert_eq!(analysis.status(), &AnalyzerStatus::Off);
     let typed = system.update(&[InputEvent::Text('x')]);
     assert!(code_text(&typed).starts_with('x'));
 }
 
-#[test]
-fn without_an_executable_nothing_happens() {
-    let fixture = Fixture::new("sys-lsp-none");
-    let cache = ScratchDir::new("lsp-none-cache");
-    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
-    let mut system = code_view(&fixture, NESTED_MAIN, nested_modules);
-    // SAFETY: tests of this module are the only readers of these variables
-    // and nextest runs each test in its own process.
-    unsafe {
-        std::env::set_var("GLAUX_LUAU_LSP", "/definitely/not/luau-lsp");
-        std::env::remove_var("LUAU_LSP");
-    }
-    for _ in 0..5 {
+/// Frames of the analyzer's work and one tick of the system.
+fn frames(mut system: System, analysis: &mut Analysis, count: usize) -> System {
+    for _ in 0..count {
         analysis.sync(&mut system);
         analysis.poll(&mut system);
         system = system.update(&[]);
     }
-    assert!(!has_findings(&system));
-    assert!(code_text(&system).starts_with("--!strict"));
+    system
+}
+
+#[test]
+fn without_an_executable_the_status_says_why_and_the_user_is_told_once() {
+    let fixture = Fixture::new("sys-lsp-none");
+    let cache = ScratchDir::new("lsp-none-cache");
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
+    // SAFETY: each test runs in its own process under nextest, and no other
+    // thread reads the environment while it is changed.
+    unsafe {
+        std::env::set_var("GLAUX_LUAU_LSP", "/definitely/not/luau-lsp");
+        std::env::remove_var("LUAU_LSP");
+    }
+    let system = shell_with_cartridge(&fixture, NESTED_MAIN);
+    nested_modules(&fixture);
+    let system = enter(system, "load pong");
+    let system = frames(system, &mut analysis, 3);
+
+    match analysis.status() {
+        AnalyzerStatus::Unavailable(reason) => {
+            assert!(reason.starts_with("GLAUX_LUAU_LSP is set to"), "{reason}")
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        system.notice_text(),
+        Some("luau-lsp not found, see the log (F12)")
+    );
+    assert!(
+        !cache.join("lsp").exists(),
+        "nothing was started or written"
+    );
+
+    // The notice runs out while the workspace ticks, and loading the
+    // cartridge again looks again but does not repeat it.
+    let system = frames(press_break(system), &mut analysis, 200);
+    assert_eq!(system.notice_text(), None);
+    let system = enter(press_break(system), "unload");
+    let system = frames(system, &mut analysis, 2);
+    let system = frames(enter(system, "load pong"), &mut analysis, 3);
+    assert!(matches!(analysis.status(), AnalyzerStatus::Unavailable(_)));
+    assert_eq!(system.notice_text(), None);
 }
 
 fn findings_of(system: &System, path: &str) -> Vec<(usize, String)> {
