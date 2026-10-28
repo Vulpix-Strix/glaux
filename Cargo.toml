@@ -33,6 +33,8 @@ ron = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+tokio = { version = "1", default-features = false, features = ["rt", "process", "io-util", "sync", "time", "macros"] }
+
 bitflags = "2"
 # raylib's default features minus SUPPORT_SCREEN_CAPTURE, which reserves F12 for
 # automatic screenshots. Glaux uses F12 for the log panel.
@@ -108,6 +110,7 @@ glaux-syntax = { path = "crates/glaux-syntax" }
 glaux-i18n = { path = "crates/glaux-i18n" }
 glaux-docs = { path = "crates/glaux-docs" }
 glaux-sense = { path = "crates/glaux-sense" }
+glaux-lsp = { path = "crates/glaux-lsp" }
 
 [profile.dev]
 opt-level = 0
