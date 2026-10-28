@@ -24,7 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "target" / "profiling"
-SCENARIOS = ("luau", "rhai", "editor")
+SCENARIOS = ("luau", "rhai", "editor", "paced", "analyzer")
 UNITS = {"ns": 1e-9, "µs": 1e-6, "ms": 1e-3, "s": 1.0, "B": 1.0, "KB": 1e3, "MB": 1e6, "GB": 1e9}
 
 
@@ -32,6 +32,9 @@ def run(label: str) -> int:
     out = OUT / label
     out.mkdir(parents=True, exist_ok=True)
     for scenario in SCENARIOS:
+        if scenario == "analyzer" and "LUAU_LSP" not in os.environ:
+            print("analyzer: skipped, set LUAU_LSP to a luau-lsp executable", flush=True)
+            continue
         for feature, suffix in (("hotpath", "time"), ("hotpath-alloc", "alloc")):
             report = out / f"{scenario}.{suffix}.json"
             env = {

@@ -69,6 +69,7 @@ fn check(cancel: &AtomicBool) -> Result<(), PrepareError> {
     }
 }
 
+#[hotpath::measure(label = "lsp::prepare")]
 pub(super) fn prepare(input: Input, cancel: &AtomicBool) -> Result<Prepared, PrepareError> {
     let began = Instant::now();
     let binary = locate::find(input.config_dir.as_deref())

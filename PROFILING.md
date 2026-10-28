@@ -4,11 +4,11 @@ Glaux uses [hotpath](https://hotpath.rs) for development profiling. Every hotpat
 
 ## Features
 
-| Feature | Adds | Needs |
-|---|---|---|
-| `hotpath` | Wall-clock time per instrumented function, and per-thread CPU use. | Nothing. |
-| `hotpath-alloc` | Allocated bytes per function. Installs a counting global allocator. | Nothing. |
-| `hotpath-cpu` | CPU samples per function, from [samply](https://github.com/mstange/samply). | `samply` and `hotpath-samply`, see below. |
+| Feature         | Adds                                                                        | Needs                                     |
+|-----------------|-----------------------------------------------------------------------------|-------------------------------------------|
+| `hotpath`       | Wall-clock time per instrumented function, and per-thread CPU use.          | Nothing.                                  |
+| `hotpath-alloc` | Allocated bytes per function. Installs a counting global allocator.         | Nothing.                                  |
+| `hotpath-cpu`   | CPU samples per function, from [samply](https://github.com/mstange/samply). | `samply` and `hotpath-samply`, see below. |
 
 None of them is in `default`. Build with `--profile profiling` (release plus symbols) for numbers that mean something. The dev profile compiles `glaux` itself without optimizations and measured about eight times slower for `system::render`.
 
@@ -18,14 +18,15 @@ None of them is in `default`. Build with `--profile profiling` (release plus sym
 
 `apps/glaux/src/system/tests/profiling_workload.rs` is an ignored test that drives the real `System` and the real System ROM through the same `render`, `update` and audio calls the application makes every frame, without a window. It is the way to get numbers that can be compared between commits. It copies the example cartridge to a scratch directory, never saves, and asserts nothing about time.
 
-| `GLAUX_WORKLOAD` | What it does |
-|---|---|
-| `luau` (default) | Plays Signal Lost for 3600 ticks, one minute of game time, with a fixed pattern of buttons. |
-| `rhai` | The same for the Rhai port, `signal-lost-rhai`. |
-| `editor` | In the Code view of Signal Lost: scrolling, navigating, typing with completion and signature help, hovering a grid of places, go to definition and back, opening every module and undoing. |
+| `GLAUX_WORKLOAD` | What it does                                                                                                                                                                                                                                                                            |
+|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `luau` (default) | Plays Signal Lost for 3600 ticks, one minute of game time, with a fixed pattern of buttons.                                                                                                                                                                                             |
+| `rhai`           | The same for the Rhai port, `signal-lost-rhai`.                                                                                                                                                                                                                                         |
+| `editor`         | In the Code view of Signal Lost: scrolling, navigating, typing with completion and signature help, hovering a grid of places, go to definition and back, opening every module and undoing.                                                                                              |
+| `analyzer`       | The `editor` scenario with `luau-lsp` running beside it, driven once per frame as the application does, followed by ten rewrites of a module from outside. Needs `LUAU_LSP`, and `mise run profile` skips it without. A 1 ms wait after each frame, outside its recorded time, lets the server's answers land between edits. |
 
 ```sh
-mise run profile -- my-label            # all three, timing and allocations
+mise run profile -- my-label            # every scenario, timing and allocations
 mise run profile-compare -- before after
 ```
 
@@ -49,14 +50,14 @@ The report is printed when Glaux exits normally. Add `HOTPATH_SHUTDOWN_MS=20000 
 
 Useful variables (all are listed in the [configuration page](https://hotpath.rs/configuration)):
 
-| Variable | Effect |
-|---|---|
-| `HOTPATH_SHUTDOWN_MS` | Quit and print the report after this many milliseconds. |
-| `HOTPATH_OUTPUT_PATH` | Write the report to a file instead of stdout. |
-| `HOTPATH_OUTPUT_FORMAT` | `table` (default), `json`, `json-pretty` or `none`. |
-| `HOTPATH_FOCUS` | Only report functions whose name contains this text, or matches `/regex/`. |
-| `HOTPATH_ALLOC_METRIC` | `count` ranks allocations by number instead of bytes. |
-| `HOTPATH_METRICS_SERVER_OFF` | `1` disables the local metrics server (port 6770). The workloads set it. |
+| Variable                     | Effect                                                                     |
+|------------------------------|----------------------------------------------------------------------------|
+| `HOTPATH_SHUTDOWN_MS`        | Quit and print the report after this many milliseconds.                    |
+| `HOTPATH_OUTPUT_PATH`        | Write the report to a file instead of stdout.                              |
+| `HOTPATH_OUTPUT_FORMAT`      | `table` (default), `json`, `json-pretty` or `none`.                        |
+| `HOTPATH_FOCUS`              | Only report functions whose name contains this text, or matches `/regex/`. |
+| `HOTPATH_ALLOC_METRIC`       | `count` ranks allocations by number instead of bytes.                      |
+| `HOTPATH_METRICS_SERVER_OFF` | `1` disables the local metrics server (port 6770). The workloads set it.   |
 
 ### Live view
 
@@ -88,18 +89,20 @@ Only the app crate defines the `hotpath-cpu` feature. Instrumented functions in 
 
 Labels are `area::name` and appear as such in the report.
 
-| Label | Where | Notes |
-|---|---|---|
-| `app::frame`, `app::present`, `app::advance` | `apps/glaux/src/app.rs` | Once per displayed frame. |
-| `system::update`, `system::render` | `System` | One call per tick and per frame. |
-| `workspace::render`, `code_editor::render` | workspace | Drawing of the editor and its tabs. |
-| `editing::syntax_refresh` | `DocumentSyntax` | Reparse and span update, called more than once per frame. |
-| `syntax::highlighter_update`, `syntax::highlighter_spans` | `glaux-syntax` | Tree-sitter incremental parse and highlight query. |
-| `sense::complete`, `sense::signature_help`, `sense::hover`, `sense::definition` | `glaux-sense` | Run on editor requests, and completion also while typing. |
-| `running::advance`, `running::render` | `RunningCartridge` | Cartridge tick and frame replay. |
-| `luau::tick`, `rhai::tick` | script runtimes | One script `tick()` plus `draw()`. |
-| `cartridge::load`, `cartridge_fs::replace_file` | cartridge storage | Cold paths: opening and saving. |
-| `workload::frame` | the workload test only | `render` plus `update` plus audio, one application frame without the window. |
+| Label                                                                           | Where                   | Notes                                                                                                                           |
+|---------------------------------------------------------------------------------|-------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `app::frame`, `app::present`, `app::advance`                                    | `apps/glaux/src/app.rs` | Once per displayed frame.                                                                                                       |
+| `system::update`, `system::render`                                              | `System`                | One call per tick and per frame.                                                                                                |
+| `workspace::render`, `code_editor::render`                                      | workspace               | Drawing of the editor and its tabs.                                                                                             |
+| `editing::syntax_refresh`                                                       | `DocumentSyntax`        | Reparse and span update, called more than once per frame.                                                                       |
+| `syntax::highlighter_update`, `syntax::highlighter_spans`                       | `glaux-syntax`          | Tree-sitter incremental parse and highlight query.                                                                              |
+| `sense::complete`, `sense::signature_help`, `sense::hover`, `sense::definition` | `glaux-sense`           | Run on editor requests, and completion also while typing.                                                                       |
+| `running::advance`, `running::render`                                           | `RunningCartridge`      | Cartridge tick and frame replay.                                                                                                |
+| `luau::tick`, `rhai::tick`                                                      | script runtimes         | One script `tick()` plus `draw()`.                                                                                              |
+| `cartridge::load`, `cartridge_fs::replace_file`                                 | cartridge storage       | Cold paths: opening and saving.                                                                                                 |
+| `lsp::sync`, `lsp::poll`                                                        | `Analysis`              | The analyzer's share of a frame on the main thread. Only the `analyzer` scenario calls them.                                    |
+| `lsp::prepare`                                                                  | analyzer workspace      | Runs on a blocking thread once per cartridge: locating the executable, the definitions, the workspace and reading every module. |
+| `workload::frame`                                                               | the workload test only  | `render` plus `update` plus audio, one application frame without the window.                                                    |
 
 Nothing below the tick level is instrumented (draw commands, pixels, glyphs, per-token work). Those run thousands of times per frame and the instrumentation would cost more than it measures.
 
@@ -124,41 +127,41 @@ Times nest, so never add them up.
 
 Taken on 2026-10-28 on top of the commit that adds the workloads. The medians of three runs with hotpath off, in milliseconds per application frame (`render` plus `update` plus audio, no vsync, no window).
 
-| | |
-|---|---|
-| Machine | Apple M5 Max, macOS 27.0.1, other applications open |
+|           |                                                                  |
+|-----------|------------------------------------------------------------------|
+| Machine   | Apple M5 Max, macOS 27.0.1, other applications open              |
 | Toolchain | rustc 1.99.1, `profiling` profile, hotpath 0.30.0, samply 0.13.1 |
-| Glaux | the Luau and Rhai ports of `examples/signal-lost`, 3600 ticks |
+| Glaux     | the Luau and Rhai ports of `examples/signal-lost`, 3600 ticks    |
 
-| Scenario | Frames | p50 | p95 | p99 | max | Budget used at p95 |
-|---|---|---|---|---|---|---|
-| Signal Lost, Luau | 3600 | 0.078 | 0.097 | 0.113 | 0.210 | 0.6 % |
-| Signal Lost, Rhai | 3600 | 0.284 | 0.351 | 0.433 | 0.684 | 2.1 % |
+| Scenario          | Frames | p50   | p95   | p99   | max   | Budget used at p95 |
+|-------------------|--------|-------|-------|-------|-------|--------------------|
+| Signal Lost, Luau | 3600   | 0.078 | 0.097 | 0.113 | 0.210 | 0.6 %              |
+| Signal Lost, Rhai | 3600   | 0.284 | 0.351 | 0.433 | 0.684 | 2.1 %              |
 
 Where the time goes (average per tick, microseconds, from `hotpath`):
 
-| | Luau | Rhai |
-|---|---|---|
-| `luau::tick` / `rhai::tick` (script `tick` and `draw`) | 52 | 249 |
-| `running::render` (replaying the draw commands) | 21 | 20 |
-| Allocated per tick by the script | 74.9 KB | 307.8 KB |
-| Peak resident memory of the test process | 24 MB | 24 MB |
+|                                                        | Luau    | Rhai     |
+|--------------------------------------------------------|---------|----------|
+| `luau::tick` / `rhai::tick` (script `tick` and `draw`) | 52      | 249      |
+| `running::render` (replaying the draw commands)        | 21      | 20       |
+| Allocated per tick by the script                       | 74.9 KB | 307.8 KB |
+| Peak resident memory of the test process               | 24 MB   | 24 MB    |
 
 The editor scenario, per phase (milliseconds per frame, medians of three runs with hotpath off):
 
-| Phase | Frames | p50 | p95 | max |
-|---|---|---|---|---|
-| editor idle | 480 | 0.078 | 0.088 | 0.141 |
-| scroll | 24 | 0.102 | 0.125 | 0.136 |
-| navigate | 300 | 0.082 | 0.132 | 0.183 |
-| typing (with completion popups) | 627 | 0.216 | 0.323 | 0.851 |
-| complete | 36 | 0.148 | 0.278 | 0.295 |
-| signature | 12 | 0.041 | 0.048 | 0.059 |
-| hover | 1440 | 0.038 | 0.046 | 0.100 |
-| definition and back | 241 | 0.080 | 0.355 | 3.402 |
-| open file | 9 | 0.963 | 1.517 | 1.517 |
-| tabs | 74 | 0.078 | 0.123 | 0.217 |
-| undo | 40 | 0.051 | 0.057 | 0.063 |
+| Phase                           | Frames | p50   | p95   | max   |
+|---------------------------------|--------|-------|-------|-------|
+| editor idle                     | 480    | 0.078 | 0.088 | 0.141 |
+| scroll                          | 24     | 0.102 | 0.125 | 0.136 |
+| navigate                        | 300    | 0.082 | 0.132 | 0.183 |
+| typing (with completion popups) | 627    | 0.216 | 0.323 | 0.851 |
+| complete                        | 36     | 0.148 | 0.278 | 0.295 |
+| signature                       | 12     | 0.041 | 0.048 | 0.059 |
+| hover                           | 1440   | 0.038 | 0.046 | 0.100 |
+| definition and back             | 241    | 0.080 | 0.355 | 3.402 |
+| open file                       | 9      | 0.963 | 1.517 | 1.517 |
+| tabs                            | 74     | 0.078 | 0.123 | 0.217 |
+| undo                            | 40     | 0.051 | 0.057 | 0.063 |
 
 Editor functions (`hotpath`, average per call): `syntax::highlighter_update` 113 µs (664 calls, only when the text changed), `syntax::highlighter_spans` 18 µs, `sense::complete` 37 µs (470 calls), `sense::definition` 262 µs (60 calls), `sense::signature_help` 28 µs, `sense::hover` 33 µs. Allocations per call: `sense::complete` 44.6 KB, `sense::definition` 134.8 KB, `syntax::highlighter_spans` 20.8 KB. Peak resident memory of the test process: 31 MB.
 

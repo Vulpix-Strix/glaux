@@ -5,8 +5,11 @@
 //! the usual report. See `PROFILING.md`.
 //!
 //! The scenario comes from `GLAUX_WORKLOAD`: `luau` (the default) and `rhai`
-//! play Signal Lost for a minute of game time, and `editor` edits its Luau
-//! scripts. Run one scenario per process.
+//! play Signal Lost for a minute of game time, `editor` edits its Luau
+//! scripts, `analyzer` does the same with `luau-lsp` running beside it (it
+//! needs `LUAU_LSP`), and `paced` is `editor` with the same short wait after
+//! each frame but no analyzer, to tell what the analyzer costs from what the
+//! wait does to the CPU. Run one scenario per process.
 //!
 //! The commands are in `PROFILING.md`. Edits stay in memory and the
 //! cartridge is copied to a scratch directory first, so the examples are
@@ -20,7 +23,10 @@ use std::time::{Duration, Instant};
 use super::*;
 use glaux_machine::psg::Psg;
 
+use crate::lsp::Analysis;
 use crate::rom;
+use crate::scratch_dir::ScratchDir;
+use crate::system::AnalyzerStatus;
 
 /// Ticks of game time the cartridge scenarios play, one minute at 60 Hz.
 const GAME_TICKS: usize = 3600;
@@ -93,7 +99,21 @@ struct Session {
     psg: Psg,
     pointer: Option<Point>,
     phases: Phases,
+    analysis: Option<Analyzer>,
+    paced: bool,
 }
+
+/// The analyzer a session drives the way the application does, once per
+/// frame, and the cache it keeps its files in.
+struct Analyzer {
+    analysis: Analysis,
+    _cache: ScratchDir,
+}
+
+/// Frames are not paced like a window's, so with the analyzer on each one is
+/// followed by a short wait that lets the server's answers land between
+/// edits. The wait is outside the time recorded for the frame.
+const ANALYZER_PACE: Duration = Duration::from_millis(1);
 
 impl Session {
     /// A system at the shell over a scratch cartridge root that holds a copy
@@ -122,6 +142,62 @@ impl Session {
             psg: Psg::new(),
             pointer: None,
             phases: Phases::default(),
+            analysis: None,
+            paced: false,
+        }
+    }
+
+    /// Runs `luau-lsp` beside the system from now on.
+    fn analyze(&mut self) {
+        assert!(
+            std::env::var_os("LUAU_LSP").is_some(),
+            "the analyzer scenario needs LUAU_LSP set to a luau-lsp executable"
+        );
+        let cache = ScratchDir::new("workload-analyzer-cache");
+        self.paced = true;
+        self.analysis = Some(Analyzer {
+            analysis: Analysis::new(Some(cache.to_path_buf()), None),
+            _cache: cache,
+        });
+    }
+
+    /// The analyzer's share of a frame.
+    fn analyzer_frame(&mut self, system: &mut System) {
+        if let Some(analyzer) = &mut self.analysis {
+            analyzer.analysis.sync(system);
+            analyzer.analysis.poll(system);
+        }
+    }
+
+    /// Lets the server's answers land. Not part of any frame's time.
+    fn pace(&self) {
+        if self.paced {
+            std::thread::sleep(ANALYZER_PACE);
+        }
+    }
+
+    /// Runs frames, not counted in any phase, until the analyzer is ready
+    /// and the open tab has its findings.
+    fn wait_for_analyzer(&mut self) {
+        let began = Instant::now();
+        loop {
+            self.setup(&[]);
+            let analyzer = self.analysis.as_ref().unwrap();
+            let system = self.system.as_ref().unwrap();
+            let code = system.code.as_ref().unwrap();
+            let shown = code
+                .active_document()
+                .and_then(|document| code.diagnostic_summary(document.id()))
+                .is_some_and(|summary| !summary.stale);
+            if *analyzer.analysis.status() == AnalyzerStatus::Ready && shown {
+                eprintln!("analyzer ready after {:?}", began.elapsed());
+                return;
+            }
+            assert!(
+                began.elapsed() < Duration::from_secs(20),
+                "the analyzer never became ready: {:?}",
+                analyzer.analysis.status()
+            );
         }
     }
 
@@ -137,14 +213,19 @@ impl Session {
             &self.rom,
             &mut self.psg,
         );
+        let mut system = system;
+        self.analyzer_frame(&mut system);
         self.phases.record(phase, started.elapsed());
         self.system = Some(system);
+        self.pace();
     }
 
     /// Runs `input` in a frame outside the measured phases, as setup.
     fn setup(&mut self, input: &[InputEvent]) {
-        let system = self.system.take().unwrap();
-        self.system = Some(system.update(input));
+        let mut system = self.system.take().unwrap().update(input);
+        self.analyzer_frame(&mut system);
+        self.system = Some(system);
+        self.pace();
     }
 
     fn typed(&mut self, phase: &'static str, text: &str) {
@@ -233,11 +314,18 @@ fn play(name: &str) {
 
 /// Moves around, types, completes, hovers and follows definitions in the
 /// scripts of Signal Lost, without saving.
-fn edit() {
+fn edit(analyzed: bool, paced: bool) {
     let fixture = Fixture::new("workload-edit");
     let mut session = Session::new(&fixture, "signal-lost");
+    session.paced = paced || analyzed;
+    if analyzed {
+        session.analyze();
+    }
     session.load("signal-lost");
     session.setup(&[InputEvent::Break]);
+    if analyzed {
+        session.wait_for_analyzer();
+    }
     session.idle("editor idle", 240);
 
     let down = InputEvent::Down { select: false };
@@ -319,6 +407,15 @@ fn edit() {
         session.frame("undo", &[InputEvent::Undo]);
     }
     session.idle("editor idle", 120);
+    if analyzed {
+        // Another program rewrites a module the open tabs require.
+        let util = fixture.root().join("signal-lost/code/util.luau");
+        let text = fs::read_to_string(&util).unwrap();
+        for round in 0..10 {
+            fs::write(&util, format!("{text}\n-- rewritten {round}\n")).unwrap();
+            session.idle("external", 60);
+        }
+    }
     session.phases.report();
 }
 
@@ -327,9 +424,15 @@ fn edit() {
 #[hotpath::main(functions_limit = 40)]
 fn workload() {
     match std::env::var("GLAUX_WORKLOAD").as_deref() {
-        Ok("editor") => edit(),
+        Ok("editor") => edit(false, false),
+        Ok("paced") => edit(false, true),
+        Ok("analyzer") => edit(true, true),
         Ok("rhai") => play("signal-lost-rhai"),
         Ok("luau") | Err(_) => play("signal-lost"),
-        Ok(other) => panic!("unknown GLAUX_WORKLOAD {other:?}, expected luau, rhai or editor"),
+        Ok(other) => {
+            panic!(
+                "unknown GLAUX_WORKLOAD {other:?}, expected luau, rhai, editor, paced or analyzer"
+            )
+        }
     }
 }
