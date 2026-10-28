@@ -38,11 +38,12 @@ pub enum Row {
     IndentWith,
     IndentSize,
     SaveBeforeRunning,
+    Diagnostics,
     Done,
 }
 
 impl Row {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::WordWrap,
         Self::TabSize,
         Self::LineNumbers,
@@ -50,6 +51,7 @@ impl Row {
         Self::IndentWith,
         Self::IndentSize,
         Self::SaveBeforeRunning,
+        Self::Diagnostics,
         Self::Done,
     ];
 
@@ -62,6 +64,7 @@ impl Row {
             Self::IndentWith => ui_text::get("code-indent-with"),
             Self::IndentSize => ui_text::get("code-indent-size"),
             Self::SaveBeforeRunning => ui_text::get("code-save-before-running"),
+            Self::Diagnostics => ui_text::get("code-diagnostics"),
             Self::Done => done(),
         }
     }
@@ -290,11 +293,16 @@ impl SettingsDialog {
             let label_x = rect.x + 2 + LABEL_INDENT * cell_w;
             draw_text(framebuffer, font, &row.label(), label_x, text_y, ink);
             match row {
-                Row::WordWrap | Row::LineNumbers | Row::Ligatures | Row::SaveBeforeRunning => {
+                Row::WordWrap
+                | Row::LineNumbers
+                | Row::Ligatures
+                | Row::SaveBeforeRunning
+                | Row::Diagnostics => {
                     let checked = match row {
                         Row::WordWrap => settings.word_wrap,
                         Row::LineNumbers => settings.line_numbers,
                         Row::SaveBeforeRunning => settings.save_before_running,
+                        Row::Diagnostics => settings.diagnostics,
                         _ => settings.ligatures,
                     };
                     let rect = Rect {
@@ -343,6 +351,7 @@ fn toggle(row: Row, settings: &mut EditorSettings) {
         Row::LineNumbers => settings.line_numbers = !settings.line_numbers,
         Row::Ligatures => settings.ligatures = !settings.ligatures,
         Row::SaveBeforeRunning => settings.save_before_running = !settings.save_before_running,
+        Row::Diagnostics => settings.diagnostics = !settings.diagnostics,
         Row::TabSize | Row::IndentWith | Row::IndentSize | Row::Done => {}
     }
 }
@@ -353,7 +362,12 @@ fn step(row: Row, settings: &mut EditorSettings, direction: i8) {
         Row::TabSize => settings.step_tab_size(direction),
         Row::IndentWith => settings.indent = settings.indent.stepped(direction),
         Row::IndentSize => settings.step_indent_size(direction),
-        Row::WordWrap | Row::LineNumbers | Row::Ligatures | Row::SaveBeforeRunning | Row::Done => {}
+        Row::WordWrap
+        | Row::LineNumbers
+        | Row::Ligatures
+        | Row::SaveBeforeRunning
+        | Row::Diagnostics
+        | Row::Done => {}
     }
 }
 

@@ -21,6 +21,7 @@ mod navigation;
 mod new_file;
 mod picker;
 mod popup;
+mod problems;
 mod prompt;
 mod rename;
 mod render;
@@ -1155,6 +1156,7 @@ impl CodeEditor {
                 });
             }
             InputEvent::ToggleBreakpoint => self.toggle_breakpoint_at_caret(session),
+            InputEvent::NextProblem { reverse } => self.next_problem(session, reverse),
             InputEvent::SelectAll => self.select_all(session),
             InputEvent::PageUp { select } => self.page(session, -1, select),
             InputEvent::PageDown { select } => self.page(session, 1, select),

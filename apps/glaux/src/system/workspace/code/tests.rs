@@ -5,6 +5,7 @@ use crate::cartridge::LoadedCartridge;
 use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::system::editing::document::DocumentId;
+use crate::system::editing::history::EditKind;
 use crate::system::editing::session::DocumentView;
 use crate::system::editor_settings::EditorSettings;
 use crate::system::test_font::LAYOUT_FONT;
@@ -18,6 +19,7 @@ mod find;
 mod hover;
 mod indent;
 mod menus;
+mod problems;
 mod selection;
 mod signature;
 

@@ -13,6 +13,7 @@ use glaux_video::draw::{draw_glyph, draw_ink_image, draw_text, fill_rect, pixel}
 use super::layout::{
     CHEVRON_WIDTH, CLOSE_SIZE, CodeLayout, LABEL_PAD, SETTINGS_MARGIN, StripHit, shorten_start,
 };
+use super::problems::is_marked;
 mod debug_panel;
 
 use super::picker::FilePicker;
@@ -20,6 +21,7 @@ use super::symbols::{PAD, PanelLayout, SymbolPanel, clip_name, kind_letter};
 use super::text_view::{TextGeometry, thumb};
 use super::{CodeEditor, labels, picker_layout, settings_layout};
 use crate::cartridge::Language;
+use crate::system::editing::diagnostics::{EditorDiagnostic, Severity, Summary};
 use crate::system::editing::document::{Breakpoints, CodeDocument};
 use crate::system::editing::metrics::{Spot, TextMetrics, spot, visual_rows};
 use crate::system::editing::session::{CodeSession, DocumentView};
@@ -38,6 +40,15 @@ fn open_tag() -> String {
 }
 /// The ground of text the find bar matches, outside the selection.
 const MATCH: u8 = HOVER_SHADE;
+
+/// The color a finding of `severity` is drawn in.
+fn severity_color(severity: Severity) -> u8 {
+    match severity {
+        Severity::Error => ERROR,
+        Severity::Warning => WARN,
+        Severity::Info => ACCENT,
+    }
+}
 
 impl CodeEditor {
     /// The line of `document`, counted from 0, the selected frame of a
@@ -110,6 +121,7 @@ impl CodeEditor {
                             Marks {
                                 breakpoints: document.breakpoints(),
                                 stopped_at: self.stopped_line(document),
+                                findings: session.diagnostics(id),
                             },
                         );
                         if let (Some(panel), Some(layout)) = (&self.symbols, self.panel_layout()) {
@@ -182,8 +194,17 @@ impl CodeEditor {
         painter.run_buttons(run_lit, debug_lit, hover_pointer);
         painter.settings_button(ui, settings_lit);
         let hint = self.hint();
-        let (status, color) = notice.unwrap_or((&hint, PALE));
-        painter.status_bar(status, color);
+        let problem = session.and_then(|session| self.problem_at_caret(session));
+        let (status, color) = notice
+            .or_else(|| {
+                problem.map(|found| (found.message.as_str(), severity_color(found.severity)))
+            })
+            .unwrap_or((&hint, PALE));
+        let summary = session.and_then(|session| {
+            let id = session.active_document()?.id();
+            session.diagnostic_summary(id)
+        });
+        painter.status_bar(status, color, summary);
 
         if let (Some(menu), Some(session)) = (self.menu, session) {
             let (window, rows) = self.menu_rows(session.tabs().len(), menu.focus);
@@ -221,6 +242,8 @@ struct Marks<'a> {
     breakpoints: &'a Breakpoints,
     /// The line, counted from 0, a stopped cartridge is at in this document.
     stopped_at: Option<usize>,
+    /// What the analyzer found in the text as it is now, in text order.
+    findings: &'a [EditorDiagnostic],
 }
 
 struct Painter<'a> {
@@ -246,6 +269,15 @@ impl Painter<'_> {
             rect.height,
             color,
         );
+    }
+
+    /// A line along the bottom of `rect`, one pixel in two, so it does not
+    /// read as a selection or a border.
+    fn dotted(&mut self, rect: Rect, color: u8) {
+        let y = rect.bottom() - 1;
+        for x in (rect.x..rect.right()).step_by(2) {
+            fill_rect(self.framebuffer, x, y, 1, 1, color);
+        }
     }
 
     fn cell_w(&self) -> i32 {
@@ -503,6 +535,15 @@ impl Painter<'_> {
                 .filter(|span| span.range.contains(&byte))
                 .map(|span| syntax_theme::color(span.kind))
         };
+        // The worst finding of each line that has any, in line order.
+        let mut by_line: Vec<(usize, Severity)> = marks
+            .findings
+            .iter()
+            .filter(|found| is_marked(found.severity))
+            .map(|found| (document.line_of(found.range.start), found.severity))
+            .collect();
+        by_line.sort_unstable();
+        by_line.dedup_by_key(|(line, _)| *line);
         let metrics = metrics.filter(|metrics| metrics.describes(document, geometry.metrics_key()));
         let view = metrics.map_or(view, |metrics| geometry.clamp(view, metrics));
         let (cell_w, cell_h) = (self.cell_w(), self.cell_h());
@@ -544,7 +585,11 @@ impl Painter<'_> {
             if row.row_in_line == 0
                 && let Some(gutter) = geometry.gutter
             {
-                let color = self.line_number(row.line, y, &gutter, &marks);
+                let finding = by_line
+                    .binary_search_by_key(&row.line, |(line, _)| *line)
+                    .ok()
+                    .map(|at| by_line[at].1);
+                let color = self.line_number(row.line, y, &gutter, &marks, finding);
                 self.number(row.line + 1, geometry.number_right(), y, color);
             }
             let first = if geometry.wrap {
@@ -567,6 +612,16 @@ impl Painter<'_> {
             // Shaping never changes which cells characters take, so each
             // glyph lands in its character's cell.
             let glyphs = self.font.shape(row.text, settings.features());
+            let row_bytes = row.start.byte..row.start.byte + row.text.len();
+            let row_findings: Vec<&EditorDiagnostic> = marks
+                .findings
+                .iter()
+                .filter(|found| {
+                    is_marked(found.severity)
+                        && found.range.start < row_bytes.end
+                        && found.range.end > row_bytes.start
+                })
+                .collect();
             let mut row_end = row.start.column;
             for (cell, glyph) in row.cells(columns).zip(glyphs) {
                 row_end = cell.column + cell.width;
@@ -583,6 +638,16 @@ impl Painter<'_> {
                 };
                 if let (Some(ground), Some(rect)) = (ground, cell_rect(cell.column, cell.width)) {
                     self.fill(rect, ground);
+                }
+                let underline = row_findings
+                    .iter()
+                    .filter(|found| found.range.contains(&cell.byte))
+                    .map(|found| found.severity)
+                    .min();
+                if let (Some(severity), Some(rect)) =
+                    (underline, cell_rect(cell.column, cell.width))
+                {
+                    self.dotted(rect, severity_color(severity));
                 }
                 // Glyphs cut by either edge of the viewport are left out.
                 if cell.column < first || cell.column + cell.width > end {
@@ -652,6 +717,23 @@ impl Painter<'_> {
                     },
                     DIM,
                 );
+                // Warnings first, so an error on the same spot wins.
+                for severity in [Severity::Warning, Severity::Error] {
+                    for found in marks.findings.iter().filter(|f| f.severity == severity) {
+                        let row = metrics.row_index(document.line_of(found.range.start), 0);
+                        let at = track.y
+                            + (row as i64 * i64::from(track.height) / metrics.rows().max(1) as i64)
+                                as i32;
+                        self.fill(
+                            Rect {
+                                y: at,
+                                height: 1,
+                                ..track
+                            },
+                            severity_color(severity),
+                        );
+                    }
+                }
             }
             let track = geometry.horizontal;
             let sideways = thumb(
@@ -744,7 +826,14 @@ impl Painter<'_> {
     /// Draws what the margin shows of `line` besides its number, and gives
     /// the color the number takes: a breakpoint turns it into white on red,
     /// and the line a cartridge stopped on gets an arrow.
-    fn line_number(&mut self, line: usize, y: i32, gutter: &Rect, marks: &Marks<'_>) -> u8 {
+    fn line_number(
+        &mut self,
+        line: usize,
+        y: i32,
+        gutter: &Rect,
+        marks: &Marks<'_>,
+        finding: Option<Severity>,
+    ) -> u8 {
         let cell_h = self.cell_h();
         if marks.stopped_at == Some(line) {
             // A right-pointing triangle in the space left of the numbers.
@@ -769,6 +858,18 @@ impl Painter<'_> {
                 ERROR,
             );
             return TEXT;
+        }
+        // A finding gives way to the breakpoint, which takes the margin.
+        // It stays readable as the underline and in the status bar.
+        if let Some(severity) = finding {
+            fill_rect(
+                self.framebuffer,
+                gutter.right() - 4,
+                y + 1,
+                2,
+                cell_h - 2,
+                severity_color(severity),
+            );
         }
         IDLE_SHADE
     }
@@ -822,13 +923,54 @@ impl Painter<'_> {
         }
     }
 
-    fn status_bar(&mut self, text: &str, color: u8) {
+    fn status_bar(&mut self, text: &str, color: u8, summary: Option<Summary>) {
         let bar = self.layout.status;
         self.fill(bar, BAR);
         let y = self.bar_text_y(bar.y, bar.height);
-        let columns = usize::try_from((bar.width - 8) / self.cell_w().max(1)).unwrap_or(0);
+        let counts = summary.filter(|s| s.errors + s.warnings > 0);
+        // The counts take the right edge, so the text yields the room.
+        let reserved = counts.map_or(0, |counts| self.summary_width(&counts) + self.cell_w());
+        let columns =
+            usize::try_from((bar.width - 8 - reserved) / self.cell_w().max(1)).unwrap_or(0);
         let text = take_cells(self.font, text, columns);
         self.text(text, 4, y, color);
+        if let Some(counts) = counts {
+            self.diagnostic_summary(&counts, bar.right() - 4, y);
+        }
+    }
+
+    fn summary_parts(counts: &Summary) -> [(Option<String>, u8); 2] {
+        let part = |count: usize, key: &str, color: u8| {
+            let text = (count > 0)
+                .then(|| ui_text::get_with(key, &[("count", Arg::Text(&count.to_string()))]));
+            (text, if counts.stale { DIM } else { color })
+        };
+        [
+            part(counts.errors, "code-errors", ERROR),
+            part(counts.warnings, "code-warnings", WARN),
+        ]
+    }
+
+    fn summary_width(&self, counts: &Summary) -> i32 {
+        let parts = Self::summary_parts(counts);
+        let cells: i32 = parts
+            .iter()
+            .filter_map(|(text, _)| text.as_deref())
+            .map(|text| self.layout.cells(text) + 1)
+            .sum();
+        (cells - 1).max(0) * self.cell_w()
+    }
+
+    /// The error and warning counts, ending at `right`. They turn dim while
+    /// an edit waits for the analyzer's answer.
+    fn diagnostic_summary(&mut self, counts: &Summary, right: i32, y: i32) {
+        let mut x = right - self.summary_width(counts);
+        for (text, color) in Self::summary_parts(counts) {
+            if let Some(text) = text {
+                self.text(&text, x, y, color);
+                x += (self.layout.cells(&text) + 1) * self.cell_w();
+            }
+        }
     }
 
     /// The list of every open tab, `focus` highlighted.
