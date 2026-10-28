@@ -22,6 +22,7 @@ use std::env::consts::{ARCH, OS};
 
 use desktop::single_instance::{self, SecondaryLaunch, Startup};
 
+#[hotpath::main]
 fn main() -> anyhow::Result<()> {
     if let Some(command) = tooling::Cli::parse_env().command {
         tooling::run(command)?;

@@ -414,6 +414,7 @@ impl System {
     ///
     /// Copying and pasting in the workspace read and write `clipboard` as
     /// their input is handled.
+    #[hotpath::measure(label = "system::update", impl_type = "System")]
     pub fn update_with(mut self, input: &[InputEvent], clipboard: &mut dyn Clipboard) -> Self {
         // `Self` has no `Drop`, so the state can move out of `self` and the
         // other fields be lent to `ctx` while it is away.

@@ -185,6 +185,7 @@ impl<'a> App<'a> {
     /// One pass of the loop, which shows the current state before it
     /// advances it. Returns the system for the next frame, or `None` once
     /// quitting is confirmed.
+    #[hotpath::measure(label = "app::frame", impl_type = "App")]
     fn frame(&mut self, mut system: System) -> anyhow::Result<Option<System>> {
         // Closing the window only asks: the system may first ask what to do
         // with unsaved edits, and quits once they are saved or discarded.
@@ -223,6 +224,7 @@ impl<'a> App<'a> {
 
     /// Draws the system into the machine's framebuffer and shows it with the
     /// pointer on top.
+    #[hotpath::measure(label = "app::present", impl_type = "App")]
     fn present(&mut self, system: &System) -> anyhow::Result<()> {
         let pointer = self.host.pointer_position();
         system.render(self.machine.framebuffer_mut(), &self.rom, pointer);
@@ -240,6 +242,7 @@ impl<'a> App<'a> {
 
     /// Runs the ticks due since the last frame. After each tick it serves the
     /// system's host requests and queues the audio the tick produced.
+    #[hotpath::measure(label = "app::advance", impl_type = "App")]
     fn advance(&mut self, mut system: System) -> System {
         let now = Instant::now();
         let ticks = self.clock.advance(now - self.last);

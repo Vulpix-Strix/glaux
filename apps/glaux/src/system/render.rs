@@ -80,6 +80,7 @@ impl System {
     /// font and UI images, with the question about unsaved edits on top
     /// while it is open. In the workspace, `pointer` is the logical pixel
     /// under the host's pointer, used to highlight what it hovers.
+    #[hotpath::measure(label = "system::render", impl_type = "System")]
     pub fn render(&self, framebuffer: &mut Framebuffer, rom: &SystemRom, pointer: Option<Point>) {
         let Some(flow) = &self.unsaved else {
             self.render_state(framebuffer, rom, pointer);
