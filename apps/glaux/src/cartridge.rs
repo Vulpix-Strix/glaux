@@ -182,7 +182,7 @@ pub struct Compatibility {
     pub min_glaux: Version,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Language {
     Luau,
     /// Experimental: its scripting API may change without notice.

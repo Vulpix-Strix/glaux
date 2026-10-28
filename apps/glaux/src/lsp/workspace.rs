@@ -52,22 +52,30 @@ impl Shadow {
         &self.root
     }
 
-    pub fn file(&self, module: &ModuleName) -> PathBuf {
-        self.root.join(format!("{}.luau", module.as_str()))
-    }
-
     /// Makes the placeholder for `module`.
     pub fn add(&self, module: &ModuleName) -> io::Result<PathBuf> {
-        let file = self.file(module);
-        if !file.exists() {
-            fs::write(&file, "")?;
-        }
-        Ok(file)
+        placeholder(&self.root, module)
     }
+}
 
-    pub fn remove(&self, module: &ModuleName) {
-        let _ = fs::remove_file(self.file(module));
+/// The placeholder file of `module` in the workspace at `root`.
+fn placeholder_file(root: &Path, module: &ModuleName) -> PathBuf {
+    root.join(format!("{}.luau", module.as_str()))
+}
+
+/// Makes the placeholder for `module` in the workspace at `root`, if it is
+/// not there yet. Blocking, like every file operation here.
+pub(super) fn placeholder(root: &Path, module: &ModuleName) -> io::Result<PathBuf> {
+    let file = placeholder_file(root, module);
+    if !file.exists() {
+        fs::write(&file, "")?;
     }
+    Ok(file)
+}
+
+/// Removes the placeholder of `module` from the workspace at `root`.
+pub(super) fn remove_placeholder(root: &Path, module: &ModuleName) {
+    let _ = fs::remove_file(placeholder_file(root, module));
 }
 
 impl Drop for Shadow {
@@ -114,7 +122,7 @@ mod tests {
         let file = shadow.add(&module).unwrap();
         assert_eq!(file.file_name().unwrap(), "game.enemies.luau");
         assert_eq!(fs::read_to_string(&file).unwrap(), "");
-        shadow.remove(&module);
+        remove_placeholder(shadow.root(), &module);
         assert!(!file.exists());
     }
 

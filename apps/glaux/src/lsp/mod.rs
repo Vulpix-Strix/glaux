@@ -7,10 +7,14 @@
 //! The analyzer is optional. Without the executable, or with the setting
 //! off, the editor works exactly as before.
 
+mod actor;
 mod definitions;
 mod locate;
+mod prepare;
 mod service;
 mod translate;
 mod workspace;
 
+#[cfg(test)]
+pub(crate) use prepare::SLOW_MODULES;
 pub(crate) use service::Analysis;

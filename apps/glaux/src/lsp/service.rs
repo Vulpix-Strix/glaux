@@ -1,23 +1,23 @@
-//! Keeps one `luau-lsp` session in step with the loaded cartridge.
+//! The part of the analyzer that lives on the thread that draws frames.
 //!
-//! [`Analysis::sync`] runs every frame and only compares revisions, so an
-//! idle editor costs a few integer comparisons. Every module of the
-//! cartridge is sent to the server, because a script's findings depend on
-//! the modules it requires. Open tabs send their text as edited, the rest
-//! send what is on disk.
+//! It does almost nothing: [`Analysis::sync`] notices which cartridge is
+//! loaded and which tabs changed and sends that to the actor, and
+//! [`Analysis::poll`] hands the system what the actor found. Locating the
+//! executable, preparing the workspace, reading modules and talking to the
+//! server all happen elsewhere, see `actor`.
+//!
+//! Each call compares a handful of integers when nothing changed, so an idle
+//! editor pays next to nothing.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
-use glaux_docs::{Kind, Library, ScriptLanguage};
-use glaux_lsp::uri::path_to_uri;
-use glaux_lsp::{DocumentInit, Event, LspHandle, LspRuntime, ServerSpec, SessionKey};
+use glaux_lsp::LspRuntime;
+use tokio::sync::mpsc::{self, error::TrySendError};
 
-use super::translate::to_editor;
-use super::workspace::{Shadow, module_name};
-use super::{definitions, locate};
-use crate::cartridge::LoadedCartridge;
+use super::actor::{self, Command, Inbox, Settings, TabText};
 use crate::cartridge::source::SourcePath;
 use crate::system::{AnalysisInput, AnalyzerStatus, System};
 use crate::ui_text;
@@ -25,76 +25,75 @@ use crate::ui_text;
 /// The server runs one session per cartridge, and more are never needed.
 const MAX_SESSIONS: usize = 2;
 
+/// Commands waiting for the actor, which it takes as fast as they come.
+const COMMANDS: usize = 64;
+
 pub(crate) struct Analysis {
     cache_dir: Option<PathBuf>,
     /// Where a development copy of the executable can be dropped, `bin`.
     config_dir: Option<PathBuf>,
-    state: State,
-    /// What the analyzer is doing while nothing is running. See
-    /// [`Analysis::status`].
+    /// Started the first time a cartridge needs it and kept until the
+    /// program ends.
+    started: Option<Started>,
+    /// The cartridge the actor was last told about. Its commands carry this
+    /// number, and the answers that come back with another one are old.
+    generation: u64,
+    loaded: Option<Loaded>,
+    /// Commands the actor had no room for. They go first, in order.
+    queued: VecDeque<Command>,
     status: AnalyzerStatus,
     /// The user is told once per run that the executable is missing and
     /// once that the analyzer gave up. Later occurrences only reach the log.
     told_unavailable: bool,
     told_stopped: bool,
-    /// Restarts and gives up within milliseconds, and waits this long for the
-    /// handshake, for tests of servers that fail.
     #[cfg(test)]
     quick_failures: Option<std::time::Duration>,
 }
 
-enum State {
-    /// Not started. It starts the first time a cartridge needs it.
-    Idle,
-    /// There is no executable or no place to keep files. Tried again for the
-    /// next cartridge or when the setting is toggled, never every frame.
-    Unavailable {
-        for_dir: PathBuf,
-    },
-    Running(Box<Running>),
-}
-
-struct Running {
-    /// Where the analyzer stands, from the events of its session.
-    status: AnalyzerStatus,
-    session: Option<Session>,
-    /// A cartridge whose session could not be kept, so it is not retried
-    /// every frame.
-    gave_up_on: Option<PathBuf>,
-    handle: LspHandle,
-    binary: PathBuf,
-    definitions: PathBuf,
-    cache_dir: PathBuf,
-    callbacks: Vec<String>,
-    sessions_started: u32,
+struct Started {
+    commands: mpsc::Sender<Command>,
+    inbox: Arc<Inbox>,
+    /// The actor says here that it has closed everything.
+    finished: std::sync::mpsc::Receiver<()>,
     #[cfg(test)]
-    quick_failures: Option<std::time::Duration>,
-    // Last, so the servers are told to stop before the thread is joined.
+    handle: glaux_lsp::LspHandle,
+    /// Last, so it outlives the actor it runs.
     _runtime: LspRuntime,
 }
 
-struct Session {
-    key: SessionKey,
-    started_at: Instant,
-    host_dir: PathBuf,
-    shadow: Shadow,
-    modules: HashMap<String, Module>,
-    by_uri: HashMap<String, String>,
+/// How long closing the program waits for the actor to cancel what it is
+/// doing and remove its files.
+const CLOSING: std::time::Duration = std::time::Duration::from_secs(3);
+
+impl Drop for Analysis {
+    fn drop(&mut self) {
+        let Some(started) = self.started.take() else {
+            return;
+        };
+        // The actor sees its commands end, cancels the preparation under way,
+        // closes the session and removes the workspace. The runtime is only
+        // stopped after that, or it would cut the actor short and the
+        // blocking work it started would go on unattended.
+        let Started {
+            commands,
+            finished,
+            _runtime,
+            ..
+        } = started;
+        drop(commands);
+        if finished.recv_timeout(CLOSING).is_err() {
+            tracing::warn!("the Luau analyzer did not close in time");
+        }
+    }
 }
 
-struct Module {
-    path: SourcePath,
-    uri: String,
-    /// The version the server last received. Only grows.
-    version: i64,
-    source: Source,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Source {
-    Disk,
-    /// An open tab at this revision of its document.
-    Tab(u64),
+/// The cartridge the actor works on and what it has been told of its tabs.
+struct Loaded {
+    dir: PathBuf,
+    /// The revision of each tab as the actor last received it.
+    sent: HashMap<SourcePath, u64>,
+    /// The actor will not run this cartridge, so nothing more is sent.
+    halted: bool,
 }
 
 impl Analysis {
@@ -102,7 +101,10 @@ impl Analysis {
         Self {
             cache_dir,
             config_dir,
-            state: State::Idle,
+            started: None,
+            generation: 0,
+            loaded: None,
+            queued: VecDeque::new(),
             status: AnalyzerStatus::Off,
             told_unavailable: false,
             told_stopped: false,
@@ -120,63 +122,44 @@ impl Analysis {
     /// What the server has been sent and has answered so far.
     #[cfg(test)]
     pub(crate) fn lsp_stats(&self) -> Option<glaux_lsp::StatsSnapshot> {
-        let State::Running(running) = &self.state else {
-            return None;
-        };
-        let session = running.session.as_ref()?;
-        running.handle.stats(&session.key)
+        let started = self.started.as_ref()?;
+        started.handle.stats(&started.inbox.session_key()?)
     }
 
     /// What the analyzer is doing, with the reason when it is not working.
     pub(crate) fn status(&self) -> &AnalyzerStatus {
-        match &self.state {
-            State::Running(running) => &running.status,
-            _ => &self.status,
-        }
+        &self.status
     }
 
-    /// Brings the server up to date with the system. Call once per frame.
+    /// Tells the actor what changed since the last frame. Call once per
+    /// frame.
     #[hotpath::measure(label = "lsp::sync", impl_type = "Analysis")]
     pub(crate) fn sync(&mut self, system: &mut System) {
         if !system.analysis_enabled() {
-            if matches!(self.state, State::Running(_)) {
+            if self.loaded.is_some() {
+                self.unload();
                 system.analysis_lost();
             }
-            self.state = State::Idle;
             self.status = AnalyzerStatus::Off;
             return;
         }
         let Some(input) = system.analysis_input() else {
             // No cartridge: loading one again is a fresh chance to find the
             // executable, even the same cartridge.
-            if matches!(self.state, State::Unavailable { .. }) {
-                self.state = State::Idle;
-            }
-            if let State::Running(running) = &mut self.state {
-                running.end_session();
+            if self.loaded.is_some() {
+                self.unload();
             }
             return;
         };
-        if let State::Unavailable { for_dir } = &self.state
-            && for_dir != input.cartridge.host_dir()
-        {
-            self.state = State::Idle;
-        }
-        if matches!(self.state, State::Idle) {
-            let dir = input.cartridge.host_dir().to_path_buf();
-            if let Some(text) = self.start(dir) {
-                system.analysis_notice(text);
+        self.send_queued();
+        let host_dir = input.cartridge.host_dir();
+        match &self.loaded {
+            Some(loaded) if loaded.dir == host_dir => {
+                if !loaded.halted {
+                    self.send_tabs(&input);
+                }
             }
-            // Go on in this frame, so the session opens as soon as it can.
-            if let (State::Running(running), Some(input)) =
-                (&mut self.state, system.analysis_input())
-            {
-                running.sync(&input);
-            }
-            return;
-        }
-        if let State::Running(running) = &mut self.state {
-            running.sync(&input);
+            _ => self.load(&input),
         }
     }
 
@@ -184,399 +167,214 @@ impl Analysis {
     /// what the analyzer is doing.
     #[hotpath::measure(label = "lsp::poll", impl_type = "Analysis")]
     pub(crate) fn poll(&mut self, system: &mut System) {
-        if let State::Running(running) = &mut self.state {
-            let mut lost = false;
-            let mut stopped = false;
-            let mut arrived = Vec::new();
-            for event in running.handle.poll() {
-                match event {
-                    Event::Diagnostics {
-                        key,
-                        uri,
-                        version,
-                        diagnostics,
-                    } => {
-                        if let Some(found) =
-                            running.deliver(&key, &uri, version, &diagnostics, system)
-                        {
-                            arrived.push(found);
-                        }
-                    }
-                    Event::Disabled { key, reason } => {
-                        tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %reason, "the Luau analyzer stopped");
-                        if running.is_current(&key) {
-                            running.status = AnalyzerStatus::Disabled(reason);
-                            lost = true;
-                            stopped = true;
-                        }
-                        running.abandon(&key);
-                    }
-                    Event::Failed {
-                        key,
-                        reason,
-                        retry_in,
-                    } => {
-                        tracing::warn!(%reason, ?retry_in, "the Luau analyzer was lost, restarting");
-                        if running.is_current(&key) {
-                            running.status = AnalyzerStatus::Failed { reason, retry_in };
-                        }
-                    }
-                    Event::Ready { key } => {
-                        if let Some(session) = running.session.as_ref().filter(|s| s.key == key) {
-                            tracing::info!(
-                                elapsed = ?session.started_at.elapsed(),
-                                "the Luau analyzer is ready"
-                            );
-                            running.status = AnalyzerStatus::Ready;
-                        }
-                    }
-                    Event::Closed { key } => {
-                        tracing::debug!(%key, "the Luau analyzer session closed");
-                    }
-                }
+        if let Some(started) = &self.started {
+            let delivery = started.inbox.take(self.generation);
+            if let Some(status) = delivery.status {
+                self.apply(status, system);
             }
-            if lost {
-                system.analysis_lost();
-            }
-            for (path, revision, items) in arrived {
-                system.analysis_arrived(&path, revision, items);
-            }
-            if stopped && !std::mem::replace(&mut self.told_stopped, true) {
-                system.analysis_notice(ui_text::get("code-analyzer-stopped"));
+            for found in delivery.found {
+                system.analysis_arrived(&found.path, found.revision, found.items);
             }
         }
         system.analysis_status(self.status());
     }
 
-    /// Looks for the executable and starts the runtime. On failure the
-    /// analyzer waits for the next cartridge, and the returned text is the
-    /// notice to show, the first time only.
-    fn start(&mut self, dir: PathBuf) -> Option<String> {
-        let began = Instant::now();
-        match self.try_start() {
-            Ok(running) => {
-                tracing::info!(
-                    binary = %running.binary.display(),
-                    elapsed = ?began.elapsed(),
-                    "diagnostics from luau-lsp are on"
-                );
-                self.state = State::Running(Box::new(running));
-                None
-            }
-            Err(reason) => {
-                let first = !std::mem::replace(&mut self.told_unavailable, true);
-                if first {
+    fn apply(&mut self, status: AnalyzerStatus, system: &mut System) {
+        match &status {
+            AnalyzerStatus::Unavailable(reason) => {
+                self.halt();
+                if !std::mem::replace(&mut self.told_unavailable, true) {
                     tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %reason, "diagnostics are off");
+                    system.analysis_notice(ui_text::get("code-analyzer-not-found"));
                 } else {
                     tracing::debug!(%reason, "diagnostics are still off");
                 }
-                self.status = AnalyzerStatus::Unavailable(reason);
-                self.state = State::Unavailable { for_dir: dir };
-                first.then(|| ui_text::get("code-analyzer-not-found"))
+            }
+            AnalyzerStatus::Disabled(_) => {
+                self.halt();
+                system.analysis_lost();
+                if !std::mem::replace(&mut self.told_stopped, true) {
+                    system.analysis_notice(ui_text::get("code-analyzer-stopped"));
+                }
+            }
+            AnalyzerStatus::Off
+            | AnalyzerStatus::Starting
+            | AnalyzerStatus::Ready
+            | AnalyzerStatus::Failed { .. } => {}
+        }
+        self.status = status;
+    }
+
+    fn halt(&mut self) {
+        if let Some(loaded) = &mut self.loaded {
+            loaded.halted = true;
+        }
+    }
+
+    /// Sends the cartridge and its tabs, starting the actor if this is the
+    /// first one.
+    fn load(&mut self, input: &AnalysisInput<'_>) {
+        if self.loaded.is_some() {
+            self.unload();
+        }
+        let dir = input.cartridge.host_dir().to_path_buf();
+        if let Err(reason) = self.start() {
+            // Nothing runs, so the actor cannot say why. Said here, once.
+            if !std::mem::replace(&mut self.told_unavailable, true) {
+                tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %reason, "diagnostics are off");
+            }
+            self.status = AnalyzerStatus::Unavailable(reason);
+            self.loaded = Some(Loaded {
+                dir,
+                sent: HashMap::new(),
+                halted: true,
+            });
+            return;
+        }
+        self.generation += 1;
+        let tabs: Vec<TabText> = input
+            .scripts
+            .iter()
+            .map(|script| TabText {
+                path: script.path.clone(),
+                revision: script.revision,
+                text: script.text.to_owned(),
+            })
+            .collect();
+        self.loaded = Some(Loaded {
+            dir,
+            sent: revisions(input),
+            halted: false,
+        });
+        self.status = AnalyzerStatus::Starting;
+        self.send(Command::Load {
+            generation: self.generation,
+            cartridge: input.cartridge.clone(),
+            tabs,
+        });
+    }
+
+    fn unload(&mut self) {
+        self.loaded = None;
+        if self.started.is_some() {
+            self.generation += 1;
+            self.send(Command::Unload {
+                generation: self.generation,
+            });
+        }
+    }
+
+    /// Sends the tabs that changed, if any did.
+    fn send_tabs(&mut self, input: &AnalysisInput<'_>) {
+        let Some(loaded) = &mut self.loaded else {
+            return;
+        };
+        let unchanged = input.scripts.len() == loaded.sent.len()
+            && input
+                .scripts
+                .iter()
+                .all(|script| loaded.sent.get(script.path) == Some(&script.revision));
+        if unchanged || !self.queued.is_empty() {
+            return;
+        }
+        let Some(started) = &self.started else {
+            return;
+        };
+        let changed: Vec<TabText> = input
+            .scripts
+            .iter()
+            .filter(|script| loaded.sent.get(script.path) != Some(&script.revision))
+            .map(|script| TabText {
+                path: script.path.clone(),
+                revision: script.revision,
+                text: script.text.to_owned(),
+            })
+            .collect();
+        let command = Command::Tabs {
+            generation: self.generation,
+            open: input
+                .scripts
+                .iter()
+                .map(|script| script.path.clone())
+                .collect(),
+            changed,
+        };
+        // If the actor has no room, nothing is recorded and the same tabs are
+        // sent again next frame.
+        if started.commands.try_send(command).is_ok() {
+            loaded.sent = revisions(input);
+        }
+    }
+
+    /// Sends `command` now, or keeps it for the next frame if the actor has
+    /// no room.
+    fn send(&mut self, command: Command) {
+        self.queued.push_back(command);
+        self.send_queued();
+    }
+
+    fn send_queued(&mut self) {
+        let Some(started) = &self.started else {
+            return;
+        };
+        while let Some(command) = self.queued.pop_front() {
+            match started.commands.try_send(command) {
+                Ok(()) => {}
+                Err(TrySendError::Full(command)) => {
+                    self.queued.push_front(command);
+                    return;
+                }
+                Err(TrySendError::Closed(_)) => return,
             }
         }
     }
 
-    fn try_start(&self) -> Result<Running, String> {
+    /// Starts the runtime and the actor on it, once.
+    fn start(&mut self) -> Result<(), String> {
+        if self.started.is_some() {
+            return Ok(());
+        }
         let cache_dir = self
             .cache_dir
             .clone()
             .ok_or("there is no cache directory to keep files in")?;
-        let binary = locate::find(self.config_dir.as_deref()).map_err(|error| error.to_string())?;
-        let definitions = definitions::extract(&cache_dir)
-            .map_err(|error| format!("could not write the Luau definitions: {error}"))?;
+        let began = Instant::now();
         let runtime = LspRuntime::start(MAX_SESSIONS)
             .map_err(|error| format!("could not start the analyzer runtime: {error}"))?;
-        Ok(Running {
-            status: AnalyzerStatus::Starting,
-            session: None,
-            gave_up_on: None,
-            handle: runtime.handle(),
-            binary,
-            definitions,
+        let handle = runtime.handle();
+        let inbox = Arc::new(Inbox::default());
+        let (commands, receiver) = mpsc::channel(COMMANDS);
+        let (done, finished) = std::sync::mpsc::channel();
+        let settings = Settings {
             cache_dir,
-            callbacks: callback_names(),
-            sessions_started: 0,
+            config_dir: self.config_dir.clone(),
             #[cfg(test)]
             quick_failures: self.quick_failures,
-            _runtime: runtime,
-        })
-    }
-}
-
-fn callback_names() -> Vec<String> {
-    let library = Library::embedded();
-    library
-        .api()
-        .entries_for(ScriptLanguage::Luau)
-        .filter(|entry| entry.kind() == Kind::Callback)
-        .filter_map(|entry| entry.binding(ScriptLanguage::Luau))
-        .map(|binding| binding.name.clone())
-        .collect()
-}
-
-impl Running {
-    fn sync(&mut self, input: &AnalysisInput<'_>) {
-        let host_dir = input.cartridge.host_dir();
-        if self
-            .session
-            .as_ref()
-            .is_some_and(|s| s.host_dir != host_dir)
-        {
-            self.end_session();
-        }
-        if self.session.is_none() {
-            if self.gave_up_on.as_deref() == Some(host_dir) {
-                return;
-            }
-            self.gave_up_on = None;
-            match self.begin_session(input.cartridge) {
-                Ok(session) => {
-                    self.status = AnalyzerStatus::Starting;
-                    self.session = Some(session);
-                }
-                Err(reason) => {
-                    tracing::warn!(target: crate::logging::DIAGNOSTIC_TARGET, %reason, "the Luau analyzer could not start");
-                    self.status = AnalyzerStatus::Disabled(reason);
-                    self.gave_up_on = Some(host_dir.to_path_buf());
-                    return;
-                }
-            }
-        }
-        if let Some(session) = &mut self.session {
-            session.update(&self.handle, input);
-        }
-    }
-
-    fn begin_session(&mut self, cartridge: &LoadedCartridge) -> Result<Session, String> {
-        let began = Instant::now();
-        self.sessions_started += 1;
-        let key = SessionKey::new(format!("luau-{}", self.sessions_started));
-        let root = self.cache_dir.join("lsp").join("workspaces").join(format!(
-            "{}-{}",
-            std::process::id(),
-            self.sessions_started
+        };
+        handle.spawn(actor::run(
+            receiver,
+            handle.clone(),
+            Arc::clone(&inbox),
+            settings,
+            done,
         ));
-        let shadow = Shadow::create(root)
-            .map_err(|error| format!("could not prepare the analyzer workspace: {error}"))?;
-        let mut spec = ServerSpec::new(&self.binary, shadow.root());
-        spec.args = vec![
-            "lsp".into(),
-            format!("--definitions={}", self.definitions.display()).into(),
-        ];
-        #[cfg(test)]
-        if let Some(handshake) = self.quick_failures {
-            spec.max_failures = 1;
-            spec.backoff_base = std::time::Duration::from_millis(20);
-            spec.backoff_cap = std::time::Duration::from_millis(20);
-            spec.handshake_timeout = handshake;
-        }
-        // Every placeholder exists on disk, and every module reaches the
-        // server together, before it is asked anything. See
-        // `LspHandle::open_session_with`.
-        let mut modules_by_name = HashMap::new();
-        let mut by_uri = HashMap::new();
-        let mut initial = Vec::new();
-        if let Ok(listing) = cartridge.script_files() {
-            for path in listing.paths {
-                let Some(name) = module_name(&path) else {
-                    continue;
-                };
-                let Some(text) = read_text(cartridge, &path) else {
-                    continue;
-                };
-                let file = match shadow.add(&name) {
-                    Ok(file) => file,
-                    Err(error) => {
-                        tracing::debug!(%error, module = name.as_str(), "no placeholder for a module");
-                        continue;
-                    }
-                };
-                let uri = path_to_uri(&file);
-                initial.push(DocumentInit {
-                    uri: uri.clone(),
-                    language: "luau".into(),
-                    version: 1,
-                    text,
-                });
-                by_uri.insert(uri.clone(), name.as_str().to_owned());
-                modules_by_name.insert(
-                    name.as_str().to_owned(),
-                    Module {
-                        path,
-                        uri,
-                        version: 1,
-                        source: Source::Disk,
-                    },
-                );
-            }
-        }
-        let modules = initial.len();
-        self.handle
-            .open_session_with(key.clone(), spec, initial)
-            .map_err(|error| format!("could not start the Luau analyzer: {error}"))?;
-        let session = Session {
-            key,
-            started_at: began,
-            host_dir: cartridge.host_dir().to_path_buf(),
-            shadow,
-            modules: modules_by_name,
-            by_uri,
-        };
-        tracing::info!(modules, elapsed = ?began.elapsed(), "the Luau analyzer's workspace is prepared");
-        Ok(session)
-    }
-
-    fn end_session(&mut self) {
-        if let Some(session) = self.session.take() {
-            self.handle.close_session(&session.key);
-        }
-    }
-
-    fn is_current(&self, key: &SessionKey) -> bool {
-        self.session.as_ref().is_some_and(|s| &s.key == key)
-    }
-
-    /// The server gave up on `key`. Its cartridge is not retried until the
-    /// user loads another or toggles the setting.
-    fn abandon(&mut self, key: &SessionKey) {
-        if self.is_current(key)
-            && let Some(session) = self.session.take()
-        {
-            self.gave_up_on = Some(session.host_dir.clone());
-            self.handle.close_session(&session.key);
-        }
-    }
-
-    /// The findings in `diagnostics`, if they describe the text of an open
-    /// tab as it is now.
-    fn deliver(
-        &self,
-        key: &SessionKey,
-        uri: &str,
-        version: i64,
-        diagnostics: &[glaux_lsp::protocol::Diagnostic],
-        system: &System,
-    ) -> Option<(SourcePath, u64, Vec<crate::system::EditorDiagnostic>)> {
-        let session = self.session.as_ref().filter(|s| &s.key == key)?;
-        let module = session.modules.get(session.by_uri.get(uri)?)?;
-        let Source::Tab(revision) = module.source else {
-            return None;
-        };
-        if module.version != version {
-            return None;
-        }
-        let input = system.analysis_input()?;
-        let script = input
-            .scripts
-            .iter()
-            .find(|s| s.path == &module.path && s.revision == revision)?;
-        Some((
-            module.path.clone(),
-            revision,
-            to_editor(script.text, diagnostics, &self.callbacks),
-        ))
+        tracing::info!(elapsed = ?began.elapsed(), "the Luau analyzer's runtime started");
+        self.started = Some(Started {
+            commands,
+            inbox,
+            finished,
+            #[cfg(test)]
+            handle,
+            _runtime: runtime,
+        });
+        Ok(())
     }
 }
 
-impl Drop for Running {
-    fn drop(&mut self) {
-        self.end_session();
-    }
-}
-
-impl Session {
-    fn add(&mut self, handle: &LspHandle, path: &SourcePath, text: &str, source: Source) {
-        let Some(name) = module_name(path) else {
-            return;
-        };
-        let file = match self.shadow.add(&name) {
-            Ok(file) => file,
-            Err(error) => {
-                tracing::debug!(%error, module = name.as_str(), "no placeholder for a module");
-                return;
-            }
-        };
-        let uri = path_to_uri(&file);
-        if handle
-            .open_document(&self.key, &uri, "luau", 1, text)
-            .is_err()
-        {
-            return;
-        }
-        self.by_uri.insert(uri.clone(), name.as_str().to_owned());
-        self.modules.insert(
-            name.as_str().to_owned(),
-            Module {
-                path: path.clone(),
-                uri,
-                version: 1,
-                source,
-            },
-        );
-    }
-
-    fn change(&mut self, handle: &LspHandle, name: &str, text: &str, source: Source) {
-        if let Some(module) = self.modules.get_mut(name) {
-            module.version += 1;
-            module.source = source;
-            let _ = handle.change_document(&self.key, &module.uri, module.version, text);
-        }
-    }
-
-    fn remove(&mut self, handle: &LspHandle, name: &str) {
-        if let Some(module) = self.modules.remove(name) {
-            let _ = handle.close_document(&self.key, &module.uri);
-            self.by_uri.remove(&module.uri);
-            if let Ok(parsed) = glaux_modules::ModuleName::parse(name) {
-                self.shadow.remove(&parsed);
-            }
-        }
-    }
-
-    /// Sends what changed since the last frame.
-    fn update(&mut self, handle: &LspHandle, input: &AnalysisInput<'_>) {
-        let mut open = HashSet::new();
-        for script in &input.scripts {
-            let Some(name) = module_name(script.path) else {
-                continue;
-            };
-            let name = name.as_str().to_owned();
-            match self.modules.get(&name) {
-                None => self.add(
-                    handle,
-                    script.path,
-                    script.text,
-                    Source::Tab(script.revision),
-                ),
-                Some(module) if module.source == Source::Tab(script.revision) => {}
-                Some(_) => {
-                    if let Some(module) = self.modules.get_mut(&name) {
-                        module.path = script.path.clone();
-                    }
-                    self.change(handle, &name, script.text, Source::Tab(script.revision));
-                }
-            }
-            open.insert(name);
-        }
-        let closed: Vec<String> = self
-            .modules
-            .iter()
-            .filter(|(name, module)| {
-                matches!(module.source, Source::Tab(_)) && !open.contains(*name)
-            })
-            .map(|(name, _)| name.clone())
-            .collect();
-        for name in closed {
-            let path = self.modules[&name].path.clone();
-            match read_text(input.cartridge, &path) {
-                Some(text) => self.change(handle, &name, &text, Source::Disk),
-                None => self.remove(handle, &name),
-            }
-        }
-    }
-}
-
-fn read_text(cartridge: &LoadedCartridge, path: &SourcePath) -> Option<String> {
-    String::from_utf8(cartridge.read_source(path).ok()?).ok()
+fn revisions(input: &AnalysisInput<'_>) -> HashMap<SourcePath, u64> {
+    input
+        .scripts
+        .iter()
+        .map(|script| (script.path.clone(), script.revision))
+        .collect()
 }

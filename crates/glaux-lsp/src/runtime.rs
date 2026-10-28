@@ -116,6 +116,8 @@ const OUTBOX_CAPACITY: usize = 1024;
 #[derive(Default)]
 pub(crate) struct Outbox {
     events: Mutex<VecDeque<Event>>,
+    /// Wakes whoever awaits [`LspHandle::events`].
+    arrived: tokio::sync::Notify,
 }
 
 impl Outbox {
@@ -133,6 +135,8 @@ impl Outbox {
             events.remove(oldest.unwrap_or(0));
         }
         events.push_back(event);
+        drop(events);
+        self.arrived.notify_one();
     }
 
     pub(crate) fn take(&self) -> Vec<Event> {
@@ -317,6 +321,42 @@ impl LspHandle {
     /// Takes every event produced since the last call. Never blocks.
     pub fn poll(&self) -> Vec<Event> {
         self.registry.outbox.take()
+    }
+
+    /// Waits for events and takes them all. For code that runs on the
+    /// runtime; the caller of [`poll`](Self::poll) and this method should be
+    /// the same one, since each event is taken once.
+    pub async fn events(&self) -> Vec<Event> {
+        loop {
+            let arrived = self.registry.outbox.arrived.notified();
+            let events = self.registry.outbox.take();
+            if !events.is_empty() {
+                return events;
+            }
+            arrived.await;
+        }
+    }
+
+    /// Runs `future` on the runtime that serves the language servers.
+    ///
+    /// The runtime has one thread for everything that is not blocking, so a
+    /// task must await instead of waiting.
+    pub fn spawn<F>(&self, future: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.registry.runtime.spawn(future)
+    }
+
+    /// Runs `work` on a thread meant for blocking, such as file system
+    /// access, so it does not hold up the servers.
+    pub fn spawn_blocking<F, R>(&self, work: F) -> tokio::task::JoinHandle<R>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        self.registry.runtime.spawn_blocking(work)
     }
 }
 

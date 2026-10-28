@@ -222,6 +222,25 @@ fn frames(mut system: System, analysis: &mut Analysis, count: usize) -> System {
     system
 }
 
+/// Runs frames until `done`, which looks at the analyzer, holds.
+fn until(mut system: System, analysis: &mut Analysis, done: impl Fn(&Analysis) -> bool) -> System {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !done(analysis) {
+        assert!(
+            Instant::now() < deadline,
+            "never got there: {:?}",
+            analysis.status()
+        );
+        system = frames(system, analysis, 1);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    system
+}
+
+fn unavailable(analysis: &Analysis) -> bool {
+    matches!(analysis.status(), AnalyzerStatus::Unavailable(_))
+}
+
 #[test]
 fn without_an_executable_the_status_says_why_and_the_user_is_told_once() {
     let fixture = Fixture::new("sys-lsp-none");
@@ -236,7 +255,8 @@ fn without_an_executable_the_status_says_why_and_the_user_is_told_once() {
     let system = shell_with_cartridge(&fixture, NESTED_MAIN);
     nested_modules(&fixture);
     let system = enter(system, "load pong");
-    let system = frames(system, &mut analysis, 3);
+    let system = until(system, &mut analysis, unavailable);
+    let system = frames(system, &mut analysis, 1);
 
     match analysis.status() {
         AnalyzerStatus::Unavailable(reason) => {
@@ -259,7 +279,10 @@ fn without_an_executable_the_status_says_why_and_the_user_is_told_once() {
     assert_eq!(system.notice_text(), None);
     let system = enter(press_break(system), "unload");
     let system = frames(system, &mut analysis, 2);
-    let system = frames(enter(system, "load pong"), &mut analysis, 3);
+    let system = until(enter(system, "load pong"), &mut analysis, |a| {
+        matches!(a.status(), AnalyzerStatus::Starting)
+    });
+    let system = until(system, &mut analysis, unavailable);
     assert!(matches!(analysis.status(), AnalyzerStatus::Unavailable(_)));
     assert_eq!(system.notice_text(), None);
 }
@@ -319,6 +342,19 @@ fn an_unsaved_edit_in_another_module_reaches_its_dependents_and_closing_it_undoe
     assert_eq!(findings_of(&system, "code/main.luau")[0].0, 3);
 }
 
+/// The files of the only workspace under `cache`, if there is exactly one.
+fn placeholders_in(cache: &Path) -> Option<Vec<std::path::PathBuf>> {
+    let mut workspaces = std::fs::read_dir(cache.join("lsp/workspaces")).ok()?;
+    let workspace = workspaces.next()?.ok()?.path();
+    if workspaces.next().is_some() {
+        return None;
+    }
+    std::fs::read_dir(workspace)
+        .ok()?
+        .map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect()
+}
+
 fn workspaces(cache: &Path) -> usize {
     std::fs::read_dir(cache.join("lsp/workspaces")).map_or(0, Iterator::count)
 }
@@ -333,9 +369,10 @@ fn changing_cartridge_closes_the_session_and_leaves_no_workspace_behind() {
     let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
     let system = shell_with_cartridge(&fixture, NESTED_MAIN);
     nested_modules(&fixture);
-    let mut system = enter(system, "load pong");
-    analysis.sync(&mut system);
-    assert_eq!(workspaces(&cache), 1);
+    let system = enter(system, "load pong");
+    let system = until(system, &mut analysis, |_| {
+        placeholders_in(&cache).is_some_and(|names| names.len() == 4)
+    });
     let placeholders = std::fs::read_dir(cache.join("lsp/workspaces"))
         .unwrap()
         .next()
@@ -357,13 +394,11 @@ fn changing_cartridge_closes_the_session_and_leaves_no_workspace_behind() {
         ]
     );
 
-    let mut system = enter(system, "unload");
-    analysis.sync(&mut system);
-    assert_eq!(workspaces(&cache), 0);
+    let system = enter(system, "unload");
+    let system = until(system, &mut analysis, |_| workspaces(&cache) == 0);
 
-    let mut system = enter(system, "load pong");
-    analysis.sync(&mut system);
-    assert_eq!(workspaces(&cache), 1);
+    let system = enter(system, "load pong");
+    let _system = until(system, &mut analysis, |_| workspaces(&cache) == 1);
 }
 
 /// Servers that misbehave, played by `crates/glaux-lsp/tests/fake_server.py`
@@ -530,6 +565,29 @@ fn retype(system: &mut System, path: &str, from: &str, to: &str) {
         .unwrap();
 }
 
+/// `pong` with `modules` chained modules `m0` to `m{n-1}` and a `main` that
+/// requires the last. Returns the shell, not yet loaded.
+fn chain_cartridge(fixture: &Fixture, modules: usize) -> System {
+    let main = format!(
+        "--!strict\nlocal last = require(\"m{}\")\nlocal n: number = last.value()\nprint(n, 0, 0, 0)\n",
+        modules - 1
+    );
+    let system = shell_with_cartridge(fixture, &main);
+    write(
+        fixture,
+        "code/m0.luau",
+        "--!strict\nlocal M = {}\nfunction M.value() return 1 end\nreturn M\n",
+    );
+    for k in 1..modules {
+        let text = format!(
+            "--!strict\nlocal prev = require(\"m{}\")\nlocal M = {{}}\nfunction M.value() return prev.value() end\nreturn M\n",
+            k - 1
+        );
+        write(fixture, &format!("code/m{k}.luau"), &text);
+    }
+    system
+}
+
 #[test]
 fn an_edit_reaches_the_far_end_of_a_cartridge_with_hundreds_of_modules() {
     if analyzer().is_none() {
@@ -543,23 +601,7 @@ fn an_edit_reaches_the_far_end_of_a_cartridge_with_hundreds_of_modules() {
     let fixture = Fixture::new("sys-lsp-large");
     let cache = ScratchDir::new("lsp-large-cache");
     let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
-    let main = format!(
-        "--!strict\nlocal last = require(\"m{}\")\nlocal n: number = last.value()\nprint(n, 0, 0, 0)\n",
-        MODULES - 1
-    );
-    let system = shell_with_cartridge(&fixture, &main);
-    write(
-        &fixture,
-        "code/m0.luau",
-        "--!strict\nlocal M = {}\nfunction M.value() return 1 end\nreturn M\n",
-    );
-    for k in 1..MODULES {
-        let text = format!(
-            "--!strict\nlocal prev = require(\"m{}\")\nlocal M = {{}}\nfunction M.value() return prev.value() end\nreturn M\n",
-            k - 1
-        );
-        write(&fixture, &format!("code/m{k}.luau"), &text);
-    }
+    let system = chain_cartridge(&fixture, MODULES);
     let mut system = press_break(enter(system, "load pong"));
     for path in ["code/main.luau", "code/m0.luau"] {
         open_tab(&mut system, path);
@@ -603,4 +645,111 @@ pub(super) fn open_tab(system: &mut System, path: &str) {
         .unwrap()
         .open(&cartridge, &path)
         .unwrap();
+}
+
+/// Waits, without running frames, until the actor has made a workspace.
+fn wait_for_workspace(cache: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while workspaces(cache) == 0 {
+        assert!(Instant::now() < deadline, "no workspace was made");
+        std::thread::sleep(Duration::from_micros(100));
+    }
+}
+
+#[test]
+fn unloading_while_the_workspace_is_being_prepared_leaves_nothing_behind() {
+    if analyzer().is_none() {
+        return;
+    }
+    let fixture = Fixture::new("sys-lsp-cancel");
+    let cache = ScratchDir::new("lsp-cancel-cache");
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
+    let system = chain_cartridge(&fixture, 400);
+
+    // Unload the moment the workspace starts to exist, as when a cartridge
+    // is replaced right after being loaded. The disk is slow, so the
+    // preparation is certainly half done and has to stop and clean up.
+    crate::lsp::SLOW_MODULES.store(2000, std::sync::atomic::Ordering::Relaxed);
+    let mut system = enter(system, "load pong");
+    analysis.sync(&mut system);
+    wait_for_workspace(&cache);
+    let mut system = enter(system, "unload");
+    analysis.sync(&mut system);
+    analysis.poll(&mut system);
+
+    // Wherever the preparation had got to, it ends with no workspace and no
+    // analyzer running for a cartridge that is gone.
+    std::thread::sleep(Duration::from_millis(300));
+    let system = frames(system, &mut analysis, 3);
+    assert_eq!(workspaces(&cache), 0, "{:?}", placeholders_in(&cache));
+    assert_ne!(analysis.status(), &AnalyzerStatus::Ready);
+    drop(system);
+}
+
+#[test]
+fn replacing_a_cartridge_never_shows_the_old_ones_findings_on_the_new() {
+    if analyzer().is_none() {
+        return;
+    }
+    let fixture = Fixture::new("sys-lsp-replace");
+    let cache = ScratchDir::new("lsp-replace-cache");
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
+    // `pong` has an error in `main`. `clean` has none.
+    let system = shell_with_cartridge(
+        &fixture,
+        "--!strict\nlocal n: number = \"a\"\nprint(n, 0, 0, 0)\n",
+    );
+    let clean = fixture.root().join("clean");
+    crate::cartridge::fixture::write_cartridge(&clean, "Clean");
+    std::fs::write(
+        clean.join("code/main.luau"),
+        "--!strict\nlocal n: number = 1\nprint(n, 0, 0, 0)\n",
+    )
+    .unwrap();
+
+    let system = press_break(enter(system, "load pong"));
+    let system = settle(system, &mut analysis, has_findings);
+    assert_eq!(errors(&system).len(), 1);
+
+    // Replace it and keep going until the new one has its own answer.
+    let system = enter(press_break(system), "load clean");
+    let mut system = press_break(system);
+    let began = Instant::now();
+    let mut answered = false;
+    while began.elapsed() < Duration::from_secs(5) && !answered {
+        system = frames(system, &mut analysis, 1);
+        let errors = errors(&system);
+        assert_eq!(errors, [], "the old cartridge's error was shown");
+        answered = system
+            .code
+            .as_ref()
+            .and_then(|code| code.diagnostic_summary(code.active_document()?.id()))
+            .is_some_and(|summary| !summary.stale);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(answered, "the new cartridge never got its answer");
+}
+
+#[test]
+fn dropping_the_analyzer_in_the_middle_of_a_start_is_prompt_and_tidy() {
+    if analyzer().is_none() {
+        return;
+    }
+    let fixture = Fixture::new("sys-lsp-drop");
+    let cache = ScratchDir::new("lsp-drop-cache");
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
+    let system = chain_cartridge(&fixture, 400);
+    crate::lsp::SLOW_MODULES.store(2000, std::sync::atomic::Ordering::Relaxed);
+    let mut system = enter(system, "load pong");
+    analysis.sync(&mut system);
+    wait_for_workspace(&cache);
+
+    let began = Instant::now();
+    drop(analysis);
+    assert!(
+        began.elapsed() < Duration::from_secs(4),
+        "closing took {:?}",
+        began.elapsed()
+    );
+    assert_eq!(workspaces(&cache), 0, "{:?}", placeholders_in(&cache));
 }

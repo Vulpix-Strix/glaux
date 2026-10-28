@@ -14,7 +14,7 @@ const SCRIPT_WALK: WalkLimits = WalkLimits {
 /// The portable path of a script file from the cartridge root, as in
 /// `code/player.luau`. Its extension names its language, whatever language
 /// the manifest declares.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourcePath {
     path: String,
     language: Language,

@@ -33,6 +33,7 @@ glaux-syntax.workspace = true
 glaux-docs.workspace = true
 glaux-sense.workspace = true
 glaux-lsp.workspace = true
+tokio.workspace = true
 rfd.workspace = true
 open.workspace = true
 

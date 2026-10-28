@@ -243,3 +243,45 @@ fn dropping_the_runtime_stops_its_servers_promptly() {
         started.elapsed()
     );
 }
+
+#[test]
+fn a_task_on_the_runtime_is_woken_by_events() {
+    let Some(spec) = spec(&["echo"]) else { return };
+    let runtime = LspRuntime::start(2).unwrap();
+    let handle = runtime.handle();
+    let (sent, received) = std::sync::mpsc::channel();
+    let waiting = handle.clone();
+    handle.spawn(async move {
+        let events = waiting.events().await;
+        let _ = sent.send(events);
+    });
+    // Nobody asked for anything yet, so the task is still waiting.
+    assert!(received.recv_timeout(Duration::from_millis(100)).is_err());
+    handle.open_session(SessionKey::new("a"), spec).unwrap();
+    let events = received.recv_timeout(Duration::from_secs(8)).unwrap();
+    assert!(matches!(events[0], Event::Ready { .. }), "{events:?}");
+}
+
+#[test]
+fn blocking_work_does_not_hold_up_a_server() {
+    let Some(spec) = spec(&["echo"]) else { return };
+    let runtime = LspRuntime::start(2).unwrap();
+    let handle = runtime.handle();
+    let blocked = handle.spawn_blocking(|| {
+        std::thread::sleep(Duration::from_millis(1500));
+        7
+    });
+    let began = Instant::now();
+    handle.open_session(SessionKey::new("a"), spec).unwrap();
+    wait_for(&handle, |event| matches!(event, Event::Ready { .. })).unwrap();
+    assert!(
+        began.elapsed() < Duration::from_millis(1200),
+        "the server waited {:?} for blocking work",
+        began.elapsed()
+    );
+    let (done, finished) = std::sync::mpsc::channel();
+    handle.spawn(async move {
+        let _ = done.send(blocked.await.unwrap());
+    });
+    assert_eq!(finished.recv_timeout(Duration::from_secs(5)).unwrap(), 7);
+}
