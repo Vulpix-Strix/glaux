@@ -516,6 +516,7 @@ impl CartridgeFs {
     /// The file is compared with `expected` once more just before the
     /// rename. No portable primitive makes that comparison and the rename
     /// one step, so a write landing in between is still replaced.
+    #[hotpath::measure(label = "cartridge_fs::replace_file", impl_type = "CartridgeFs")]
     pub fn replace_file(
         &self,
         path: &str,

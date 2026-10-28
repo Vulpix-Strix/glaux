@@ -212,6 +212,7 @@ impl Runtime {
     ///
     /// A successful call advances the logical time read by `frame()` and
     /// `t()`. A failed one does not.
+    #[hotpath::measure(label = "luau::tick", impl_type = "Runtime")]
     pub fn tick(&mut self, input: InputState) -> Result<(), RuntimeError> {
         self.input.set(input);
         self.callback(Phase::Tick)?;

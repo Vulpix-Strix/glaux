@@ -433,6 +433,7 @@ impl LoadedCartridge {
     /// The manifest and the entry script are looked up only inside the
     /// cartridge directory: symlinks leading out of it count as missing.
     /// A cartridge requiring a newer Glaux than this one is rejected.
+    #[hotpath::measure(label = "cartridge::load", impl_type = "LoadedCartridge")]
     pub fn load(storage: &CartridgeStorage, path: &str) -> Result<Self, CartridgeError> {
         let (location, files) = storage.subdir(path)?;
         Self::open(location, files)

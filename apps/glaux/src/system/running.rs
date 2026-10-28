@@ -245,6 +245,7 @@ impl RunningCartridge {
     /// does, but a tick can also stop at a breakpoint or a step, and then
     /// it waits to be [resumed](Self::resume). A run that is not debugged
     /// never stops.
+    #[hotpath::measure(label = "running::advance", impl_type = "RunningCartridge")]
     pub fn advance(&mut self, input: &[InputEvent]) -> Result<Tick, RuntimeError> {
         let state = self.input.advance(input);
         match self.debugged() {
@@ -332,6 +333,7 @@ impl RunningCartridge {
 
     /// Redraws the cartridge's last completed frame: a screen cleared to
     /// palette index 0, then its draw commands in the order they were made.
+    #[hotpath::measure(label = "running::render", impl_type = "RunningCartridge")]
     pub fn render(&self, framebuffer: &mut Framebuffer, font: &BitmapFont) {
         clear(framebuffer, 0);
         for command in self.runtime.frame() {
