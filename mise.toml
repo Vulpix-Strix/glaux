@@ -50,6 +50,14 @@ run = "python scripts/licenses.py check"
 description = "Run every routine check: format, lint, tests, documentation and third-party licenses"
 depends = ["fmt", "clippy", "test", "docs-check", "licenses-check"]
 
+[tasks.profile]
+description = "Play the profiling workloads and write hotpath reports to target/profiling/<label> (pass the label after `--`)"
+run = "python scripts/profile.py run"
+
+[tasks.profile-compare]
+description = "Compare two labels of `mise run profile` and flag functions that got slower (pass both labels after `--`)"
+run = "python scripts/profile.py compare"
+
 [tasks.glaux]
 run = "cargo run -p glaux"
 
