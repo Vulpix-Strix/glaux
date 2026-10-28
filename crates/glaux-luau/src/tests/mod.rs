@@ -3,6 +3,7 @@
 mod audio;
 mod catalog_consistency;
 mod debug;
+mod definitions_consistency;
 mod draw;
 mod input;
 mod limits;

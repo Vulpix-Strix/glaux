@@ -38,6 +38,20 @@ run = [
 description = "Add the ids of new documentation pages to docs/ids.lock. Published ids are never removed"
 run = "cargo run --quiet -p glaux-docs --bin glaux-docs -- update-ids"
 
+[tasks.luau-defs]
+description = "Regenerate crates/glaux-luau/definitions/glaux.d.luau from docs/api/*.ron. Skipped when no input changed"
+sources = ["docs/api/*.ron", "crates/glaux-luau/src/definitions.rs", "crates/glaux-input/src/lib.rs", "crates/glaux-audio/src/lib.rs"]
+outputs = ["crates/glaux-luau/definitions/glaux.d.luau"]
+run = "cargo run --quiet -p glaux-luau --bin glaux-luau-defs -- generate"
+
+[tasks.luau-defs-check]
+description = "Fail when glaux.d.luau is out of date with the API catalog"
+run = "cargo run --quiet -p glaux-luau --bin glaux-luau-defs -- check"
+
+[tasks.luau-lsp-check]
+description = "Check glaux.d.luau against a real luau-lsp (set LUAU_LSP to the executable). Not part of verify"
+run = "python scripts/luau_lsp_check.py"
+
 [tasks.licenses]
 description = "Regenerate apps/glaux/licenses/third-party.json from Cargo.lock with cargo-about"
 run = "python scripts/licenses.py generate"
@@ -47,8 +61,8 @@ description = "Fail when third-party.json is out of date or extra.json is malfor
 run = "python scripts/licenses.py check"
 
 [tasks.verify]
-description = "Run every routine check: format, lint, tests, documentation and third-party licenses"
-depends = ["fmt", "clippy", "test", "docs-check", "licenses-check"]
+description = "Run every routine check: format, lint, tests, documentation, Luau definitions and third-party licenses"
+depends = ["fmt", "clippy", "test", "docs-check", "luau-defs-check", "licenses-check"]
 
 [tasks.profile]
 description = "Play the profiling workloads and write hotpath reports to target/profiling/<label> (pass the label after `--`)"

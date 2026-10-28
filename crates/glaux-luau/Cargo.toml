@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 hotpath.workspace = true
 glaux-audio.workspace = true
+glaux-docs.workspace = true
 glaux-input.workspace = true
 glaux-machine.workspace = true
 glaux-modules.workspace = true
@@ -21,5 +22,4 @@ hotpath = ["hotpath/hotpath"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [dev-dependencies]
-glaux-docs.workspace = true
 pretty_assertions.workspace = true

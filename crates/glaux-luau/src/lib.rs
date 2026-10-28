@@ -66,6 +66,10 @@
 //!   changes only the oscillator. `gate(channel, true)` opens the gate, or
 //!   retriggers it if already open, and `gate(channel, false)` releases it.
 //!
+//! [`definitions`] renders the same API as Luau type definitions for
+//! `luau-lsp`, kept in [`DEFINITIONS_PATH`] and refreshed with
+//! `mise run luau-defs`.
+//!
 //! The same API is described, with parameters and examples, in the
 //! repository's `docs/api/` catalog and `docs/en/api/` pages.
 //!
@@ -75,13 +79,18 @@
 //! [`ModuleName`]: glaux_modules::ModuleName
 //! [`AudioState`]: glaux_audio::AudioState
 
+/// Where the generated definitions are kept, relative to this crate.
+pub const DEFINITIONS_PATH: &str = "definitions/glaux.d.luau";
+
 mod api;
 mod args;
 mod debug;
+mod definitions;
 mod error;
 mod modules;
 mod runtime;
 
+pub use definitions::{DefinitionsError, definitions};
 pub use glaux_script::{
     DrawCommand, LogEntry, LogLevel, MAX_DRAW_COMMANDS, Phase, RequireError, RequireFailure,
     RuntimeError, SPRITE_TILE_COST, ScriptError, StartFailure, TEXT_CHAR_COST,
