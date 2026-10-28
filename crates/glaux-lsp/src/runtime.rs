@@ -287,6 +287,23 @@ impl LspHandle {
         })
     }
 
+    /// Asks the server for diagnostics of `uris` only, or of every open
+    /// document with `None`.
+    ///
+    /// The server still analyzes the other documents when the chosen ones
+    /// require them, so what it reports for the chosen ones does not change.
+    /// Only the requests for the rest are saved.
+    pub fn diagnose_only(
+        &self,
+        key: &SessionKey,
+        uris: Option<Vec<String>>,
+    ) -> Result<(), LspError> {
+        self.with_shared(key, |shared| {
+            shared.documents().set_targets(uris);
+            Ok(())
+        })
+    }
+
     pub fn close_document(&self, key: &SessionKey, uri: &str) -> Result<(), LspError> {
         self.with_shared(key, |shared| {
             shared

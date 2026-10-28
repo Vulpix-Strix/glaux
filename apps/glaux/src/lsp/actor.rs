@@ -521,6 +521,15 @@ impl Actor {
                 }
             }
         }
+        // Only the tabs show findings, and the server still checks what they
+        // require, so the rest need no request of their own.
+        let wanted = loaded
+            .modules
+            .values()
+            .filter(|module| matches!(module.source, Source::Tab { .. }))
+            .map(|module| module.uri.clone())
+            .collect();
+        let _ = self.handle.diagnose_only(&loaded.key, Some(wanted));
     }
 
     async fn events(&mut self, batch: Vec<Event>) {

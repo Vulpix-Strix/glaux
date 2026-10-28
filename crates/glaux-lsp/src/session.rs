@@ -337,12 +337,17 @@ async fn handshake(
 /// Writes whatever the documents owe the server and starts a round of
 /// pulls when something changed. Returns `false` if the writer is gone.
 fn flush(state: &mut State, out: &Outgoing, shared: &Shared) -> bool {
-    let wire = shared.documents().drain();
+    let (wire, retargeted) = {
+        let mut documents = shared.documents();
+        (documents.drain(), documents.take_targets_changed())
+    };
     if !wire.is_empty() {
         state.epoch += 1;
         state.dirty = true;
         shared.stats.notifications_sent(wire.len());
     }
+    // A document newly asked about needs an answer even if nothing was sent.
+    state.dirty |= retargeted;
     for item in wire {
         let sent = match item {
             Wire::Open {
@@ -384,7 +389,7 @@ fn flush(state: &mut State, out: &Outgoing, shared: &Shared) -> bool {
     start_round(state, out, shared)
 }
 
-/// Pulls every open document once, unless a round is already in flight.
+/// Pulls every wanted document once, unless a round is already in flight.
 fn start_round(state: &mut State, out: &Outgoing, shared: &Shared) -> bool {
     if !state.pull || !state.dirty || !state.inflight.is_empty() {
         return true;

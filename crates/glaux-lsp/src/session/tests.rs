@@ -264,6 +264,42 @@ fn changing_one_module_pulls_every_open_module_again() {
 }
 
 #[test]
+fn only_the_chosen_documents_are_pulled_and_a_newly_chosen_one_is_asked_at_once() {
+    block_on(async {
+        let mut rig = rig(Duration::from_secs(5));
+        rig.server.handshake(PULL()).await;
+        rig.edit(|d| {
+            d.set_targets(Some(vec!["file:///a".into()]));
+            d.open("file:///a", "luau", 1, "a").unwrap();
+            d.open("file:///b", "luau", 1, "b").unwrap();
+        });
+        for _ in 0..2 {
+            rig.server.next_method("textDocument/didOpen").await;
+        }
+        let pull = rig.server.next_method("textDocument/diagnostic").await;
+        assert_eq!(pull["params"]["textDocument"]["uri"], "file:///a");
+        rig.server.answer(&pull, json!([])).await;
+        rig.events().await;
+
+        // Nothing is written, yet the document that became wanted is pulled.
+        rig.edit(|d| d.set_targets(Some(vec!["file:///a".into(), "file:///b".into()])));
+        let mut pulled = Vec::new();
+        for _ in 0..2 {
+            let pull = rig.server.next_method("textDocument/diagnostic").await;
+            pulled.push(
+                pull["params"]["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+            rig.server.answer(&pull, json!([])).await;
+        }
+        pulled.sort();
+        assert_eq!(pulled, ["file:///a", "file:///b"]);
+    });
+}
+
+#[test]
 fn a_document_closed_while_pulling_gets_no_diagnostics() {
     block_on(async {
         let mut rig = rig(Duration::from_secs(5));

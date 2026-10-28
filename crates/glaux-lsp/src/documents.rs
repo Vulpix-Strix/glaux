@@ -10,7 +10,7 @@
 //! before its open or after its close. Only consecutive changes merge. They
 //! are always full text, so the latest one supersedes the rest.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Too many lifecycle notifications are waiting for the server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -73,6 +73,9 @@ pub struct Documents {
     open: BTreeMap<String, Document>,
     language: BTreeMap<String, String>,
     owed: VecDeque<Owed>,
+    /// The documents whose diagnostics are wanted. `None` means all of them.
+    targets: Option<BTreeSet<String>>,
+    targets_changed: bool,
     capacity: usize,
 }
 
@@ -82,6 +85,8 @@ impl Documents {
             open: BTreeMap::new(),
             language: BTreeMap::new(),
             owed: VecDeque::new(),
+            targets: None,
+            targets_changed: false,
             capacity,
         }
     }
@@ -209,10 +214,28 @@ impl Documents {
         !self.owed.is_empty()
     }
 
-    /// The open documents and their latest versions.
+    /// Limits the diagnostics asked of the server to `uris`, or lifts the
+    /// limit with `None`. The other documents stay open, so the server can
+    /// still resolve what the chosen ones require.
+    pub fn set_targets(&mut self, uris: Option<Vec<String>>) {
+        let targets = uris.map(|uris| uris.into_iter().collect::<BTreeSet<_>>());
+        if targets != self.targets {
+            self.targets = targets;
+            self.targets_changed = true;
+        }
+    }
+
+    /// Whether the targets changed since the last call.
+    pub(crate) fn take_targets_changed(&mut self) -> bool {
+        std::mem::take(&mut self.targets_changed)
+    }
+
+    /// The open documents whose diagnostics are wanted, with their latest
+    /// versions.
     pub fn versions(&self) -> Vec<(String, i64)> {
         self.open
             .iter()
+            .filter(|(uri, _)| self.targets.as_ref().is_none_or(|t| t.contains(*uri)))
             .map(|(uri, document)| (uri.clone(), document.version))
             .collect()
     }
