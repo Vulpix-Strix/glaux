@@ -874,6 +874,7 @@ dependencies = [
  "directories",
  "glaux-audio",
  "glaux-docs",
+ "glaux-fswatch",
  "glaux-host-raylib",
  "glaux-i18n",
  "glaux-input",

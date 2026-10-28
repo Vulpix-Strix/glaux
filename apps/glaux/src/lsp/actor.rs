@@ -11,15 +11,20 @@
 //! flight is cancelled, and whatever it still produces is thrown away.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use glaux_lsp::{DocumentInit, Event, LspHandle, ServerSpec, SessionKey};
-use tokio::sync::mpsc;
+use glaux_modules::ModuleName;
+use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 
+use glaux_fswatch::WatchError;
+
+use super::external::{self, Watching};
 use super::prepare::{self, PrepareError, Prepared};
 use super::translate::to_editor;
 use super::workspace::{self, Shadow, module_name};
@@ -50,6 +55,9 @@ pub(super) enum Command {
     },
     /// The cartridge was unloaded.
     Unload { generation: u64 },
+    /// The window came back to the front. Compares the cartridge with the
+    /// disk, unless a watcher already keeps it up to date.
+    Refocused { generation: u64 },
 }
 
 /// What the actor found for an open tab.
@@ -136,6 +144,9 @@ pub(super) struct Settings {
     /// the handshake, for tests of servers that fail.
     #[cfg(test)]
     pub quick_failures: Option<std::time::Duration>,
+    /// Whether to watch the cartridge, off in tests of what happens without.
+    #[cfg(test)]
+    pub watch: bool,
 }
 
 enum Source {
@@ -153,6 +164,15 @@ struct Module {
     /// The version the server last received. Only grows.
     version: i64,
     source: Source,
+    /// A hash of the text the disk had when it was last read, to tell a
+    /// change from a repeated notice.
+    disk: u64,
+}
+
+fn hash_of(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
 }
 
 struct Loaded {
@@ -166,6 +186,8 @@ struct Loaded {
     /// [`Prepared::skipped`].
     skipped: Vec<String>,
     started_at: Instant,
+    /// Absent when the cartridge could not be watched.
+    watching: Option<Watching>,
 }
 
 /// A preparation running on a blocking thread.
@@ -192,6 +214,11 @@ pub(super) struct Actor {
     loaded: Option<Loaded>,
     tabs: Tabs,
     sessions_started: u32,
+    /// Notified by the watcher when it has something to report.
+    woken: Arc<Notify>,
+    starting_watch: Option<StartingWatch>,
+    /// A watcher that was ready before the session was.
+    ready_watch: Option<Watching>,
 }
 
 /// Runs the actor until the main thread drops its end of `commands`, then
@@ -212,8 +239,12 @@ pub(super) async fn run(
         loaded: None,
         tabs: Tabs::default(),
         sessions_started: 0,
+        woken: Arc::new(Notify::new()),
+        starting_watch: None,
+        ready_watch: None,
     };
     loop {
+        let due = actor.watch_due().map(tokio::time::Instant::from_std);
         tokio::select! {
             command = commands.recv() => match command {
                 Some(command) => actor.command(command).await,
@@ -223,6 +254,13 @@ pub(super) async fn run(
                 actor.prepared(finished).await;
             }
             batch = handle.events() => actor.events(batch).await,
+            started = Actor::watch_started(&mut actor.starting_watch), if actor.starting_watch.is_some() => {
+                actor.watch_ready(started).await;
+            }
+            () = actor.woken.notified() => actor.disk_changed().await,
+            () = tokio::time::sleep_until(due.unwrap_or_else(tokio::time::Instant::now)), if due.is_some() => {
+                actor.disk_changed().await;
+            }
         }
     }
     actor.teardown().await;
@@ -233,6 +271,13 @@ type Finished = (
     u64,
     Result<Result<Prepared, PrepareError>, tokio::task::JoinError>,
 );
+
+/// A watcher being started on a blocking thread, which takes a while on
+/// some systems.
+struct StartingWatch {
+    generation: u64,
+    job: JoinHandle<Result<Watching, WatchError>>,
+}
 
 impl Actor {
     /// Waits for the preparation in `slot`, which is then empty.
@@ -277,6 +322,15 @@ impl Actor {
                 self.teardown().await;
                 self.generation = generation;
             }
+            Command::Refocused { generation } => {
+                let unwatched = self
+                    .loaded
+                    .as_ref()
+                    .is_some_and(|loaded| loaded.watching.is_none());
+                if generation == self.generation && unwatched {
+                    self.reconcile().await;
+                }
+            }
         }
     }
 
@@ -295,6 +349,7 @@ impl Actor {
             config_dir: self.settings.config_dir.clone(),
             workspace,
         };
+        let dir = input.cartridge.host_dir().to_path_buf();
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&cancel);
         let job = self
@@ -305,6 +360,7 @@ impl Actor {
             cancel,
             job,
         });
+        self.start_watching(dir);
     }
 
     async fn prepared(&mut self, (generation, result): Finished) {
@@ -385,6 +441,7 @@ impl Actor {
                     uri: module.uri,
                     version: 1,
                     source: Source::Disk,
+                    disk: hash_of(&module.text),
                 };
                 (module.name, value)
             })
@@ -407,8 +464,12 @@ impl Actor {
             callbacks,
             skipped,
             started_at: Instant::now(),
+            watching: None,
         });
         self.apply_tabs().await;
+        if let Some(watching) = self.ready_watch.take() {
+            self.install(watching).await;
+        }
     }
 
     /// Brings the modules that have tabs in line with the tabs, and the ones
@@ -452,35 +513,16 @@ impl Actor {
             .map(|(name, _)| name.clone())
             .collect();
 
+        let appeared = !added.is_empty();
         for (name, path, revision, text) in added {
-            let root = loaded.shadow.root().to_path_buf();
-            let module_name = name.clone();
-            let file = self
-                .handle
-                .spawn_blocking(move || workspace::placeholder(&root, &module_name))
-                .await;
-            let Ok(Ok(file)) = file else {
-                tracing::debug!(module = name.as_str(), "no placeholder for a module");
-                continue;
+            let source = Source::Tab {
+                revision,
+                text: text.clone(),
             };
-            let uri = glaux_lsp::uri::path_to_uri(&file);
-            if self
-                .handle
-                .open_document(&loaded.key, &uri, "luau", 1, &text)
-                .is_err()
-            {
-                continue;
-            }
-            loaded.by_uri.insert(uri.clone(), name.as_str().to_owned());
-            loaded.modules.insert(
-                name.as_str().to_owned(),
-                Module {
-                    path,
-                    uri,
-                    version: 1,
-                    source: Source::Tab { revision, text },
-                },
-            );
+            insert_module(&self.handle, loaded, &name, path, source, 0, &text).await;
+        }
+        if appeared {
+            let _ = self.handle.resend_documents(&loaded.key);
         }
         for name in closed {
             let Some(path) = loaded.modules.get(&name).map(|module| module.path.clone()) else {
@@ -498,6 +540,7 @@ impl Actor {
                     if let Some(module) = loaded.modules.get_mut(&name) {
                         module.version += 1;
                         module.source = Source::Disk;
+                        module.disk = hash_of(&text);
                         let _ = self.handle.change_document(
                             &loaded.key,
                             &module.uri,
@@ -506,19 +549,7 @@ impl Actor {
                         );
                     }
                 }
-                None => {
-                    if let Some(module) = loaded.modules.remove(&name) {
-                        let _ = self.handle.close_document(&loaded.key, &module.uri);
-                        loaded.by_uri.remove(&module.uri);
-                        if let Ok(parsed) = glaux_modules::ModuleName::parse(&name) {
-                            let root = loaded.shadow.root().to_path_buf();
-                            // Nobody waits for it: a stray placeholder is harmless.
-                            drop(self.handle.spawn_blocking(move || {
-                                workspace::remove_placeholder(&root, &parsed);
-                            }));
-                        }
-                    }
-                }
+                None => drop_module(&self.handle, loaded, &name),
             }
         }
         // Only the tabs show findings, and the server still checks what they
@@ -530,6 +561,247 @@ impl Actor {
             .map(|module| module.uri.clone())
             .collect();
         let _ = self.handle.diagnose_only(&loaded.key, Some(wanted));
+    }
+
+    /// Starts watching the cartridge on a blocking thread, since some
+    /// systems take over a second to set a watch up. Until it is ready the
+    /// cartridge is compared with the disk when the window is focused.
+    fn start_watching(&mut self, dir: PathBuf) {
+        #[cfg(test)]
+        if !self.settings.watch {
+            return;
+        }
+        let woken = Arc::clone(&self.woken);
+        let job = self
+            .handle
+            .spawn_blocking(move || Watching::start(&dir, woken));
+        self.starting_watch = Some(StartingWatch {
+            generation: self.generation,
+            job,
+        });
+    }
+
+    async fn watch_started(
+        slot: &mut Option<StartingWatch>,
+    ) -> (
+        u64,
+        Result<Result<Watching, WatchError>, tokio::task::JoinError>,
+    ) {
+        let Some(starting) = slot.as_mut() else {
+            return std::future::pending().await;
+        };
+        let result = (&mut starting.job).await;
+        let generation = starting.generation;
+        *slot = None;
+        (generation, result)
+    }
+
+    /// The watcher for `generation` is up, or could not be.
+    async fn watch_ready(
+        &mut self,
+        (generation, result): (
+            u64,
+            Result<Result<Watching, WatchError>, tokio::task::JoinError>,
+        ),
+    ) {
+        let watching = match result {
+            Ok(Ok(watching)) => watching,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "scripts changed outside Glaux will be noticed when the window is focused");
+                return;
+            }
+            Err(_) => return,
+        };
+        if generation != self.generation {
+            self.release(Some(watching));
+        } else if self.loaded.is_some() {
+            self.install(watching).await;
+        } else {
+            self.ready_watch = Some(watching);
+        }
+    }
+
+    /// Puts a watcher to work. What changed before it was up went unseen,
+    /// so the cartridge is compared with the disk once.
+    async fn install(&mut self, watching: Watching) {
+        let Some(loaded) = &mut self.loaded else {
+            return;
+        };
+        loaded.watching = Some(watching);
+        self.reconcile().await;
+    }
+
+    /// Drops a watcher away from the runtime, where stopping it may wait.
+    fn release(&self, watching: Option<Watching>) {
+        if let Some(watching) = watching {
+            drop(self.handle.spawn_blocking(move || drop(watching)));
+        }
+    }
+
+    /// When the watcher will have something to report, if it is holding
+    /// changes back to see whether more follow.
+    fn watch_due(&self) -> Option<Instant> {
+        self.loaded.as_ref()?.watching.as_ref()?.due()
+    }
+
+    /// Takes what the watcher settled on and brings the workspace in line.
+    async fn disk_changed(&mut self) {
+        let Some(loaded) = &mut self.loaded else {
+            return;
+        };
+        let Some(watching) = &mut loaded.watching else {
+            return;
+        };
+        let events = watching.poll();
+        if events.is_empty() {
+            return;
+        }
+        let plan = external::plan(watching.root(), &events, |below| {
+            let inside = format!("{below}/");
+            loaded
+                .modules
+                .values()
+                .any(|module| module.path.as_str().starts_with(&inside))
+        });
+        if plan.layout
+            && let Some(watching) = &mut loaded.watching
+        {
+            watching.follow_code();
+        }
+        if plan.reconcile {
+            self.reconcile().await;
+        } else {
+            self.reload(plan.touched, plan.gone).await;
+        }
+    }
+
+    /// Reads `touched` again and forgets `gone`.
+    async fn reload(&mut self, touched: Vec<SourcePath>, gone: Vec<SourcePath>) {
+        let Some(loaded) = &self.loaded else {
+            return;
+        };
+        let cartridge = loaded.cartridge.clone();
+        let texts = self
+            .handle
+            .spawn_blocking(move || {
+                touched
+                    .into_iter()
+                    .filter(|path| module_name(path).is_some())
+                    .map(|path| {
+                        let text = prepare::read_text(&cartridge, &path);
+                        (path, text)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_default();
+        self.apply_disk(texts, gone).await;
+    }
+
+    /// Compares every script of the cartridge with what the server has.
+    /// Used when events may have been lost, and as the only way to notice
+    /// changes when the cartridge cannot be watched.
+    async fn reconcile(&mut self) {
+        let Some(loaded) = &self.loaded else {
+            return;
+        };
+        let cartridge = loaded.cartridge.clone();
+        let listing = self
+            .handle
+            .spawn_blocking(move || {
+                let listing = cartridge.script_files().ok()?;
+                let complete = prepare::describe_gaps(&listing.gaps).is_empty();
+                let texts: Vec<_> = listing
+                    .paths
+                    .into_iter()
+                    .filter(|path| module_name(path).is_some())
+                    .map(|path| {
+                        let text = prepare::read_text(&cartridge, &path);
+                        (path, text)
+                    })
+                    .collect();
+                Some((texts, complete))
+            })
+            .await
+            .ok()
+            .flatten();
+        // An unreadable cartridge says nothing about which scripts are gone.
+        let Some((texts, complete)) = listing else {
+            return;
+        };
+        let gone = match (&self.loaded, complete) {
+            (Some(loaded), true) => {
+                let present: HashSet<&SourcePath> = texts.iter().map(|(path, _)| path).collect();
+                loaded
+                    .modules
+                    .values()
+                    .filter(|module| matches!(module.source, Source::Disk))
+                    .filter(|module| !present.contains(&module.path))
+                    .map(|module| module.path.clone())
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        self.apply_disk(texts, gone).await;
+    }
+
+    /// Applies what the disk now holds. A module with a tab is left to the
+    /// tab, whose text is the one that counts.
+    async fn apply_disk(
+        &mut self,
+        texts: Vec<(SourcePath, Option<String>)>,
+        gone: Vec<SourcePath>,
+    ) {
+        let Some(loaded) = &mut self.loaded else {
+            return;
+        };
+        let mut appeared = false;
+        for (path, text) in texts {
+            let Some(name) = module_name(&path) else {
+                continue;
+            };
+            let key = name.as_str().to_owned();
+            match (loaded.modules.get_mut(&key), text) {
+                (Some(module), _) if matches!(module.source, Source::Tab { .. }) => {}
+                (Some(module), Some(text)) => {
+                    let hash = hash_of(&text);
+                    if hash != module.disk {
+                        module.disk = hash;
+                        module.version += 1;
+                        let _ = self.handle.change_document(
+                            &loaded.key,
+                            &module.uri,
+                            module.version,
+                            &text,
+                        );
+                    }
+                }
+                (Some(_), None) => drop_module(&self.handle, loaded, &key),
+                (None, Some(text)) => {
+                    let disk = hash_of(&text);
+                    insert_module(&self.handle, loaded, &name, path, Source::Disk, disk, &text)
+                        .await;
+                    appeared = true;
+                }
+                (None, None) => {}
+            }
+        }
+        for path in gone {
+            let Some(name) = module_name(&path) else {
+                continue;
+            };
+            let key = name.as_str().to_owned();
+            if loaded
+                .modules
+                .get(&key)
+                .is_some_and(|module| matches!(module.source, Source::Disk))
+            {
+                drop_module(&self.handle, loaded, &key);
+            }
+        }
+        if appeared {
+            let _ = self.handle.resend_documents(&loaded.key);
+        }
     }
 
     async fn events(&mut self, batch: Vec<Event>) {
@@ -610,6 +882,7 @@ impl Actor {
             .status(self.generation, AnalyzerStatus::Disabled(reason));
         if let Some(loaded) = self.loaded.take() {
             self.handle.close_session(&loaded.key);
+            self.release(loaded.watching);
             self.discard(loaded.shadow);
         }
         self.inbox.session(None);
@@ -631,11 +904,72 @@ impl Actor {
                 self.discard(prepared.shadow);
             }
         }
+        // A watcher still starting is released when it is up.
+        self.starting_watch = None;
+        let ready = self.ready_watch.take();
+        self.release(ready);
         if let Some(loaded) = self.loaded.take() {
             self.handle.close_session(&loaded.key);
+            self.release(loaded.watching);
             self.discard(loaded.shadow);
         }
         self.inbox.session(None);
+    }
+}
+
+/// Opens a module the workspace did not have: a placeholder on disk, then
+/// the document itself.
+async fn insert_module(
+    handle: &LspHandle,
+    loaded: &mut Loaded,
+    name: &ModuleName,
+    path: SourcePath,
+    source: Source,
+    disk: u64,
+    text: &str,
+) {
+    let root = loaded.shadow.root().to_path_buf();
+    let module_name = name.clone();
+    let file = handle
+        .spawn_blocking(move || workspace::placeholder(&root, &module_name))
+        .await;
+    let Ok(Ok(file)) = file else {
+        tracing::debug!(module = name.as_str(), "no placeholder for a module");
+        return;
+    };
+    let uri = glaux_lsp::uri::path_to_uri(&file);
+    if handle
+        .open_document(&loaded.key, &uri, "luau", 1, text)
+        .is_err()
+    {
+        return;
+    }
+    loaded.by_uri.insert(uri.clone(), name.as_str().to_owned());
+    loaded.modules.insert(
+        name.as_str().to_owned(),
+        Module {
+            path,
+            uri,
+            version: 1,
+            source,
+            disk,
+        },
+    );
+}
+
+/// Closes a module and removes its placeholder.
+fn drop_module(handle: &LspHandle, loaded: &mut Loaded, name: &str) {
+    let Some(module) = loaded.modules.remove(name) else {
+        return;
+    };
+    let _ = handle.close_document(&loaded.key, &module.uri);
+    loaded.by_uri.remove(&module.uri);
+    if let Ok(parsed) = glaux_modules::ModuleName::parse(name) {
+        let root = loaded.shadow.root().to_path_buf();
+        // Nobody waits for it: a stray placeholder is harmless.
+        drop(handle.spawn_blocking(move || {
+            workspace::remove_placeholder(&root, &parsed);
+        }));
     }
 }
 

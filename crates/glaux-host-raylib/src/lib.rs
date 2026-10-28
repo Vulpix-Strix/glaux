@@ -240,6 +240,11 @@ impl RaylibHost {
         self.rl.maximize_window();
     }
 
+    /// Whether the window has input focus.
+    pub fn is_focused(&self) -> bool {
+        self.rl.is_window_focused()
+    }
+
     /// Restores the window if it is minimized and asks the platform to give
     /// it input focus. The platform may refuse.
     pub fn focus(&mut self) {

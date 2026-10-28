@@ -143,7 +143,7 @@ pub(super) fn prepare(input: Input, cancel: &AtomicBool) -> Result<Prepared, Pre
 
 /// What a listing left out, one line each. A directory reached again through
 /// a symlink was searched under its other name, so nothing is lost there.
-fn describe_gaps(gaps: &[WalkGap]) -> Vec<String> {
+pub(super) fn describe_gaps(gaps: &[WalkGap]) -> Vec<String> {
     gaps.iter()
         .filter_map(|gap| match gap {
             WalkGap::FileLimit(limit) => Some(format!("more than {limit} script files")),

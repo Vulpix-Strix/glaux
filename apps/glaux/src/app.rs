@@ -129,6 +129,8 @@ struct App<'a> {
     picker: FilePicker,
     /// Diagnostics from an external analyzer, if one is available.
     analysis: Analysis,
+    /// Whether the window had focus on the previous frame.
+    was_focused: bool,
     instance: &'a PrimaryInstance,
     session: SessionKind,
     config_dir: Option<&'a Path>,
@@ -168,6 +170,7 @@ impl<'a> App<'a> {
                 app_dirs::cache_dir(),
                 shared.config_dir.map(Path::to_path_buf),
             ),
+            was_focused: true,
             instance: shared.instance,
             session: shared.session,
             config_dir: shared.config_dir,
@@ -214,6 +217,11 @@ impl<'a> App<'a> {
         if let Some(picked) = self.picker.poll() {
             system.file_picked(picked);
         }
+        let focused = self.host.is_focused();
+        if focused && !self.was_focused {
+            self.analysis.window_focused();
+        }
+        self.was_focused = focused;
         self.analysis.sync(&mut system);
         self.analysis.poll(&mut system);
         Ok(Some(system))

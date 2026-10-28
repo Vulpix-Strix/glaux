@@ -50,6 +50,8 @@ pub(crate) struct Analysis {
     told_limited: bool,
     #[cfg(test)]
     quick_failures: Option<std::time::Duration>,
+    #[cfg(test)]
+    watch: bool,
 }
 
 struct Started {
@@ -113,12 +115,21 @@ impl Analysis {
             told_limited: false,
             #[cfg(test)]
             quick_failures: None,
+            #[cfg(test)]
+            watch: true,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_quick_failures(mut self, handshake: std::time::Duration) -> Self {
         self.quick_failures = Some(handshake);
+        self
+    }
+
+    /// Leaves the cartridge unwatched, as when the system refuses to.
+    #[cfg(test)]
+    pub(crate) fn without_watcher(mut self) -> Self {
+        self.watch = false;
         self
     }
 
@@ -163,6 +174,20 @@ impl Analysis {
                 }
             }
             _ => self.load(&input),
+        }
+    }
+
+    /// The window came back to the front. A cartridge that could not be
+    /// watched is compared with the disk, since nothing else says that its
+    /// scripts changed.
+    pub(crate) fn window_focused(&mut self) {
+        let Some(loaded) = &self.loaded else {
+            return;
+        };
+        if !loaded.halted {
+            self.send(Command::Refocused {
+                generation: self.generation,
+            });
         }
     }
 
@@ -358,6 +383,8 @@ impl Analysis {
             config_dir: self.config_dir.clone(),
             #[cfg(test)]
             quick_failures: self.quick_failures,
+            #[cfg(test)]
+            watch: self.watch,
         };
         handle.spawn(actor::run(
             receiver,

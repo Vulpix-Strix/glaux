@@ -409,6 +409,8 @@ fn changing_cartridge_closes_the_session_and_leaves_no_workspace_behind() {
 /// Servers that misbehave, played by `crates/glaux-lsp/tests/fake_server.py`
 /// behind a one-line shell script named like luau-lsp.
 #[cfg(unix)]
+mod external;
+
 mod failing_servers {
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
