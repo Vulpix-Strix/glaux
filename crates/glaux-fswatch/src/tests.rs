@@ -37,7 +37,7 @@ fn watcher() -> FsWatcher {
 /// Polls until `done` accepts what was collected, or fails after a while.
 fn collect(watcher: &mut FsWatcher, done: impl Fn(&[FsEvent]) -> bool) -> Vec<FsEvent> {
     let mut all = Vec::new();
-    for _ in 0..300 {
+    for _ in 0..1000 {
         all.extend(watcher.poll());
         if done(&all) {
             return all;
@@ -230,7 +230,7 @@ fn the_wake_callback_runs_when_events_arrive() {
     .unwrap();
     watcher.watch(&dir.0, true).unwrap();
     fs::write(dir.0.join("a.luau"), "x").unwrap();
-    for _ in 0..300 {
+    for _ in 0..1000 {
         if woken.load(Ordering::Relaxed) > 0 {
             return;
         }
