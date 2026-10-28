@@ -20,6 +20,7 @@ open = { version = "5.4", features = ["shellexecute-on-windows"] }
 muda = { version = "0.21", default-features = false }
 
 tracing = "0.1"
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 
 # Every macro is a no-op until the `hotpath` feature of a crate turns it on.
 hotpath = "0.30"
@@ -111,6 +112,7 @@ glaux-i18n = { path = "crates/glaux-i18n" }
 glaux-docs = { path = "crates/glaux-docs" }
 glaux-sense = { path = "crates/glaux-sense" }
 glaux-lsp = { path = "crates/glaux-lsp" }
+glaux-fswatch = { path = "crates/glaux-fswatch" }
 
 [profile.dev]
 opt-level = 0
