@@ -107,6 +107,7 @@ pub enum Doc {
 ///
 /// `syntax` must have parsed `request.text`. If it has not, or it is for the other
 /// language, the answer is empty rather than based on offsets that could be wrong.
+#[hotpath::measure(label = "sense::complete")]
 pub fn complete(request: &Request<'_>, api: &ApiCatalog, syntax: &Highlighter) -> Completions {
     let nothing = Completions {
         revision: request.revision,

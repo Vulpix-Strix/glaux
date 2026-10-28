@@ -26,6 +26,7 @@ pub enum Resolution {
 ///
 /// A name is only followed through an import alias that is still the declaration in
 /// effect, so a local that shadows the alias leads nowhere.
+#[hotpath::measure(label = "sense::definition")]
 pub fn definition(
     language: ScriptLanguage,
     text: &str,

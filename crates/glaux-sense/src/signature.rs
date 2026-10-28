@@ -85,6 +85,7 @@ impl Signature {
 /// language, the answer is empty rather than based on offsets that could be wrong.
 /// There is no answer either when the callee is unknown, is a Luau method or is not a
 /// function, or when the caret is in a comment.
+#[hotpath::measure(label = "sense::signature_help")]
 pub fn signature_help(
     request: &SignatureRequest<'_>,
     api: &ApiCatalog,

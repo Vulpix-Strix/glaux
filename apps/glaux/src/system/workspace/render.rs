@@ -48,6 +48,7 @@ impl Workspace {
         clippy::too_many_arguments,
         reason = "each argument is a separate source the frame is drawn from"
     )]
+    #[hotpath::measure(label = "workspace::render", impl_type = "Workspace")]
     pub fn render(
         &self,
         framebuffer: &mut Framebuffer,

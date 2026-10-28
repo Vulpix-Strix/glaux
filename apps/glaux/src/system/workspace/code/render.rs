@@ -50,6 +50,7 @@ impl CodeEditor {
     /// Draws the view for `session` below the workspace's tab bar, with
     /// what `pointer` is over highlighted. `notice`, when given, takes the
     /// status bar in its color.
+    #[hotpath::measure(label = "code_editor::render", impl_type = "CodeEditor")]
     pub fn render(
         &self,
         framebuffer: &mut Framebuffer,

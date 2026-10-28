@@ -63,6 +63,7 @@ impl Highlighter {
     }
 
     /// Brings the parse tree in line with `text`, reusing the previous tree.
+    #[hotpath::measure(label = "syntax::highlighter_update")]
     pub fn update(&mut self, text: &str) {
         if self.tree.is_some() && self.source == text {
             return;
@@ -90,6 +91,7 @@ impl Highlighter {
     /// Highlight spans inside `window`, sorted by position and never overlapping.
     ///
     /// Only the nodes that touch `window` are visited. Text without a span is plain.
+    #[hotpath::measure(label = "syntax::highlighter_spans")]
     pub fn spans(&self, window: Range<usize>) -> Vec<Span> {
         let Some(tree) = &self.tree else {
             return Vec::new();

@@ -44,6 +44,7 @@ impl DocumentSyntax {
 
     /// Updates the spans for `window`, a byte range of `document`'s text,
     /// reparsing first if the text changed since the last call.
+    #[hotpath::measure(label = "editing::syntax_refresh", impl_type = "DocumentSyntax")]
     pub fn refresh(&mut self, document: &CodeDocument, window: Range<usize>) {
         if document.language() != self.language {
             *self = Self::new(document.language());

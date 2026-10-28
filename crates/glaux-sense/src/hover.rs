@@ -38,6 +38,7 @@ pub struct Hover<'a> {
 /// Any offset in or next to a word works, not only a caret. `syntax` must have parsed
 /// `text`. Returns `None` where there is no word to ask about, as in a comment, a
 /// string or a number.
+#[hotpath::measure(label = "sense::hover")]
 pub fn hover<'a>(
     api: &'a ApiCatalog,
     language: ScriptLanguage,
