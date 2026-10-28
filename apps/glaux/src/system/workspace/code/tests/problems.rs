@@ -101,3 +101,15 @@ fn the_message_under_the_caret_is_the_most_serious_one() {
         Some("major")
     );
 }
+
+#[test]
+fn the_settings_window_still_fits_the_view_with_its_diagnostics_row() {
+    let editor = editor();
+    let layout = settings_layout(editor.layout());
+    let area = overlay_area(editor.layout());
+    assert!(
+        layout.window.y >= area.y && layout.window.bottom() <= area.bottom(),
+        "{:?} in {area:?}",
+        layout.window
+    );
+}
