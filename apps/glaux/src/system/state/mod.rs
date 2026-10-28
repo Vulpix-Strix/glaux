@@ -46,7 +46,7 @@ impl Context<'_> {
 }
 
 /// The cartridge `state` holds, if any.
-fn cartridge_of(state: &SystemState) -> Option<&LoadedCartridge> {
+pub(super) fn cartridge_of(state: &SystemState) -> Option<&LoadedCartridge> {
     match state {
         SystemState::Boot { .. } => None,
         SystemState::Shell { loaded, .. }

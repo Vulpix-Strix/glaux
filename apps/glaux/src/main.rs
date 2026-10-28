@@ -9,6 +9,7 @@ mod desktop;
 mod editor_settings_file;
 mod licenses;
 mod logging;
+mod lsp;
 mod platform;
 mod rom;
 #[cfg(test)]

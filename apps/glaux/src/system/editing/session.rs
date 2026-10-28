@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use super::cursor::Caret;
+use super::diagnostics::{DiagnosticStore, EditorDiagnostic, Summary};
 use super::document::{
     CodeDocument, CodeDocumentError, CodeDocuments, CodeRenameError, CodeSaveError, CodeSaved,
     DiskState, DocumentId, EditError, Replaced,
@@ -49,6 +50,8 @@ pub struct CodeSession {
     closed_breakpoints: Vec<(SourcePath, Vec<usize>)>,
     /// Whether the text is being shown to a debugger and so cannot change.
     read_only: bool,
+    /// What the analyzer last said about each open document.
+    diagnostics: DiagnosticStore,
 }
 
 impl CodeSession {
@@ -87,7 +90,49 @@ impl CodeSession {
         }
         self.histories.remove(&id);
         self.syntax.remove(&id);
+        self.diagnostics.forget(id);
         closed
+    }
+
+    /// The open documents with the text they hold now, edited or not.
+    pub fn open_documents(&self) -> impl Iterator<Item = &CodeDocument> {
+        self.documents.iter()
+    }
+
+    /// Stores what the analyzer found in revision `made_for` of the open
+    /// script at `path`. Ignored if the script is not open or has been
+    /// edited since, which is how late answers are dropped. Returns whether
+    /// anything was kept.
+    pub fn set_diagnostics(
+        &mut self,
+        path: &SourcePath,
+        made_for: u64,
+        items: Vec<EditorDiagnostic>,
+    ) -> bool {
+        let Some(document) = self.documents.iter().find(|d| d.path() == path) else {
+            return false;
+        };
+        let (id, now) = (document.id(), document.revision());
+        self.diagnostics.set(id, now, made_for, items)
+    }
+
+    /// The findings that describe `id`'s current text, in text order.
+    pub fn diagnostics(&self, id: DocumentId) -> &[EditorDiagnostic] {
+        match self.documents.get(id) {
+            Some(document) => self.diagnostics.current(id, document.revision()),
+            None => &[],
+        }
+    }
+
+    /// The error and warning counts of `id`, stale after an edit.
+    pub fn diagnostic_summary(&self, id: DocumentId) -> Option<Summary> {
+        self.diagnostics
+            .summary(id, self.documents.get(id)?.revision())
+    }
+
+    /// Forgets every finding, for when the analyzer is gone.
+    pub fn clear_diagnostics(&mut self) {
+        self.diagnostics.clear();
     }
 
     pub fn document(&self, id: DocumentId) -> Option<&CodeDocument> {

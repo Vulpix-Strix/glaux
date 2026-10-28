@@ -32,6 +32,7 @@ glaux-rhai.workspace = true
 glaux-syntax.workspace = true
 glaux-docs.workspace = true
 glaux-sense.workspace = true
+glaux-lsp.workspace = true
 rfd.workspace = true
 open.workspace = true
 

@@ -73,6 +73,9 @@ pub struct EditorSettings {
     /// Write every modified document to the cartridge before it runs from
     /// the Code view. When off, a run uses what the cartridge's files hold.
     pub save_before_running: bool,
+    /// Show the findings of the external analyzer when one is available.
+    /// Turning it off stops the analyzer without affecting anything else.
+    pub diagnostics: bool,
 }
 
 impl Default for EditorSettings {
@@ -85,6 +88,7 @@ impl Default for EditorSettings {
             indent: IndentStyle::Detect,
             indent_size: 4,
             save_before_running: true,
+            diagnostics: true,
         }
     }
 }

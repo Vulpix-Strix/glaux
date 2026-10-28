@@ -143,6 +143,11 @@ impl CodeDocuments {
         Ok(id)
     }
 
+    /// The open documents, oldest first.
+    pub fn iter(&self) -> impl Iterator<Item = &CodeDocument> {
+        self.documents.iter()
+    }
+
     pub fn get(&self, id: DocumentId) -> Option<&CodeDocument> {
         self.documents.iter().find(|doc| doc.id == id)
     }

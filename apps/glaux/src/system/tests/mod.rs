@@ -19,6 +19,7 @@ use semver::Version;
 use shell::CartridgeSlot;
 use workspace::Tab;
 
+mod analysis;
 mod boot_sequence;
 mod cartridge_audio;
 mod code_editing;

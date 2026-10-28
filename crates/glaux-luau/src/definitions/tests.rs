@@ -33,6 +33,14 @@ fn the_committed_file_is_what_the_catalog_generates() {
 }
 
 #[test]
+fn the_embedded_definitions_are_what_the_catalog_generates() {
+    assert!(
+        crate::DEFINITIONS == generated(),
+        "run `mise run luau-defs`"
+    );
+}
+
+#[test]
 fn callbacks_and_other_language_names_are_not_declared() {
     let text = generated();
     for absent in ["boot", "tick", "draw", "import", "text"] {

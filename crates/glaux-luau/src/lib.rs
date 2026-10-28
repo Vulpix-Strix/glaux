@@ -82,6 +82,11 @@
 /// Where the generated definitions are kept, relative to this crate.
 pub const DEFINITIONS_PATH: &str = "definitions/glaux.d.luau";
 
+/// The committed definitions, for hosts that hand them to a type checker
+/// without the repository at hand. A test keeps them equal to what
+/// [`definitions`] generates.
+pub const DEFINITIONS: &str = include_str!("../definitions/glaux.d.luau");
+
 mod api;
 mod args;
 mod debug;

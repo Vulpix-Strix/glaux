@@ -18,6 +18,7 @@ fn missing_fields_take_their_defaults_and_unknown_ones_are_ignored() {
 fn files_from_before_the_run_setting_save_before_running() {
     let settings: EditorSettings = serde_json::from_str(r#"{ "word_wrap": true }"#).unwrap();
     assert!(settings.save_before_running);
+    assert!(settings.diagnostics);
 }
 
 #[test]
@@ -30,6 +31,7 @@ fn settings_survive_a_round_trip() {
         indent: IndentStyle::Tabs,
         indent_size: 2,
         save_before_running: false,
+        diagnostics: false,
     };
     let text = serde_json::to_string(&settings).unwrap();
     assert_eq!(

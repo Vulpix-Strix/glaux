@@ -38,6 +38,7 @@ mod workspace;
 use boot::Boot;
 pub use clipboard::Clipboard;
 use credits::CreditsView;
+pub(crate) use editing::diagnostics::{EditorDiagnostic, Severity};
 use editing::session::CodeSession;
 #[cfg(test)]
 pub use editor_settings::IndentStyle;
@@ -77,6 +78,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use crate::cartridge::LoadedCartridge;
+use crate::cartridge::source::SourcePath;
 use crate::cartridge_fs::CartridgeStorage;
 use crate::logging::Diagnostics;
 use crate::sprite_import::SheetSource;
@@ -230,6 +232,19 @@ enum AudioSource {
     Shell,
     /// The running cartridge's audio.
     Cartridge,
+}
+
+/// What an analyzer needs to know about the loaded cartridge.
+pub(crate) struct AnalysisInput<'a> {
+    pub cartridge: &'a LoadedCartridge,
+    /// The open scripts, as edited and not necessarily saved.
+    pub scripts: Vec<OpenScript<'a>>,
+}
+
+pub(crate) struct OpenScript<'a> {
+    pub path: &'a SourcePath,
+    pub revision: u64,
+    pub text: &'a str,
 }
 
 /// The system UI state machine.
@@ -550,6 +565,49 @@ impl System {
     #[cfg(test)]
     pub fn update(self, input: &[InputEvent]) -> Self {
         self.update_with(input, &mut clipboard::MemoryClipboard::default())
+    }
+
+    /// Whether the user wants the external analyzer's findings.
+    pub(crate) fn analysis_enabled(&self) -> bool {
+        self.workspace.editor_settings().diagnostics
+    }
+
+    /// The loaded cartridge and the scripts open on it, for an analyzer that
+    /// runs outside the system. `None` while no cartridge is loaded.
+    pub(crate) fn analysis_input(&self) -> Option<AnalysisInput<'_>> {
+        let cartridge = state::cartridge_of(&self.state)?;
+        let scripts = self
+            .code
+            .iter()
+            .flat_map(CodeSession::open_documents)
+            .map(|document| OpenScript {
+                path: document.path(),
+                revision: document.revision(),
+                text: document.text(),
+            })
+            .collect();
+        Some(AnalysisInput { cartridge, scripts })
+    }
+
+    /// Hands the system what the analyzer found in revision `made_for` of
+    /// the open script at `path`. A script that was edited or closed since
+    /// ignores it.
+    pub(crate) fn analysis_arrived(
+        &mut self,
+        path: &SourcePath,
+        made_for: u64,
+        items: Vec<EditorDiagnostic>,
+    ) {
+        if let Some(code) = &mut self.code {
+            code.set_diagnostics(path, made_for, items);
+        }
+    }
+
+    /// Forgets every finding, for when the analyzer stops.
+    pub(crate) fn analysis_lost(&mut self) {
+        if let Some(code) = &mut self.code {
+            code.clear_diagnostics();
+        }
     }
 
     /// Takes the oldest work the system asked of the host and the host has

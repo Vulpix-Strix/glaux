@@ -20,6 +20,12 @@ pub(crate) fn config_dir() -> Option<PathBuf> {
     project_dirs().map(|dirs| dirs.config_dir().to_path_buf())
 }
 
+/// Glaux's platform cache directory, if the platform provides one. Anything
+/// kept there can be rebuilt.
+pub(crate) fn cache_dir() -> Option<PathBuf> {
+    project_dirs().map(|dirs| dirs.cache_dir().to_path_buf())
+}
+
 /// The user's runtime directory (`$XDG_RUNTIME_DIR`), if set. Only Linux
 /// provides one.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]

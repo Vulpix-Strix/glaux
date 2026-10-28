@@ -6,6 +6,7 @@
 //! movement depends on how a document wraps into character cells.
 
 pub(super) mod cursor;
+pub(super) mod diagnostics;
 pub(super) mod document;
 pub(super) mod edit;
 pub(super) mod history;

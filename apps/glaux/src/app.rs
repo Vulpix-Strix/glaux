@@ -26,9 +26,10 @@ use crate::clock::TickClock;
 use crate::desktop::file_picker::FilePicker;
 use crate::desktop::single_instance::PrimaryInstance;
 use crate::logging::Diagnostics;
+use crate::lsp::Analysis;
 use crate::platform::SessionKind;
 use crate::system::{CartridgeVideoDefaults, System, SystemInfo};
-use crate::{editor_settings_file, rom};
+use crate::{app_dirs, editor_settings_file, rom};
 use audio::AudioSink;
 use host_work::{HostClipboard, serve_host_requests};
 use menu::Menu;
@@ -126,6 +127,8 @@ struct App<'a> {
     /// framebuffer with data from the ROM without borrowing both at once.
     rom: SystemRom,
     picker: FilePicker,
+    /// Diagnostics from an external analyzer, if one is available.
+    analysis: Analysis,
     instance: &'a PrimaryInstance,
     session: SessionKind,
     config_dir: Option<&'a Path>,
@@ -161,6 +164,7 @@ impl<'a> App<'a> {
             machine,
             rom,
             picker: FilePicker::new(),
+            analysis: Analysis::new(app_dirs::cache_dir()),
             instance: shared.instance,
             session: shared.session,
             config_dir: shared.config_dir,
@@ -207,6 +211,8 @@ impl<'a> App<'a> {
         if let Some(picked) = self.picker.poll() {
             system.file_picked(picked);
         }
+        self.analysis.sync(&mut system);
+        self.analysis.poll(&mut system);
         Ok(Some(system))
     }
 

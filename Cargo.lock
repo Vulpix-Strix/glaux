@@ -877,6 +877,7 @@ dependencies = [
  "glaux-host-raylib",
  "glaux-i18n",
  "glaux-input",
+ "glaux-lsp",
  "glaux-luau",
  "glaux-machine",
  "glaux-modules",
