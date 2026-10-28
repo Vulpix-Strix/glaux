@@ -20,6 +20,7 @@ use shell::CartridgeSlot;
 use workspace::Tab;
 
 mod analysis;
+mod analysis_bench;
 mod boot_sequence;
 mod cartridge_audio;
 mod code_editing;
