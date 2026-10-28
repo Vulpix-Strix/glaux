@@ -77,7 +77,7 @@ fn entry_view(
     let function = entry.kind() == Kind::Function;
     let params = if function {
         entry
-            .params()
+            .params_for(language)
             .iter()
             .map(|param| ParamRow {
                 name: if param.optional {

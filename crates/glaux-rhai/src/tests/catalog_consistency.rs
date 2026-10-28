@@ -70,7 +70,8 @@ fn every_documented_function_is_registered_with_exactly_the_documented_arities()
             continue;
         }
         let name = LANGUAGE.qualified_name(entry.binding(LANGUAGE).unwrap());
-        let expected: BTreeSet<usize> = (entry.required_params()..=entry.params().len()).collect();
+        let expected: BTreeSet<usize> =
+            (entry.required_params(LANGUAGE)..=entry.params_for(LANGUAGE).len()).collect();
         assert_eq!(
             registered.get(&name),
             Some(&expected),

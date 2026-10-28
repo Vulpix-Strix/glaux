@@ -276,11 +276,10 @@ fn every_function_in_the_catalog_has_help_with_its_own_parameters() {
             let found = help(language, &format!("{name}(¦")).expect("every function has help");
             let signature = found.signature();
             assert_eq!(signature.name, name);
-            assert_eq!(signature.params.len(), entry.params().len(), "{name}");
-            assert_eq!(
-                found.active_param,
-                (!entry.params().is_empty()).then_some(0)
-            );
+            let count =
+                entry.params_for(language).len() + usize::from(entry.varargs(language).is_some());
+            assert_eq!(signature.params.len(), count, "{name}");
+            assert_eq!(found.active_param, (count > 0).then_some(0));
         }
     }
 }
@@ -311,4 +310,18 @@ proptest! {
             }
         }
     }
+}
+
+#[test]
+fn luau_log_takes_any_number_of_values_and_rhai_exactly_one() {
+    let luau = help(ScriptLanguage::Luau, "log.info(1, 2, ¦").unwrap();
+    let params = &luau.signature().params;
+    assert_eq!(params.len(), 1);
+    assert!(params[0].variadic && params[0].name == "...");
+    assert_eq!(luau.active_param, Some(0));
+
+    let rhai = help(ScriptLanguage::Rhai, "log::info(¦").unwrap();
+    let params = &rhai.signature().params;
+    assert_eq!(params.len(), 1);
+    assert!(!params[0].variadic && params[0].name == "value");
 }

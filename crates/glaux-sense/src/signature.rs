@@ -149,7 +149,7 @@ fn api_signature(entry: &ApiEntry, language: ScriptLanguage) -> Option<Signature
     Some(Signature {
         name: language.qualified_name(binding),
         params: entry
-            .params()
+            .params_for(language)
             .iter()
             .map(|param| ParamInfo {
                 name: param.name.clone(),
@@ -157,6 +157,12 @@ fn api_signature(entry: &ApiEntry, language: ScriptLanguage) -> Option<Signature
                 optional: param.optional,
                 variadic: false,
             })
+            .chain(entry.varargs(language).map(|ty| ParamInfo {
+                name: VARARGS.to_owned(),
+                ty: Some(ty),
+                optional: false,
+                variadic: true,
+            }))
             .collect(),
         returns: entry.returns(language),
         doc: Doc::Api(entry.id().clone()),

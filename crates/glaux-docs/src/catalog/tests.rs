@@ -99,6 +99,8 @@ fn qualified_names_use_the_languages_separator() {
         path: vec!["audio".into()],
         name: "tone".into(),
         returns: None,
+        params: None,
+        varargs: None,
     };
     assert_eq!(ScriptLanguage::Luau.qualified_name(&binding), "audio.tone");
     assert_eq!(ScriptLanguage::Rhai.qualified_name(&binding), "audio::tone");
@@ -128,7 +130,7 @@ fn required_params_and_return_overrides() {
     let (catalog, diagnostics) = merge(&[("api/time.ron", source)]);
     assert_eq!(diagnostics, []);
     let entry = &catalog.entries()[0];
-    assert_eq!(entry.required_params(), 1);
+    assert_eq!(entry.required_params(ScriptLanguage::Luau), 1);
     assert_eq!(entry.returns(ScriptLanguage::Luau), Some(ValueType::Number));
     assert_eq!(entry.returns(ScriptLanguage::Rhai), Some(ValueType::Int));
 }
@@ -191,10 +193,47 @@ fn rejects_invalid_definitions() {
         r#"(id: "api/a/x", kind: Namespace, luau: (name: "x"), params: [(name: "p", ty: Int)])"#,
         r#"(id: "api/a/x", kind: ConstantGroup, luau: (name: "X"))"#,
         r#"(id: "api/a/x", kind: Function, luau: (name: "x"), source: "glaux_input::Key")"#,
+        r#"(id: "api/a/x", kind: Function, luau: (name: "x", params: [(name: "p", ty: Int), (name: "p", ty: Int)]))"#,
+        r#"(id: "api/a/x", kind: Function, luau: (name: "x", params: [(name: "p", ty: Int, optional: true), (name: "q", ty: Int)]))"#,
+        r#"(id: "api/a/x", kind: Namespace, luau: (name: "x", varargs: Any))"#,
+        r#"(id: "api/a/x", kind: Namespace, luau: (name: "x", params: []))"#,
     ];
     for case in cases {
         assert_eq!(single("a", case), ["catalog-definition"], "{case}");
     }
+}
+
+#[test]
+fn a_binding_overrides_params_and_adds_varargs_for_its_language_only() {
+    let source = r#"#![enable(implicit_some)]
+[(
+    id: "api/logging/info",
+    kind: Function,
+    luau: (path: ["log"], name: "info", params: [], varargs: Any),
+    rhai: (path: ["log"], name: "info"),
+    params: [(name: "value", ty: Any)],
+)]"#;
+    let (catalog, diagnostics) = merge(&[("api/logging.ron", source)]);
+    assert_eq!(diagnostics, []);
+    let entry = &catalog.entries()[0];
+    assert_eq!(entry.params_for(ScriptLanguage::Luau), []);
+    assert_eq!(entry.required_params(ScriptLanguage::Luau), 0);
+    assert_eq!(entry.varargs(ScriptLanguage::Luau), Some(ValueType::Any));
+    assert_eq!(entry.params_for(ScriptLanguage::Rhai).len(), 1);
+    assert_eq!(entry.required_params(ScriptLanguage::Rhai), 1);
+    assert_eq!(entry.varargs(ScriptLanguage::Rhai), None);
+}
+
+#[test]
+fn varargs_follow_fixed_parameters_without_making_them_optional() {
+    let source = r#"#![enable(implicit_some)]
+[(id: "api/a/x", kind: Function, luau: (name: "x", varargs: Any), params: [(name: "p", ty: Int)])]"#;
+    let (catalog, diagnostics) = merge(&[("api/a.ron", source)]);
+    assert_eq!(diagnostics, []);
+    let entry = &catalog.entries()[0];
+    assert_eq!(entry.params_for(ScriptLanguage::Luau).len(), 1);
+    assert_eq!(entry.required_params(ScriptLanguage::Luau), 1);
+    assert_eq!(entry.varargs(ScriptLanguage::Luau), Some(ValueType::Any));
 }
 
 #[test]

@@ -99,14 +99,18 @@ fn api_panel(candidate: &Candidate, id: &DocId, source: &PanelSource<'_>) -> Opt
     let member = (candidate.kind == CandidateKind::Constant && candidate.label != name)
         .then_some(candidate.label.as_str());
     panel.signature = entry_signature(entry, language, member);
-    if entry.kind() == Kind::Function && !entry.params().is_empty() {
+    let varargs = entry.varargs(language);
+    if entry.kind() == Kind::Function
+        && (!entry.params_for(language).is_empty() || varargs.is_some())
+    {
         let typed: Vec<String> = entry
-            .params()
+            .params_for(language)
             .iter()
             .map(|param| {
                 let mark = if param.optional { "?" } else { "" };
                 format!("{}{mark}: {}", param.name, type_name(param.ty))
             })
+            .chain(varargs.map(|ty| format!("...: {}", type_name(ty))))
             .collect();
         panel.params = Some(typed.join("  "));
     }
@@ -128,7 +132,7 @@ pub(in crate::system::workspace::code) fn entry_signature(
     match entry.kind() {
         Kind::Function => {
             let names: Vec<String> = entry
-                .params()
+                .params_for(language)
                 .iter()
                 .map(|param| {
                     if param.optional {
@@ -137,6 +141,7 @@ pub(in crate::system::workspace::code) fn entry_signature(
                         param.name.clone()
                     }
                 })
+                .chain(entry.varargs(language).map(|_| "...".to_owned()))
                 .collect();
             let mut signature = vec![
                 (name, SyntaxKind::Function),

@@ -126,6 +126,15 @@ pub struct Binding {
     /// The result type in this language, when it differs from the entry's.
     #[serde(default)]
     pub returns: Option<ValueType>,
+    /// The parameters in this language, when they differ from the entry's.
+    /// Needed when one language takes a value the other does not, such as
+    /// Luau's `log.info(...)` against Rhai's `log::info(value)`.
+    #[serde(default)]
+    pub params: Option<Vec<Param>>,
+    /// The type of the extra arguments this language accepts after its
+    /// parameters, zero or more. Never makes an argument required.
+    #[serde(default)]
+    pub varargs: Option<ValueType>,
 }
 
 /// A parameter of a function.
@@ -175,13 +184,32 @@ impl ApiEntry {
         }
     }
 
+    /// The parameters shared by the languages, unless a binding overrides
+    /// them. See [`ApiEntry::params_for`].
     pub fn params(&self) -> &[Param] {
         &self.params
     }
 
-    /// How many parameters a call must give.
-    pub fn required_params(&self) -> usize {
-        self.params.iter().filter(|param| !param.optional).count()
+    /// The parameters of `language`: those of its binding when it has its
+    /// own, the entry's otherwise. Varargs are not included.
+    pub fn params_for(&self, language: ScriptLanguage) -> &[Param] {
+        self.binding(language)
+            .and_then(|binding| binding.params.as_deref())
+            .unwrap_or(&self.params)
+    }
+
+    /// The type of the extra arguments `language` accepts after its
+    /// parameters, if it accepts any.
+    pub fn varargs(&self, language: ScriptLanguage) -> Option<ValueType> {
+        self.binding(language).and_then(|binding| binding.varargs)
+    }
+
+    /// How many parameters a call in `language` must give.
+    pub fn required_params(&self, language: ScriptLanguage) -> usize {
+        self.params_for(language)
+            .iter()
+            .filter(|param| !param.optional)
+            .count()
     }
 
     /// The result type in `language`, or `None` for no result.
@@ -412,7 +440,11 @@ impl RawEntry {
             self.check_callback()?;
         }
         let callable = matches!(self.kind, Kind::Function | Kind::Keyword);
-        if !callable && (!self.params.is_empty() || self.returns.is_some()) {
+        let overrides = [&self.luau, &self.rhai]
+            .into_iter()
+            .flatten()
+            .any(|binding| binding.params.is_some() || binding.varargs.is_some());
+        if !callable && (!self.params.is_empty() || self.returns.is_some() || overrides) {
             return Err(definition(
                 "only functions and keywords take parameters or return values".into(),
             ));
@@ -426,31 +458,42 @@ impl RawEntry {
             }
             _ => {}
         }
-        let mut names = BTreeSet::new();
-        let mut optional_seen = false;
-        for param in &self.params {
-            if !is_identifier(&param.name) {
-                return Err(definition(format!(
-                    "parameter name {:?} is not an identifier",
-                    param.name
-                )));
+        check_params(&self.params)?;
+        for binding in [&self.luau, &self.rhai].into_iter().flatten() {
+            if let Some(params) = &binding.params {
+                check_params(params)?;
             }
-            if !names.insert(param.name.as_str()) {
-                return Err(definition(format!(
-                    "parameter `{}` appears twice",
-                    param.name
-                )));
-            }
-            if optional_seen && !param.optional {
-                return Err(definition(format!(
-                    "required parameter `{}` follows an optional one",
-                    param.name
-                )));
-            }
-            optional_seen |= param.optional;
         }
         Ok(())
     }
+}
+
+fn check_params(params: &[Param]) -> Result<(), Problem> {
+    let definition = |message: String| Problem::new("catalog-definition", message);
+    let mut names = BTreeSet::new();
+    let mut optional_seen = false;
+    for param in params {
+        if !is_identifier(&param.name) {
+            return Err(definition(format!(
+                "parameter name {:?} is not an identifier",
+                param.name
+            )));
+        }
+        if !names.insert(param.name.as_str()) {
+            return Err(definition(format!(
+                "parameter `{}` appears twice",
+                param.name
+            )));
+        }
+        if optional_seen && !param.optional {
+            return Err(definition(format!(
+                "required parameter `{}` follows an optional one",
+                param.name
+            )));
+        }
+        optional_seen |= param.optional;
+    }
+    Ok(())
 }
 
 impl RawEntry {
