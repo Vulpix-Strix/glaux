@@ -17,7 +17,11 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(async { timeout(Duration::from_secs(10), future).await.expect("the test hung") })
+        .block_on(async {
+            timeout(Duration::from_secs(10), future)
+                .await
+                .expect("the test hung")
+        })
 }
 
 /// The server side of an in-memory conversation.
@@ -49,8 +53,10 @@ impl Server {
     /// `initialized`.
     async fn handshake(&mut self, capabilities: Value) -> Value {
         let init = self.next_method("initialize").await;
-        self.send(json!({"jsonrpc": "2.0", "id": init["id"], "result": {"capabilities": capabilities}}))
-            .await;
+        self.send(
+            json!({"jsonrpc": "2.0", "id": init["id"], "result": {"capabilities": capabilities}}),
+        )
+        .await;
         self.next_method("initialized").await;
         init
     }
@@ -86,7 +92,15 @@ fn rig(request_timeout: Duration) -> Rig {
     let session = {
         let (shared, outbox) = (Arc::clone(&shared), Arc::clone(&outbox));
         tokio::spawn(async move {
-            run(BufReader::new(client_in), client_out, &config, &shared, &outbox, stopped).await
+            run(
+                BufReader::new(client_in),
+                client_out,
+                &config,
+                &shared,
+                &outbox,
+                stopped,
+            )
+            .await
         })
     };
     Rig {
@@ -124,7 +138,12 @@ fn diagnostics_of(events: &[Event]) -> Vec<(String, i64, Vec<String>)> {
     events
         .iter()
         .filter_map(|event| match event {
-            Event::Diagnostics { uri, version, diagnostics, .. } => Some((
+            Event::Diagnostics {
+                uri,
+                version,
+                diagnostics,
+                ..
+            } => Some((
                 uri.clone(),
                 *version,
                 diagnostics.iter().map(|d| d.message.clone()).collect(),
@@ -144,7 +163,12 @@ fn the_handshake_asks_for_pull_and_reports_ready() {
             init["params"]["capabilities"]["textDocument"]["diagnostic"]["dynamicRegistration"],
             false
         );
-        assert_eq!(rig.events().await, vec![Event::Ready { key: SessionKey::new("k") }]);
+        assert_eq!(
+            rig.events().await,
+            vec![Event::Ready {
+                key: SessionKey::new("k")
+            }]
+        );
     });
 }
 
@@ -163,7 +187,9 @@ fn documents_queued_early_are_sent_after_initialized_then_pulled() {
             diagnostics_of(&events),
             vec![("file:///a".into(), 3, vec!["boom".into()])]
         );
-        let Event::Diagnostics { diagnostics, .. } = &events[1] else { panic!() };
+        let Event::Diagnostics { diagnostics, .. } = &events[1] else {
+            panic!()
+        };
         assert_eq!(diagnostics[0].severity, Some(Severity::Error));
     });
 }
@@ -181,9 +207,13 @@ fn a_result_computed_before_a_newer_change_is_discarded() {
         let change = rig.server.next_method("textDocument/didChange").await;
         assert_eq!(change["params"]["textDocument"]["version"], 2);
 
-        rig.server.answer(&first, one_error("about the old text")).await;
+        rig.server
+            .answer(&first, one_error("about the old text"))
+            .await;
         let second = rig.server.next_method("textDocument/diagnostic").await;
-        rig.server.answer(&second, one_error("about the new text")).await;
+        rig.server
+            .answer(&second, one_error("about the new text"))
+            .await;
 
         assert_eq!(
             diagnostics_of(&rig.events().await),
@@ -215,7 +245,12 @@ fn changing_one_module_pulls_every_open_module_again() {
         let mut pulled = Vec::new();
         for _ in 0..2 {
             let pull = rig.server.next_method("textDocument/diagnostic").await;
-            pulled.push(pull["params"]["textDocument"]["uri"].as_str().unwrap().to_owned());
+            pulled.push(
+                pull["params"]["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
             rig.server.answer(&pull, json!([])).await;
         }
         pulled.sort();
@@ -268,8 +303,10 @@ fn server_requests_are_answered_so_the_server_never_waits() {
         let mut rig = rig(Duration::from_secs(5));
         rig.server.handshake(PULL()).await;
         rig.server
-            .send(json!({"jsonrpc": "2.0", "id": 77, "method": "workspace/configuration",
-                         "params": {"items": [{}, {}]}}))
+            .send(
+                json!({"jsonrpc": "2.0", "id": 77, "method": "workspace/configuration",
+                         "params": {"items": [{}, {}]}}),
+            )
             .await;
         let reply = rig.server.next().await;
         assert_eq!(reply["id"], 77);
@@ -299,7 +336,11 @@ fn unanswered_requests_are_cancelled_and_repeated_silence_loses_the_server() {
                 break;
             }
         }
-        match timeout(Duration::from_secs(2), rig.session).await.unwrap().unwrap() {
+        match timeout(Duration::from_secs(2), rig.session)
+            .await
+            .unwrap()
+            .unwrap()
+        {
             SessionExit::Lost(reason) => assert!(reason.contains("stopped answering"), "{reason}"),
             SessionExit::Shutdown => panic!("expected the server to be lost"),
         }

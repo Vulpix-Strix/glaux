@@ -32,10 +32,7 @@ fn spec(args: &[&str]) -> Option<ServerSpec> {
 }
 
 /// Polls until `wanted` accepts an event, collecting everything seen.
-fn wait_for(
-    handle: &LspHandle,
-    wanted: impl Fn(&Event) -> bool,
-) -> Result<Vec<Event>, Vec<Event>> {
+fn wait_for(handle: &LspHandle, wanted: impl Fn(&Event) -> bool) -> Result<Vec<Event>, Vec<Event>> {
     let deadline = Instant::now() + Duration::from_secs(8);
     let mut seen = Vec::new();
     while Instant::now() < deadline {
@@ -71,7 +68,9 @@ fn a_document_gets_diagnostics_for_its_version() {
     let handle = runtime.handle();
     let key = SessionKey::new("a");
     handle.open_session(key.clone(), spec).unwrap();
-    handle.open_document(&key, "file:///m", "luau", 7, "x").unwrap();
+    handle
+        .open_document(&key, "file:///m", "luau", 7, "x")
+        .unwrap();
     let seen = wait_for(&handle, is_diagnostics).unwrap();
     assert!(matches!(seen[0], Event::Ready { .. }));
     assert_eq!(messages(&seen), ["v7"]);
@@ -81,16 +80,21 @@ fn a_document_gets_diagnostics_for_its_version() {
 fn a_crashed_server_is_restarted_and_gets_its_documents_back() {
     let marker = std::env::temp_dir().join(format!("glaux-lsp-marker-{}", std::process::id()));
     let _ = std::fs::remove_file(&marker);
-    let Some(spec) = spec(&["crash-once", marker.to_str().unwrap()]) else { return };
+    let Some(spec) = spec(&["crash-once", marker.to_str().unwrap()]) else {
+        return;
+    };
     let runtime = LspRuntime::start(2).unwrap();
     let handle = runtime.handle();
     let key = SessionKey::new("a");
     handle.open_session(key.clone(), spec).unwrap();
-    handle.open_document(&key, "file:///m", "luau", 5, "x").unwrap();
+    handle
+        .open_document(&key, "file:///m", "luau", 5, "x")
+        .unwrap();
     let seen = wait_for(&handle, is_diagnostics).unwrap();
     let _ = std::fs::remove_file(&marker);
     assert!(
-        seen.iter().any(|event| matches!(event, Event::Failed { .. })),
+        seen.iter()
+            .any(|event| matches!(event, Event::Failed { .. })),
         "{seen:?}"
     );
     assert_eq!(messages(&seen), ["v5"]);
@@ -117,22 +121,34 @@ fn a_server_that_keeps_dying_is_given_up_on() {
     let handle = runtime.handle();
     handle.open_session(SessionKey::new("a"), spec).unwrap();
     let seen = wait_for(&handle, |event| matches!(event, Event::Closed { .. })).unwrap();
-    assert!(seen.iter().any(|e| matches!(e, Event::Disabled { .. })), "{seen:?}");
-    let failures = seen.iter().filter(|e| matches!(e, Event::Failed { .. })).count();
+    assert!(
+        seen.iter().any(|e| matches!(e, Event::Disabled { .. })),
+        "{seen:?}"
+    );
+    let failures = seen
+        .iter()
+        .filter(|e| matches!(e, Event::Failed { .. }))
+        .count();
     assert_eq!(failures, 2);
 }
 
 #[test]
 fn a_silent_server_fails_the_handshake_without_blocking_the_caller() {
-    let Some(spec) = spec(&["silent"]) else { return };
+    let Some(spec) = spec(&["silent"]) else {
+        return;
+    };
     let runtime = LspRuntime::start(2).unwrap();
     let handle = runtime.handle();
     let key = SessionKey::new("a");
     let started = Instant::now();
     handle.open_session(key.clone(), spec).unwrap();
-    handle.open_document(&key, "file:///m", "luau", 1, "x").unwrap();
+    handle
+        .open_document(&key, "file:///m", "luau", 1, "x")
+        .unwrap();
     for version in 2..200 {
-        handle.change_document(&key, "file:///m", version, "x").unwrap();
+        handle
+            .change_document(&key, "file:///m", version, "x")
+            .unwrap();
         let _ = handle.poll();
     }
     assert!(
@@ -162,7 +178,8 @@ fn closing_a_session_reports_closed_and_forgets_the_key() {
 
 #[test]
 fn sessions_are_independent_and_bounded() {
-    let (Some(first), Some(second), Some(third)) = (spec(&["echo"]), spec(&["echo"]), spec(&["echo"]))
+    let (Some(first), Some(second), Some(third)) =
+        (spec(&["echo"]), spec(&["echo"]), spec(&["echo"]))
     else {
         return;
     };
@@ -175,8 +192,12 @@ fn sessions_are_independent_and_bounded() {
         handle.open_session(SessionKey::new("c"), third),
         Err(LspError::TooManySessions)
     );
-    handle.open_document(&a, "file:///m", "luau", 1, "x").unwrap();
-    handle.open_document(&b, "file:///m", "luau", 9, "x").unwrap();
+    handle
+        .open_document(&a, "file:///m", "luau", 1, "x")
+        .unwrap();
+    handle
+        .open_document(&b, "file:///m", "luau", 9, "x")
+        .unwrap();
     let mut by_key = Vec::new();
     while by_key.len() < 2 {
         for event in wait_for(&handle, is_diagnostics).unwrap() {
@@ -191,12 +212,18 @@ fn sessions_are_independent_and_bounded() {
 
 #[test]
 fn dropping_the_runtime_stops_its_servers_promptly() {
-    let Some(spec) = spec(&["silent"]) else { return };
+    let Some(spec) = spec(&["silent"]) else {
+        return;
+    };
     let runtime = LspRuntime::start(2).unwrap();
     let handle = runtime.handle();
     handle.open_session(SessionKey::new("a"), spec).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     let started = Instant::now();
     drop(runtime);
-    assert!(started.elapsed() < Duration::from_secs(6), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(6),
+        "{:?}",
+        started.elapsed()
+    );
 }

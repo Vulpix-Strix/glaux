@@ -29,7 +29,8 @@ fn framed(body: &str) -> Vec<u8> {
 
 #[test]
 fn a_written_frame_reads_back() {
-    let message = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"é": "ñ😀"}});
+    let message =
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"é": "ñ😀"}});
     let read = block_on(async {
         let (mut tx, rx) = duplex(1024);
         write_frame(&mut tx, &message).await.unwrap();
@@ -48,7 +49,9 @@ fn length_counts_bytes_not_characters() {
 
 #[test]
 fn several_frames_and_extra_headers_are_accepted() {
-    let mut bytes = b"Content-Type: application/vscode-jsonrpc; charset=utf-8\r\ncontent-length: 2\r\n\r\n{}".to_vec();
+    let mut bytes =
+        b"Content-Type: application/vscode-jsonrpc; charset=utf-8\r\ncontent-length: 2\r\n\r\n{}"
+            .to_vec();
     bytes.extend(framed(r#"{"a":1}"#));
     assert_eq!(read_all(&bytes).unwrap(), vec![json!({}), json!({"a": 1})]);
 }

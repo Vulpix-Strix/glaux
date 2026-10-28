@@ -406,7 +406,10 @@ async fn supervise(
         }
         failures += 1;
         if failures > spec.max_failures {
-            outbox.push(Event::Disabled { key: key.clone(), reason });
+            outbox.push(Event::Disabled {
+                key: key.clone(),
+                reason,
+            });
             break;
         }
         let retry_in = spec
@@ -491,18 +494,25 @@ mod tests {
         outbox.push(diagnostics("a", 1));
         outbox.push(diagnostics("b", 1));
         outbox.push(diagnostics("a", 2));
-        assert_eq!(outbox.take(), vec![diagnostics("b", 1), diagnostics("a", 2)]);
+        assert_eq!(
+            outbox.take(),
+            vec![diagnostics("b", 1), diagnostics("a", 2)]
+        );
         assert_eq!(outbox.take(), vec![]);
     }
 
     #[test]
     fn a_full_box_sheds_diagnostics_before_state_changes() {
         let outbox = Outbox::default();
-        outbox.push(Event::Ready { key: SessionKey::new("k") });
+        outbox.push(Event::Ready {
+            key: SessionKey::new("k"),
+        });
         for n in 0..OUTBOX_CAPACITY {
             outbox.push(diagnostics(&format!("u{n}"), 1));
         }
-        outbox.push(Event::Closed { key: SessionKey::new("k") });
+        outbox.push(Event::Closed {
+            key: SessionKey::new("k"),
+        });
         let events = outbox.take();
         assert_eq!(events.len(), OUTBOX_CAPACITY);
         assert!(matches!(events.first(), Some(Event::Ready { .. })));

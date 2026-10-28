@@ -129,7 +129,9 @@ async fn converse(
         Ok(capabilities) => capabilities,
         Err(reason) => return SessionExit::Lost(reason),
     };
-    let pull = capabilities.get("diagnosticProvider").is_some_and(|p| !p.is_null());
+    let pull = capabilities
+        .get("diagnosticProvider")
+        .is_some_and(|p| !p.is_null());
     if !send(out, protocol::notification("initialized", json!({}))) {
         return SessionExit::Lost("the server stopped reading".into());
     }
@@ -347,7 +349,9 @@ fn receive(
     let id = message.get("id").and_then(Value::as_i64)?;
     let pending = state.inflight.remove(&id)?;
     state.timeouts = 0;
-    let result = message.get("result").filter(|result| result["kind"] == "full");
+    let result = message
+        .get("result")
+        .filter(|result| result["kind"] == "full");
     if let Some(result) = result {
         let current = state.epoch == pending.epoch
             && shared.documents().version(&pending.uri) == Some(pending.version);
@@ -413,7 +417,10 @@ fn expire(state: &mut State, out: &mpsc::Sender<Value>, config: &SessionConfig) 
         .collect();
     for id in late {
         state.inflight.remove(&id);
-        let _ = send(out, protocol::notification("$/cancelRequest", json!({"id": id})));
+        let _ = send(
+            out,
+            protocol::notification("$/cancelRequest", json!({"id": id})),
+        );
         state.timeouts += 1;
         tracing::warn!(target: "glaux_lsp", key = %config.key, "a diagnostics request timed out");
     }

@@ -52,8 +52,12 @@ enum Owed {
         text: String,
     },
     /// The text is read from the document when drained.
-    Change { uri: String },
-    Close { uri: String },
+    Change {
+        uri: String,
+    },
+    Close {
+        uri: String,
+    },
 }
 
 impl Owed {
