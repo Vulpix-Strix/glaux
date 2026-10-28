@@ -52,6 +52,7 @@ fn analyzer_tag(language: Language, status: &AnalyzerStatus) -> Option<(String, 
         AnalyzerStatus::Off | AnalyzerStatus::Ready => None,
         AnalyzerStatus::Unavailable(_) => Some((ui_text::get("code-analyzer-unavailable"), DIM)),
         AnalyzerStatus::Starting => Some((ui_text::get("code-analyzer-starting"), PALE)),
+        AnalyzerStatus::Limited(_) => Some((ui_text::get("code-analyzer-limited"), WARN)),
         AnalyzerStatus::Failed { .. } | AnalyzerStatus::Disabled(_) => {
             Some((ui_text::get("code-analyzer-attention"), WARN))
         }

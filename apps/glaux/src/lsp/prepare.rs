@@ -12,10 +12,11 @@ use std::time::Instant;
 use glaux_docs::{Kind, Library, ScriptLanguage};
 use glaux_lsp::uri::path_to_uri;
 
-use super::workspace::{Shadow, module_name};
+use super::workspace::{ABANDONED_AFTER, Shadow, clean_abandoned, module_name};
 use super::{definitions, locate};
 use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::SourcePath;
+use crate::cartridge_fs::WalkGap;
 
 pub(super) struct Input {
     pub cartridge: LoadedCartridge,
@@ -41,6 +42,9 @@ pub(super) struct Prepared {
     pub modules: Vec<PreparedModule>,
     /// Names the host calls itself, such as `tick`.
     pub callbacks: Vec<String>,
+    /// What the listing of the cartridge did not reach, worded for people.
+    /// Empty when every script was found.
+    pub skipped: Vec<String>,
 }
 
 pub(super) enum PrepareError {
@@ -77,13 +81,21 @@ pub(super) fn prepare(input: Input, cancel: &AtomicBool) -> Result<Prepared, Pre
     let callbacks = callback_names();
     let found = began.elapsed();
 
+    if let Some(parent) = input.workspace.parent() {
+        let removed = clean_abandoned(parent, ABANDONED_AFTER);
+        if removed > 0 {
+            tracing::info!(removed, "workspaces left by earlier runs were removed");
+        }
+    }
     let shadow = Shadow::create(input.workspace).map_err(|error| {
         PrepareError::Failed(format!("could not prepare the workspace: {error}"))
     })?;
     // The placeholders all exist before the server is started, and the
     // modules reach it together. See `LspHandle::open_session_with`.
     let mut modules = Vec::new();
+    let mut skipped = Vec::new();
     if let Ok(listing) = input.cartridge.script_files() {
+        skipped = describe_gaps(&listing.gaps);
         for path in listing.paths {
             // Dropping `shadow` on the way out removes the workspace.
             check(cancel)?;
@@ -125,7 +137,21 @@ pub(super) fn prepare(input: Input, cancel: &AtomicBool) -> Result<Prepared, Pre
         shadow,
         modules,
         callbacks,
+        skipped,
     })
+}
+
+/// What a listing left out, one line each. A directory reached again through
+/// a symlink was searched under its other name, so nothing is lost there.
+fn describe_gaps(gaps: &[WalkGap]) -> Vec<String> {
+    gaps.iter()
+        .filter_map(|gap| match gap {
+            WalkGap::FileLimit(limit) => Some(format!("more than {limit} script files")),
+            WalkGap::TooDeep(dir) => Some(format!("{dir} is too deep")),
+            WalkGap::Unreadable(dir) => Some(format!("{dir} could not be read")),
+            WalkGap::AlreadyWalked(_) => None,
+        })
+        .collect()
 }
 
 fn callback_names() -> Vec<String> {

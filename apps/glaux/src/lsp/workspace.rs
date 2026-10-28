@@ -11,9 +11,10 @@
 //! open document, which the server prefers to the file. The cartridge is
 //! never touched.
 
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use glaux_modules::{MODULE_ROOT, ModuleName};
 
@@ -35,9 +36,19 @@ pub(super) fn module_name(path: &SourcePath) -> Option<ModuleName> {
     ModuleName::parse(&inside.replace('/', ".")).ok()
 }
 
+/// The file whose lock says a workspace belongs to a running Glaux.
+const LOCK_FILE: &str = ".lock";
+
 /// A temporary directory of placeholders for one cartridge.
+///
+/// The directory holds a lock file, locked by the process that made it for
+/// as long as the [`Shadow`] lives. The operating system releases the lock
+/// when the process ends, however it ends, which is how [`clean_abandoned`]
+/// tells a workspace left behind from one another Glaux is using.
 pub(super) struct Shadow {
     root: PathBuf,
+    /// Held to keep the lock. Dropped before the directory is removed.
+    lock: Option<File>,
 }
 
 impl Shadow {
@@ -45,7 +56,17 @@ impl Shadow {
     pub fn create(root: PathBuf) -> io::Result<Self> {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root)?;
-        Ok(Self { root })
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(root.join(LOCK_FILE))
+            .ok();
+        // Where locking is not supported the workspace is left unlocked, and
+        // `clean_abandoned` then never removes it.
+        let lock = lock.filter(|file| file.try_lock().is_ok());
+        Ok(Self { root, lock })
     }
 
     pub fn root(&self) -> &Path {
@@ -80,7 +101,53 @@ pub(super) fn remove_placeholder(root: &Path, module: &ModuleName) {
 
 impl Drop for Shadow {
     fn drop(&mut self) {
+        // Windows will not remove a directory with an open file in it.
+        drop(self.lock.take());
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+/// How long a workspace must have gone untouched to be taken for left behind.
+/// A workspace is locked a moment after it is made, and this keeps one that
+/// is still being made safe.
+pub(super) const ABANDONED_AFTER: Duration = Duration::from_secs(60);
+
+/// Removes the workspaces under `workspaces` that no running Glaux owns,
+/// and returns how many.
+///
+/// A workspace goes only if its lock is free, which means whoever made it is
+/// gone, and nothing in it changed for `grace`. One whose lock is held, or
+/// that cannot be checked, stays.
+pub(super) fn clean_abandoned(workspaces: &Path, grace: Duration) -> usize {
+    let Ok(entries) = fs::read_dir(workspaces) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|dir| dir.is_dir() && is_abandoned(dir, grace))
+        .filter(|dir| fs::remove_dir_all(dir).is_ok())
+        .count()
+}
+
+fn is_abandoned(dir: &Path, grace: Duration) -> bool {
+    let idle = fs::metadata(dir)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age >= grace);
+    if !idle {
+        return false;
+    }
+    match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dir.join(LOCK_FILE))
+    {
+        // Free means nobody holds it. The handle is closed on return.
+        Ok(lock) => lock.try_lock().is_ok(),
+        // Made before workspaces had locks, or never got one.
+        Err(error) => error.kind() == io::ErrorKind::NotFound,
     }
 }
 
@@ -126,6 +193,115 @@ mod tests {
         assert!(!file.exists());
     }
 
+    fn workspace_with_file(parent: &Path, name: &str) -> Shadow {
+        let shadow = Shadow::create(parent.join(name)).unwrap();
+        shadow.add(&ModuleName::parse("util").unwrap()).unwrap();
+        shadow
+    }
+
+    #[test]
+    fn a_workspace_in_use_is_never_cleaned() {
+        let scratch = ScratchDir::new("lsp-clean-live");
+        let live = workspace_with_file(&scratch, "100-1");
+        assert_eq!(clean_abandoned(&scratch, Duration::ZERO), 0);
+        assert!(live.root().join("util.luau").exists());
+    }
+
+    #[test]
+    fn a_workspace_whose_owner_is_gone_is_cleaned() {
+        let scratch = ScratchDir::new("lsp-clean-dead");
+        let gone = scratch.join("200-1");
+        drop(workspace_with_file(&scratch, "200-1"));
+        // Dropping removes it, so leave one behind as a crash would.
+        fs::create_dir_all(&gone).unwrap();
+        fs::write(gone.join(LOCK_FILE), "").unwrap();
+        fs::write(gone.join("util.luau"), "").unwrap();
+        let kept = workspace_with_file(&scratch, "300-1");
+
+        assert_eq!(clean_abandoned(&scratch, Duration::ZERO), 1);
+        assert!(!gone.exists());
+        assert!(kept.root().exists());
+    }
+
+    #[test]
+    fn a_workspace_touched_recently_is_given_time() {
+        let scratch = ScratchDir::new("lsp-clean-fresh");
+        let fresh = scratch.join("400-1");
+        fs::create_dir_all(&fresh).unwrap();
+        fs::write(fresh.join(LOCK_FILE), "").unwrap();
+        assert_eq!(clean_abandoned(&scratch, ABANDONED_AFTER), 0);
+        assert!(fresh.exists());
+        assert_eq!(clean_abandoned(&scratch, Duration::ZERO), 1);
+    }
+
+    #[test]
+    fn a_directory_without_a_lock_goes_only_when_idle_and_files_are_left_alone() {
+        let scratch = ScratchDir::new("lsp-clean-nolock");
+        let old = scratch.join("500-1");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(scratch.join("stray.txt"), "x").unwrap();
+        assert_eq!(clean_abandoned(&scratch, ABANDONED_AFTER), 0);
+        assert_eq!(clean_abandoned(&scratch, Duration::ZERO), 1);
+        assert!(!old.exists());
+        assert!(scratch.join("stray.txt").exists());
+    }
+
+    #[test]
+    fn a_missing_folder_has_nothing_to_clean() {
+        let scratch = ScratchDir::new("lsp-clean-missing");
+        assert_eq!(clean_abandoned(&scratch.join("nowhere"), Duration::ZERO), 0);
+    }
+
+    /// Another process holds the lock, as a second Glaux would.
+    #[cfg(unix)]
+    #[test]
+    fn a_workspace_another_process_holds_is_left_alone_until_it_ends() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+
+        let Ok(python) = Command::new("python3").arg("--version").output() else {
+            return;
+        };
+        if !python.status.success() {
+            return;
+        }
+        let scratch = ScratchDir::new("lsp-clean-other");
+        let other = scratch.join("600-1");
+        fs::create_dir_all(&other).unwrap();
+        let lock = other.join(LOCK_FILE);
+        fs::write(&lock, "").unwrap();
+        /// Kills the process when the test ends, even by failing.
+        struct Holder(std::process::Child);
+        impl Drop for Holder {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut child = Holder(Command::new("python3")
+            .args([
+                "-c",
+                "import fcntl,sys,time\nf=open(sys.argv[1],'r+')\nfcntl.flock(f,fcntl.LOCK_EX)\nprint('locked',flush=True)\ntime.sleep(60)",
+            ])
+            .arg(&lock)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap());
+        let mut line = String::new();
+        BufReader::new(child.0.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        assert_eq!(line.trim(), "locked");
+
+        assert_eq!(clean_abandoned(&scratch, Duration::ZERO), 0);
+        assert!(other.exists(), "the other process's workspace was removed");
+
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        assert_eq!(clean_abandoned(&scratch, Duration::ZERO), 1);
+        assert!(!other.exists());
+    }
+
     #[test]
     fn creating_over_an_old_workspace_starts_empty_and_dropping_removes_it() {
         let scratch = ScratchDir::new("lsp-shadow-drop");
@@ -133,7 +309,12 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("old.luau"), "stale").unwrap();
         let shadow = Shadow::create(root.clone()).unwrap();
-        assert_eq!(fs::read_dir(shadow.root()).unwrap().count(), 0);
+        // Only the lock file.
+        let names: Vec<_> = fs::read_dir(shadow.root())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [LOCK_FILE]);
         drop(shadow);
         assert!(!root.exists());
     }

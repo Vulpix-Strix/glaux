@@ -32,6 +32,9 @@ pub enum AnalyzerStatus {
     Unavailable(String),
     Starting,
     Ready,
+    /// Working, but some scripts of the cartridge could not be listed, so
+    /// what depends on them is not checked. Holds what was left out.
+    Limited(String),
     /// The server was lost and will be started again.
     Failed {
         reason: String,

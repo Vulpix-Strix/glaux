@@ -42,10 +42,12 @@ pub(crate) struct Analysis {
     /// Commands the actor had no room for. They go first, in order.
     queued: VecDeque<Command>,
     status: AnalyzerStatus,
-    /// The user is told once per run that the executable is missing and
-    /// once that the analyzer gave up. Later occurrences only reach the log.
+    /// The user is told once per run that the executable is missing, that
+    /// the analyzer gave up, and that some scripts are not analyzed. Later
+    /// occurrences only reach the log.
     told_unavailable: bool,
     told_stopped: bool,
+    told_limited: bool,
     #[cfg(test)]
     quick_failures: Option<std::time::Duration>,
 }
@@ -108,6 +110,7 @@ impl Analysis {
             status: AnalyzerStatus::Off,
             told_unavailable: false,
             told_stopped: false,
+            told_limited: false,
             #[cfg(test)]
             quick_failures: None,
         }
@@ -195,6 +198,11 @@ impl Analysis {
                 system.analysis_lost();
                 if !std::mem::replace(&mut self.told_stopped, true) {
                     system.analysis_notice(ui_text::get("code-analyzer-stopped"));
+                }
+            }
+            AnalyzerStatus::Limited(_) => {
+                if !std::mem::replace(&mut self.told_limited, true) {
+                    system.analysis_notice(ui_text::get("code-analyzer-limited-notice"));
                 }
             }
             AnalyzerStatus::Off

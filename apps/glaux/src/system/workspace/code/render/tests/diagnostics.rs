@@ -242,6 +242,7 @@ fn the_options_bar_only_tags_an_analyzer_that_is_not_doing_its_job() {
             retry_in: Duration::from_secs(1),
         },
         AnalyzerStatus::Disabled("gave up".into()),
+        AnalyzerStatus::Limited("more than 1024 script files".into()),
     ] {
         session.set_analyzer_status(&status);
         let framebuffer = render(&editor, &session);

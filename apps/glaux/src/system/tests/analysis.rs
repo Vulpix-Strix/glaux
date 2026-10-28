@@ -352,6 +352,10 @@ fn placeholders_in(cache: &Path) -> Option<Vec<std::path::PathBuf>> {
     std::fs::read_dir(workspace)
         .ok()?
         .map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.as_ref()
+                .is_none_or(|path| path.file_name() != Some(".lock".as_ref()))
+        })
         .collect()
 }
 
@@ -382,6 +386,7 @@ fn changing_cartridge_closes_the_session_and_leaves_no_workspace_behind() {
     let mut names: Vec<_> = std::fs::read_dir(placeholders)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name != ".lock")
         .collect();
     names.sort();
     assert_eq!(
@@ -531,6 +536,105 @@ mod failing_servers {
             reason.contains("did not answer initialize in time"),
             "{reason}"
         );
+    }
+
+    /// A cartridge in the Code view, with `prepare` run before it is loaded.
+    fn code_view_prepared(
+        name: &str,
+        prepare: impl FnOnce(&Fixture),
+    ) -> Option<(ScratchDir, Analysis, System)> {
+        if !python_available() {
+            eprintln!("skipped: python3 is needed to play the fake server");
+            return None;
+        }
+        let fixture = Fixture::new(name);
+        let cache = serving("echo", &format!("{name}-cache"));
+        let analysis = Analysis::new(Some(cache.join("cache")), None);
+        let system = code_view(&fixture, "local x = 1\n", prepare);
+        std::mem::forget(fixture);
+        Some((cache, analysis, system))
+    }
+
+    fn limited(_: &System, seen: &[AnalyzerStatus]) -> bool {
+        matches!(seen.last(), Some(AnalyzerStatus::Limited(_)))
+    }
+
+    #[test]
+    fn a_cartridge_with_more_scripts_than_can_be_listed_says_what_it_lost() {
+        let Some((_cache, mut analysis, system)) = code_view_prepared("sys-lsp-files", |fixture| {
+            for k in 0..1030 {
+                write(fixture, &format!("code/s{k}.luau"), "return 1\n");
+            }
+        }) else {
+            return;
+        };
+        let (system, seen) = trace(system, &mut analysis, limited);
+        let Some(AnalyzerStatus::Limited(reason)) = seen.last() else {
+            panic!("{seen:?}");
+        };
+        assert!(reason.contains("more than 1024 script files"), "{reason}");
+        assert_eq!(
+            system.notice_text(),
+            Some("Some scripts are not analyzed, see the log (F12)")
+        );
+    }
+
+    #[test]
+    fn a_directory_below_the_depth_limit_is_reported_too() {
+        let Some((_cache, mut analysis, system)) = code_view_prepared("sys-lsp-deep", |fixture| {
+            let deep = (0..18)
+                .map(|n| format!("d{n}"))
+                .collect::<Vec<_>>()
+                .join("/");
+            write(fixture, &format!("code/{deep}/buried.luau"), "return 1\n");
+        }) else {
+            return;
+        };
+        let (_, seen) = trace(system, &mut analysis, limited);
+        let Some(AnalyzerStatus::Limited(reason)) = seen.last() else {
+            panic!("{seen:?}");
+        };
+        assert!(reason.contains("is too deep"), "{reason}");
+    }
+
+    #[test]
+    fn a_complete_listing_is_plainly_ready() {
+        let Some((_cache, mut analysis, system)) = code_view_prepared("sys-lsp-complete", |_| {})
+        else {
+            return;
+        };
+        let (system, seen) = trace(system, &mut analysis, |_, seen| {
+            seen.last() == Some(&AnalyzerStatus::Ready)
+        });
+        assert!(!seen.iter().any(|s| matches!(s, AnalyzerStatus::Limited(_))));
+        assert_eq!(system.notice_text(), None);
+    }
+
+    #[test]
+    fn workspaces_left_by_a_run_that_ended_are_removed_when_the_next_starts() {
+        let Some((cache, mut analysis, system)) = code_view_prepared("sys-lsp-stale", |_| {})
+        else {
+            return;
+        };
+        // What a crash leaves: an unlocked workspace, untouched for a while.
+        let stale = cache.join("cache/lsp/workspaces/999999-1");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join(".lock"), "").unwrap();
+        std::fs::write(stale.join("old.luau"), "").unwrap();
+        let hour_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+        std::fs::File::open(&stale)
+            .unwrap()
+            .set_modified(hour_ago)
+            .unwrap();
+        // And a fresh one, which might be being made by another Glaux.
+        let fresh = cache.join("cache/lsp/workspaces/999998-1");
+        std::fs::create_dir_all(&fresh).unwrap();
+
+        let (_, _) = trace(system, &mut analysis, |_, seen| {
+            seen.last() == Some(&AnalyzerStatus::Ready)
+        });
+        assert!(!stale.exists(), "the abandoned workspace is still there");
+        assert!(fresh.exists(), "a workspace that may be in use was removed");
     }
 
     #[test]

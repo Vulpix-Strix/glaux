@@ -162,6 +162,9 @@ struct Loaded {
     modules: HashMap<String, Module>,
     by_uri: HashMap<String, String>,
     callbacks: Vec<String>,
+    /// What the listing of the cartridge left out, see
+    /// [`Prepared::skipped`].
+    skipped: Vec<String>,
     started_at: Instant,
 }
 
@@ -343,6 +346,7 @@ impl Actor {
             shadow,
             modules,
             callbacks,
+            skipped,
         } = prepared;
         let key = SessionKey::new(format!("luau-{}", self.sessions_started));
         let mut spec = ServerSpec::new(&binary, shadow.root());
@@ -385,6 +389,14 @@ impl Actor {
                 (module.name, value)
             })
             .collect();
+        if !skipped.is_empty() {
+            tracing::warn!(
+                target: crate::logging::DIAGNOSTIC_TARGET,
+                skipped = skipped.len(),
+                first = %skipped[0],
+                "some scripts of the cartridge are not analyzed"
+            );
+        }
         self.inbox.session(Some(key.clone()));
         self.loaded = Some(Loaded {
             key,
@@ -393,6 +405,7 @@ impl Actor {
             modules,
             by_uri,
             callbacks,
+            skipped,
             started_at: Instant::now(),
         });
         self.apply_tabs().await;
@@ -548,7 +561,14 @@ impl Actor {
                             elapsed = ?loaded.started_at.elapsed(),
                             "the Luau analyzer is ready"
                         );
-                        self.inbox.status(self.generation, AnalyzerStatus::Ready);
+                        let status = match loaded.skipped.as_slice() {
+                            [] => AnalyzerStatus::Ready,
+                            [only] => AnalyzerStatus::Limited(only.clone()),
+                            [first, rest @ ..] => {
+                                AnalyzerStatus::Limited(format!("{first}, and {} more", rest.len()))
+                            }
+                        };
+                        self.inbox.status(self.generation, status);
                     }
                 }
                 Event::Failed {
