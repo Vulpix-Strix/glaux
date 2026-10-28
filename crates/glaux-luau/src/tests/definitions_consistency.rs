@@ -72,9 +72,12 @@ fn every_luau_function_is_declared_where_the_runtime_installs_it() {
         match entry.kind() {
             Kind::Function if binding.path.is_empty() => {
                 let declaration = format!("declare function {}(", binding.name);
-                assert!(
+                let analyzer_owned =
+                    crate::definitions::ANALYZER_GLOBALS.contains(&binding.name.as_str());
+                assert_eq!(
                     text.contains(&declaration),
-                    "{} is not declared",
+                    !analyzer_owned,
+                    "{} is declared or missing against the analyzer globals",
                     entry.id()
                 );
             }

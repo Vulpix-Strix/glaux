@@ -20,3 +20,5 @@ cls() -- error
 text("rhai only", 0, 0, 1) -- error
 local e: string = frame() -- error
 tick() -- error
+
+local wrong: string = require("util").double(1) -- error

@@ -44,6 +44,18 @@ fn callbacks_and_other_language_names_are_not_declared() {
 }
 
 #[test]
+fn require_is_left_to_the_analyzer() {
+    let text = generated();
+    assert!(!text.contains("function require("), "require is declared");
+
+    let api = catalog(
+        r#"(id: "api/a/require", kind: Function, luau: (name: "require"),
+            params: [(name: "name", ty: Text)], returns: Any)"#,
+    );
+    assert!(!definitions(&api).unwrap().contains("require"));
+}
+
+#[test]
 fn signatures_follow_the_luau_side_of_the_catalog() {
     let api = catalog(
         r#"

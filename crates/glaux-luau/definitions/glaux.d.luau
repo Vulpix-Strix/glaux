@@ -98,7 +98,6 @@ declare function keyp(key: Key): boolean
 declare function print(value: any, x: number, y: number, color: number)
 declare function pset(x: number, y: number, color: number)
 declare function rectfill(x: number, y: number, width: number, height: number, color: number)
-declare function require(name: string): any
 declare function spr(tile: number, x: number, y: number, w: number?, h: number?, flip_x: boolean?, flip_y: boolean?, palette: number?)
 declare function t(): number
 

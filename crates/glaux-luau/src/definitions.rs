@@ -17,6 +17,9 @@
 //! - A function with no result type returns `()`.
 //! - Callbacks such as `tick` are defined by the script, so they have no
 //!   declaration.
+//! - `require` has no declaration. A declared `require` replaces the
+//!   analyzer's own, which makes every module `any` and hides unknown
+//!   modules. The analyzer resolves the call against the cartridge instead.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -26,6 +29,9 @@ use glaux_docs::{ApiCatalog, ApiEntry, Kind, Param, ScriptLanguage, ValueType};
 use glaux_input::{Button, Key};
 
 const LANGUAGE: ScriptLanguage = ScriptLanguage::Luau;
+
+/// Globals the analyzer types itself. Declaring them would override it.
+pub(crate) const ANALYZER_GLOBALS: &[&str] = &["require"];
 
 /// Why the catalog cannot be rendered.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -76,6 +82,9 @@ pub fn definitions(api: &ApiCatalog) -> Result<String, DefinitionsError> {
         let Some(binding) = entry.binding(LANGUAGE) else {
             continue;
         };
+        if binding.path.is_empty() && ANALYZER_GLOBALS.contains(&binding.name.as_str()) {
+            continue;
+        }
         match entry.kind() {
             Kind::Function => root
                 .descend(&binding.path)

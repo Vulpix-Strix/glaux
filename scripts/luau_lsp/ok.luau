@@ -23,3 +23,6 @@ log.warn("a", 1, nil, {})
 log.debug(held, pressed, button, f)
 
 local util = require("util")
+
+local doubled: number = util.double(2)
+print(doubled, 0, 0, 0)
