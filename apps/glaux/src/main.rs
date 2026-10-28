@@ -22,7 +22,9 @@ use std::env::consts::{ARCH, OS};
 
 use desktop::single_instance::{self, SecondaryLaunch, Startup};
 
-#[hotpath::main]
+// The profiling workload test starts its own guard, and a second one would
+// install a second global allocator under `hotpath-alloc`.
+#[cfg_attr(not(test), hotpath::main)]
 fn main() -> anyhow::Result<()> {
     if let Some(command) = tooling::Cli::parse_env().command {
         tooling::run(command)?;

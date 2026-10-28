@@ -37,6 +37,7 @@ mod log_perf;
 mod menu_state;
 mod new_cartridge;
 mod pausing;
+mod profiling_workload;
 mod rhai;
 mod rom_audio;
 mod script_management;
