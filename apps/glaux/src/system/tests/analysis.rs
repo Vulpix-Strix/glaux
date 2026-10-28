@@ -11,6 +11,7 @@ use crate::lsp::Analysis;
 use crate::scratch_dir::ScratchDir;
 use crate::system::EditorDiagnostic;
 use crate::system::Severity;
+use crate::system::editing::history::EditKind;
 use pretty_assertions::assert_eq;
 
 fn analyzer() -> Option<&'static str> {
@@ -227,4 +228,106 @@ fn without_an_executable_nothing_happens() {
     }
     assert!(!has_findings(&system));
     assert!(code_text(&system).starts_with("--!strict"));
+}
+
+fn findings_of(system: &System, path: &str) -> Vec<(usize, String)> {
+    let code = system.code.as_ref().unwrap();
+    let document = code
+        .open_documents()
+        .find(|document| document.path().as_str() == path)
+        .unwrap();
+    code.diagnostics(document.id())
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .map(|d| (document.line_of(d.range.start) + 1, d.message.clone()))
+        .collect()
+}
+
+#[test]
+fn an_unsaved_edit_in_another_module_reaches_its_dependents_and_closing_it_undoes_that() {
+    if analyzer().is_none() {
+        return;
+    }
+    let fixture = Fixture::new("sys-lsp-dependent");
+    let cache = ScratchDir::new("lsp-dependent-cache");
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()));
+    let main = "--!strict\nlocal util = require(\"util\")\nlocal text: string = util.double(1)\nprint(text, 0, 0, 0)\n";
+    let system = code_view(&fixture, main, nested_modules);
+    let system = settle(system, &mut analysis, |s| {
+        !findings_of(s, "code/main.luau").is_empty()
+    });
+    assert_eq!(findings_of(&system, "code/main.luau")[0].0, 3);
+
+    // `double` now returns a string, in a tab nobody saved.
+    let mut system = super::code_tabs::open_file(system, "util");
+    let code = system.code.as_mut().unwrap();
+    let util = code.active_document().unwrap();
+    let (id, at) = (util.id(), util.text().find("): number").unwrap() + 3);
+    code.edit(
+        id,
+        at..at + "number".len(),
+        "string",
+        EditKind::Typing,
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let mut system = settle(system, &mut analysis, |s| {
+        findings_of(s, "code/main.luau").is_empty()
+    });
+    assert_eq!(findings_of(&system, "code/main.luau"), []);
+
+    // Closing the tab drops the edit, so the module is what is on disk again.
+    system.code.as_mut().unwrap().close(id);
+    let system = settle(system, &mut analysis, |s| {
+        !findings_of(s, "code/main.luau").is_empty()
+    });
+    assert_eq!(findings_of(&system, "code/main.luau")[0].0, 3);
+}
+
+fn workspaces(cache: &Path) -> usize {
+    std::fs::read_dir(cache.join("lsp/workspaces")).map_or(0, Iterator::count)
+}
+
+#[test]
+fn changing_cartridge_closes_the_session_and_leaves_no_workspace_behind() {
+    if analyzer().is_none() {
+        return;
+    }
+    let fixture = Fixture::new("sys-lsp-swap");
+    let cache = ScratchDir::new("lsp-swap-cache");
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()));
+    let system = shell_with_cartridge(&fixture, NESTED_MAIN);
+    nested_modules(&fixture);
+    let mut system = enter(system, "load pong");
+    analysis.sync(&mut system);
+    assert_eq!(workspaces(&cache), 1);
+    let placeholders = std::fs::read_dir(cache.join("lsp/workspaces"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut names: Vec<_> = std::fs::read_dir(placeholders)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "game.deep.boss.luau",
+            "game.enemies.luau",
+            "main.luau",
+            "util.luau"
+        ]
+    );
+
+    let mut system = enter(system, "unload");
+    analysis.sync(&mut system);
+    assert_eq!(workspaces(&cache), 0);
+
+    let mut system = enter(system, "load pong");
+    analysis.sync(&mut system);
+    assert_eq!(workspaces(&cache), 1);
 }
