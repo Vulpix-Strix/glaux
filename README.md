@@ -32,14 +32,14 @@ No external game engine required.
 
 ### The machine
 
-| Specification | Glaux G1 |
-|---|---|
-| Display | 320 × 240 pixels |
-| Update rate | 60 Hz |
-| Master palette | 256 colors |
-| Audio | 4-channel PSG |
-| Cartridges | Script-based games with optional assets |
-| Programming | Luau, experimental Rhai |
+| Specification     | Glaux G1                                      |
+|-------------------|-----------------------------------------------|
+| Display           | 320 × 240 pixels                              |
+| Update rate       | 60 Hz                                         |
+| Master palette    | 256 colors                                    |
+| Audio             | 4-channel PSG                                 |
+| Cartridges        | Script-based games with optional assets       |
+| Programming       | Luau, experimental Rhai                       |
 | Development tools | Code, sprite, map, sound and music workspaces |
 
 ### Your first cartridge
