@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use glaux_docs::{Kind, Library, ScriptLanguage};
 use glaux_lsp::uri::path_to_uri;
-use glaux_lsp::{Event, LspHandle, LspRuntime, ServerSpec, SessionKey};
+use glaux_lsp::{DocumentInit, Event, LspHandle, LspRuntime, ServerSpec, SessionKey};
 
 use super::translate::to_editor;
 use super::workspace::{Shadow, module_name};
@@ -115,6 +115,16 @@ impl Analysis {
     pub(crate) fn with_quick_failures(mut self, handshake: std::time::Duration) -> Self {
         self.quick_failures = Some(handshake);
         self
+    }
+
+    /// What the server has been sent and has answered so far.
+    #[cfg(test)]
+    pub(crate) fn lsp_stats(&self) -> Option<glaux_lsp::StatsSnapshot> {
+        let State::Running(running) = &self.state else {
+            return None;
+        };
+        let session = running.session.as_ref()?;
+        running.handle.stats(&session.key)
     }
 
     /// What the analyzer is doing, with the reason when it is not working.
@@ -361,26 +371,58 @@ impl Running {
             spec.backoff_cap = std::time::Duration::from_millis(20);
             spec.handshake_timeout = handshake;
         }
+        // Every placeholder exists on disk, and every module reaches the
+        // server together, before it is asked anything. See
+        // `LspHandle::open_session_with`.
+        let mut modules_by_name = HashMap::new();
+        let mut by_uri = HashMap::new();
+        let mut initial = Vec::new();
+        if let Ok(listing) = cartridge.script_files() {
+            for path in listing.paths {
+                let Some(name) = module_name(&path) else {
+                    continue;
+                };
+                let Some(text) = read_text(cartridge, &path) else {
+                    continue;
+                };
+                let file = match shadow.add(&name) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        tracing::debug!(%error, module = name.as_str(), "no placeholder for a module");
+                        continue;
+                    }
+                };
+                let uri = path_to_uri(&file);
+                initial.push(DocumentInit {
+                    uri: uri.clone(),
+                    language: "luau".into(),
+                    version: 1,
+                    text,
+                });
+                by_uri.insert(uri.clone(), name.as_str().to_owned());
+                modules_by_name.insert(
+                    name.as_str().to_owned(),
+                    Module {
+                        path,
+                        uri,
+                        version: 1,
+                        source: Source::Disk,
+                    },
+                );
+            }
+        }
+        let modules = initial.len();
         self.handle
-            .open_session(key.clone(), spec)
+            .open_session_with(key.clone(), spec, initial)
             .map_err(|error| format!("could not start the Luau analyzer: {error}"))?;
-        let mut session = Session {
+        let session = Session {
             key,
             started_at: began,
             host_dir: cartridge.host_dir().to_path_buf(),
             shadow,
-            modules: HashMap::new(),
-            by_uri: HashMap::new(),
+            modules: modules_by_name,
+            by_uri,
         };
-        let mut modules = 0;
-        if let Ok(listing) = cartridge.script_files() {
-            for path in listing.paths {
-                if let Some(text) = read_text(cartridge, &path) {
-                    session.add(&self.handle, &path, &text, Source::Disk);
-                    modules += 1;
-                }
-            }
-        }
         tracing::info!(modules, elapsed = ?began.elapsed(), "the Luau analyzer's workspace is prepared");
         Ok(session)
     }

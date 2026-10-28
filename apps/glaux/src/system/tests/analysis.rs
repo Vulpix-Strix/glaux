@@ -7,6 +7,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::cartridge::source::SourcePath;
 use crate::lsp::Analysis;
 use crate::scratch_dir::ScratchDir;
 use crate::system::EditorDiagnostic;
@@ -515,4 +516,91 @@ mod failing_servers {
         assert_eq!(seen.first(), Some(&AnalyzerStatus::Starting), "{seen:?}");
         assert_eq!(errors(&system).len(), 1);
     }
+}
+
+/// Replaces `from` by `to` in the open tab of `path`, as a person would type.
+fn retype(system: &mut System, path: &str, from: &str, to: &str) {
+    let code = system.code.as_mut().unwrap();
+    let path = SourcePath::parse(path).unwrap();
+    let document = code.open_documents().find(|d| d.path() == &path).unwrap();
+    let at = document.text().find(from).unwrap();
+    let id = document.id();
+    code.edit(id, at..at + from.len(), to, EditKind::Typing, None)
+        .unwrap()
+        .unwrap();
+}
+
+#[test]
+fn an_edit_reaches_the_far_end_of_a_cartridge_with_hundreds_of_modules() {
+    if analyzer().is_none() {
+        return;
+    }
+    // Modules are handed to the server in name order, so `m100` arrives
+    // before `m99` that it requires. A server asked about it too early would
+    // remember the failed lookup and never connect the two, so the edit made
+    // at `m0` would not reach `main`.
+    const MODULES: usize = 300;
+    let fixture = Fixture::new("sys-lsp-large");
+    let cache = ScratchDir::new("lsp-large-cache");
+    let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
+    let main = format!(
+        "--!strict\nlocal last = require(\"m{}\")\nlocal n: number = last.value()\nprint(n, 0, 0, 0)\n",
+        MODULES - 1
+    );
+    let system = shell_with_cartridge(&fixture, &main);
+    write(
+        &fixture,
+        "code/m0.luau",
+        "--!strict\nlocal M = {}\nfunction M.value() return 1 end\nreturn M\n",
+    );
+    for k in 1..MODULES {
+        let text = format!(
+            "--!strict\nlocal prev = require(\"m{}\")\nlocal M = {{}}\nfunction M.value() return prev.value() end\nreturn M\n",
+            k - 1
+        );
+        write(&fixture, &format!("code/m{k}.luau"), &text);
+    }
+    let mut system = press_break(enter(system, "load pong"));
+    for path in ["code/main.luau", "code/m0.luau"] {
+        open_tab(&mut system, path);
+    }
+    let analyzed = |system: &System| {
+        system
+            .code
+            .as_ref()
+            .and_then(|code| {
+                let document = code
+                    .open_documents()
+                    .find(|d| d.path().as_str() == "code/main.luau")?;
+                code.diagnostic_summary(document.id())
+            })
+            .is_some_and(|summary| !summary.stale)
+    };
+    let system = settle(system, &mut analysis, analyzed);
+    assert_eq!(findings_of(&system, "code/main.luau"), []);
+
+    let mut system = system;
+    retype(&mut system, "code/m0.luau", "return 1", "return \"a\"");
+    let system = settle(system, &mut analysis, |s| {
+        !findings_of(s, "code/main.luau").is_empty()
+    });
+    let found = findings_of(&system, "code/main.luau");
+    assert!(
+        found[0].1.contains("Expected this to be 'number'"),
+        "{found:?}"
+    );
+}
+
+/// Opens the script at `path` in a tab of the Code view.
+pub(super) fn open_tab(system: &mut System, path: &str) {
+    let cartridge = crate::system::state::cartridge_of(&system.state)
+        .unwrap()
+        .clone();
+    let path = SourcePath::parse(path).unwrap();
+    system
+        .code
+        .as_mut()
+        .unwrap()
+        .open(&cartridge, &path)
+        .unwrap();
 }
