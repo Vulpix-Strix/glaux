@@ -8,7 +8,7 @@ members = [
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/cuervolu/glaux"
+repository = "https://github.com/Vulpix-Strix/glaux"
 
 [workspace.dependencies]
 anyhow = "1"
