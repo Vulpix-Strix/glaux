@@ -384,6 +384,7 @@ impl CodeEditor {
             || self.completion.is_some()
             || self.signature.is_some()
             || self.hover.is_some()
+            || self.diag.focused()
             || self.symbols.as_ref().is_some_and(SymbolPanel::focused)
     }
 
@@ -410,7 +411,7 @@ impl CodeEditor {
             go_to_hint()
         } else if self.debug.is_some() {
             stopped_hint()
-        } else if self.symbols.as_ref().is_some_and(SymbolPanel::focused) {
+        } else if self.diag.focused() || self.symbols.as_ref().is_some_and(SymbolPanel::focused) {
             symbols_hint()
         } else if self.completion.is_some() {
             completion_hint()
@@ -986,6 +987,9 @@ impl CodeEditor {
         }
         if self.go_to.is_some() {
             return self.go_to_input(event, session);
+        }
+        if let Some(request) = self.diag_input(event, session) {
+            return request;
         }
         if let Some(request) = self.symbols_input(event, session) {
             return request;

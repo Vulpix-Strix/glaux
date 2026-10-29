@@ -38,6 +38,15 @@ impl CodeEditor {
         let Some(start) = target.map(|d| d.range.start) else {
             return;
         };
+        self.go_to_problem(session, start);
+    }
+
+    /// Puts the caret of the active document at byte `start` and shows it.
+    pub(super) fn go_to_problem(&mut self, session: &mut CodeSession, start: usize) {
+        let Some(document) = session.active_document() else {
+            return;
+        };
+        let id = document.id();
         let selection = Selection::collapsed(Caret::at(document, start));
         session.tabs_mut().set_selection(id, selection);
         self.show_arrival(session, id, None);

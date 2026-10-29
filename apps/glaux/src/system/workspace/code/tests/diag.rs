@@ -83,3 +83,55 @@ fn the_view_scrolls_to_keep_the_pick_in_sight() {
     list.sync(id, &found, 3);
     assert_eq!((list.index(id, &found), list.top()), (Some(4), 2));
 }
+
+/// A session over `a b c d e f` with `items` stored for it.
+fn analyzed(fixture: &Fixture, items: Vec<EditorDiagnostic>) -> (CodeEditor, CodeSession) {
+    let editor = editor();
+    let (_, mut session) = session_with_text(fixture, &["a.luau"], "a b c d e f\n");
+    editor.refresh_metrics(&mut session);
+    let document = session.active_document().unwrap();
+    let (path, revision) = (document.path().clone(), document.revision());
+    session.set_diagnostics(&path, revision, items);
+    (editor, session)
+}
+
+fn caret(session: &CodeSession) -> usize {
+    let id = session.active_document().unwrap().id();
+    session.tabs().selection(id).unwrap().caret().byte()
+}
+
+#[test]
+fn focus_picks_a_row_and_enter_goes_to_it_and_gives_the_keys_back() {
+    let fixture = Fixture::new("code-diag-enter");
+    let items = vec![
+        finding(2, Severity::Error, "one"),
+        finding(6, Severity::Warning, "two"),
+    ];
+    let (mut editor, mut session) = analyzed(&fixture, items);
+    editor.handle_input(InputEvent::FocusDiagnostics, Some(&mut session));
+    assert!(editor.claims_break());
+    editor.handle_input(InputEvent::Down { select: false }, Some(&mut session));
+    editor.handle_input(InputEvent::Enter, Some(&mut session));
+    assert_eq!(caret(&session), 6);
+    assert!(!editor.claims_break());
+}
+
+#[test]
+fn typing_does_not_edit_while_the_list_has_the_keys() {
+    let fixture = Fixture::new("code-diag-typing");
+    let (mut editor, mut session) = analyzed(&fixture, vec![finding(2, Severity::Error, "one")]);
+    editor.handle_input(InputEvent::FocusDiagnostics, Some(&mut session));
+    editor.handle_input(InputEvent::Text('x'), Some(&mut session));
+    assert_eq!(session.active_document().unwrap().text(), "a b c d e f\n");
+    editor.handle_input(InputEvent::Break, Some(&mut session));
+    editor.handle_input(InputEvent::Text('x'), Some(&mut session));
+    assert_eq!(session.active_document().unwrap().text(), "xa b c d e f\n");
+}
+
+#[test]
+fn focus_does_nothing_without_findings() {
+    let fixture = Fixture::new("code-diag-none");
+    let (mut editor, mut session) = analyzed(&fixture, vec![]);
+    editor.handle_input(InputEvent::FocusDiagnostics, Some(&mut session));
+    assert!(!editor.claims_break());
+}

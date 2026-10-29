@@ -7,12 +7,12 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
-use glaux_input::Point;
+use glaux_input::{InputEvent, Point, PointerButton};
 
-use super::CodeEditor;
 use super::layout::CodeLayout;
 use super::render::severity_color;
 use super::text_view::thumb;
+use super::{CodeEditor, CodeRequest};
 use crate::system::editing::diagnostics::{EditorDiagnostic, Severity};
 use crate::system::editing::document::{CodeDocument, DocumentId};
 use crate::system::editing::session::CodeSession;
@@ -89,6 +89,30 @@ impl DiagList {
         }
         self.focused = true;
         true
+    }
+
+    pub(super) fn blur(&mut self) {
+        self.focused = false;
+    }
+
+    /// Picks `index` of `found`.
+    pub(super) fn select(
+        &mut self,
+        document: DocumentId,
+        found: &[EditorDiagnostic],
+        index: usize,
+    ) {
+        if let Some(found) = found.get(index) {
+            self.pick = Some(Pick::of(document, found));
+        }
+    }
+
+    /// Scrolls by `rows` without moving the pick.
+    pub(super) fn scroll(&mut self, rows: isize, shown: usize, total: usize) {
+        self.top = self
+            .top
+            .saturating_add_signed(rows)
+            .min(total.saturating_sub(shown));
     }
 
     /// Index in `found` of the picked finding: the same one if it is still
@@ -263,6 +287,83 @@ impl CodeEditor {
         };
         let shown = self.layout.diag_rows();
         self.diag.sync(id, session.diagnostics(id), shown);
+    }
+
+    /// Applies `event` to the problem list. `None` when the list does not
+    /// take it.
+    pub(super) fn diag_input(
+        &mut self,
+        event: InputEvent,
+        session: &mut CodeSession,
+    ) -> Option<Option<CodeRequest>> {
+        let id = session.active_document()?.id();
+        let found = session.diagnostics(id).to_vec();
+        let shown = self.layout.diag_rows();
+        match event {
+            InputEvent::FocusDiagnostics if self.diag.focused() => self.diag.blur(),
+            InputEvent::FocusDiagnostics => {
+                let caret = session
+                    .tabs()
+                    .selection(id)
+                    .unwrap_or_default()
+                    .caret()
+                    .byte();
+                if self.diag.focus(id, &found, caret) {
+                    self.close_hover();
+                }
+            }
+            InputEvent::PointerDown {
+                button: PointerButton::Primary,
+                at,
+                ..
+            } if self.layout.diag.contains(at) => {
+                if let Some(index) = self.diag_row_at(at, found.len()) {
+                    self.diag.select(id, &found, index);
+                    self.go_to_problem(session, found[index].range.start);
+                }
+            }
+            // A press anywhere else takes the keys back and goes on to
+            // whatever is under it.
+            InputEvent::PointerDown { .. } => {
+                self.diag.blur();
+                return None;
+            }
+            InputEvent::Wheel { delta }
+                if self.pointer.is_some_and(|at| self.layout.diag.contains(at)) =>
+            {
+                self.diag.scroll(-isize::from(delta), shown, found.len());
+            }
+            _ if !self.diag.focused() => return None,
+            InputEvent::Up { .. } => self.diag.step(id, &found, -1),
+            InputEvent::Down { .. } => self.diag.step(id, &found, 1),
+            InputEvent::PageUp { .. } => self.diag.step(id, &found, -(shown as isize)),
+            InputEvent::PageDown { .. } => self.diag.step(id, &found, shown as isize),
+            InputEvent::Enter => {
+                if let Some(index) = self.diag.index(id, &found) {
+                    self.diag.blur();
+                    self.go_to_problem(session, found[index].range.start);
+                }
+            }
+            InputEvent::Break => self.diag.blur(),
+            // Keys that would edit or move the caret do nothing while the
+            // list has the keys.
+            InputEvent::Text(_)
+            | InputEvent::Backspace
+            | InputEvent::Delete
+            | InputEvent::Tab { .. }
+            | InputEvent::Left { .. }
+            | InputEvent::Right { .. }
+            | InputEvent::Home { .. }
+            | InputEvent::End { .. }
+            | InputEvent::WordLeft { .. }
+            | InputEvent::WordRight { .. }
+            | InputEvent::Undo
+            | InputEvent::Redo
+            | InputEvent::Cut
+            | InputEvent::Paste => {}
+            _ => return None,
+        }
+        Some(None)
     }
 
     /// The finding whose row `at` is over, among `total`.

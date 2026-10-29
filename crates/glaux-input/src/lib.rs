@@ -166,6 +166,9 @@ pub enum InputEvent {
     NextProblem {
         reverse: bool,
     },
+    /// Give the keys to the list of problems under the text, or take them
+    /// back (F6 on desktop).
+    FocusDiagnostics,
     /// Open the list of the symbols the open document declares (Ctrl+O or
     /// Ctrl+Shift+O on desktop).
     GoToSymbol,

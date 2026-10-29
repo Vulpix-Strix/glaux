@@ -295,6 +295,7 @@ impl Shell {
             | InputEvent::Forward
             | InputEvent::GoToDefinition
             | InputEvent::NextProblem { .. }
+            | InputEvent::FocusDiagnostics
             | InputEvent::GoToSymbol
             | InputEvent::GoToDefinitionAt(_)
             | InputEvent::ToggleSidebar

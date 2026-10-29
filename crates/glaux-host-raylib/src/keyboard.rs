@@ -43,7 +43,7 @@ struct EditKey {
     plain_only: bool,
 }
 
-const EDIT_KEYS: [EditKey; 25] = [
+const EDIT_KEYS: [EditKey; 26] = [
     EditKey {
         key: KeyboardKey::KEY_LEFT,
         event: |m| {
@@ -196,6 +196,12 @@ const EDIT_KEYS: [EditKey; 25] = [
                 InputEvent::Run
             }
         },
+        repeats: false,
+        plain_only: false,
+    },
+    EditKey {
+        key: KeyboardKey::KEY_F6,
+        event: |_| InputEvent::FocusDiagnostics,
         repeats: false,
         plain_only: false,
     },
@@ -679,6 +685,7 @@ pub(crate) fn retain_for_mode(mode: InputMode, events: &mut Vec<InputEvent>) {
                     | InputEvent::Forward
                     | InputEvent::GoToDefinition
                     | InputEvent::NextProblem { .. }
+                    | InputEvent::FocusDiagnostics
                     | InputEvent::GoToSymbol
                     | InputEvent::ToggleSidebar
                     | InputEvent::Copy
