@@ -30,6 +30,7 @@ mod syntax_theme;
 mod test_font;
 #[cfg(test)]
 mod test_frames;
+mod text;
 mod ui_errors;
 mod unsaved;
 mod video;

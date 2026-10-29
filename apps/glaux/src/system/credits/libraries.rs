@@ -3,11 +3,12 @@ use glaux_input::InputEvent;
 use glaux_machine::framebuffer::WIDTH;
 
 use super::catalog::{Catalog, LicenseFilter};
-use super::paint::{BAR, Painter, ROW, clip, wrap};
+use super::paint::{BAR, Painter, ROW};
 use super::reader::Reader;
 use super::spdx::Terms;
 use crate::licenses::{Category, Entry};
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
+use crate::system::text::{clip, wrap};
 use crate::ui_text;
 
 const LIST_TOP: i32 = 24;

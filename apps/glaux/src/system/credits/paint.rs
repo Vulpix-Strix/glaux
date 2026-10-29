@@ -3,11 +3,11 @@ use glaux_machine::framebuffer::{Framebuffer, WIDTH};
 use glaux_video::draw::{draw_text, fill_rect};
 
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
+use crate::system::text::clip;
 
 pub(super) const ROW: i32 = 12;
 pub(super) const BAR: u8 = 12;
 pub(super) const IDLE: u8 = 13;
-const ELLIPSIS: &str = "..";
 const CHECKER: i32 = 2;
 
 pub(super) struct Painter<'a> {
@@ -145,66 +145,4 @@ fn thumb(offset: usize, visible: usize, total: usize, track: i32) -> Option<(i32
     let range = total - visible;
     let start = (track - length) * offset.min(range) / range;
     Some((start as i32, length as i32))
-}
-
-/// `text` cut to `cells` character cells, ending in `..` when something
-/// was left out.
-pub(super) fn clip(font: &BitmapFont, text: &str, cells: usize) -> String {
-    if font.text_cells(text) <= cells {
-        return text.to_owned();
-    }
-    let room = cells.saturating_sub(ELLIPSIS.len());
-    let mut used = 0;
-    let mut out = String::new();
-    for ch in text.chars() {
-        let width = font.cells(ch);
-        if used + width > room {
-            break;
-        }
-        used += width;
-        out.push(ch);
-    }
-    if cells >= ELLIPSIS.len() {
-        out.push_str(ELLIPSIS);
-    }
-    out
-}
-
-/// Breaks `text` into lines of at most `cells` character cells, at spaces
-/// when it has any and inside words otherwise. Explicit newlines are kept.
-pub(super) fn wrap(font: &BitmapFont, text: &str, cells: usize) -> Vec<String> {
-    let cells = cells.max(1);
-    let mut lines = Vec::new();
-    for paragraph in text.split('\n') {
-        let mut line = String::new();
-        let mut used = 0;
-        for word in paragraph.split(' ') {
-            let width = font.text_cells(word);
-            let space = usize::from(!line.is_empty());
-            if used + space + width <= cells {
-                if space == 1 {
-                    line.push(' ');
-                }
-                line.push_str(word);
-                used += space + width;
-                continue;
-            }
-            if !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
-                used = 0;
-            }
-            // A word longer than a line is split wherever it reaches the edge.
-            for ch in word.chars() {
-                let width = font.cells(ch);
-                if used + width > cells && !line.is_empty() {
-                    lines.push(std::mem::take(&mut line));
-                    used = 0;
-                }
-                line.push(ch);
-                used += width;
-            }
-        }
-        lines.push(line);
-    }
-    lines
 }
