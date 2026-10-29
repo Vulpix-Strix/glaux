@@ -6,6 +6,7 @@ use glaux_syntax::SyntaxKind;
 
 use super::super::completion::{entry_signature, local_panel, type_name};
 use crate::system::workspace::docs::DocTarget;
+use crate::ui_text;
 
 /// What one parameter takes and means.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +29,32 @@ pub struct HoverView {
     pub returns: Option<&'static str>,
     /// Whether the full page can be opened from the popup.
     pub opens_page: bool,
+}
+
+impl HoverView {
+    /// Everything the view says, as plain paragraphs, for reading where the
+    /// popup had no room for it.
+    pub fn full_text(&self) -> String {
+        let mut text: String = self
+            .signature
+            .iter()
+            .map(|(piece, _)| piece.as_str())
+            .collect();
+        if let Some(summary) = &self.summary {
+            text.push_str("\n\n");
+            text.push_str(summary);
+        }
+        for row in &self.params {
+            text.push_str(&format!("\n\n{} ({})", row.name, row.ty));
+            if !row.meaning.is_empty() {
+                text.push_str(&format!(": {}", row.meaning));
+            }
+        }
+        if let Some(ty) = self.returns {
+            text.push_str(&format!("\n\n{}: {ty}", ui_text::get("code-hover-returns")));
+        }
+        text
+    }
 }
 
 /// Where the popup's wording comes from. The view does not read the

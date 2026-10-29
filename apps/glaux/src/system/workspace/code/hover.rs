@@ -19,6 +19,7 @@ use crate::system::editing::document::{CodeDocument, DocumentId};
 use crate::system::editing::metrics::spot;
 use crate::system::editing::session::CodeSession;
 use crate::system::workspace::Rect;
+use crate::system::workspace::detail::Detail;
 use crate::system::workspace::docs::DocTarget;
 use crate::ui_text;
 pub(super) use layout::HoverLayout;
@@ -30,9 +31,9 @@ pub const HOVER_DELAY_TICKS: u32 = TICK_RATE / 2;
 /// The status bar hint while the popup is shown.
 pub fn hover_hint(opens_page: bool) -> String {
     if opens_page {
-        ui_text::get("code-click-open-docs-esc-close")
+        ui_text::get("code-click-open-docs-tab-more-esc-close")
     } else {
-        ui_text::get("code-esc-close")
+        ui_text::get("code-tab-more-esc-close")
     }
 }
 
@@ -235,6 +236,20 @@ impl CodeEditor {
                 None
             }
             InputEvent::Break => {
+                self.close_hover();
+                Some(None)
+            }
+            // The popup keeps only what fits, so Tab opens all of it.
+            InputEvent::Tab { .. } => {
+                if let Some(popup) = self.hover.take() {
+                    self.detail = Some(Detail::new(
+                        &self.layout.font,
+                        self.layout.text,
+                        &ui_text::get("code-hover-details"),
+                        popup.view.tag.as_deref().unwrap_or_default(),
+                        &popup.view.full_text(),
+                    ));
+                }
                 self.close_hover();
                 Some(None)
             }

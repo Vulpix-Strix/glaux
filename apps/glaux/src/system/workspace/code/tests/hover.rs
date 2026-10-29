@@ -130,7 +130,20 @@ fn a_local_describes_where_it_is_declared_and_opens_no_page() {
         popup.view().summary.as_deref(),
         Some("Function declared on line 1.")
     );
-    assert_eq!(editor.hint(), ui_text::get("code-esc-close"));
+    assert_eq!(editor.hint(), ui_text::get("code-tab-more-esc-close"));
+}
+
+#[test]
+fn tab_opens_the_whole_hover_even_when_the_word_has_no_page() {
+    let (mut editor, mut session) = luau("local function mine() end\nmine()\n");
+    rest_on(&mut editor, &mut session, 26);
+    assert!(editor.hover().is_some());
+    editor.handle_input(InputEvent::Tab { reverse: false }, Some(&mut session));
+    assert!(editor.hover().is_none());
+    assert!(editor.has_overlay());
+    assert_eq!(editor.hint(), ui_text::get("code-up-down-scroll-esc-close"));
+    editor.handle_input(InputEvent::Break, Some(&mut session));
+    assert!(!editor.has_overlay());
 }
 
 #[test]
@@ -342,7 +355,7 @@ fn the_hint_follows_the_popup() {
     rest_on(&mut editor, &mut session, 1);
     assert_eq!(
         editor.hint(),
-        ui_text::get("code-click-open-docs-esc-close")
+        ui_text::get("code-click-open-docs-tab-more-esc-close")
     );
     feed(&mut editor, &mut session, &[InputEvent::Break]);
     assert_eq!(editor.hint(), idle);
