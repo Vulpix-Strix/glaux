@@ -28,6 +28,24 @@ pub(crate) fn clip(font: &BitmapFont, text: &str, cells: usize) -> String {
     out
 }
 
+/// `text` cut to `cells` character cells with [`ELLIPSIS`] at its end, for a
+/// last line that has more text after it.
+pub(crate) fn cut(font: &BitmapFont, text: &str, cells: usize) -> String {
+    let room = cells.saturating_sub(font.text_cells(ELLIPSIS));
+    let mut kept = String::new();
+    let mut used = 0;
+    for ch in text.chars() {
+        let width = font.cells(ch);
+        if used + width > room {
+            break;
+        }
+        used += width;
+        kept.push(ch);
+    }
+    kept.push_str(ELLIPSIS);
+    kept
+}
+
 /// Breaks `text` into lines of at most `cells` character cells, at spaces
 /// when it has any and inside words otherwise. Explicit newlines are kept.
 pub(crate) fn wrap(font: &BitmapFont, text: &str, cells: usize) -> Vec<String> {
@@ -85,6 +103,12 @@ mod tests {
     fn clip_never_splits_a_wide_glyph_at_the_edge() {
         // The wide glyph would need cells 3 and 4 but only 3 remain before "..".
         assert_eq!(clip(&LAYOUT_FONT, "ab✅cd", 5), "ab..");
+    }
+
+    #[test]
+    fn cut_always_marks_the_end_even_when_the_line_fits() {
+        assert_eq!(cut(&LAYOUT_FONT, "abc", 6), "abc..");
+        assert_eq!(cut(&LAYOUT_FONT, "abcdefgh", 6), "abcd..");
     }
 
     #[test]

@@ -324,7 +324,8 @@ logs-nothing-logged = Nothing logged yet.
 logs-run-cancelled-graphics-not-saved = Run cancelled: the graphics could not be saved.
 logs-run-cancelled-script-not-saved = Run cancelled: { $path } could not be saved.
 logs-system = System
-logs-up-down-scroll-l-level-s-source-f12-close = Up/Down: scroll  L: level  S: source  F12: close
+logs-tab-read-l-level-s-source-f12-close = Tab: read  L: level  S: source  F12: close
+logs-up-down-scroll-tab-back = Up/Down: scroll  Tab: back
 
 ## Sprite editor
 

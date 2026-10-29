@@ -41,6 +41,7 @@ use crate::ui_text;
 pub(super) use answers::saved_before_stopping;
 use code::CodeEditor;
 pub use code::DebugAction;
+pub(super) use code::text_view::thumb;
 pub use colors::WorkspaceVideo;
 pub(super) use dialog::{Dialog, DialogLayout};
 use docs::{DocsBrowser, Source};

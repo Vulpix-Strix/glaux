@@ -177,4 +177,44 @@ mod panel {
         assert!(panel.listing.rows.is_empty());
         assert_eq!(panel.listing.revision, None);
     }
+
+    #[test]
+    fn tab_reads_one_record_whole_and_up_down_then_scroll_it_instead_of_moving() {
+        use glaux_machine::framebuffer::Framebuffer;
+
+        use crate::system::test_font::LAYOUT_FONT;
+
+        let mut store = LogStore::default();
+        let long = (0..40)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        store.push_cartridge(
+            vec![
+                entry(LogLevel::Info, "before"),
+                entry(LogLevel::Info, &long),
+            ],
+            0,
+        );
+        let mut panel = open_on(&store);
+        let mut frame = Framebuffer::default();
+        let mut draw = |panel: &LogPanel| panel.render(&mut frame, &LAYOUT_FONT, &|c| c, false);
+
+        panel.input(InputEvent::Tab { reverse: false }, &store, false);
+        draw(&panel);
+        panel.input(InputEvent::Down { select: false }, &store, false);
+        panel.input(InputEvent::Up { select: false }, &store, false);
+        panel.input(InputEvent::Down { select: false }, &store, false);
+        draw(&panel);
+        assert_eq!(panel.reading, Some(1));
+        assert!(highlighted(&panel).unwrap().starts_with("line 0"));
+
+        // Escape leaves the text, then closes the panel as before.
+        panel.input(InputEvent::Break, &store, false);
+        assert!(panel.is_open());
+        up(&mut panel, &store);
+        assert_eq!(highlighted(&panel).as_deref(), Some("before"));
+        panel.input(InputEvent::Break, &store, false);
+        assert!(!panel.is_open());
+    }
 }

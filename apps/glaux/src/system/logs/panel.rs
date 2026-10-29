@@ -3,6 +3,7 @@
 //! The panel builds its rows from the store when it opens and holds none
 //! while closed.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use glaux_i18n::Arg;
@@ -13,7 +14,8 @@ use glaux_video::draw::{draw_text, fill_rect};
 
 use super::{LogRecord, LogStore, Severity, Source, SourceLocation};
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT, TRACE, WARN};
-use crate::system::workspace::{take_cells, wrap};
+use crate::system::text::{clip, cut, wrap};
+use crate::system::workspace::{take_cells, thumb};
 use crate::ui_text;
 
 /// Rows moved by a page key.
@@ -83,6 +85,11 @@ pub struct LogPanel {
     /// The `seq` of the record the user moved to, or `None` while the
     /// panel follows the newest record.
     selected: Option<u64>,
+    /// How far the selected record's text is scrolled, while the user reads
+    /// it whole instead of moving between records.
+    pub(super) reading: Option<usize>,
+    /// The furthest `reading` can reach, as the last drawing measured it.
+    reach: Cell<usize>,
     pub(super) listing: Listing,
 }
 
@@ -93,6 +100,8 @@ impl Default for LogPanel {
             min: Severity::Trace,
             source: SourceFilter::All,
             selected: None,
+            reading: None,
+            reach: Cell::new(0),
             listing: Listing::default(),
         }
     }
@@ -105,6 +114,7 @@ impl LogPanel {
 
     pub fn toggle(&mut self) {
         self.open = !self.open;
+        self.reading = None;
         if self.open {
             self.selected = None;
         }
@@ -146,8 +156,36 @@ impl LogPanel {
     /// key events, and over the editor as editing events, so both are read.
     pub fn input(&mut self, event: InputEvent, store: &LogStore, can_jump: bool) -> PanelAction {
         self.sync(store);
+        if let Some(top) = self.reading {
+            let top = match event {
+                InputEvent::ToggleLogs => {
+                    self.close();
+                    return PanelAction::None;
+                }
+                InputEvent::Break | InputEvent::Tab { .. } | InputEvent::KeyDown(Key::Tab) => {
+                    self.reading = None;
+                    return PanelAction::None;
+                }
+                InputEvent::ButtonDown(Button::Up) | InputEvent::Up { .. } => top.saturating_sub(1),
+                InputEvent::ButtonDown(Button::Down) | InputEvent::Down { .. } => top + 1,
+                InputEvent::KeyDown(Key::PageUp) | InputEvent::PageUp { .. } => {
+                    top.saturating_sub(PAGE_ROWS)
+                }
+                InputEvent::KeyDown(Key::PageDown) | InputEvent::PageDown { .. } => top + PAGE_ROWS,
+                InputEvent::KeyDown(Key::Home) | InputEvent::Home { .. } => 0,
+                InputEvent::KeyDown(Key::End) | InputEvent::End { .. } => usize::MAX,
+                _ => top,
+            };
+            self.reading = Some(top.min(self.reach.get()));
+            return PanelAction::None;
+        }
         match event {
             InputEvent::Break | InputEvent::ToggleLogs => self.close(),
+            InputEvent::KeyDown(Key::Tab) | InputEvent::Tab { .. } => {
+                if self.selected_record().is_some() {
+                    self.reading = Some(0);
+                }
+            }
             InputEvent::ButtonDown(Button::Up) | InputEvent::Up { .. } => self.step(-1),
             InputEvent::ButtonDown(Button::Down) | InputEvent::Down { .. } => self.step(1),
             InputEvent::KeyDown(Key::PageUp) | InputEvent::PageUp { .. } => {
@@ -291,6 +329,40 @@ impl LogPanel {
             color(ACCENT),
         );
 
+        if let (Some(top), Some(record)) = (self.reading, self.selected_record()) {
+            let rows = rows_total.saturating_sub(2);
+            let lines = wrap(font, &record.text(), columns.saturating_sub(1));
+            self.reach.set(lines.len().saturating_sub(rows));
+            let top = top.min(self.reach.get());
+            for (n, part) in lines.iter().skip(top).take(rows).enumerate() {
+                let ink = color(severity_color(record.severity));
+                draw_text(framebuffer, font, part, x, line(1 + n), ink);
+            }
+            let track = rows as i32 * cell_h;
+            if let Some((start, length)) = thumb(top, rows, lines.len(), track) {
+                fill_rect(framebuffer, width - 3, line(1), 2, track, color(DIM));
+                fill_rect(
+                    framebuffer,
+                    width - 3,
+                    line(1) + start,
+                    2,
+                    length,
+                    color(PALE),
+                );
+            }
+            let footer = ui_text::get("logs-up-down-scroll-tab-back");
+            let footer = clip(font, &footer, columns);
+            draw_text(
+                framebuffer,
+                font,
+                &footer,
+                x,
+                line(rows_total - 1),
+                color(DIM),
+            );
+            return;
+        }
+
         // While following, the highlighted row is the newest and the list
         // ends there.
         let end = highlighted
@@ -314,11 +386,11 @@ impl LogPanel {
             draw_text(framebuffer, font, tag, x, y, color(tag_color));
             let text = row.text();
             let first = text.lines().next().unwrap_or_default();
-            let shown = take_cells(font, first, columns.saturating_sub(2));
+            let shown = clip(font, first, columns.saturating_sub(2));
             draw_text(
                 framebuffer,
                 font,
-                shown,
+                &shown,
                 x + 2 * cell_w,
                 y,
                 color(severity_color(row.severity)),
@@ -337,15 +409,18 @@ impl LogPanel {
 
         if let Some(record) = self.selected_record() {
             let text = record.text();
-            for (n, part) in wrap(font, &text, columns)
-                .iter()
-                .take(DETAIL_ROWS)
-                .enumerate()
-            {
+            let lines = wrap(font, &text, columns);
+            for (n, part) in lines.iter().take(DETAIL_ROWS).enumerate() {
+                // The last row says there is more to read with Tab.
+                let part = if n + 1 == DETAIL_ROWS && lines.len() > DETAIL_ROWS {
+                    cut(font, part, columns)
+                } else {
+                    part.clone()
+                };
                 draw_text(
                     framebuffer,
                     font,
-                    part,
+                    &part,
                     x,
                     line(1 + list_rows + n),
                     color(severity_color(record.severity)),
@@ -361,7 +436,7 @@ impl LogPanel {
                     ("line", Arg::Text(&location.line.to_string())),
                 ],
             ),
-            None => ui_text::get("logs-up-down-scroll-l-level-s-source-f12-close"),
+            None => ui_text::get("logs-tab-read-l-level-s-source-f12-close"),
         };
         draw_text(
             framebuffer,

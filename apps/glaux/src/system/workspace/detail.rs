@@ -6,9 +6,8 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
-use super::code::text_view::thumb;
 use super::dialog::{INK, PAD, draw_window_with_detail};
-use super::{BAR, Rect};
+use super::{BAR, Rect, thumb};
 use crate::system::text::wrap;
 
 /// Rows of text the window shows at once.

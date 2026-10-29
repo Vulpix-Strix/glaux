@@ -4,6 +4,7 @@ use glaux_video::draw::{draw_text, fill_rect};
 
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::system::text::clip;
+use crate::system::workspace::thumb;
 
 pub(super) const ROW: i32 = 12;
 pub(super) const BAR: u8 = 12;
@@ -130,19 +131,4 @@ impl<'a> Painter<'a> {
             self.fill(x, y + start, 3, length, thumb_color);
         }
     }
-}
-
-/// Where a scroll thumb sits along a track `track` pixels long, as its start
-/// and length, for a view showing `visible` of `total` rows from `offset`.
-/// `None` when everything is visible.
-fn thumb(offset: usize, visible: usize, total: usize, track: i32) -> Option<(i32, i32)> {
-    if total <= visible || track <= 0 {
-        return None;
-    }
-    let (offset, visible, total) = (offset as i64, visible as i64, total as i64);
-    let track = i64::from(track);
-    let length = (track * visible / total).clamp(4.min(track), track);
-    let range = total - visible;
-    let start = (track - length) * offset.min(range) / range;
-    Some((start as i32, length as i32))
 }
