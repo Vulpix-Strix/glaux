@@ -14,6 +14,7 @@ use pretty_assertions::assert_eq;
 mod autocomplete;
 pub(super) mod completion;
 mod debugging;
+mod diag;
 mod editing;
 mod find;
 mod hover;
@@ -303,7 +304,7 @@ fn each_document_keeps_its_own_scroll_position() {
         InputEvent::WheelHorizontal { delta: i8::MIN },
         Some(&mut session),
     );
-    assert_eq!(view(&session, "b.luau"), at(101 - 14, 0, 61 - 47));
+    assert_eq!(view(&session, "b.luau"), at(101 - 13, 0, 61 - 47));
     editor.handle_input(InputEvent::Wheel { delta: i8::MAX }, Some(&mut session));
     editor.handle_input(
         InputEvent::WheelHorizontal { delta: i8::MAX },

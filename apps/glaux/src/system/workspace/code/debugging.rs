@@ -7,7 +7,7 @@
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_script::debug::{Frame, Resume, Step, Stop, Variable};
 
-use super::layout::CodeLayout;
+use super::layout::{CodeLayout, DIAG_ROWS, DIAG_ROWS_STOPPED};
 use super::symbols::{PanelLayout, WIDTH};
 use super::{CodeEditor, CodeRequest};
 use crate::system::workspace::Rect;
@@ -278,11 +278,13 @@ impl CodeEditor {
         self.signature = None;
         self.close_hover();
         self.debug = Some(DebugView::new(stop));
+        self.layout = self.layout.resized_diag(DIAG_ROWS_STOPPED);
     }
 
     pub fn end_stop(&mut self) {
         self.resizing = false;
         self.debug = None;
+        self.layout = self.layout.resized_diag(DIAG_ROWS);
     }
 
     pub fn debug_view(&self) -> Option<&DebugView> {

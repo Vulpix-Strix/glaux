@@ -57,11 +57,25 @@ pub struct CodeLayout {
     pub options: Rect,
     /// The active document's text.
     pub text: Rect,
+    /// The list of the active document's problems, between the text and the
+    /// status bar.
+    pub diag: Rect,
     pub status: Rect,
 }
 
+/// Rows the problem list shows while the cartridge runs free.
+pub const DIAG_ROWS: usize = 1;
+/// Rows the problem list shows while a debugged cartridge is stopped.
+pub const DIAG_ROWS_STOPPED: usize = 3;
+
 impl CodeLayout {
     pub fn new(metrics: Metrics, font: BitmapFont) -> Self {
+        Self::with_diag_rows(metrics, font, DIAG_ROWS)
+    }
+
+    /// The layout whose problem list is `rows` rows tall. The text area
+    /// gives up the room.
+    pub fn with_diag_rows(metrics: Metrics, font: BitmapFont, rows: usize) -> Self {
         let bar = metrics.cell_h + 2;
         let width = WIDTH as i32;
         let strip = Rect {
@@ -80,11 +94,18 @@ impl CodeLayout {
             y: HEIGHT as i32 - bar,
             ..strip
         };
+        // The rule above the rows takes one pixel.
+        let diag_height = rows as i32 * metrics.cell_h + 1;
+        let diag = Rect {
+            y: status.y - diag_height,
+            height: diag_height,
+            ..strip
+        };
         let text = Rect {
             x: 0,
             y: options.bottom(),
             width,
-            height: status.y - options.bottom(),
+            height: diag.y - options.bottom(),
         };
         Self {
             metrics,
@@ -92,8 +113,28 @@ impl CodeLayout {
             strip,
             options,
             text,
+            diag,
             status,
         }
+    }
+
+    /// Rows the problem list takes.
+    pub fn diag_rows(&self) -> usize {
+        usize::try_from((self.diag.height - 1) / self.metrics.cell_h.max(1)).unwrap_or(0)
+    }
+
+    /// The `n`th visible row of the problem list.
+    pub fn diag_row(&self, n: usize) -> Rect {
+        Rect {
+            y: self.diag.y + 1 + n as i32 * self.metrics.cell_h,
+            height: self.metrics.cell_h,
+            ..self.diag
+        }
+    }
+
+    /// The same layout with a problem list of `rows` rows.
+    pub fn resized_diag(&self, rows: usize) -> Self {
+        Self::with_diag_rows(self.metrics, self.font.clone(), rows)
     }
 
     /// Text columns that fit across the text area.

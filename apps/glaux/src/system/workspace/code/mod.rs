@@ -9,6 +9,7 @@ mod actions;
 mod breakpoints;
 mod completion;
 mod debugging;
+mod diag;
 mod docs_lookup;
 mod edit;
 use edit::read_only_notice;
@@ -280,6 +281,8 @@ pub struct CodeEditor {
     /// What a stopped cartridge shows, docked right of the text while it
     /// is stopped. The scripts cannot be edited meanwhile.
     debug: Option<DebugView>,
+    /// The problem list under the text.
+    diag: diag::DiagList,
     /// Width of the panel of a stopped cartridge, which the user resizes and
     /// which is kept from one stop to the next.
     debug_width: i32,
@@ -321,6 +324,7 @@ impl CodeEditor {
             entry: None,
             symbols: None,
             debug: None,
+            diag: diag::DiagList::default(),
             debug_width: debugging::MIN_WIDTH,
             resizing: false,
             blink: 0,
@@ -349,6 +353,7 @@ impl CodeEditor {
             self.refresh_find(session);
             self.tick_hover(session);
             self.sync_symbols(session);
+            self.sync_diag(session);
         }
     }
 
@@ -933,6 +938,7 @@ impl CodeEditor {
         self.update_signature(event, revision, session);
         self.sync_hover(session);
         self.sync_symbols(session);
+        self.sync_diag(session);
         request
     }
 

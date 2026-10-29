@@ -60,7 +60,7 @@ fn analyzer_tag(language: Language, status: &AnalyzerStatus) -> Option<(String, 
 }
 
 /// The color a finding of `severity` is drawn in.
-fn severity_color(severity: Severity) -> u8 {
+pub(super) fn severity_color(severity: Severity) -> u8 {
     match severity {
         Severity::Error => ERROR,
         Severity::Warning => WARN,
@@ -213,6 +213,18 @@ impl CodeEditor {
                 painter.options_bar_empty();
                 painter.empty_state(self.entry_error.as_deref());
             }
+        }
+        if let Some(document) = session.and_then(|session| session.active_document()) {
+            let found = session.map_or(&[][..], |session| session.diagnostics(document.id()));
+            let hover = hover_pointer.and_then(|at| self.diag_row_at(at, found.len()));
+            self.diag.render(
+                painter.framebuffer,
+                font,
+                &self.layout,
+                document,
+                found,
+                hover,
+            );
         }
         painter.run_buttons(run_lit, debug_lit, hover_pointer);
         painter.settings_button(ui, settings_lit);

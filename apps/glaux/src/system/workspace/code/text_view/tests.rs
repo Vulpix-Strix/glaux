@@ -65,9 +65,9 @@ fn hidden_line_numbers_give_their_room_to_the_text() {
 fn text_and_indicators_never_overlap() {
     let geometry = TextGeometry::new(&layout(), 10, &settings(false, true));
     let area = layout().text;
-    // 182 pixels between the options and status bars, less the top pixel
-    // and the horizontal indicator, hold 14 rows of 12.
-    assert_eq!(geometry.rows, 14);
+    // 170 pixels between the options bar and the problem list, less the top
+    // pixel and the horizontal indicator, hold 13 rows of 12.
+    assert_eq!(geometry.rows, 13);
     assert!(geometry.viewport.right() < geometry.vertical.x);
     assert!(geometry.viewport.bottom() < geometry.horizontal.y);
     assert!(geometry.vertical.bottom() < geometry.horizontal.y);
@@ -80,8 +80,8 @@ fn vertical_scrolling_stops_when_the_last_line_reaches_the_bottom() {
     let document = document(30, 10);
     let (geometry, metrics) = measured(&document, &settings(false, true));
     let down = geometry.scroll_rows(view(0, 0, 0), 100, &metrics);
-    assert_eq!(down, view(30 - 14, 0, 0));
-    assert_eq!(geometry.scroll_rows(down, -3, &metrics), view(13, 0, 0));
+    assert_eq!(down, view(30 - 13, 0, 0));
+    assert_eq!(geometry.scroll_rows(down, -3, &metrics), view(14, 0, 0));
     assert_eq!(geometry.scroll_rows(down, -100, &metrics), view(0, 0, 0));
 }
 
@@ -122,8 +122,8 @@ fn folded_lines_scroll_by_rows_across_lines_and_never_sideways() {
     let moved = geometry.scroll_rows(view(0, 0, 0), 4, &metrics);
     assert_eq!(moved, view(1, 1, 0));
     assert_eq!(geometry.scroll_rows(moved, -2, &metrics), view(0, 2, 0));
-    // The bottom stops at row 30 - 14 = 16, the second row of line 5.
-    assert_eq!(geometry.scroll_rows(moved, 100, &metrics), view(5, 1, 0));
+    // The bottom stops at row 30 - 13 = 17, the third row of line 5.
+    assert_eq!(geometry.scroll_rows(moved, 100, &metrics), view(5, 2, 0));
     assert_eq!(geometry.scroll_columns(moved, 6, &metrics), moved);
 }
 

@@ -219,6 +219,7 @@ code-debug-locals = Locals
 code-debug-no-variables = None here
 code-debug-stack = Stack
 code-delete-script = Delete script...
+code-diag-none = No problems.
 code-done = Done
 code-editor-settings = EDITOR SETTINGS
 code-enter-go-esc-cancel = Enter: go  Esc: cancel

@@ -28,8 +28,21 @@ fn the_rows_stack_from_the_bar_to_the_bottom_without_gaps() {
     assert_eq!(layout.strip.y, 16);
     assert_eq!(layout.options.y, layout.strip.bottom());
     assert_eq!(layout.text.y, layout.options.bottom());
-    assert_eq!(layout.status.y, layout.text.bottom());
+    assert_eq!(layout.diag.y, layout.text.bottom());
+    assert_eq!(layout.status.y, layout.diag.bottom());
     assert_eq!(layout.status.bottom(), HEIGHT as i32);
+}
+
+#[test]
+fn the_problem_list_takes_one_row_and_three_while_stopped() {
+    let free = layout();
+    let stopped = free.resized_diag(DIAG_ROWS_STOPPED);
+    assert_eq!((free.diag_rows(), stopped.diag_rows()), (1, 3));
+    assert_eq!(stopped.diag_row(2).bottom(), stopped.status.y);
+    assert_eq!(
+        free.text.height - stopped.text.height,
+        2 * free.metrics.cell_h
+    );
 }
 
 #[test]
