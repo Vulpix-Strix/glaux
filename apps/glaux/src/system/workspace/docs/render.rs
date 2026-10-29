@@ -12,10 +12,11 @@ use super::tabs::{CHEVRON_WIDTH, CLOSE_SIZE, LABEL_PAD, MARKER, StripHit};
 use super::view::{Geometry, nav_label, search_label};
 use super::{DocsBrowser, PanelKind, Source};
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::system::text::clip;
 use crate::system::workspace::code::text_view::thumb;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::text_field::FieldColors;
-use crate::system::workspace::{BAR, ELLIPSIS, HOVER_SHADE, IDLE_SHADE, Rect, take_cells};
+use crate::system::workspace::{BAR, ELLIPSIS, HOVER_SHADE, IDLE_SHADE, Rect};
 use crate::ui_text;
 
 /// Thickness of the box around a code block or a table, in pixels from the
@@ -207,8 +208,8 @@ impl DocsBrowser {
         canvas.text(&crumb, items.crumb.x, y, DIM);
         let title_x = items.crumb.x + canvas.cells(&crumb) * canvas.cell_w;
         let title_room = columns.saturating_sub(canvas.font.text_cells(&crumb));
-        let title = take_cells(canvas.font, &shown.title, title_room);
-        canvas.text(title, title_x, y, TEXT);
+        let title = clip(canvas.font, &shown.title, title_room);
+        canvas.text(&title, title_x, y, TEXT);
     }
 
     fn panel(&self, canvas: &mut Canvas<'_>, pointer: Option<Point>) {
@@ -314,8 +315,8 @@ impl DocsBrowser {
         };
         let columns = usize::try_from((bar.width - 8) / canvas.cell_w.max(1)).unwrap_or(0);
         let y = canvas.bar_text_y(bar.y, bar.height);
-        let shown = take_cells(canvas.font, text, columns);
-        canvas.text(shown, 4, y, ink);
+        let shown = clip(canvas.font, text, columns);
+        canvas.text(&shown, 4, y, ink);
     }
 
     /// The list of every tab, `focus` highlighted.
@@ -433,15 +434,6 @@ fn close_glyph(canvas: &mut Canvas<'_>, rect: Rect, color: u8) {
             color,
         );
     }
-}
-
-/// `text` kept to `cells` of `font`'s cells, marking a cut with `..`.
-fn clip(font: &BitmapFont, text: &str, cells: usize) -> String {
-    if font.text_cells(text) <= cells {
-        return text.to_owned();
-    }
-    let room = cells.saturating_sub(font.text_cells(ELLIPSIS));
-    format!("{}{ELLIPSIS}", take_cells(font, text, room))
 }
 
 /// `text` kept to `cells` of `font`'s cells by cutting its start.
