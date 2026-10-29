@@ -60,6 +60,7 @@ use text_view::TextGeometry;
 
 use super::Rect;
 use super::context_menu::{ContextMenu, MenuLayout, MenuOutcome, menu_hint as context_menu_hint};
+use super::detail::{Detail, DetailAction};
 use super::docs::DocTarget;
 use crate::cartridge::Language;
 use crate::cartridge::source::{ScriptListing, SourcePath};
@@ -124,6 +125,14 @@ fn menu_hint() -> String {
 /// The status bar hint while the symbol panel has the keys.
 fn symbols_hint() -> String {
     ui_text::get("code-up-down-pick-enter-go-esc-back")
+}
+/// The status bar hint while the problem list has the keys.
+fn diag_hint() -> String {
+    ui_text::get("code-up-down-pick-enter-go-tab-more-esc-back")
+}
+/// The status bar hint while a detail window is open.
+fn detail_hint() -> String {
+    ui_text::get("code-up-down-scroll-esc-close")
 }
 /// The status bar hint while EDITOR SETTINGS is open.
 fn settings_hint() -> String {
@@ -283,6 +292,8 @@ pub struct CodeEditor {
     debug: Option<DebugView>,
     /// The problem list under the text.
     diag: diag::DiagList,
+    /// The whole of a text too long for where it was shown, while open.
+    detail: Option<Detail>,
     /// Width of the panel of a stopped cartridge, which the user resizes and
     /// which is kept from one stop to the next.
     debug_width: i32,
@@ -325,6 +336,7 @@ impl CodeEditor {
             symbols: None,
             debug: None,
             diag: diag::DiagList::default(),
+            detail: None,
             debug_width: debugging::MIN_WIDTH,
             resizing: false,
             blink: 0,
@@ -367,6 +379,7 @@ impl CodeEditor {
     /// LINE, the list of open tabs or a context menu.
     pub fn has_overlay(&self) -> bool {
         self.settings_dialog.is_some()
+            || self.detail.is_some()
             || self.picker.is_some()
             || self.menu.is_some()
             || self.context_menu.is_some()
@@ -409,9 +422,13 @@ impl CodeEditor {
             rename_hint()
         } else if self.go_to.is_some() {
             go_to_hint()
+        } else if self.detail.is_some() {
+            detail_hint()
+        } else if self.diag.focused() {
+            diag_hint()
         } else if self.debug.is_some() {
             stopped_hint()
-        } else if self.diag.focused() || self.symbols.as_ref().is_some_and(SymbolPanel::focused) {
+        } else if self.symbols.as_ref().is_some_and(SymbolPanel::focused) {
             symbols_hint()
         } else if self.completion.is_some() {
             completion_hint()
@@ -959,6 +976,12 @@ impl CodeEditor {
     }
 
     fn input(&mut self, event: InputEvent, session: &mut CodeSession) -> Option<CodeRequest> {
+        if let Some(detail) = &mut self.detail {
+            if detail.handle_input(event) == DetailAction::Close {
+                self.detail = None;
+            }
+            return None;
+        }
         if let Some(picker) = &mut self.picker {
             let layout = picker_layout(&self.layout, picker);
             return match picker.handle_input(event, &layout)? {

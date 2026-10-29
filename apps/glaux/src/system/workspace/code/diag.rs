@@ -7,6 +7,7 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
+use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
 
 use super::layout::CodeLayout;
@@ -19,6 +20,7 @@ use crate::system::editing::session::CodeSession;
 use crate::system::screen::{BACKGROUND, DIM, PALE, TEXT};
 use crate::system::text::clip;
 use crate::system::workspace::BAR;
+use crate::system::workspace::detail::Detail;
 use crate::ui_text;
 
 /// Side of the mark that tells the severity of a row.
@@ -345,12 +347,17 @@ impl CodeEditor {
                 }
             }
             InputEvent::Break => self.diag.blur(),
+            InputEvent::Tab { .. } => {
+                if let Some(finding) = self.diag.index(id, &found).map(|at| &found[at]) {
+                    let line = session.active_document()?.line_of(finding.range.start) + 1;
+                    self.detail = Some(finding_detail(&self.layout, finding, line));
+                }
+            }
             // Keys that would edit or move the caret do nothing while the
             // list has the keys.
             InputEvent::Text(_)
             | InputEvent::Backspace
             | InputEvent::Delete
-            | InputEvent::Tab { .. }
             | InputEvent::Left { .. }
             | InputEvent::Right { .. }
             | InputEvent::Home { .. }
@@ -373,4 +380,19 @@ impl CodeEditor {
             .map(|n| self.diag.top() + n)
             .filter(|&index| index < total)
     }
+}
+
+/// The window with the whole of `finding`, found on `line`.
+fn finding_detail(layout: &CodeLayout, finding: &EditorDiagnostic, line: usize) -> Detail {
+    let title = ui_text::get(match finding.severity {
+        Severity::Error => "code-diag-error",
+        Severity::Warning => "code-diag-warning",
+        Severity::Info => "code-diag-info",
+    });
+    let place = ui_text::get_with("code-diag-line", &[("line", Arg::Text(&line.to_string()))]);
+    let body = match &finding.code {
+        Some(code) => format!("{code}\n{}", finding.message),
+        None => finding.message.clone(),
+    };
+    Detail::new(&layout.font, layout.text, &title, &place, &body)
 }

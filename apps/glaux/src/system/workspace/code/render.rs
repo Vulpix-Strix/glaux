@@ -28,6 +28,7 @@ use crate::system::editing::session::{CodeSession, DocumentView};
 use crate::system::editor_settings::EditorSettings;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT, WARN};
 use crate::system::syntax_theme;
+use crate::system::text::clip;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
 use crate::ui_text;
@@ -263,6 +264,9 @@ impl CodeEditor {
         if let Some(dialog) = &self.go_to {
             let layout = self.prompt_layout(dialog.prompt());
             dialog.render(painter.framebuffer, font, &layout, lit);
+        }
+        if let Some(detail) = &self.detail {
+            detail.render(painter.framebuffer, font);
         }
         if let Some(dialog) = &self.settings_dialog {
             let layout = settings_layout(&self.layout);
@@ -978,8 +982,8 @@ impl Painter<'_> {
         let reserved = counts.map_or(0, |counts| self.summary_width(&counts) + self.cell_w());
         let columns =
             usize::try_from((bar.width - 8 - reserved) / self.cell_w().max(1)).unwrap_or(0);
-        let text = take_cells(self.font, text, columns);
-        self.text(text, 4, y, color);
+        let text = clip(self.font, text.lines().next().unwrap_or_default(), columns);
+        self.text(&text, 4, y, color);
         if let Some(counts) = counts {
             self.diagnostic_summary(&counts, bar.right() - 4, y);
         }

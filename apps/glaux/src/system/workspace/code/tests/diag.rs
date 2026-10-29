@@ -135,3 +135,22 @@ fn focus_does_nothing_without_findings() {
     editor.handle_input(InputEvent::FocusDiagnostics, Some(&mut session));
     assert!(!editor.claims_break());
 }
+
+#[test]
+fn tab_opens_the_whole_message_which_scrolls_and_closes_with_escape() {
+    let fixture = Fixture::new("code-diag-detail");
+    let long = "word ".repeat(120);
+    let (mut editor, mut session) = analyzed(&fixture, vec![finding(2, Severity::Error, &long)]);
+    editor.handle_input(InputEvent::FocusDiagnostics, Some(&mut session));
+    editor.handle_input(InputEvent::Tab { reverse: false }, Some(&mut session));
+    assert!(editor.has_overlay());
+    let before = caret(&session);
+    editor.handle_input(InputEvent::Down { select: false }, Some(&mut session));
+    assert_eq!(
+        caret(&session),
+        before,
+        "keys scroll the window, not the text"
+    );
+    editor.handle_input(InputEvent::Break, Some(&mut session));
+    assert!(!editor.has_overlay());
+}

@@ -13,6 +13,7 @@ mod code;
 mod colors;
 mod context_menu;
 mod debugging;
+mod detail;
 mod dialog;
 mod docs;
 mod docs_apart;
