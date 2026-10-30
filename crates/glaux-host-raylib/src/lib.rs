@@ -175,6 +175,27 @@ impl RaylibHost {
         })
     }
 
+    /// Sets the window icon from PNG images of different sizes, so the
+    /// platform can pick the one that suits each place it shows an icon.
+    ///
+    /// Images that fail to decode are skipped with a warning.
+    pub fn set_window_icons(&mut self, pngs: &[&[u8]]) {
+        let images: Vec<Image> = pngs
+            .iter()
+            .filter_map(|png| match Image::load_image_from_mem(".png", png) {
+                Ok(image) => Some(image),
+                Err(err) => {
+                    tracing::warn!(error = %err, "window icon skipped");
+                    None
+                }
+            })
+            .collect();
+        // The raw copies only borrow the pixels, which `images` keeps alive
+        // until the call returns. GLFW copies them.
+        let mut raw: Vec<_> = images.iter().map(|image| *image.as_ref()).collect();
+        self.rl.set_window_icons(&mut raw);
+    }
+
     /// Moves the window according to `placement`.
     pub fn place(&mut self, placement: WindowPlacement) {
         match placement {

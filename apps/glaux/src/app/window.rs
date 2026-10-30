@@ -7,7 +7,7 @@ use glaux_host_raylib::{Presentation, RaylibHost};
 use glaux_video::{HEIGHT, WIDTH};
 
 use crate::desktop::window_state::{self, WindowSnapshot, WindowTracker};
-use crate::platform::SessionKind;
+use crate::platform::{SessionKind, sets_window_icon};
 
 /// Window size, as a multiple of the logical resolution, when no saved
 /// state applies.
@@ -15,6 +15,14 @@ const WINDOW_SCALE: i32 = 3;
 
 /// How the host draws frames to the window.
 const PRESENTATION: Presentation = Presentation::Crt;
+
+/// The window icon at the sizes desktops ask for, smallest first.
+const WINDOW_ICONS: [&[u8]; 4] = [
+    include_bytes!("../../../../rom/app-icon/glaux-16.png"),
+    include_bytes!("../../../../rom/app-icon/glaux-32.png"),
+    include_bytes!("../../../../rom/app-icon/glaux-48.png"),
+    include_bytes!("../../../../rom/app-icon/glaux-64.png"),
+];
 
 /// What Glaux does to the window on top of what the host does by itself.
 #[derive(Debug)]
@@ -37,6 +45,9 @@ impl WindowLifecycle {
             |state| (state.width, state.height),
         );
         let mut host = RaylibHost::new("Glaux", size, PRESENTATION)?;
+        if sets_window_icon(session) {
+            host.set_window_icons(&WINDOW_ICONS);
+        }
         let placement = window_state::plan(session, saved.as_ref(), &host.monitors());
         host.place(placement);
         let lifecycle = Self {

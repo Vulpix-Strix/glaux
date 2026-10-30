@@ -51,6 +51,14 @@ fn classify(var: impl Fn(&str) -> Option<String>) -> SessionKind {
     }
 }
 
+/// Whether the window icon can be set at runtime in `session`.
+///
+/// macOS takes the icon from the app bundle, and Wayland from the desktop
+/// entry matching the application id. GLFW ignores a runtime icon in both.
+pub(crate) fn sets_window_icon(session: SessionKind) -> bool {
+    !cfg!(target_os = "macos") && session != SessionKind::Wayland
+}
+
 /// Initial window placement for `session`.
 ///
 /// Wayland has no global window positions, so the compositor chooses.
