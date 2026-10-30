@@ -130,7 +130,16 @@ fn created_cartridges_load_with_the_starter() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     names.sort();
-    assert_eq!(names, ["cartridge.ron", "code"]);
+    assert_eq!(
+        names,
+        [
+            "cartridge.ron",
+            "code",
+            "objattr.bin",
+            "obp.bin",
+            "sprites.bin"
+        ]
+    );
     let code: Vec<_> = fs::read_dir(dir.join("code"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name())

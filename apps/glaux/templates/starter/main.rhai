@@ -1,5 +1,5 @@
 // Welcome to your new cartridge!
-// A little owl waits under the night sky. Change anything you like,
+// The Glaux owl waits under the night sky. Change anything you like,
 // then type 'run' in the shell to see what you made.
 //
 // Rhai support is experimental: its scripting API may change.
@@ -8,17 +8,15 @@
 // these constants as `global::NAME`.
 const SKY = 21; const STAR = 15; const MOON = 6;
 const HILLS = 10; const GRASS = 9;
-const FEATHER = 4; const SHADE = 3; const BELLY = 6;
-const EYE = 16; const PUPIL = 11; const BEAK = 27; const FEET = 26;
+const BUBBLE = 16; const BUBBLE_TEXT = 11;
 const TITLE = 26; const TEXT = 16; const HINT = 14;
 
 const SCREEN_W = 320; const SCREEN_H = 240;
 const GROUND_Y = 212;
 const CHAR_W = 6; // width of one character of text
 
-// The owl is drawn on a 16x18 grid of big 2x2 pixels.
-const SCALE = 2;
-const OWL_W = 32; const OWL_H = 36;
+// The owl is a 32x32 sprite: 4x4 tiles starting at tile 0 of sprites.bin.
+const OWL_W = 32; const OWL_H = 32;
 const SPEED = 2;
 
 const MESSAGES = [
@@ -31,7 +29,7 @@ const MESSAGES = [
 // Everything that changes while the cartridge runs lives in `this`, which
 // boot(), tick() and draw() all share.
 fn boot() {
-    this.owl = #{ x: 144, y: global::GROUND_Y - global::OWL_H, facing: 1 };
+    this.owl = #{ x: 144, y: global::GROUND_Y - global::OWL_H };
     this.hoots = 0;
     this.hop_timer = 0; // ticks left in the current hop
     this.bubble_timer = 0; // ticks left to show "Hoot!"
@@ -47,11 +45,9 @@ fn boot() {
 fn tick() {
     if btn(Button::Left) {
         this.owl.x -= global::SPEED;
-        this.owl.facing = -1;
     }
     if btn(Button::Right) {
         this.owl.x += global::SPEED;
-        this.owl.facing = 1;
     }
     if btn(Button::Up) {
         this.owl.y -= global::SPEED;
@@ -104,45 +100,14 @@ fn draw_sky() {
     rectfill(0, global::GROUND_Y, global::SCREEN_W, global::SCREEN_H - global::GROUND_Y, global::GRASS);
 }
 
-// Draws one block of the owl's 16x18 grid, with the owl at (x, y).
-fn block(x, y, bx, by, w, h, color) {
-    let s = global::SCALE;
-    rectfill(x + bx * s, y + by * s, w * s, h * s, color);
-}
-
-fn draw_owl(x, y) {
-    block(x, y, 1, 0, 3, 3, global::SHADE); // ear tufts
-    block(x, y, 12, 0, 3, 3, global::SHADE);
-    block(x, y, 0, 2, 16, 14, global::FEATHER); // head and body
-    block(x, y, 0, 9, 2, 6, global::SHADE); // wings
-    block(x, y, 14, 9, 2, 6, global::SHADE);
-    block(x, y, 4, 10, 8, 6, global::BELLY);
-    block(x, y, 7, 8, 2, 3, global::BEAK);
-    block(x, y, 4, 16, 3, 2, global::FEET);
-    block(x, y, 9, 16, 3, 2, global::FEET);
-
-    // Blink for a moment every few seconds.
-    if frame() % 180 < 6 {
-        block(x, y, 2, 6, 5, 1, global::PUPIL);
-        block(x, y, 9, 6, 5, 1, global::PUPIL);
-    } else {
-        block(x, y, 2, 4, 5, 5, global::EYE);
-        block(x, y, 9, 4, 5, 5, global::EYE);
-        // The pupils look the way the owl is facing.
-        let look = if this.owl.facing > 0 { 2 } else { 1 };
-        block(x, y, 2 + look, 5, 2, 2, global::PUPIL);
-        block(x, y, 9 + look, 5, 2, 2, global::PUPIL);
-    }
-}
-
 fn draw_bubble(x, y) {
     let w = 36;
     let h = 13;
     let bx = clamp(x + global::OWL_W / 2 - w / 2, 0, global::SCREEN_W - w);
     let by = y - h - 6;
-    rectfill(bx, by, w, h, global::EYE);
-    rectfill(x + global::OWL_W / 2 - 1, by + h, 3, 3, global::EYE); // the bubble's tail
-    text("Hoot!", bx + 3, by + 2, global::PUPIL);
+    rectfill(bx, by, w, h, global::BUBBLE);
+    rectfill(x + global::OWL_W / 2 - 1, by + h, 3, 3, global::BUBBLE); // the bubble's tail
+    text("Hoot!", bx + 3, by + 2, global::BUBBLE_TEXT);
 }
 
 fn draw() {
@@ -150,7 +115,7 @@ fn draw() {
 
     // Hop in a smooth arc while the hop timer runs.
     let hop = (sin(this.hop_timer.to_float() / 12.0 * PI()) * 8.0).floor().to_int();
-    this.draw_owl(this.owl.x, this.owl.y - hop);
+    spr(0, this.owl.x, this.owl.y - hop, 4, 4);
     if this.bubble_timer > 0 {
         draw_bubble(this.owl.x, this.owl.y - hop);
     }

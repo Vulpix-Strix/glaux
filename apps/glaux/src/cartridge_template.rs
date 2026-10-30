@@ -21,6 +21,21 @@ const RHAI_ENTRY: &str = "code/main.rhai";
 /// Code a new Rhai cartridge starts with: the Luau starter's scene.
 pub const RHAI_STARTER: &str = include_str!("../templates/starter/main.rhai");
 
+/// The owl sprite every new cartridge starts with: native tiles, tile
+/// attributes and object palettes, imported from the Glaux logo. Its colors
+/// all come from the system palette, so no `palette.bin` is needed.
+const SPRITES: [(&str, &[u8]); 3] = [
+    (
+        "sprites.bin",
+        include_bytes!("../templates/starter/sprites.bin"),
+    ),
+    (
+        "objattr.bin",
+        include_bytes!("../templates/starter/objattr.bin"),
+    ),
+    ("obp.bin", include_bytes!("../templates/starter/obp.bin")),
+];
+
 /// Longest accepted ID, in characters.
 const MAX_ID_LEN: usize = 32;
 
@@ -193,10 +208,11 @@ pub fn create(
 ) -> Result<LoadedCartridge, CreateError> {
     let manifest = spec.manifest_ron();
     let (entry, starter) = spec.entry();
-    let files: [(&str, &[u8]); 2] = [
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("cartridge.ron", manifest.as_bytes()),
         (entry, starter.as_bytes()),
     ];
+    files.extend(SPRITES);
     let location = storage
         .create_dir_with(&spec.id, &files, |staged| {
             LoadedCartridge::open("/".into(), staged.clone()).map(drop)

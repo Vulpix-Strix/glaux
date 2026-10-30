@@ -10,15 +10,16 @@ Glaux starts in a shell. Create a cartridge with `new` and give it an id, which 
 new my-game
 ```
 
-The new cartridge is loaded right away. It starts as a small demo with an owl you can move. To write Rhai instead of Luau, add `--lang rhai`. Rhai support is experimental.
+The new cartridge is loaded right away. It starts as a small demo with the Glaux owl, which you can move. To write Rhai instead of Luau, add `--lang rhai`. Rhai support is experimental.
 
-A cartridge is a folder with three parts that matter here:
+A cartridge is a folder with these parts that matter here:
 
-| File                | Purpose                                                  |
-|---------------------|----------------------------------------------------------|
-| `cartridge.ron`     | The manifest: name, version, language and entry script.  |
-| `code/main.luau`    | The entry script. A Rhai cartridge has `code/main.rhai`. |
-| Other `code/` files | Modules the entry script loads.                          |
+| File                  | Purpose                                                  |
+|-----------------------|----------------------------------------------------------|
+| `cartridge.ron`       | The manifest: name, version, language and entry script.  |
+| `code/main.luau`      | The entry script. A Rhai cartridge has `code/main.rhai`. |
+| Other `code/` files   | Modules the entry script loads.                          |
+| `sprites.bin`, `objattr.bin`, `obp.bin` | The owl sprite and its palettes. |
 
 ## Run it
 
