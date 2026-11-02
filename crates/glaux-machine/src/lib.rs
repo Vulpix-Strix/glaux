@@ -9,3 +9,4 @@ pub mod palette;
 pub mod psg;
 pub mod sprite;
 pub mod system_rom;
+pub mod tilemap;
