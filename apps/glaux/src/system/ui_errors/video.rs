@@ -20,6 +20,14 @@ pub(in crate::system) fn video_asset(error: &crate::system::video::VideoAssetErr
             "error-video-palette",
             &[("detail", Arg::Text(&palette_bytes(detail)))],
         ),
+        VideoAssetError::BgTiles(detail) => ui_text::get_with(
+            "error-video-bgtiles",
+            &[("detail", Arg::Text(&bg_tiles(detail)))],
+        ),
+        VideoAssetError::BgPalettes(detail) => ui_text::get_with(
+            "error-video-bgpalettes",
+            &[("detail", Arg::Text(&bg_palettes(detail)))],
+        ),
     }
 }
 
@@ -50,6 +58,52 @@ pub(in crate::system) fn obj_tiles(error: &glaux_machine::sprite::ObjTileBankErr
                     "OBJ-TILE-BANK-BYTES",
                     Arg::Text(&OBJ_TILE_BANK_BYTES.to_string()),
                 ),
+            ],
+        ),
+    }
+}
+
+pub(in crate::system) fn bg_tiles(error: &glaux_machine::bg::BgTileBankError) -> String {
+    use glaux_machine::bg::{BG_TILE_BANK_BYTES, BG_TILE_BYTES, BgTileBankError};
+    match error {
+        BgTileBankError::Misaligned { length } => ui_text::get_with(
+            "error-bg-tiles-misaligned",
+            &[
+                ("BG-TILE-BYTES", Arg::Text(&BG_TILE_BYTES.to_string())),
+                ("length", Arg::Text(&length.to_string())),
+            ],
+        ),
+        BgTileBankError::TooLarge { length } => ui_text::get_with(
+            "error-bg-tiles-too-large",
+            &[
+                ("length", Arg::Text(&length.to_string())),
+                (
+                    "BG-TILE-BANK-BYTES",
+                    Arg::Text(&BG_TILE_BANK_BYTES.to_string()),
+                ),
+            ],
+        ),
+    }
+}
+
+pub(in crate::system) fn bg_palettes(error: &glaux_machine::bg::BgPalettesError) -> String {
+    use glaux_machine::bg::{BG_PALETTES_BYTES, BgPalettesError};
+    match error {
+        BgPalettesError::Length { length } => ui_text::get_with(
+            "error-bg-palettes-length",
+            &[
+                (
+                    "BG-PALETTES-BYTES",
+                    Arg::Text(&BG_PALETTES_BYTES.to_string()),
+                ),
+                ("length", Arg::Text(&length.to_string())),
+            ],
+        ),
+        BgPalettesError::ReservedEntry { bank, value } => ui_text::get_with(
+            "error-bg-palettes-reserved-entry",
+            &[
+                ("bank", Arg::Text(&bank.to_string())),
+                ("value", Arg::Text(&value.to_string())),
             ],
         ),
     }

@@ -35,14 +35,20 @@ pub enum VideoAsset {
     ObjPalettes,
     /// RGB888 master palette, `palette.bin`.
     MasterPalette,
+    /// Native background-tile data, `bgtiles.bin`.
+    BgTiles,
+    /// Background palette banks, `bgp.bin`.
+    BgPalettes,
 }
 
 impl VideoAsset {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::ObjTiles,
         Self::ObjAttributes,
         Self::ObjPalettes,
         Self::MasterPalette,
+        Self::BgTiles,
+        Self::BgPalettes,
     ];
 
     /// The asset's file name in the cartridge root.
@@ -52,6 +58,8 @@ impl VideoAsset {
             Self::ObjAttributes => "objattr.bin",
             Self::ObjPalettes => "obp.bin",
             Self::MasterPalette => "palette.bin",
+            Self::BgTiles => "bgtiles.bin",
+            Self::BgPalettes => "bgp.bin",
         }
     }
 

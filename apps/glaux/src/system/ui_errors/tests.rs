@@ -1,3 +1,4 @@
+use glaux_machine::bg::{BgPalettesError, BgTileBankError};
 use glaux_machine::sprite::{ObjTileAttributesError, ObjTileBankError};
 use pretty_assertions::assert_eq;
 
@@ -33,5 +34,17 @@ fn visible_errors_keep_their_english_and_dynamic_values() {
             }
         )),
         "Invalid objattr.bin: object tile 12 attribute 0xaf sets reserved bits; only bits 0-2 are defined"
+    );
+    assert_eq!(
+        video_asset(&VideoAssetError::BgTiles(BgTileBankError::TooLarge {
+            length: 40000
+        })),
+        "Invalid bgtiles.bin: background tile data is too large: got 40000 bytes, maximum is 32768"
+    );
+    assert_eq!(
+        video_asset(&VideoAssetError::BgPalettes(BgPalettesError::Length {
+            length: 10
+        })),
+        "Invalid bgp.bin: background palette data must be exactly 64 bytes, got 10"
     );
 }

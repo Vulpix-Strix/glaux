@@ -962,7 +962,10 @@ impl SpriteDocument {
         let unit = match asset {
             VideoAsset::ObjTiles => OBJ_TILE_BYTES,
             VideoAsset::ObjAttributes => 1,
-            VideoAsset::ObjPalettes | VideoAsset::MasterPalette => return bytes,
+            VideoAsset::ObjPalettes
+            | VideoAsset::MasterPalette
+            | VideoAsset::BgTiles
+            | VideoAsset::BgPalettes => return bytes,
         };
         let used = bytes
             .chunks(unit)

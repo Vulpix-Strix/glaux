@@ -1,8 +1,8 @@
-//! A cartridge's video assets as machine state: its object tiles, their
-//! attributes, its object palette banks and its master palette.
+//! A cartridge's video assets as machine state.
 
 use std::borrow::Cow;
 
+use glaux_machine::bg::{BgPalettes, BgPalettesError, BgTileBank, BgTileBankError, BgVram};
 use glaux_machine::obj_palette::{ObjPalettes, ObjPalettesError};
 use glaux_machine::palette::{Palette, PaletteBytesError};
 use glaux_machine::sprite::{
@@ -23,6 +23,10 @@ pub enum VideoAssetError {
     ObjPalettes(#[from] ObjPalettesError),
     #[error("Invalid palette.bin: {0}")]
     Palette(#[from] PaletteBytesError),
+    #[error("Invalid bgtiles.bin: {0}")]
+    BgTiles(#[from] BgTileBankError),
+    #[error("Invalid bgp.bin: {0}")]
+    BgPalettes(#[from] BgPalettesError),
 }
 
 /// Why a cartridge's video state could not be loaded.
@@ -71,6 +75,8 @@ pub struct VideoFiles {
     pub obj_attributes: Option<Vec<u8>>,
     pub obj_palettes: Option<Vec<u8>>,
     pub master_palette: Option<Vec<u8>>,
+    pub bg_tiles: Option<Vec<u8>>,
+    pub bg_palettes: Option<Vec<u8>>,
 }
 
 impl VideoFiles {
@@ -81,6 +87,8 @@ impl VideoFiles {
             obj_attributes: cartridge.read_asset(VideoAsset::ObjAttributes)?,
             obj_palettes: cartridge.read_asset(VideoAsset::ObjPalettes)?,
             master_palette: cartridge.read_asset(VideoAsset::MasterPalette)?,
+            bg_tiles: cartridge.read_asset(VideoAsset::BgTiles)?,
+            bg_palettes: cartridge.read_asset(VideoAsset::BgPalettes)?,
         })
     }
 
@@ -91,6 +99,8 @@ impl VideoFiles {
             VideoAsset::ObjAttributes => &self.obj_attributes,
             VideoAsset::ObjPalettes => &self.obj_palettes,
             VideoAsset::MasterPalette => &self.master_palette,
+            VideoAsset::BgTiles => &self.bg_tiles,
+            VideoAsset::BgPalettes => &self.bg_palettes,
         }
         .as_deref()
     }
@@ -102,6 +112,7 @@ pub struct CartridgeVideo {
     /// The master palette the cartridge's frames are presented with.
     pub palette: Palette,
     pub obj: ObjVram,
+    pub bg: BgVram,
 }
 
 impl CartridgeVideo {
@@ -128,6 +139,7 @@ impl CartridgeVideo {
                 ObjTileAttributes::new(),
                 defaults.obj_palettes.clone(),
             ),
+            bg: BgVram::default(),
         };
         for asset in VideoAsset::ALL {
             video.decode_asset(asset, files.get(asset), defaults)?;
@@ -169,6 +181,18 @@ impl CartridgeVideo {
                     None => defaults.palette.clone(),
                 };
             }
+            VideoAsset::BgTiles => {
+                *self.bg.tiles_mut() = match bytes {
+                    Some(bytes) => BgTileBank::from_bytes(bytes)?,
+                    None => BgTileBank::new(),
+                };
+            }
+            VideoAsset::BgPalettes => {
+                *self.bg.palettes_mut() = match bytes {
+                    Some(bytes) => BgPalettes::from_bytes(bytes)?,
+                    None => BgPalettes::linear(),
+                };
+            }
         }
         Ok(())
     }
@@ -182,6 +206,8 @@ impl CartridgeVideo {
             VideoAsset::ObjAttributes => Cow::Borrowed(self.obj.attributes().as_bytes()),
             VideoAsset::ObjPalettes => Cow::Borrowed(self.obj.palettes().as_bytes()),
             VideoAsset::MasterPalette => Cow::Owned(self.palette.to_rgb888().to_vec()),
+            VideoAsset::BgTiles => Cow::Borrowed(self.bg.tiles().as_bytes()),
+            VideoAsset::BgPalettes => Cow::Borrowed(self.bg.palettes().as_bytes()),
         }
     }
 
@@ -194,6 +220,8 @@ impl CartridgeVideo {
             }
             VideoAsset::ObjPalettes => *self.obj.palettes_mut() = other.obj.palettes().clone(),
             VideoAsset::MasterPalette => self.palette = other.palette.clone(),
+            VideoAsset::BgTiles => *self.bg.tiles_mut() = other.bg.tiles().clone(),
+            VideoAsset::BgPalettes => *self.bg.palettes_mut() = other.bg.palettes().clone(),
         }
     }
 }
@@ -234,5 +262,81 @@ impl<'a> VideoOverrides<'a> {
                 video.copy_asset(source, asset);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use glaux_machine::tilemap::BgBank;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn defaults() -> CartridgeVideoDefaults {
+        CartridgeVideoDefaults::from_rom(&crate::rom::load().unwrap())
+    }
+
+    #[test]
+    fn missing_background_files_fall_back_to_blank_tiles_and_linear_palettes() {
+        let video = CartridgeVideo::decode(&VideoFiles::default(), &defaults()).unwrap();
+        assert_eq!(video.bg, BgVram::default());
+        assert_eq!(video.bg.palettes().resolve(BgBank::ZERO, 3), Some(3));
+    }
+
+    #[test]
+    fn background_files_decode_as_their_own_assets() {
+        let mut palettes = [0; 64];
+        palettes[16 + 1] = 99;
+        let files = VideoFiles {
+            bg_tiles: Some(vec![0x12; 32]),
+            bg_palettes: Some(palettes.to_vec()),
+            ..VideoFiles::default()
+        };
+        let video = CartridgeVideo::decode(&files, &defaults()).unwrap();
+        assert_eq!(video.bg.tiles().pixel(0, 0, 0), Some(1));
+        assert_eq!(
+            video.bg.palettes().resolve(BgBank::new(1).unwrap(), 1),
+            Some(99)
+        );
+        let plain = CartridgeVideo::decode(&VideoFiles::default(), &defaults()).unwrap();
+        assert_eq!(video.obj, plain.obj);
+    }
+
+    #[test]
+    fn invalid_background_files_name_their_asset() {
+        let files = VideoFiles {
+            bg_tiles: Some(vec![0; 5]),
+            ..VideoFiles::default()
+        };
+        assert!(matches!(
+            CartridgeVideo::decode(&files, &defaults()),
+            Err(VideoAssetError::BgTiles(_))
+        ));
+        let files = VideoFiles {
+            bg_palettes: Some(vec![0; 10]),
+            ..VideoFiles::default()
+        };
+        assert!(matches!(
+            CartridgeVideo::decode(&files, &defaults()),
+            Err(VideoAssetError::BgPalettes(_))
+        ));
+    }
+
+    #[test]
+    fn background_assets_copy_and_encode_natively() {
+        let files = VideoFiles {
+            bg_tiles: Some(vec![0x34; 64]),
+            ..VideoFiles::default()
+        };
+        let source = CartridgeVideo::decode(&files, &defaults()).unwrap();
+        let mut target = CartridgeVideo::decode(&VideoFiles::default(), &defaults()).unwrap();
+        target.copy_asset(&source, VideoAsset::BgTiles);
+        assert_eq!(target.bg, source.bg);
+        assert_eq!(target.native_bytes(VideoAsset::BgTiles).len(), 32 * 1024);
+        assert_eq!(
+            &target.native_bytes(VideoAsset::BgTiles)[..64],
+            &[0x34; 64][..]
+        );
+        assert_eq!(target.native_bytes(VideoAsset::BgPalettes).len(), 64);
     }
 }

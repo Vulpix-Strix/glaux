@@ -209,6 +209,7 @@ impl ImportPreview {
         let video = CartridgeVideo {
             palette: fitted.palette,
             obj: ObjVram::new(tiles, attributes, fitted.obj_palettes),
+            bg: document.video().bg.clone(),
         };
         let preview = ObjPreviewPalette::new(
             &self.system_palette,

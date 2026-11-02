@@ -650,6 +650,10 @@ desktop-the-file-dialog-stopped-unexpectedly = The file dialog stopped unexpecte
 
 ## Visible errors
 
+error-bg-palettes-length = background palette data must be exactly { $BG-PALETTES-BYTES } bytes, got { $length }
+error-bg-palettes-reserved-entry = background palette bank { $bank } entry 0 must be 0, got { $value }; local index 0 is transparent
+error-bg-tiles-misaligned = background tile data length must be a multiple of { $BG-TILE-BYTES } bytes, got { $length }
+error-bg-tiles-too-large = background tile data is too large: got { $length } bytes, maximum is { $BG-TILE-BANK-BYTES }
 error-cartridge-asset-not-a-file = { $asset } is not a file
 error-cartridge-asset-read-only = { $asset } is read-only
 error-cartridge-empty-name = cartridge.ron: cartridge.name is empty
@@ -764,6 +768,8 @@ error-source-edit-entry = { $path } is the entry script of this cartridge
 error-source-edit-language = { $from } cannot become { $to }: a script keeps its language
 error-source-path-invalid = Invalid path: { $path }
 error-source-path-unsupported-extension = Not a Luau or Rhai file: { $path }
+error-video-bgpalettes = Invalid bgp.bin: { $detail }
+error-video-bgtiles = Invalid bgtiles.bin: { $detail }
 error-video-objattributes = Invalid objattr.bin: { $detail }
 error-video-objpalettes = Invalid obp.bin: { $detail }
 error-video-objtiles = Invalid sprites.bin: { $detail }

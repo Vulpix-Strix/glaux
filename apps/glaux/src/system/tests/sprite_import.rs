@@ -250,6 +250,8 @@ fn saving_an_import_gives_the_assets_the_cli_import_gives() {
             obj_attributes: read("objattr.bin"),
             obj_palettes: read("obp.bin"),
             master_palette: read("palette.bin"),
+            bg_tiles: read("bgtiles.bin"),
+            bg_palettes: read("bgp.bin"),
         };
         CartridgeVideo::decode(&files, &defaults).unwrap()
     };

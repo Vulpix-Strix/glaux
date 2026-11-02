@@ -669,7 +669,16 @@ fn replacing_every_asset_is_one_step_undone_and_redone_whole() {
 
     assert!(doc.replace_video(&new));
     assert_eq!(doc.video(), &new);
-    assert_eq!(modified(&doc), VideoAsset::ALL.to_vec());
+    // The sprite editor never edits the background assets.
+    assert_eq!(
+        modified(&doc),
+        [
+            VideoAsset::ObjTiles,
+            VideoAsset::ObjAttributes,
+            VideoAsset::ObjPalettes,
+            VideoAsset::MasterPalette,
+        ]
+    );
 
     assert!(doc.undo());
     assert_eq!(doc.video(), &before);
@@ -695,6 +704,7 @@ fn replacing_clears_drawn_tiles_the_new_sheet_lacks() {
             doc.obj().palettes().clone(),
         ),
         palette: doc.video().palette.clone(),
+        bg: doc.video().bg.clone(),
     };
     let impact = doc.replacement_impact(&new);
     assert_eq!(impact.tiles_changed, 41);
