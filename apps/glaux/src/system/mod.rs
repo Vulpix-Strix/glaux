@@ -16,6 +16,8 @@ mod editor_settings;
 mod external_url;
 mod line_editor;
 mod logs;
+#[cfg_attr(not(test), allow(dead_code))]
+mod map_document;
 mod menu_state;
 mod pause;
 mod render;
