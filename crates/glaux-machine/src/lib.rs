@@ -1,5 +1,6 @@
 //! Core machine model for Glaux.
 
+pub mod bg;
 pub mod font;
 pub mod framebuffer;
 pub mod ink_image;
