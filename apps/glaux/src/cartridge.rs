@@ -615,6 +615,8 @@ fn entry_error(err: FsError, entry: &str) -> CartridgeError {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) mod map;
 pub(crate) mod source;
 
 #[cfg(test)]
