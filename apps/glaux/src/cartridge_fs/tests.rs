@@ -987,6 +987,54 @@ mod removing_and_moving {
     }
 
     #[test]
+    fn removing_a_directory_takes_only_empty_ones_and_staging_leftovers() {
+        let fixture = Fixture::new("remove-dir");
+        write(&fixture, "maps/a/.glaux-staging-map.ron-1", "half");
+        write(&fixture, "maps/b/map.ron", "b");
+        let fs = fixture.open();
+
+        fs.remove_dir("/maps/a").unwrap();
+        assert_eq!(ls(&fs, Some("/maps")), ["b/"]);
+
+        assert_eq!(
+            fs.remove_dir("/maps/b"),
+            Err(FsError::Unwritable("/maps/b".into()))
+        );
+        assert_eq!(read(&fixture, "maps/b/map.ron"), "b");
+    }
+
+    #[test]
+    fn removing_a_directory_refuses_files_the_root_and_missing_names() {
+        let fixture = Fixture::new("remove-dir-refused");
+        write(&fixture, "tools/a.luau", "a");
+        let fs = fixture.open();
+        assert_eq!(
+            fs.remove_dir("/tools/a.luau"),
+            Err(FsError::NotADirectory("/tools/a.luau".into()))
+        );
+        assert_eq!(fs.remove_dir("/gone"), Err(not_found("/gone")));
+        assert_eq!(fs.remove_dir("/"), Err(FsError::Unwritable("/".into())));
+        assert_eq!(
+            fs.remove_dir("/tools/.glaux-staging-x"),
+            Err(FsError::Unwritable("/tools/.glaux-staging-x".into()))
+        );
+    }
+
+    #[test]
+    fn entry_names_lists_everything_but_staging_leftovers() {
+        let fixture = Fixture::new("entry-names");
+        write(&fixture, "tools/b.luau", "b");
+        write(&fixture, "tools/a.luau", "a");
+        write(&fixture, "tools/.glaux-staging-a.luau-1", "half");
+        fs::create_dir(fixture.root().join("tools/sub")).unwrap();
+        assert_eq!(
+            fixture.open().entry_names("/tools"),
+            Ok(vec!["a.luau".into(), "b.luau".into(), "sub".into()])
+        );
+        assert_eq!(fixture.open().entry_names("/gone"), Err(not_found("/gone")));
+    }
+
+    #[test]
     fn moving_creates_directories_and_keeps_the_emptied_one() {
         let fixture = Fixture::new("move-nested");
         write(&fixture, "tools/old/a.luau", "contents");

@@ -10,7 +10,7 @@ use glaux_machine::tilemap::{BG_LAYERS, BgLayer, TileLayerError};
 use serde::{Deserialize, Serialize};
 
 use super::LoadedCartridge;
-use crate::cartridge_fs::{EntryKind, FsError, ReplaceError};
+use crate::cartridge_fs::{CreateDirError, EntryKind, FsError, ReplaceError};
 
 /// Version of the `map.ron` format. It evolves apart from the manifest's.
 pub const MAP_FORMAT: u32 = 1;
@@ -160,7 +160,34 @@ struct LayerNamesFile {
     bg2: Option<String>,
 }
 
+/// The rules every map obeys, whether read from a `map.ron` or created.
+fn check_name_and_size(name: &str, width: usize, height: usize) -> Result<(), MapError> {
+    if name.trim().is_empty() {
+        return Err(MapError::BlankName);
+    }
+    let valid = |size: usize| (1..=MAP_MAX_SIZE).contains(&size);
+    if !valid(width) || !valid(height) {
+        let saturate = |size: usize| u32::try_from(size).unwrap_or(u32::MAX);
+        return Err(MapError::InvalidSize {
+            width: saturate(width),
+            height: saturate(height),
+        });
+    }
+    Ok(())
+}
+
 impl MapMeta {
+    /// Metadata for a new map without layer names.
+    pub fn new(name: &str, width: usize, height: usize) -> Result<Self, MapError> {
+        check_name_and_size(name, width, height)?;
+        Ok(Self {
+            name: name.to_owned(),
+            width,
+            height,
+            layer_names: [None, None, None],
+        })
+    }
+
     /// Parses and validates a `map.ron`.
     pub fn parse(bytes: &[u8]) -> Result<Self, MapError> {
         let probe: FormatProbe = ron::de::from_bytes(bytes).map_err(ron_error)?;
@@ -168,16 +195,7 @@ impl MapMeta {
             return Err(MapError::UnsupportedFormat(probe.format));
         }
         let file: MetaFile = ron::de::from_bytes(bytes).map_err(ron_error)?;
-        if file.name.trim().is_empty() {
-            return Err(MapError::BlankName);
-        }
-        let valid = |size: u32| (1..=MAP_MAX_SIZE as u32).contains(&size);
-        if !valid(file.width) || !valid(file.height) {
-            return Err(MapError::InvalidSize {
-                width: file.width,
-                height: file.height,
-            });
-        }
+        check_name_and_size(&file.name, file.width as usize, file.height as usize)?;
         let layer_names = [file.layers.bg0, file.layers.bg1, file.layers.bg2];
         for (layer, name) in BgLayer::ALL.into_iter().zip(&layer_names) {
             if name.as_ref().is_some_and(|name| name.trim().is_empty()) {
@@ -257,7 +275,149 @@ pub enum MapWriteError {
     Changed(Option<Vec<u8>>),
 }
 
+/// A failed [`LoadedCartridge::create_map`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum MapCreateError {
+    #[error("Map {0} already exists")]
+    AlreadyExists(MapId),
+    #[error(transparent)]
+    Fs(FsError),
+}
+
+/// A failed [`LoadedCartridge::delete_map`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum MapDeleteError {
+    #[error("Map {0} does not exist")]
+    Missing(MapId),
+    /// A file no longer holds what the caller saw. Nothing was deleted.
+    #[error("{file} of map {id} changed outside Glaux")]
+    Changed {
+        id: MapId,
+        file: MapFile,
+        /// What the file holds now, `None` when it is absent.
+        current: Option<Vec<u8>>,
+    },
+    /// The directory holds entries that are not files of the map. Nothing
+    /// was deleted.
+    #[error("Map {id} holds other files: {}", .names.join(", "))]
+    UnknownEntries { id: MapId, names: Vec<String> },
+    /// Reading the map failed before anything was deleted.
+    #[error(transparent)]
+    Map(#[from] MapError),
+    /// Deleting began and then failed, so part of the map may be gone.
+    #[error("Map {id} is only partly deleted: {source}")]
+    Incomplete { id: MapId, source: FsError },
+}
+
+/// One map of a cartridge, as the map list shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapSummary {
+    pub id: MapId,
+    /// Why the map cannot be opened, when its `map.ron` is missing or invalid.
+    pub meta: Result<MapMeta, MapError>,
+}
+
 impl LoadedCartridge {
+    /// The maps of the cartridge with their metadata, in id order. A map
+    /// whose `map.ron` cannot be read stays in the list with its error.
+    pub fn map_summaries(&self) -> Result<Vec<MapSummary>, FsError> {
+        Ok(self
+            .list_maps()?
+            .into_iter()
+            .map(|id| {
+                let meta = match self.read_map_file(&id, MapFile::Meta) {
+                    Ok(Some(bytes)) => MapMeta::parse(&bytes),
+                    Ok(None) => Err(MapError::MissingMeta(id.clone())),
+                    Err(err) => Err(err),
+                };
+                MapSummary { id, meta }
+            })
+            .collect())
+    }
+
+    /// Creates map `id` holding only its `map.ron`, since a layer without a
+    /// file is empty. Nothing is ever replaced: an existing map of that id,
+    /// or any other entry of that name under `maps/`, is
+    /// [`MapCreateError::AlreadyExists`].
+    pub fn create_map(&self, id: &MapId, meta: &MapMeta) -> Result<(), MapCreateError> {
+        let mut maps = self.files.clone();
+        maps.create_dirs(MAPS_DIR).map_err(MapCreateError::Fs)?;
+        maps.change_dir(MAPS_DIR).map_err(MapCreateError::Fs)?;
+        let bytes = meta.to_bytes();
+        let files = [(MapFile::Meta.file_name(), bytes.as_slice())];
+        maps.create_dir_with(&id.to_string(), &files, |_| {
+            Ok::<(), std::convert::Infallible>(())
+        })
+        .map(drop)
+        .map_err(|err| match err {
+            CreateDirError::Fs(FsError::AlreadyExists(_)) => {
+                MapCreateError::AlreadyExists(id.clone())
+            }
+            CreateDirError::Fs(err) => MapCreateError::Fs(err),
+            CreateDirError::Invalid(never) => match never {},
+        })
+    }
+
+    /// Deletes map `id`, provided its files still hold what `seen` read.
+    ///
+    /// Everything is checked before anything is deleted: the directory must
+    /// hold only the files of a map, and each must match `seen` exactly,
+    /// where a layer that was absent must still be absent. Any difference
+    /// leaves the map untouched. Only then are the files and the directory
+    /// removed.
+    ///
+    /// No portable primitive makes the check and the removal one step, so a
+    /// write landing in between is deleted with the map. A failure after
+    /// the first removal is [`MapDeleteError::Incomplete`].
+    pub fn delete_map(&self, id: &MapId, seen: &MapFiles) -> Result<(), MapDeleteError> {
+        let dir = format!("{MAPS_DIR}/{id}");
+        let names = match self.files.entry_names(&dir) {
+            Ok(names) => names,
+            Err(FsError::NotFound(_) | FsError::NotADirectory(_)) => {
+                return Err(MapDeleteError::Missing(id.clone()));
+            }
+            Err(err) => return Err(MapError::from(err).into()),
+        };
+        let unknown: Vec<String> = names
+            .into_iter()
+            .filter(|name| MapFile::ALL.iter().all(|file| file.file_name() != name))
+            .collect();
+        if !unknown.is_empty() {
+            return Err(MapDeleteError::UnknownEntries {
+                id: id.clone(),
+                names: unknown,
+            });
+        }
+
+        let expected = |file: MapFile| match file {
+            MapFile::Meta => Some(seen.meta.as_slice()),
+            MapFile::Layer(layer) => seen.layers[layer.index()].as_deref(),
+        };
+        for file in MapFile::ALL {
+            let current = self.read_map_file(id, file)?;
+            if current.as_deref() != expected(file) {
+                return Err(MapDeleteError::Changed {
+                    id: id.clone(),
+                    file,
+                    current,
+                });
+            }
+        }
+
+        let incomplete = |source| MapDeleteError::Incomplete {
+            id: id.clone(),
+            source,
+        };
+        // `map.ron` goes last, so a map interrupted midway still shows up
+        // in the list instead of vanishing half-deleted.
+        for file in MapFile::ALL.into_iter().rev() {
+            if expected(file).is_some() {
+                self.files.remove_file(&file.path(id)).map_err(incomplete)?;
+            }
+        }
+        self.files.remove_dir(&dir).map_err(incomplete)
+    }
+
     /// The maps of the cartridge, in id order. A cartridge without a
     /// `maps/` directory has none. Directories whose names are not valid
     /// ids are left out. Only names are read, never map contents.

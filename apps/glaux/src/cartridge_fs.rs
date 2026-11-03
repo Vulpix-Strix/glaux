@@ -687,6 +687,74 @@ impl CartridgeFs {
         Ok(())
     }
 
+    /// Names of everything inside the directory at `path`, sorted.
+    ///
+    /// Unlike [`list`](Self::list), nothing is hidden because it could not
+    /// be reached inside the root: a symlink leading out of it or a name
+    /// the shell cannot address is still named. Only staging leftovers are
+    /// left out, since [`remove_dir`](Self::remove_dir) clears them.
+    pub fn entry_names(&self, path: &str) -> Result<Vec<String>, FsError> {
+        let target = self.resolve(path)?;
+        let dir = self.directory(&target)?;
+        let mut names = Vec::new();
+        for entry in fs::read_dir(&dir).map_err(|err| io_failure(err, &target))? {
+            let entry = entry.map_err(|err| io_failure(err, &target))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.starts_with(STAGING_PREFIX) {
+                names.push(name);
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    /// Removes the directory at `path`, absolute or relative to the current
+    /// directory, provided it holds nothing but staging leftovers of an
+    /// interrupted write, which are removed with it.
+    ///
+    /// A directory with anything else inside is [`FsError::Unwritable`] and
+    /// is left as it is. A symlink is never followed or removed, even one
+    /// that stays inside the root, and `/` cannot be removed.
+    pub fn remove_dir(&self, path: &str) -> Result<(), FsError> {
+        let target = self.resolve(path)?;
+        let Some((name, parent)) = target.split_last() else {
+            return Err(FsError::Unwritable(virtual_path(&target)));
+        };
+        if name.starts_with(STAGING_PREFIX) {
+            return Err(FsError::Unwritable(virtual_path(&target)));
+        }
+        let host = self.directory(parent)?.join(name);
+        let meta = fs::symlink_metadata(&host).map_err(|err| io_failure(err, &target))?;
+        if meta.file_type().is_symlink() {
+            return Err(FsError::Unwritable(virtual_path(&target)));
+        }
+        if !meta.is_dir() {
+            return Err(FsError::NotADirectory(virtual_path(&target)));
+        }
+        if let Ok(entries) = fs::read_dir(&host) {
+            for entry in entries.flatten() {
+                let staged = entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(STAGING_PREFIX));
+                // `DirEntry::file_type` does not follow symlinks.
+                if staged && entry.file_type().is_ok_and(|kind| kind.is_file()) {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+        fs::remove_dir(&host).map_err(|err| match err.kind() {
+            ErrorKind::NotFound => FsError::NotFound(virtual_path(&target)),
+            _ => write_failure(err, &target),
+        })?;
+        if let Some(dir) = host.parent()
+            && let Err(err) = sync_dir(dir)
+        {
+            tracing::warn!(path = %virtual_path(&target), error = %err, "failed to sync a removed directory's parent");
+        }
+        Ok(())
+    }
+
     /// Creates the directory `name` in the current directory holding
     /// `files`, given as `/`-separated paths relative to it, and returns its
     /// virtual path.

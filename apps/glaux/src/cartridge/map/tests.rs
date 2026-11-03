@@ -234,3 +234,185 @@ fn remove_requires_the_file_to_hold_what_was_seen() {
     assert!(!path.exists());
     assert!(dir.join("maps/a").exists());
 }
+
+#[test]
+fn new_metadata_follows_the_same_rules_as_a_file() {
+    let created = MapMeta::new("Overworld", 128, 64).unwrap();
+    assert_eq!(MapMeta::parse(&created.to_bytes()), Ok(created));
+    assert_eq!(MapMeta::new(" ", 1, 1), Err(MapError::BlankName));
+    for (w, h) in [(0, 1), (1, 0), (257, 1), (1, 257)] {
+        assert_eq!(
+            MapMeta::new("A", w, h),
+            Err(MapError::InvalidSize {
+                width: w as u32,
+                height: h as u32
+            })
+        );
+    }
+    assert!(MapMeta::new("A", 1, 1).is_ok());
+    assert!(MapMeta::new("A", 256, 256).is_ok());
+}
+
+#[test]
+fn creating_a_map_writes_only_its_metadata() {
+    let (_fixture, dir, cartridge) = loaded("map-create");
+    let meta = MapMeta::new("Overworld", 16, 8).unwrap();
+    assert_eq!(cartridge.create_map(&id("overworld"), &meta), Ok(()));
+
+    let root = dir.join("maps/overworld");
+    let mut names: Vec<_> = fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["map.ron"]);
+    assert_eq!(fs::read(root.join("map.ron")).unwrap(), meta.to_bytes());
+    assert_eq!(cartridge.list_maps(), Ok(vec![id("overworld")]));
+}
+
+#[test]
+fn creating_a_map_never_replaces_one() {
+    let (_fixture, dir, cartridge) = loaded("map-create-twice");
+    let meta = MapMeta::new("A", 1, 1).unwrap();
+    cartridge.create_map(&id("a"), &meta).unwrap();
+    fs::write(dir.join("maps/a/bg0.bin"), [0, 0]).unwrap();
+
+    let other = MapMeta::new("B", 2, 2).unwrap();
+    assert_eq!(
+        cartridge.create_map(&id("a"), &other),
+        Err(MapCreateError::AlreadyExists(id("a")))
+    );
+    assert_eq!(
+        fs::read(dir.join("maps/a/map.ron")).unwrap(),
+        meta.to_bytes()
+    );
+    assert!(dir.join("maps/a/bg0.bin").exists());
+}
+
+#[test]
+fn creating_a_map_where_maps_is_a_file_fails() {
+    let (_fixture, dir, cartridge) = loaded("map-create-blocked");
+    fs::write(dir.join("maps"), "").unwrap();
+    let meta = MapMeta::new("A", 1, 1).unwrap();
+    assert!(matches!(
+        cartridge.create_map(&id("a"), &meta),
+        Err(MapCreateError::Fs(_))
+    ));
+}
+
+#[test]
+fn summaries_keep_maps_that_cannot_be_opened() {
+    let (_fixture, dir, cartridge) = loaded("map-summaries");
+    let good = MapMeta::new("Good", 4, 3).unwrap();
+    cartridge.create_map(&id("good"), &good).unwrap();
+    fs::create_dir_all(dir.join("maps/empty")).unwrap();
+    fs::create_dir_all(dir.join("maps/broken")).unwrap();
+    fs::write(dir.join("maps/broken/map.ron"), "(").unwrap();
+
+    let summaries = cartridge.map_summaries().unwrap();
+    let ids: Vec<_> = summaries.iter().map(|s| s.id.clone()).collect();
+    assert_eq!(ids, [id("broken"), id("empty"), id("good")]);
+    assert!(matches!(summaries[0].meta, Err(MapError::Malformed { .. })));
+    assert_eq!(summaries[1].meta, Err(MapError::MissingMeta(id("empty"))));
+    assert_eq!(summaries[2].meta, Ok(good));
+}
+
+/// A map on disk with a layer file, and what `read_map` sees of it.
+fn stored_map(name: &str) -> (Fixture, std::path::PathBuf, LoadedCartridge, MapFiles) {
+    let (fixture, dir, cartridge) = loaded(name);
+    let meta = MapMeta::new("A", 1, 1).unwrap();
+    cartridge.create_map(&id("a"), &meta).unwrap();
+    fs::write(dir.join("maps/a/bg1.bin"), [5, 0]).unwrap();
+    let seen = cartridge.read_map(&id("a")).unwrap();
+    (fixture, dir, cartridge, seen)
+}
+
+#[test]
+fn deleting_a_map_removes_its_files_and_directory() {
+    let (_fixture, dir, cartridge, seen) = stored_map("map-delete");
+    fs::create_dir_all(dir.join("maps/b")).unwrap();
+    assert_eq!(cartridge.delete_map(&id("a"), &seen), Ok(()));
+    assert!(!dir.join("maps/a").exists());
+    assert!(dir.join("maps/b").exists());
+}
+
+#[test]
+fn deleting_a_missing_map_says_so() {
+    let (_fixture, _dir, cartridge, seen) = stored_map("map-delete-missing");
+    assert_eq!(
+        cartridge.delete_map(&id("zzz"), &seen),
+        Err(MapDeleteError::Missing(id("zzz")))
+    );
+}
+
+#[test]
+fn a_changed_file_stops_the_delete_before_anything_is_removed() {
+    let (_fixture, dir, cartridge, seen) = stored_map("map-delete-changed");
+    fs::write(dir.join("maps/a/bg1.bin"), [6, 0]).unwrap();
+    assert_eq!(
+        cartridge.delete_map(&id("a"), &seen),
+        Err(MapDeleteError::Changed {
+            id: id("a"),
+            file: MapFile::Layer(BgLayer::Bg1),
+            current: Some(vec![6, 0]),
+        })
+    );
+    for file in ["map.ron", "bg1.bin"] {
+        assert!(dir.join("maps/a").join(file).exists(), "{file}");
+    }
+}
+
+#[test]
+fn a_layer_created_since_it_was_read_counts_as_a_change() {
+    let (_fixture, dir, cartridge, seen) = stored_map("map-delete-created");
+    fs::write(dir.join("maps/a/bg0.bin"), [1, 0]).unwrap();
+    assert_eq!(
+        cartridge.delete_map(&id("a"), &seen),
+        Err(MapDeleteError::Changed {
+            id: id("a"),
+            file: MapFile::Layer(BgLayer::Bg0),
+            current: Some(vec![1, 0]),
+        })
+    );
+    assert!(dir.join("maps/a/map.ron").exists());
+}
+
+#[test]
+fn a_file_removed_since_it_was_read_counts_as_a_change() {
+    let (_fixture, dir, cartridge, seen) = stored_map("map-delete-gone");
+    fs::remove_file(dir.join("maps/a/bg1.bin")).unwrap();
+    assert_eq!(
+        cartridge.delete_map(&id("a"), &seen),
+        Err(MapDeleteError::Changed {
+            id: id("a"),
+            file: MapFile::Layer(BgLayer::Bg1),
+            current: None,
+        })
+    );
+    assert!(dir.join("maps/a/map.ron").exists());
+}
+
+#[test]
+fn files_of_other_origin_stop_the_delete_untouched() {
+    let (_fixture, dir, cartridge, seen) = stored_map("map-delete-unknown");
+    fs::write(dir.join("maps/a/notes.txt"), "keep").unwrap();
+    fs::create_dir(dir.join("maps/a/sub")).unwrap();
+    assert_eq!(
+        cartridge.delete_map(&id("a"), &seen),
+        Err(MapDeleteError::UnknownEntries {
+            id: id("a"),
+            names: vec!["notes.txt".into(), "sub".into()],
+        })
+    );
+    for file in ["map.ron", "bg1.bin", "notes.txt"] {
+        assert!(dir.join("maps/a").join(file).exists(), "{file}");
+    }
+}
+
+#[test]
+fn staging_leftovers_do_not_block_a_delete() {
+    let (_fixture, dir, cartridge, seen) = stored_map("map-delete-staging");
+    fs::write(dir.join("maps/a/.glaux-staging-map.ron-1"), "half").unwrap();
+    assert_eq!(cartridge.delete_map(&id("a"), &seen), Ok(()));
+    assert!(!dir.join("maps/a").exists());
+}
