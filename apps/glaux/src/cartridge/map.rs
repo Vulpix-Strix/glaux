@@ -361,14 +361,16 @@ impl LoadedCartridge {
     /// Deletes map `id`, provided its files still hold what `seen` read.
     ///
     /// Everything is checked before anything is deleted: the directory must
-    /// hold only the files of a map, and each must match `seen` exactly,
-    /// where a layer that was absent must still be absent. Any difference
-    /// leaves the map untouched. Only then are the files and the directory
-    /// removed.
+    /// hold only the files of a map, each must match `seen` exactly (a layer
+    /// that was absent must still be absent), and none may be a file the
+    /// removal would refuse, such as a read-only one. Any problem leaves the
+    /// map untouched. Only then are the files and the directory removed.
     ///
     /// No portable primitive makes the check and the removal one step, so a
-    /// write landing in between is deleted with the map. A failure after
-    /// the first removal is [`MapDeleteError::Incomplete`].
+    /// write landing in between is deleted with the map, and a failure that
+    /// could not be known beforehand, such as a directory that cannot be
+    /// modified, comes after the first removal as
+    /// [`MapDeleteError::Incomplete`].
     pub fn delete_map(&self, id: &MapId, seen: &MapFiles) -> Result<(), MapDeleteError> {
         let dir = format!("{MAPS_DIR}/{id}");
         let names = match self.files.entry_names(&dir) {
@@ -401,6 +403,13 @@ impl LoadedCartridge {
                     file,
                     current,
                 });
+            }
+            // Refusals that are known now are reported now, so they cannot
+            // strand a half-deleted map.
+            if expected(file).is_some() {
+                self.files
+                    .ensure_removable_file(&file.path(id))
+                    .map_err(MapError::from)?;
             }
         }
 

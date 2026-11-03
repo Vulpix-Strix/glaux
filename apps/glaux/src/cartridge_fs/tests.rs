@@ -987,6 +987,33 @@ mod removing_and_moving {
     }
 
     #[test]
+    fn removability_reports_what_removing_would_refuse() {
+        let fixture = Fixture::new("removable");
+        write(&fixture, "tools/a.luau", "a");
+        write(&fixture, "tools/locked.luau", "x");
+        let host = fixture.root().join("tools/locked.luau");
+        let mut permissions = fs::metadata(&host).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&host, permissions).unwrap();
+        let fs = fixture.open();
+
+        assert_eq!(fs.ensure_removable_file("/tools/a.luau"), Ok(()));
+        assert_eq!(
+            fs.ensure_removable_file("/tools/locked.luau"),
+            Err(FsError::ReadOnly("/tools/locked.luau".into()))
+        );
+        assert_eq!(
+            fs.ensure_removable_file("/tools/gone"),
+            Err(not_found("/tools/gone"))
+        );
+        assert_eq!(
+            fs.ensure_removable_file("/tools"),
+            Err(FsError::NotAFile("/tools".into()))
+        );
+        assert!(host.exists());
+    }
+
+    #[test]
     fn removing_a_directory_takes_only_empty_ones_and_staging_leftovers() {
         let fixture = Fixture::new("remove-dir");
         write(&fixture, "maps/a/.glaux-staging-map.ron-1", "half");

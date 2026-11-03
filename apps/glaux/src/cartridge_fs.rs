@@ -617,6 +617,20 @@ impl CartridgeFs {
         Ok(())
     }
 
+    /// Fails with the error [`remove_file`](Self::remove_file) would give for
+    /// any refusal that can be known in advance, such as a missing file, a
+    /// symlink, something that is not a regular file, or a read-only file.
+    /// Nothing is changed.
+    ///
+    /// Passing this does not promise the removal works. The permissions of
+    /// the directory above the file are not checked, since no portable test
+    /// is reliable, and anything can change before the removal runs.
+    pub fn ensure_removable_file(&self, path: &str) -> Result<(), FsError> {
+        let target = self.resolve(path)?;
+        let host = self.entry_file(&target)?;
+        writable_file(&host, &target).map(drop)
+    }
+
     /// Moves the regular file at `from` to `to`, both absolute or relative
     /// to the current directory, creating the directories above `to` that
     /// are missing. Directories left empty above `from` are kept, and so

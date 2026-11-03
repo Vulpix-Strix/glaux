@@ -410,6 +410,32 @@ fn files_of_other_origin_stop_the_delete_untouched() {
 }
 
 #[test]
+fn a_file_that_cannot_be_removed_stops_the_delete_before_anything_is_removed() {
+    let (_fixture, dir, cartridge, seen) = stored_map("map-delete-read-only");
+    fs::write(dir.join("maps/a/bg2.bin"), [1, 0]).unwrap();
+    let seen = MapFiles {
+        layers: [None, seen.layers[1].clone(), Some(vec![1, 0])],
+        ..seen
+    };
+    // Layers are removed from the last one, so the locked file is the
+    // first one the removal would touch after bg2.
+    let locked = dir.join("maps/a/bg1.bin");
+    let mut permissions = fs::metadata(&locked).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&locked, permissions).unwrap();
+
+    assert_eq!(
+        cartridge.delete_map(&id("a"), &seen),
+        Err(MapDeleteError::Map(MapError::Fs(FsError::ReadOnly(
+            "/maps/a/bg1.bin".into()
+        ))))
+    );
+    for file in ["map.ron", "bg1.bin", "bg2.bin"] {
+        assert!(dir.join("maps/a").join(file).exists(), "{file}");
+    }
+}
+
+#[test]
 fn staging_leftovers_do_not_block_a_delete() {
     let (_fixture, dir, cartridge, seen) = stored_map("map-delete-staging");
     fs::write(dir.join("maps/a/.glaux-staging-map.ron-1"), "half").unwrap();
