@@ -182,6 +182,7 @@ fn back_to_code(
         Documents {
             sprites: ctx.sprites,
             code: ctx.code,
+            maps: ctx.maps,
         },
         ctx.video_defaults,
     );
@@ -228,6 +229,7 @@ pub(super) fn save_before_running(cartridge: &LoadedCartridge, ctx: &mut Context
     let documents = Documents {
         sprites: ctx.sprites,
         code: ctx.code,
+        maps: ctx.maps,
     };
     documents.save_all(cartridge, ctx.workspace, ctx.logs)
 }
@@ -239,6 +241,7 @@ pub(super) fn save_for_debugging(cartridge: &LoadedCartridge, ctx: &mut Context<
     let documents = Documents {
         sprites: ctx.sprites,
         code: ctx.code,
+        maps: ctx.maps,
     };
     documents.save_all(cartridge, ctx.workspace, ctx.logs)
 }

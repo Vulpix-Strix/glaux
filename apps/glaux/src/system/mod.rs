@@ -48,6 +48,7 @@ pub use editor_settings::IndentStyle;
 pub use editor_settings::{EditorSettings, INDENT_SIZES, TAB_SIZES};
 pub use external_url::{ExternalUrl, ExternalUrlError};
 use logs::{LogPanel, LogStore};
+use map_document::MapDocument;
 pub use menu_state::MenuState;
 use shell::Shell;
 use sprite_document::SpriteDocument;
@@ -273,6 +274,9 @@ pub struct System {
     /// is dropped only once another cartridge has loaded or this one is
     /// unloaded, so a failed `load` keeps it.
     code: Option<CodeSession>,
+    /// The open map document. Like `sprites`, it belongs to the loaded
+    /// cartridge and is dropped with it.
+    maps: Option<MapDocument>,
     /// What the current or last run logged, shared with the shell.
     logs: LogStore,
     /// The overlay that shows `logs`.
@@ -317,6 +321,7 @@ impl System {
             workspace: Workspace::new(font, palette),
             sprites: None,
             code: None,
+            maps: None,
             logs: LogStore::default(),
             log_panel: LogPanel::default(),
             diagnostics: None,
@@ -339,7 +344,8 @@ impl System {
             .sprites
             .as_ref()
             .is_some_and(SpriteDocument::is_modified)
-            || self.code.as_ref().is_some_and(CodeSession::is_modified);
+            || self.code.as_ref().is_some_and(CodeSession::is_modified)
+            || self.maps.as_ref().is_some_and(MapDocument::is_modified);
         if unsaved {
             tracing::info!("quit requested with unsaved edits");
             self.exit_requested = true;
@@ -442,6 +448,7 @@ impl System {
             workspace: &mut self.workspace,
             sprites: &mut self.sprites,
             code: &mut self.code,
+            maps: &mut self.maps,
             logs: &mut self.logs,
             log_panel: &mut self.log_panel,
             unsaved: &mut self.unsaved,

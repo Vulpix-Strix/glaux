@@ -14,12 +14,15 @@ use glaux_input::InputEvent;
 
 use super::editing::document::{CodeSaveError, CodeSaved, DocumentId};
 use super::editing::session::CodeSession;
+use super::map_document::{
+    MapDocument, SaveError as MapSaveError, SaveFailure as MapSaveFailure, Saved as MapSaved,
+};
 use super::sprite_document::{SaveError, SaveFailure, Saved, SpriteDocument};
 use super::video::CartridgeVideoDefaults;
 use super::workspace::{
-    Choice, Dialog, DialogLayout, Target, asset_conflict_dialog, message_dialog,
-    saved_before_stopping, script_conflict_dialog, source_write_advice, unsaved_dialog,
-    write_advice,
+    Choice, Dialog, DialogLayout, Target, asset_conflict_dialog, map_conflict_dialog,
+    message_dialog, saved_before_stopping, script_conflict_dialog, source_write_advice,
+    unsaved_dialog, write_advice,
 };
 use crate::cartridge::LoadedCartridge;
 use crate::ui_text;
@@ -53,6 +56,8 @@ enum Item {
     Script(DocumentId),
     /// Every modified asset of the sprite document.
     Graphics,
+    /// Every modified file of the open map.
+    Map,
 }
 
 /// What the dialog on screen asks.
@@ -82,6 +87,7 @@ pub(super) struct Edits<'a> {
     pub(super) cartridge: &'a LoadedCartridge,
     pub(super) code: &'a mut CodeSession,
     pub(super) sprites: Option<&'a mut SpriteDocument>,
+    pub(super) maps: Option<&'a mut MapDocument>,
     pub(super) defaults: &'a CartridgeVideoDefaults,
 }
 
@@ -98,12 +104,13 @@ pub(super) struct UnsavedFlow {
 }
 
 impl UnsavedFlow {
-    /// Asks about the unsaved edits in `code` and `sprites` before
+    /// Asks about the unsaved edits in `code`, `sprites` and `maps` before
     /// `pending`, or `None` when there are none.
     pub(super) fn new(
         pending: Pending,
         code: Option<&CodeSession>,
         sprites: Option<&SpriteDocument>,
+        maps: Option<&MapDocument>,
     ) -> Option<Self> {
         let mut names: Vec<String> = code
             .map(|code| {
@@ -115,6 +122,12 @@ impl UnsavedFlow {
             .unwrap_or_default();
         if sprites.is_some_and(SpriteDocument::is_modified) {
             names.push(ui_text::get("system-graphics"));
+        }
+        if let Some(map) = maps.filter(|map| map.is_modified()) {
+            names.push(ui_text::get_with(
+                "system-map",
+                &[("id", Arg::Text(&map.id().to_string()))],
+            ));
         }
         if names.is_empty() {
             return None;
@@ -159,6 +172,9 @@ impl UnsavedFlow {
                 {
                     self.queue.push_back(Item::Graphics);
                 }
+                if edits.maps.as_deref().is_some_and(MapDocument::is_modified) {
+                    self.queue.push_back(Item::Map);
+                }
                 self.run(edits)
             }
             (Stage::Ask, Choice::Discard) => Outcome::Proceed(self.pending.clone()),
@@ -193,6 +209,15 @@ impl UnsavedFlow {
                 }
                 self.run(edits)
             }
+            (Stage::Conflict(Target::MapFiles(seen)), Choice::Overwrite) => {
+                if let Some(map) = edits.maps.as_deref_mut() {
+                    let result = map.overwrite(edits.cartridge, &seen);
+                    if let Err(outcome) = self.map_saved(result) {
+                        return outcome;
+                    }
+                }
+                self.run(edits)
+            }
             _ => self.stop(),
         }
     }
@@ -210,6 +235,13 @@ impl UnsavedFlow {
                     Some(sprites) => {
                         let result = sprites.save(edits.cartridge);
                         self.graphics_saved(result)
+                    }
+                    None => Ok(()),
+                },
+                Item::Map => match edits.maps.as_deref_mut() {
+                    Some(map) => {
+                        let result = map.save(edits.cartridge);
+                        self.map_saved(result)
                     }
                     None => Ok(()),
                 },
@@ -270,6 +302,33 @@ impl UnsavedFlow {
             }
             Some(SaveFailure::Cartridge(err)) => {
                 self.fail(&ui_text::get("system-save-failed"), write_advice(&err));
+                Err(Outcome::Open)
+            }
+        }
+    }
+
+    /// Notes what saving the map wrote, or shows why it stopped.
+    fn map_saved(&mut self, result: Result<MapSaved, MapSaveError>) -> Result<(), Outcome> {
+        let (written, cause) = match result {
+            Ok(MapSaved::Written(written)) => (written, None),
+            Ok(MapSaved::NothingToSave) => (Vec::new(), None),
+            Err(MapSaveError { written, cause }) => (written, Some(cause)),
+        };
+        self.saved
+            .extend(written.iter().map(|file| file.file.file_name().to_owned()));
+        match cause {
+            None => Ok(()),
+            Some(MapSaveFailure::Conflict(conflicts)) => {
+                let saved = saved_before_stopping(&self.saved);
+                let (dialog, target) = map_conflict_dialog(conflicts, saved);
+                self.show(dialog, Stage::Conflict(target));
+                Err(Outcome::Open)
+            }
+            Some(MapSaveFailure::Map(error)) => {
+                self.fail(
+                    &ui_text::get("system-save-failed"),
+                    super::ui_errors::map::map(&error),
+                );
                 Err(Outcome::Open)
             }
         }

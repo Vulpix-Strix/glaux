@@ -96,6 +96,7 @@ fn a_chime_cut_off_by_the_shell_leaves_nothing_behind() {
         workspace: Workspace::new(fake_rom().font(), fake_rom().palette().clone()),
         sprites: None,
         code: None,
+        maps: None,
         logs: Default::default(),
         log_panel: Default::default(),
         diagnostics: None,

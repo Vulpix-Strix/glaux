@@ -1,6 +1,7 @@
 //! Shared error presentation for shell and workspace surfaces.
 
 pub(super) mod code;
+pub(super) mod map;
 pub(super) mod runtime;
 pub(super) mod video;
 

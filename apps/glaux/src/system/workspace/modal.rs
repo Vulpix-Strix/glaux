@@ -7,6 +7,7 @@ use crate::cartridge::CartridgeError;
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge_fs::FsError;
 use crate::system::editing::document::{DocumentId, SourceConflict, SourceConflictKind};
+use crate::system::map_document::{Conflict as MapConflict, DiskFile};
 use crate::system::sprite_document::{Conflict, ConflictKind, DiskAsset};
 use crate::ui_text;
 use glaux_i18n::Arg;
@@ -43,6 +44,8 @@ pub(in crate::system) enum Target {
     None,
     /// Asset files of the sprite document.
     Assets(Vec<DiskAsset>),
+    /// Files of the open map.
+    MapFiles(Vec<DiskFile>),
     /// The file of one script document, holding `seen` (`None` means absent).
     Script {
         id: DocumentId,
@@ -320,6 +323,56 @@ pub(in crate::system) fn asset_conflict_dialog(
         .map(|conflict| conflict.disk)
         .collect();
     (dialog, Target::Assets(seen))
+}
+
+/// Asks what to do about map files changed outside Glaux. Unlike the
+/// graphics, a map offers no reload here: cancelling keeps the edits so the
+/// map editor can settle it.
+pub(in crate::system) fn map_conflict_dialog(
+    conflicts: Vec<MapConflict>,
+    saved: Option<String>,
+) -> (Dialog<Choice>, Target) {
+    let mut lines: Vec<String> = conflicts
+        .iter()
+        .map(|conflict| {
+            let file = conflict.file().to_string();
+            match conflict.kind {
+                ConflictKind::Modified => ui_text::get_with(
+                    "workspace-changed-outside-glaux",
+                    &[("path", Arg::Text(&file))],
+                ),
+                ConflictKind::Deleted => ui_text::get_with(
+                    "workspace-was-deleted-outside-glaux",
+                    &[("path", Arg::Text(&file))],
+                ),
+                ConflictKind::Created => ui_text::get_with(
+                    "workspace-a-new-appeared-outside-glaux",
+                    &[("asset", Arg::Text(&file))],
+                ),
+            }
+        })
+        .collect();
+    lines.extend(saved);
+    lines.push(ui_text::get("workspace-unsaved-edits-kept"));
+    lines.push(ui_text::get_with(
+        "workspace-map-conflict-instructions",
+        &[("count", Arg::Number(conflicts.len() as f64))],
+    ));
+    let dialog = Dialog::new(
+        ui_text::get("workspace-file-conflict"),
+        lines,
+        vec![
+            (&ui_text::get("workspace-overwrite-disk"), Choice::Overwrite),
+            (&ui_text::get("workspace-cancel"), Choice::Cancel),
+        ],
+        1,
+        Some(Choice::Cancel),
+    );
+    let seen = conflicts
+        .into_iter()
+        .map(|conflict| conflict.disk)
+        .collect();
+    (dialog, Target::MapFiles(seen))
 }
 
 /// Shows `lines` under `title` until dismissed.

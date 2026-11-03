@@ -17,6 +17,7 @@ use crate::cartridge::LoadedCartridge;
 use crate::system::SystemState;
 use crate::system::editing::session::CodeSession;
 use crate::system::logs::{Category, LogPanel, LogStore};
+use crate::system::map_document::MapDocument;
 use crate::system::sprite_document::SpriteDocument;
 use crate::system::unsaved::UnsavedFlow;
 use crate::system::video::CartridgeVideoDefaults;
@@ -30,6 +31,7 @@ pub(super) struct Context<'a> {
     pub(super) workspace: &'a mut Workspace,
     pub(super) sprites: &'a mut Option<SpriteDocument>,
     pub(super) code: &'a mut Option<CodeSession>,
+    pub(super) maps: &'a mut Option<MapDocument>,
     pub(super) logs: &'a mut LogStore,
     pub(super) log_panel: &'a mut LogPanel,
     pub(super) unsaved: &'a mut Option<UnsavedFlow>,
@@ -42,6 +44,7 @@ impl Context<'_> {
             .as_ref()
             .is_some_and(SpriteDocument::is_modified)
             || self.code.as_ref().is_some_and(CodeSession::is_modified)
+            || self.maps.as_ref().is_some_and(MapDocument::is_modified)
     }
 }
 
@@ -78,11 +81,13 @@ fn report(state: &mut SystemState, workspace: &mut Workspace, message: String) {
 pub(super) struct Documents<'a> {
     pub(super) sprites: &'a mut Option<SpriteDocument>,
     pub(super) code: &'a mut Option<CodeSession>,
+    pub(super) maps: &'a mut Option<MapDocument>,
 }
 
 impl Documents<'_> {
     /// Writes every modified document of the loaded cartridge: the open
-    /// scripts first, then the sprite document's changed assets. Returns
+    /// scripts first, then the sprite document's changed assets, then the
+    /// open map. Returns
     /// whether all of them were written. At the first failure it stops and
     /// shows the failure through `workspace`. What was written before it
     /// stays written, and nothing is rolled back.
@@ -95,7 +100,11 @@ impl Documents<'_> {
         workspace: &mut Workspace,
         logs: &mut LogStore,
     ) -> bool {
-        let Self { sprites, code } = self;
+        let Self {
+            sprites,
+            code,
+            maps,
+        } = self;
         if let Some(code) = code.as_mut() {
             let modified: Vec<_> = code
                 .modified()
@@ -134,6 +143,22 @@ impl Documents<'_> {
             workspace.saved(Err(err));
             return false;
         }
+        if let Some(document) = maps.as_mut().filter(|document| document.is_modified())
+            && let Err(err) = document.save(cartridge)
+        {
+            let id = document.id().to_string();
+            tracing::info!("run cancelled: the map could not be saved");
+            logs.push_terminal(
+                Category::Save,
+                ui_text::get_with(
+                    "logs-run-cancelled-map-not-saved",
+                    &[("id", Arg::Text(&id))],
+                ),
+                None,
+            );
+            workspace.report(crate::system::ui_errors::map::map_save(&err.cause));
+            return false;
+        }
         true
     }
 }
@@ -143,6 +168,7 @@ impl Documents<'_> {
 fn discard_documents(
     sprites: &mut Option<SpriteDocument>,
     code: &mut Option<CodeSession>,
+    maps: &mut Option<MapDocument>,
     workspace: &mut Workspace,
 ) {
     if sprites
@@ -156,6 +182,9 @@ fn discard_documents(
             tracing::info!("unsaved code changes discarded");
         }
         tracing::debug!("code documents closed");
+    }
+    if maps.take().is_some_and(|document| document.is_modified()) {
+        tracing::info!("unsaved map changes discarded");
     }
     workspace.forget_code();
 }

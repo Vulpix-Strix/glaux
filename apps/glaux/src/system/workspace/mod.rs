@@ -49,8 +49,8 @@ pub use docs_apart::{DocsApart, DocsStart};
 use input::Route;
 use modal::Modal;
 pub(super) use modal::{
-    Choice, Target, asset_conflict_dialog, message_dialog, script_conflict_dialog,
-    source_write_advice, unsaved_dialog, write_advice,
+    Choice, Target, asset_conflict_dialog, map_conflict_dialog, message_dialog,
+    script_conflict_dialog, source_write_advice, unsaved_dialog, write_advice,
 };
 pub use render::draw_cursor;
 pub use request::{AssetRequest, HostWork, NavigationRequest, ScriptRequest, WorkspaceRequest};

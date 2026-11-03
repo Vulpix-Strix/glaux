@@ -37,7 +37,7 @@ pub(super) fn open_workspace(
     documents: Documents<'_>,
     video_defaults: &CartridgeVideoDefaults,
 ) -> SystemState {
-    let Documents { sprites, code } = documents;
+    let Documents { sprites, code, .. } = documents;
     let identity = cartridge_identity(cartridge.manifest());
     tracing::info!(cartridge = %identity, tab = ?workspace.tab(), "workspace opened");
     workspace.end_stroke(sprites.as_mut());

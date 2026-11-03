@@ -85,6 +85,7 @@ fn shell_input(
                         Documents {
                             sprites: ctx.sprites,
                             code: ctx.code,
+                            maps: ctx.maps,
                         },
                         video_defaults,
                     );
@@ -128,7 +129,7 @@ pub(super) fn shell_request(
         None => {}
         // The shell only asks to load a cartridge that already loaded.
         Some(ShellRequest::Load { cartridge, origin }) => {
-            discard_documents(ctx.sprites, ctx.code, ctx.workspace);
+            discard_documents(ctx.sprites, ctx.code, ctx.maps, ctx.workspace);
             let cartridge = loaded.insert(*cartridge);
             shell.announce_loaded(cartridge.manifest(), origin);
         }
@@ -136,7 +137,7 @@ pub(super) fn shell_request(
             let Some(cartridge) = loaded.take() else {
                 unreachable!("UNLOAD was requested without a loaded cartridge");
             };
-            discard_documents(ctx.sprites, ctx.code, ctx.workspace);
+            discard_documents(ctx.sprites, ctx.code, ctx.maps, ctx.workspace);
             let identity = cartridge_identity(cartridge.manifest());
             tracing::info!(cartridge = %identity, "cartridge unloaded");
             shell.report(ui_text::get_with(
@@ -160,7 +161,12 @@ pub(super) fn shell_request(
                 action,
                 line: line.clone(),
             };
-            match UnsavedFlow::new(pending, ctx.code.as_ref(), ctx.sprites.as_ref()) {
+            match UnsavedFlow::new(
+                pending,
+                ctx.code.as_ref(),
+                ctx.sprites.as_ref(),
+                ctx.maps.as_ref(),
+            ) {
                 Some(flow) => {
                     tracing::info!("asking what to do with unsaved edits");
                     *ctx.unsaved = Some(flow);

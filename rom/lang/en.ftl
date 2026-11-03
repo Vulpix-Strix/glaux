@@ -28,6 +28,7 @@ system-did-not-run = { $action } did not run.
 system-esc-resume-r-restart-enter-stop = Esc: resume  R: restart  Enter: stop
 system-glaux-did-not-quit = Glaux did not quit.
 system-graphics = graphics
+system-map = map { $id }
 system-identity = { $name } { $generation }  SYSTEM ROM { $rom-version }
 system-nothing-to-edit-try-new-id-or-load-path = Nothing to edit. Try 'new <id>' or 'load <path>'.
 system-paused = Paused { $identity }
@@ -164,6 +165,10 @@ workspace-nothing-to-save = Nothing to save
 workspace-nothing-was-changed = Nothing was changed.
 workspace-nothing-was-deleted = Nothing was deleted.
 workspace-opening = Opening { $value }
+workspace-map-conflict-instructions = { $count ->
+    [one] OVERWRITE DISK replaces the file with your edits. CANCEL keeps your edits in memory.
+   *[other] OVERWRITE DISK replaces these files with your edits. CANCEL keeps your edits in memory.
+    }
 workspace-overwrite-disk = OVERWRITE DISK
 workspace-overwrite-disk-replaces-the-file-with-your-edits = OVERWRITE DISK replaces the file with your edits.
 workspace-overwrite-disk-writes-your-edits-to-it-again = OVERWRITE DISK writes your edits to it again.
@@ -325,6 +330,7 @@ logs-header = LOGS  >={ $level }  { $source }  { $count }
 logs-messages-skipped = { $count } log messages skipped
 logs-nothing-logged = Nothing logged yet.
 logs-run-cancelled-graphics-not-saved = Run cancelled: the graphics could not be saved.
+logs-run-cancelled-map-not-saved = Run cancelled: the map { $id } could not be saved.
 logs-run-cancelled-script-not-saved = Run cancelled: { $path } could not be saved.
 logs-system = System
 logs-tab-read-l-level-s-source-f12-close = Tab: read  L: level  S: source  F12: close
@@ -708,6 +714,16 @@ error-fs-read-only = Read-only: { $path }
 error-fs-unavailable = Cartridge storage unavailable
 error-fs-unreadable = Cannot read { $path }
 error-fs-unwritable = Cannot write { $path }
+error-map-blank-layer-name = map.ron: the name of { $layer } is blank
+error-map-blank-name = map.ron: the name is blank
+error-map-layer = { $layer }: { $detail }
+error-map-malformed = map.ron line { $line }: { $reason }
+error-map-missing-field = map.ron: missing { $field }
+error-map-missing-meta = Map { $id } has no map.ron
+error-map-not-a-file = { $file } of map { $id } is not a file
+error-map-size = map.ron: size { $width }x{ $height } is outside 1 to { $max } in each direction
+error-map-unknown-field = map.ron: unknown field { $field }
+error-map-unsupported-format = map.ron: unsupported format { $format }
 error-module-name-empty = module name is empty
 error-module-name-empty-segment = module name has an empty segment
 error-module-name-has-extension = module names take no extension; use "{ $stem }", not "{ $stem }.{ $extension }"

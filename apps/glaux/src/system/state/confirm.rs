@@ -23,8 +23,12 @@ pub(in crate::system) fn guard_exit(
     if matches!(state, SystemState::Workspace { .. }) {
         ctx.workspace.end_stroke(ctx.sprites.as_mut());
     }
-    let Some(flow) = UnsavedFlow::new(Pending::Exit, ctx.code.as_ref(), ctx.sprites.as_ref())
-    else {
+    let Some(flow) = UnsavedFlow::new(
+        Pending::Exit,
+        ctx.code.as_ref(),
+        ctx.sprites.as_ref(),
+        ctx.maps.as_ref(),
+    ) else {
         *exiting = true;
         return state;
     };
@@ -68,6 +72,7 @@ pub(in crate::system) fn unsaved_tick(
             cartridge,
             code: ctx.code.get_or_insert_default(),
             sprites: ctx.sprites.as_mut(),
+            maps: ctx.maps.as_mut(),
             defaults: ctx.video_defaults,
         };
         match flow.handle_input(event, &layout, edits) {
