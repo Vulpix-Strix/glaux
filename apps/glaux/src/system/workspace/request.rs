@@ -5,11 +5,13 @@
 //! outcome through the `Workspace` method each variant names.
 
 use crate::cartridge::VideoAsset;
+use crate::cartridge::map::{MapFiles, MapId, MapMeta};
 use crate::cartridge::source::SourcePath;
 use crate::system::editing::document::DocumentId;
 use crate::system::editing::session::Destination;
 use crate::system::editor_settings::EditorSettings;
 use crate::system::external_url::ExternalUrl;
+use crate::system::map_document::DiskFile;
 use crate::system::sprite_document::DiskAsset;
 
 use super::code::DebugAction;
@@ -33,6 +35,8 @@ pub enum WorkspaceRequest {
     Assets(AssetRequest),
     /// File work on the cartridge's scripts.
     Scripts(ScriptRequest),
+    /// File work on the cartridge's maps and the open map document.
+    Maps(MapRequest),
     /// Moving between places in the scripts.
     Navigate(NavigationRequest),
     /// Links and the clipboard.
@@ -106,6 +110,49 @@ pub enum ScriptRequest {
     /// Move this script's file to this path. Answer with
     /// [`Workspace::script_renamed`](super::Workspace::script_renamed).
     Rename { id: DocumentId, to: SourcePath },
+}
+
+/// File work on the cartridge's maps and the open map document.
+///
+/// Opening replaces the open document, so the workspace asks only after
+/// the user settled any unsaved edits in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MapRequest {
+    /// List the cartridge's maps, check the open map against its files and
+    /// open the remembered one when none is open. Answer with
+    /// [`Workspace::maps_listed`](super::Workspace::maps_listed) and, for an
+    /// open map, [`Workspace::map_reopened`](super::Workspace::map_reopened).
+    List,
+    /// Open this map. Answer with
+    /// [`Workspace::map_opened`](super::Workspace::map_opened).
+    Open(MapId),
+    /// Create this map and open it. Answer with
+    /// [`Workspace::map_created`](super::Workspace::map_created).
+    Create { id: MapId, meta: MapMeta },
+    /// Write the open map. Answer with
+    /// [`Workspace::map_saved`](super::Workspace::map_saved).
+    Save,
+    /// Write the open map and, once it is written, open this map. Answer
+    /// with [`Workspace::map_saved`](super::Workspace::map_saved) and
+    /// [`Workspace::map_opened`](super::Workspace::map_opened).
+    SaveAndOpen(MapId),
+    /// Write the open map over its files, which changed outside Glaux,
+    /// provided each still holds what the user was shown. Answer with
+    /// [`Workspace::map_saved`](super::Workspace::map_saved).
+    Overwrite(Vec<DiskFile>),
+    /// Throw away the open map's unsaved edits and read it again. Answer
+    /// with [`Workspace::map_opened`](super::Workspace::map_opened).
+    Reload,
+    /// Read the files of this map for DELETE. Answer with
+    /// [`Workspace::map_delete_prompt`](super::Workspace::map_delete_prompt).
+    PrepareDelete(MapId),
+    /// Delete this map, provided its files still hold `seen`. Answer with
+    /// [`Workspace::map_deleted`](super::Workspace::map_deleted).
+    Delete { id: MapId, seen: MapFiles },
+    /// Give the open map this name. It is saved at once when the map had no
+    /// other unsaved edits. Answer with
+    /// [`Workspace::map_renamed`](super::Workspace::map_renamed).
+    Rename { name: String },
 }
 
 /// Moving between places in the scripts.

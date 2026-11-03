@@ -1,4 +1,6 @@
-use crate::cartridge::map::{MAP_MAX_SIZE, MapError};
+use crate::cartridge::map::{
+    MAP_MAX_SIZE, MAX_ID_LEN, MapCreateError, MapDeleteError, MapError, MapIdError,
+};
 use crate::system::map_document::{SaveFailure, file_list};
 use crate::ui_text;
 use glaux_i18n::Arg;
@@ -69,5 +71,55 @@ pub(in crate::system) fn map_save(failure: &SaveFailure) -> String {
             )
         }
         SaveFailure::Map(error) => map(error),
+    }
+}
+
+pub(in crate::system) fn id(error: &MapIdError) -> String {
+    ui_text::get_with(
+        "error-map-id-invalid",
+        &[
+            ("id", Arg::Text(error.id())),
+            ("max", Arg::Text(&MAX_ID_LEN.to_string())),
+        ],
+    )
+}
+
+pub(in crate::system) fn create(error: &MapCreateError) -> String {
+    match error {
+        MapCreateError::AlreadyExists(id) => {
+            ui_text::get_with("error-map-exists", &[("id", Arg::Text(&id.to_string()))])
+        }
+        MapCreateError::Fs(error) => super::fs(error),
+    }
+}
+
+pub(in crate::system) fn delete(error: &MapDeleteError) -> String {
+    match error {
+        MapDeleteError::Missing(id) => ui_text::get_with(
+            "error-map-delete-missing",
+            &[("id", Arg::Text(&id.to_string()))],
+        ),
+        MapDeleteError::Changed { id, file, .. } => ui_text::get_with(
+            "error-map-delete-changed",
+            &[
+                ("file", Arg::Text(&file.to_string())),
+                ("id", Arg::Text(&id.to_string())),
+            ],
+        ),
+        MapDeleteError::UnknownEntries { id, names } => ui_text::get_with(
+            "error-map-delete-unknown",
+            &[
+                ("id", Arg::Text(&id.to_string())),
+                ("names", Arg::Text(&names.join(", "))),
+            ],
+        ),
+        MapDeleteError::Map(error) => map(error),
+        MapDeleteError::Incomplete { id, source } => ui_text::get_with(
+            "error-map-delete-incomplete",
+            &[
+                ("id", Arg::Text(&id.to_string())),
+                ("detail", Arg::Text(&super::fs(source))),
+            ],
+        ),
     }
 }

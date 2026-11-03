@@ -18,6 +18,7 @@ mod dialog;
 mod docs;
 mod docs_apart;
 mod input;
+mod maps;
 mod menu;
 mod modal;
 mod render;
@@ -47,13 +48,16 @@ pub(super) use dialog::{Dialog, DialogLayout};
 use docs::{DocsBrowser, Source};
 pub use docs_apart::{DocsApart, DocsStart};
 use input::Route;
+use maps::MapEditor;
 use modal::Modal;
 pub(super) use modal::{
     Choice, Target, asset_conflict_dialog, map_conflict_dialog, message_dialog,
     script_conflict_dialog, source_write_advice, unsaved_dialog, write_advice,
 };
 pub use render::draw_cursor;
-pub use request::{AssetRequest, HostWork, NavigationRequest, ScriptRequest, WorkspaceRequest};
+pub use request::{
+    AssetRequest, HostWork, MapRequest, NavigationRequest, ScriptRequest, WorkspaceRequest,
+};
 #[cfg(test)]
 pub use sprites::ImportPreview;
 use sprites::SpriteEditor;
@@ -157,6 +161,7 @@ pub struct Workspace {
     tab_labels: TabLabels,
     code: CodeEditor,
     sprites: SpriteEditor,
+    maps: MapEditor,
     docs: DocsBrowser,
     /// Whether the documentation browser covers the selected view. Hiding
     /// it keeps its tabs.
@@ -187,6 +192,7 @@ impl Workspace {
                 EditorSettings::default(),
             ),
             sprites: SpriteEditor::new(layout.sprite_metrics()),
+            maps: MapEditor::new(layout.map_metrics()),
             docs: DocsBrowser::new(layout.docs_metrics(), font.clone()),
             docs_open: false,
             modal: None,

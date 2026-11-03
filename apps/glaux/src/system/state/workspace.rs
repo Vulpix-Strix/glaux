@@ -4,17 +4,19 @@
 use super::running::{save_before_running, start};
 use super::{Context, Documents};
 use crate::cartridge::LoadedCartridge;
+use crate::cartridge::map::MapId;
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::system::clipboard::Clipboard;
 use crate::system::definition::Definition;
 use crate::system::editing::session::CodeSession;
+use crate::system::map_document::MapDocument;
 use crate::system::running::RunOrigin;
 use crate::system::shell::{Shell, cartridge_identity};
 use crate::system::sprite_document::SpriteDocument;
 use crate::system::video::CartridgeVideoDefaults;
 use crate::system::workspace::{
-    AssetRequest, HostWork, NavigationRequest, ScriptRequest, Tab, Workspace, WorkspaceRequest,
-    WorkspaceVideo,
+    AssetRequest, HostWork, MapRequest, NavigationRequest, ScriptRequest, Tab, Workspace,
+    WorkspaceRequest, WorkspaceVideo,
 };
 use crate::system::{HostRequest, SystemState};
 use crate::ui_text;
@@ -38,6 +40,7 @@ pub(super) fn open_workspace(
     video_defaults: &CartridgeVideoDefaults,
 ) -> SystemState {
     let Documents { sprites, code, .. } = documents;
+    workspace.refresh_maps();
     let identity = cartridge_identity(cartridge.manifest());
     tracing::info!(cartridge = %identity, tab = ?workspace.tab(), "workspace opened");
     workspace.end_stroke(sprites.as_mut());
@@ -78,10 +81,15 @@ pub(in crate::system) fn workspace_tick(
     let workspace = &mut *ctx.workspace;
     let sprites = &mut *ctx.sprites;
     let code = ctx.code.get_or_insert_default();
+    let maps = &mut *ctx.maps;
     workspace.set_entry_script(&cartridge.manifest().runtime.entry);
     workspace.tick(Some(code));
     let mut host_requests = Vec::new();
     let mut run_requested = None;
+    // The Map view lists the maps when it shows, before any input.
+    if let Some(request) = workspace.take_map_request() {
+        serve_maps(request, workspace, maps, &cartridge);
+    }
     for &event in input {
         if event == InputEvent::Break && !workspace.claims_break() {
             workspace.end_stroke(sprites.as_mut());
@@ -94,7 +102,7 @@ pub(in crate::system) fn workspace_tick(
         }
         // The editors only change what they can show.
         let document = sprites.as_mut().filter(|_| video.is_ready());
-        let request = workspace.handle_input(event, document, Some(code));
+        let request = workspace.handle_input(event, document, Some(code), maps.as_mut());
         open_entry_once(workspace, code, &cartridge);
         let Some(request) = request else {
             continue;
@@ -117,6 +125,9 @@ pub(in crate::system) fn workspace_tick(
             }
             WorkspaceRequest::Scripts(request) => {
                 serve_scripts(request, workspace, code, &cartridge);
+            }
+            WorkspaceRequest::Maps(request) => {
+                serve_maps(request, workspace, maps, &cartridge);
             }
             WorkspaceRequest::Navigate(request) => {
                 serve_navigation(request, workspace, code, &cartridge);
@@ -234,6 +245,115 @@ pub(super) fn serve_scripts(
             workspace.script_renamed(code, &to, result);
         }
     }
+}
+
+/// Carries out file work on the cartridge's maps and the open map document.
+pub(super) fn serve_maps(
+    request: MapRequest,
+    workspace: &mut Workspace,
+    maps: &mut Option<MapDocument>,
+    cartridge: &LoadedCartridge,
+) {
+    match request {
+        MapRequest::List => {
+            workspace.maps_listed(cartridge.map_summaries());
+            match maps.as_mut() {
+                Some(document) => workspace.map_reopened(document.reopen(cartridge)),
+                None => {
+                    if let Some(id) = workspace.map_to_open() {
+                        open_map(&id, workspace, maps, cartridge, false);
+                    }
+                }
+            }
+        }
+        MapRequest::Open(id) => open_map(&id, workspace, maps, cartridge, false),
+        MapRequest::Create { id, meta } => {
+            let created = cartridge
+                .create_map(&id, &meta)
+                .map_err(|err| crate::system::ui_errors::map::create(&err));
+            // The map is created either way, but an open map with unsaved
+            // edits is never replaced behind the user's back. The user opens
+            // the new map themselves.
+            let result = created.and_then(|()| {
+                if maps.as_ref().is_some_and(MapDocument::is_modified) {
+                    return Ok(false);
+                }
+                MapDocument::load(cartridge, &id)
+                    .map(|document| {
+                        *maps = Some(document);
+                        true
+                    })
+                    .map_err(|err| crate::system::ui_errors::map::map(&err))
+            });
+            workspace.map_created(&id, result);
+        }
+        MapRequest::Save => {
+            if let Some(document) = maps.as_mut() {
+                workspace.map_saved(document.save(cartridge));
+            }
+        }
+        MapRequest::SaveAndOpen(id) => {
+            let saved = maps.as_mut().map(|document| document.save(cartridge));
+            match saved {
+                Some(Err(err)) => workspace.map_saved(Err(err)),
+                _ => open_map(&id, workspace, maps, cartridge, false),
+            }
+        }
+        MapRequest::Overwrite(seen) => {
+            if let Some(document) = maps.as_mut() {
+                workspace.map_saved(document.overwrite(cartridge, &seen));
+            }
+        }
+        MapRequest::Reload => {
+            if let Some(id) = maps.as_ref().map(|document| document.id().clone()) {
+                open_map(&id, workspace, maps, cartridge, true);
+            }
+        }
+        MapRequest::PrepareDelete(id) => {
+            let modified = maps
+                .as_ref()
+                .is_some_and(|document| document.id() == &id && document.is_modified());
+            workspace.map_delete_prompt(&id, cartridge.read_map(&id), modified);
+        }
+        MapRequest::Delete { id, seen } => {
+            let result = cartridge.delete_map(&id, &seen);
+            if result.is_ok() && maps.as_ref().is_some_and(|document| document.id() == &id) {
+                *maps = None;
+            }
+            workspace.map_deleted(&id, result);
+        }
+        MapRequest::Rename { name } => {
+            let Some(document) = maps.as_mut() else {
+                return;
+            };
+            let was_clean = !document.is_modified();
+            if !document.set_name(&name) {
+                workspace.report(ui_text::get("workspace-nothing-was-changed"));
+                return;
+            }
+            // A rename on its own is written at once. Joined to other
+            // unsaved edits it waits for the save of the whole map.
+            match was_clean.then(|| document.save(cartridge)) {
+                Some(Err(err)) => workspace.map_saved(Err(err)),
+                _ => workspace.map_renamed(&name),
+            }
+        }
+    }
+}
+
+/// Reads map `id` and makes it the open map, replacing the open one only
+/// if it was read. `reloaded` is whether this reads the open map again.
+fn open_map(
+    id: &MapId,
+    workspace: &mut Workspace,
+    maps: &mut Option<MapDocument>,
+    cartridge: &LoadedCartridge,
+    reloaded: bool,
+) {
+    let result = MapDocument::load(cartridge, id).map(|document| {
+        *maps = Some(document);
+    });
+    workspace.map_opened(id, result, reloaded);
 }
 
 /// Carries out a move between places in the scripts.

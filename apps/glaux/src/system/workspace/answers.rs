@@ -277,6 +277,10 @@ impl Workspace {
     pub fn paste(&mut self, code: &mut CodeSession, text: Option<String>) {
         if self.docs_open {
             self.docs.paste(docs_source(), text);
+        } else if self.tab == Tab::Map {
+            if let Some(text) = text {
+                self.maps.paste(&text);
+            }
         } else if self.tab == Tab::Code {
             self.code.paste(text, Some(code));
         }

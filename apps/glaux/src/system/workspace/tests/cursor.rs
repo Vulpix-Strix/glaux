@@ -30,11 +30,11 @@ fn centre(rect: Rect) -> Point {
 }
 
 fn cursor(workspace: &Workspace, at: Point, session: &CodeSession) -> SystemCursor {
-    workspace.cursor(at, Some(session)).0
+    workspace.cursor(at, Some(session), None).0
 }
 
 fn send(workspace: &mut Workspace, session: &mut CodeSession, event: InputEvent) {
-    workspace.handle_input(event, None, Some(session));
+    workspace.handle_input(event, None, Some(session), None);
 }
 
 fn press(at: Point) -> InputEvent {
@@ -130,7 +130,7 @@ fn animated_cursors_step_through_their_frames_over_time() {
     let at = Point::new(1, 1);
     let frames: Vec<usize> = (0..3)
         .map(|_| {
-            let (_, frame) = workspace.cursor(at, Some(&session));
+            let (_, frame) = workspace.cursor(at, Some(&session), None);
             for _ in 0..CURSOR_FRAME_TICKS {
                 workspace.tick(None);
             }

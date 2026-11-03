@@ -172,6 +172,15 @@ impl Layout {
         }
     }
 
+    /// The cell size and top of the Map view, below the tab bar.
+    pub(super) const fn map_metrics(self) -> super::maps::Metrics {
+        super::maps::Metrics {
+            cell_w: self.cell_w,
+            cell_h: self.cell_h,
+            top: self.bar_height(),
+        }
+    }
+
     /// Each tab's clickable plate, left to right. Rendering and hit-testing
     /// both use these.
     pub(super) fn tabs(self) -> [(Tab, Rect); 5] {

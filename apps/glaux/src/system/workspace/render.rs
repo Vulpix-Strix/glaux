@@ -9,12 +9,14 @@ use super::{
 use crate::cartridge::LoadedCartridge;
 use crate::rom::ICON_SIZE;
 use crate::system::editing::session::CodeSession;
+use crate::system::map_document::MapDocument;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::ui_text;
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, WIDTH};
 use glaux_machine::ink_image::INK_SLOTS;
+use glaux_machine::machine::TICK_RATE;
 use glaux_machine::system_rom::{Cursor, SystemCursor, SystemUi};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 
@@ -57,6 +59,7 @@ impl Workspace {
         cartridge: &LoadedCartridge,
         sprites: Result<SpriteSource<'_>, &str>,
         code: Option<&CodeSession>,
+        maps: Option<&MapDocument>,
         pointer: Option<Point>,
     ) {
         let layout = self.layout;
@@ -145,6 +148,11 @@ impl Workspace {
                 Tab::Code => self
                     .code
                     .render(framebuffer, font, ui, code, pointer, notice),
+                Tab::Map => {
+                    let lit = (self.ticks / (TICK_RATE / 2)).is_multiple_of(2);
+                    self.maps
+                        .render(framebuffer, font, maps, pointer, notice, lit);
+                }
                 _ => self.render_placeholder(framebuffer, font),
             }
         }
@@ -219,7 +227,12 @@ impl Workspace {
     /// This is the one place that decides it: an open dialog's buttons
     /// and the tab plates take a pointing hand, and everything else is up
     /// to the view, whose drags keep their pointer even over the tab bar.
-    pub fn cursor(&self, at: Point, code: Option<&CodeSession>) -> (SystemCursor, usize) {
+    pub fn cursor(
+        &self,
+        at: Point,
+        code: Option<&CodeSession>,
+        maps: Option<&MapDocument>,
+    ) -> (SystemCursor, usize) {
         let frame = (self.ticks / CURSOR_FRAME_TICKS) as usize;
         let hand = |clickable: bool| {
             if clickable {
@@ -250,6 +263,7 @@ impl Workspace {
             match self.tab {
                 Tab::Sprites => self.sprites.cursor(at),
                 Tab::Code => self.code.cursor(at, code),
+                Tab::Map => self.maps.cursor(at, maps),
                 _ => SystemCursor::Arrow,
             }
         };

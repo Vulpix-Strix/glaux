@@ -187,4 +187,5 @@ fn discard_documents(
         tracing::info!("unsaved map changes discarded");
     }
     workspace.forget_code();
+    workspace.forget_maps();
 }

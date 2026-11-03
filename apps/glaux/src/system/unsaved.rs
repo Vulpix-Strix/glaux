@@ -320,7 +320,7 @@ impl UnsavedFlow {
             None => Ok(()),
             Some(MapSaveFailure::Conflict(conflicts)) => {
                 let saved = saved_before_stopping(&self.saved);
-                let (dialog, target) = map_conflict_dialog(conflicts, saved);
+                let (dialog, target) = map_conflict_dialog(conflicts, saved, false);
                 self.show(dialog, Stage::Conflict(target));
                 Err(Outcome::Open)
             }

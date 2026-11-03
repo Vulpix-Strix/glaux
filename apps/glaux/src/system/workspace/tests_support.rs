@@ -48,6 +48,37 @@ pub fn sprite_canvas(workspace: &Workspace) -> Rect {
     workspace.sprites.canvas_rect()
 }
 
+/// Where the Map view's header button labelled `label` is drawn.
+pub fn map_button(workspace: &Workspace, label: &str) -> Rect {
+    workspace.maps.button_rect(label)
+}
+
+/// Where the Map view's selector is drawn.
+pub fn map_selector(workspace: &Workspace) -> Rect {
+    workspace.maps.selector_rect()
+}
+
+/// Where the Map view's list draws the row `slot` places below its top.
+pub fn map_row(workspace: &Workspace, slot: usize) -> Rect {
+    workspace.maps.row_rect(slot)
+}
+
+/// Where the Map view's CREATE MAP button is drawn.
+pub fn map_create_button(workspace: &Workspace) -> Rect {
+    workspace.maps.create_map_rect()
+}
+
+/// The line under the fields of the Map view's create window, while it is
+/// open.
+pub fn map_form_message(workspace: &Workspace) -> Option<String> {
+    workspace.maps.form_message()
+}
+
+/// Whether the Map view's list of maps is open.
+pub fn map_list_open(workspace: &Workspace) -> bool {
+    workspace.maps.list_is_open()
+}
+
 /// The open dialog's title and button labels.
 pub fn modal(workspace: &Workspace) -> Option<(&str, Vec<&str>)> {
     let dialog = &workspace.modal.as_ref()?.dialog;

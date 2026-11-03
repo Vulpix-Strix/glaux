@@ -23,7 +23,7 @@ mod new_file;
 mod picker;
 mod popup;
 mod problems;
-mod prompt;
+pub(super) mod prompt;
 mod rename;
 mod render;
 mod searching;

@@ -5,6 +5,7 @@
 use super::text_field::TextField;
 use super::{Route, Workspace};
 use crate::system::editing::session::CodeSession;
+use crate::system::map_document::MapDocument;
 use crate::system::menu_state::MenuState;
 use crate::system::sprite_document::SpriteDocument;
 
@@ -30,6 +31,7 @@ impl Workspace {
         &self,
         sprites: Option<&SpriteDocument>,
         code: Option<&CodeSession>,
+        maps: Option<&MapDocument>,
     ) -> MenuState {
         let documentation = MenuState {
             documentation: true,
@@ -44,7 +46,7 @@ impl Workspace {
             ..documentation
         };
         match self.route() {
-            Route::Modal | Route::SpriteDialog => MenuState::default(),
+            Route::Modal | Route::SpriteDialog | Route::MapOverlay => MenuState::default(),
             Route::CodeOverlay => self.code.menu_state(code),
             Route::Docs => self.docs.menu_state(),
             Route::Code => MenuState {
@@ -61,6 +63,15 @@ impl Workspace {
                 redo: document.can_redo(),
                 ..running
             }),
+            // Nothing runs from the Map view, but its map can be saved and
+            // its edits undone.
+            Route::Maps => MenuState {
+                toggle_logs: true,
+                save: maps.is_some_and(MapDocument::is_modified),
+                undo: maps.is_some_and(MapDocument::can_undo),
+                redo: maps.is_some_and(MapDocument::can_redo),
+                ..documentation
+            },
             Route::Inert => MenuState {
                 toggle_logs: true,
                 ..documentation

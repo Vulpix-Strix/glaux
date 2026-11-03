@@ -11,6 +11,7 @@ use crate::system::running::{RunOrigin, RunningCartridge, Tick};
 use crate::system::shell::Shell;
 use crate::system::workspace::{DebugAction, WorkspaceRequest, WorkspaceVideo};
 use crate::system::{HostRequest, StopReason, SystemState};
+use crate::ui_text;
 
 /// Shows where a debugged cartridge stopped, in the Code view, and keeps its
 /// runtime waiting there.
@@ -117,7 +118,7 @@ pub(in crate::system) fn debugging_tick(
             Some(action) => action,
             None => {
                 let code = ctx.code.get_or_insert_default();
-                match ctx.workspace.handle_input(event, None, Some(code)) {
+                match ctx.workspace.handle_input(event, None, Some(code), None) {
                     None => continue,
                     Some(WorkspaceRequest::Stopped(action)) => action,
                     Some(WorkspaceRequest::SaveEditorSettings(settings)) => {
@@ -130,6 +131,13 @@ pub(in crate::system) fn debugging_tick(
                     }
                     Some(WorkspaceRequest::Navigate(request)) => {
                         serve_navigation(request, ctx.workspace, code, running.cartridge());
+                        continue;
+                    }
+                    // The maps are read-only while the cartridge is debugged,
+                    // like its scripts.
+                    Some(WorkspaceRequest::Maps(_)) => {
+                        ctx.workspace
+                            .report(ui_text::get("code-read-only-while-debugging"));
                         continue;
                     }
                     Some(WorkspaceRequest::Host(request)) => {

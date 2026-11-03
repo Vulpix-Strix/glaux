@@ -66,9 +66,11 @@ impl System {
                 ..MenuState::default()
             },
             SystemState::Docs { .. } => self.workspace.docs_apart_menu_state(),
-            SystemState::Workspace { .. } => self
-                .workspace
-                .menu_state(self.sprites.as_ref(), self.code.as_ref()),
+            SystemState::Workspace { .. } => self.workspace.menu_state(
+                self.sprites.as_ref(),
+                self.code.as_ref(),
+                self.maps.as_ref(),
+            ),
             SystemState::Running { running, .. } => {
                 let from_code = running.origin() == RunOrigin::Code;
                 MenuState {

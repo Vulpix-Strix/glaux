@@ -336,6 +336,51 @@ logs-system = System
 logs-tab-read-l-level-s-source-f12-close = Tab: read  L: level  S: source  F12: close
 logs-up-down-scroll-tab-back = Up/Down: scroll  Tab: back
 
+## Map view
+
+maps-broken = cannot be opened
+maps-cancel = CANCEL
+maps-create = CREATE
+maps-create-map = CREATE MAP
+maps-created = Created map { $id }
+maps-delete = DELETE
+maps-delete-confirm = Delete map { $id } from the cartridge?
+maps-delete-modified = Its unsaved edits will be lost.
+maps-delete-title = DELETE MAP
+maps-delete-unrecoverable = The map and its layers cannot be recovered.
+maps-deleted = Deleted map { $id }
+maps-field-height = Height
+maps-field-id = Id
+maps-field-name = Name
+maps-field-width = Width
+maps-id-hint = The id names the map's folder and never changes.
+maps-info-layer = { $layer }: { $name }
+maps-info-layer-unnamed = { $layer }
+maps-info-size = { $width } x { $height } tiles
+maps-info-unsaved = Unsaved changes
+maps-new = NEW
+maps-new-title = NEW MAP
+maps-no-maps = This cartridge has no maps yet.
+maps-nothing-to-save = Nothing to save.
+maps-open-failed = Cannot open map { $id }
+maps-rename = RENAME
+maps-rename-label = New name for map { $id }:
+maps-rename-title = RENAME MAP
+maps-renamed = Renamed map to { $name }
+maps-reloaded = Reloaded map { $id } from disk
+maps-reloaded-files = { $value } changed on disk: reloaded
+maps-save = SAVE
+maps-saved = Saved { $files }
+maps-select = Select a map
+maps-size-number = Width and height are whole numbers.
+maps-switch-instructions = SAVE writes them first. DISCARD drops them and opens the other map.
+maps-switch-title = UNSAVED CHANGES
+maps-switch-unsaved = Map { $id } has unsaved changes.
+maps-conflict-reload-instructions = { $count ->
+    [one] OVERWRITE DISK replaces the file with your edits. DISCARD & RELOAD throws away all your unsaved edits to this map.
+   *[other] OVERWRITE DISK replaces these files with your edits. DISCARD & RELOAD throws away all your unsaved edits to this map.
+    }
+
 ## Sprite editor
 
 sprites-a-hide-palette-details = A: hide palette details
@@ -716,6 +761,12 @@ error-fs-unreadable = Cannot read { $path }
 error-fs-unwritable = Cannot write { $path }
 error-map-blank-layer-name = map.ron: the name of { $layer } is blank
 error-map-blank-name = map.ron: the name is blank
+error-map-delete-changed = { $file } of map { $id } changed outside Glaux, so nothing was deleted
+error-map-delete-incomplete = Map { $id } is only partly deleted: { $detail }
+error-map-delete-missing = Map { $id } no longer exists
+error-map-delete-unknown = Map { $id } holds other files ({ $names }), so nothing was deleted
+error-map-exists = Map { $id } already exists
+error-map-id-invalid = Invalid map id { $id }: use 1 to { $max } of a-z, 0-9, - and _, starting with a letter or digit
 error-map-layer = { $layer }: { $detail }
 error-map-malformed = map.ron line { $line }: { $reason }
 error-map-missing-field = map.ron: missing { $field }

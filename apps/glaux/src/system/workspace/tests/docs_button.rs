@@ -21,7 +21,7 @@ fn centre(rect: Rect) -> Point {
 }
 
 fn send(workspace: &mut Workspace, event: InputEvent) -> Option<WorkspaceRequest> {
-    workspace.handle_input(event, None, None)
+    workspace.handle_input(event, None, None, None)
 }
 
 fn press(button: PointerButton, at: Point) -> InputEvent {
@@ -120,14 +120,14 @@ fn the_pointer_is_a_hand_over_the_button_and_the_tabs_even_with_the_browser_open
         if open {
             send(&mut workspace, InputEvent::Docs);
         }
-        let over = |at| workspace.cursor(at, None).0;
+        let over = |at| workspace.cursor(at, None, None).0;
         assert_eq!(over(button), SystemCursor::Hand, "open: {open}");
         assert_eq!(over(tab), SystemCursor::Hand, "open: {open}");
     }
     // Over the page, the browser decides.
     let page = Point::new(10, 300);
     assert_eq!(
-        workspace.cursor(page, None).0,
+        workspace.cursor(page, None, None).0,
         workspace.docs.cursor(page, docs_source())
     );
 }
@@ -139,7 +139,7 @@ fn a_dialog_takes_the_button_pointer_away() {
     workspace.open_new_script(Language::Luau);
     assert!(workspace.has_modal());
     let button = centre(docs_button(&LAYOUT_FONT));
-    assert_eq!(workspace.cursor(button, None).0, SystemCursor::Arrow);
+    assert_eq!(workspace.cursor(button, None, None).0, SystemCursor::Arrow);
 }
 
 #[test]

@@ -3,14 +3,16 @@
 
 use super::code::CodeRequest;
 use super::docs::{DocTarget, DocsRequest};
-use super::modal::{Choice, Modal, Target, close_dialog};
+use super::maps::MapOut;
+use super::modal::{Choice, Modal, Target, close_dialog, switch_dialog};
 use super::sprites::SpriteRequest;
 use super::tab::{Rect, Tab};
 use super::{
-    AssetRequest, HostWork, NavigationRequest, ScriptRequest, Workspace, WorkspaceRequest,
-    docs_source,
+    AssetRequest, HostWork, MapRequest, NavigationRequest, ScriptRequest, Workspace,
+    WorkspaceRequest, docs_source,
 };
 use crate::system::editing::session::CodeSession;
+use crate::system::map_document::MapDocument;
 use crate::system::screen::PALE;
 use crate::system::sprite_document::SpriteDocument;
 use crate::ui_text;
@@ -27,12 +29,15 @@ pub(super) enum Route {
     /// One of the sprite editor's dialogs, or its wait for the host's file
     /// dialog.
     SpriteDialog,
+    /// One of the Map view's windows.
+    MapOverlay,
     /// One of the Code view's overlays.
     CodeOverlay,
     /// The documentation browser over the selected view.
     Docs,
     Sprites,
     Code,
+    Maps,
     /// A view with no editor of its own.
     Inert,
 }
@@ -43,6 +48,8 @@ impl Workspace {
             Route::Modal
         } else if self.sprites.has_dialog() {
             Route::SpriteDialog
+        } else if self.tab == Tab::Map && self.maps.has_overlay() {
+            Route::MapOverlay
         } else if self.code.has_overlay() {
             Route::CodeOverlay
         } else if self.docs_open {
@@ -51,7 +58,8 @@ impl Workspace {
             match self.tab {
                 Tab::Sprites => Route::Sprites,
                 Tab::Code => Route::Code,
-                Tab::Map | Tab::Sfx | Tab::Music => Route::Inert,
+                Tab::Map => Route::Maps,
+                Tab::Sfx | Tab::Music => Route::Inert,
             }
         }
     }
@@ -70,6 +78,7 @@ impl Workspace {
         event: InputEvent,
         sprites: Option<&mut SpriteDocument>,
         code: Option<&mut CodeSession>,
+        maps: Option<&mut MapDocument>,
     ) -> Option<WorkspaceRequest> {
         if let Some(modal) = &mut self.modal {
             let layout = modal.dialog.layout(
@@ -99,6 +108,21 @@ impl Workspace {
                         seen,
                     }))
                 }
+                (Choice::Overwrite, Target::MapFiles(seen)) => {
+                    Some(WorkspaceRequest::Maps(MapRequest::Overwrite(seen)))
+                }
+                (Choice::Reload, Target::MapFiles(_)) => {
+                    Some(WorkspaceRequest::Maps(MapRequest::Reload))
+                }
+                (Choice::Delete, Target::DeleteMap { id, seen }) => {
+                    Some(WorkspaceRequest::Maps(MapRequest::Delete { id, seen }))
+                }
+                (Choice::Save, Target::SwitchMap(id)) => {
+                    Some(WorkspaceRequest::Maps(MapRequest::SaveAndOpen(id)))
+                }
+                (Choice::Discard, Target::SwitchMap(id)) => {
+                    Some(WorkspaceRequest::Maps(MapRequest::Open(id)))
+                }
                 (Choice::Save, Target::CloseScript(id)) => {
                     Some(WorkspaceRequest::Scripts(ScriptRequest::SaveAndClose(id)))
                 }
@@ -116,6 +140,9 @@ impl Workspace {
         let route = self.route();
         if route == Route::SpriteDialog {
             return self.sprite_input(event, sprites);
+        }
+        if route == Route::MapOverlay {
+            return self.map_input(event, maps);
         }
         if route == Route::CodeOverlay {
             return self.code_input(event, code);
@@ -157,6 +184,7 @@ impl Workspace {
             _ if route == Route::Docs => return self.docs_input(event),
             _ if route == Route::Sprites => return self.sprite_input(event, sprites),
             _ if route == Route::Code => return self.code_input(event, code),
+            _ if route == Route::Maps => return self.map_input(event, maps),
             _ => {}
         }
         None
@@ -310,6 +338,30 @@ impl Workspace {
         }
     }
 
+    /// Hands `event` to the Map view and carries out what it asks.
+    fn map_input(
+        &mut self,
+        event: InputEvent,
+        maps: Option<&mut MapDocument>,
+    ) -> Option<WorkspaceRequest> {
+        let open = maps.as_deref().map(|document| document.id().clone());
+        match self.maps.handle_input(event, maps)? {
+            MapOut::Request(request) => Some(WorkspaceRequest::Maps(request)),
+            MapOut::ConfirmSwitch(to) => {
+                let open = open?;
+                let (dialog, target) = switch_dialog(&open, to);
+                self.modal = Some(Modal { dialog, target });
+                None
+            }
+            MapOut::Notice(text) => {
+                self.notify(text, PALE);
+                None
+            }
+            MapOut::Copy(text) => Some(WorkspaceRequest::Host(HostWork::Copy(text))),
+            MapOut::Paste => Some(WorkspaceRequest::Host(HostWork::Paste)),
+        }
+    }
+
     /// Hands `event` to the sprite editor and carries out what it asks.
     fn sprite_input(
         &mut self,
@@ -329,12 +381,19 @@ impl Workspace {
     /// Whether Escape stays in the workspace, closing what is open there,
     /// rather than returning to the shell.
     pub fn claims_break(&self) -> bool {
-        self.has_modal() || self.docs_open || (self.tab == Tab::Code && self.code.claims_break())
+        self.has_modal()
+            || self.docs_open
+            || (self.tab == Tab::Code && self.code.claims_break())
+            || (self.tab == Tab::Map && self.maps.claims_break())
     }
 
     pub(super) fn switch_to(&mut self, tab: Tab, sprites: Option<&mut SpriteDocument>) {
         if tab != self.tab {
             self.end_stroke(sprites);
+            self.maps.close_overlays();
+            if tab == Tab::Map {
+                self.maps.mark_stale();
+            }
         }
         self.tab = tab;
     }

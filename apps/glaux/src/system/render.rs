@@ -44,7 +44,9 @@ impl System {
             (Some(at), None) if matches!(self.state, SystemState::Docs { .. }) => {
                 (self.workspace.docs_apart_cursor(at), 0)
             }
-            (Some(at), None) => self.workspace.cursor(at, self.code.as_ref()),
+            (Some(at), None) => self
+                .workspace
+                .cursor(at, self.code.as_ref(), self.maps.as_ref()),
             (None, _) => (SystemCursor::Arrow, 0),
         };
         crate::system::workspace::draw_cursor(framebuffer, rom.ui().cursor(cursor), frame, pointer);
@@ -161,6 +163,7 @@ impl System {
                         .map(|source| *source)
                         .map_err(String::as_str),
                     self.code.as_ref(),
+                    self.maps.as_ref(),
                     pointer,
                 );
                 self.render_log_panel(framebuffer, rom, None);
@@ -178,6 +181,7 @@ impl System {
                         .map(|source| *source)
                         .map_err(String::as_str),
                     self.code.as_ref(),
+                    self.maps.as_ref(),
                     pointer,
                 );
                 self.render_log_panel(framebuffer, rom, None);

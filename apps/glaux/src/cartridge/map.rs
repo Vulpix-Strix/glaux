@@ -18,7 +18,8 @@ pub const MAP_FORMAT: u32 = 1;
 pub const MAP_MAX_SIZE: usize = 256;
 
 const MAPS_DIR: &str = "/maps";
-const MAX_ID_LEN: usize = 32;
+/// Longest map id, in characters.
+pub const MAX_ID_LEN: usize = 32;
 
 /// The name of a map's directory, and its identity within a cartridge.
 ///
@@ -34,6 +35,12 @@ pub struct MapId(String);
     "Invalid map id {0:?}: use 1 to {MAX_ID_LEN} of a-z, 0-9, - and _, starting with a letter or digit"
 )]
 pub struct MapIdError(String);
+
+impl MapIdError {
+    pub fn id(&self) -> &str {
+        &self.0
+    }
+}
 
 impl MapId {
     pub fn parse(id: &str) -> Result<Self, MapIdError> {

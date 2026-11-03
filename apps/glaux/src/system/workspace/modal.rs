@@ -4,6 +4,7 @@ use super::answers::phrase;
 use super::dialog::{Dialog, DialogLayout};
 use super::{Rect, Route, Workspace};
 use crate::cartridge::CartridgeError;
+use crate::cartridge::map::{MapFiles, MapId};
 use crate::cartridge::source::{SourceEditError, SourcePath};
 use crate::cartridge_fs::FsError;
 use crate::system::editing::document::{DocumentId, SourceConflict, SourceConflictKind};
@@ -46,6 +47,10 @@ pub(in crate::system) enum Target {
     Assets(Vec<DiskAsset>),
     /// Files of the open map.
     MapFiles(Vec<DiskFile>),
+    /// A map to delete, whose files held `seen` when the dialog was shown.
+    DeleteMap { id: MapId, seen: MapFiles },
+    /// A map to open once the open map's unsaved edits are settled.
+    SwitchMap(MapId),
     /// The file of one script document, holding `seen` (`None` means absent).
     Script {
         id: DocumentId,
@@ -325,12 +330,15 @@ pub(in crate::system) fn asset_conflict_dialog(
     (dialog, Target::Assets(seen))
 }
 
-/// Asks what to do about map files changed outside Glaux. Unlike the
-/// graphics, a map offers no reload here: cancelling keeps the edits so the
-/// map editor can settle it.
+/// Asks what to do about map files changed outside Glaux.
+///
+/// `offer_reload` adds DISCARD & RELOAD, which throws away all of the map's
+/// unsaved edits. The question about unsaved edits leaves it out, because
+/// cancelling there keeps the edits for the map view to settle.
 pub(in crate::system) fn map_conflict_dialog(
     conflicts: Vec<MapConflict>,
     saved: Option<String>,
+    offer_reload: bool,
 ) -> (Dialog<Choice>, Target) {
     let mut lines: Vec<String> = conflicts
         .iter()
@@ -354,18 +362,29 @@ pub(in crate::system) fn map_conflict_dialog(
         .collect();
     lines.extend(saved);
     lines.push(ui_text::get("workspace-unsaved-edits-kept"));
+    let instructions = if offer_reload {
+        "maps-conflict-reload-instructions"
+    } else {
+        "workspace-map-conflict-instructions"
+    };
     lines.push(ui_text::get_with(
-        "workspace-map-conflict-instructions",
+        instructions,
         &[("count", Arg::Number(conflicts.len() as f64))],
     ));
+    let mut actions = vec![(ui_text::get("workspace-overwrite-disk"), Choice::Overwrite)];
+    if offer_reload {
+        actions.push((ui_text::get("workspace-discard-reload"), Choice::Reload));
+    }
+    actions.push((ui_text::get("workspace-cancel"), Choice::Cancel));
+    let focus = actions.len() - 1;
     let dialog = Dialog::new(
         ui_text::get("workspace-file-conflict"),
         lines,
-        vec![
-            (&ui_text::get("workspace-overwrite-disk"), Choice::Overwrite),
-            (&ui_text::get("workspace-cancel"), Choice::Cancel),
-        ],
-        1,
+        actions
+            .iter()
+            .map(|(label, choice)| (label.as_str(), *choice))
+            .collect(),
+        focus,
         Some(Choice::Cancel),
     );
     let seen = conflicts
@@ -373,6 +392,64 @@ pub(in crate::system) fn map_conflict_dialog(
         .map(|conflict| conflict.disk)
         .collect();
     (dialog, Target::MapFiles(seen))
+}
+
+/// Asks whether to delete map `id`, whose files hold `seen`. `modified` is
+/// whether it is the open map and has unsaved edits. Cancel is focused so a
+/// stray Enter deletes nothing.
+pub(in crate::system) fn map_delete_dialog(
+    id: &MapId,
+    seen: MapFiles,
+    modified: bool,
+) -> (Dialog<Choice>, Target) {
+    let mut lines = vec![
+        ui_text::get_with("maps-delete-confirm", &[("id", Arg::Text(&id.to_string()))]),
+        ui_text::get("maps-delete-unrecoverable"),
+    ];
+    if modified {
+        lines.push(ui_text::get("maps-delete-modified"));
+    }
+    let dialog = Dialog::new(
+        ui_text::get("maps-delete-title"),
+        lines,
+        vec![
+            (&ui_text::get("workspace-delete"), Choice::Delete),
+            (&ui_text::get("workspace-cancel"), Choice::Cancel),
+        ],
+        1,
+        Some(Choice::Cancel),
+    )
+    .destructive(0);
+    (
+        dialog,
+        Target::DeleteMap {
+            id: id.clone(),
+            seen,
+        },
+    )
+}
+
+/// Asks what to do with the open map's unsaved edits before opening
+/// another map. Cancel is focused so a stray Enter loses nothing.
+pub(super) fn switch_dialog(open: &MapId, to: MapId) -> (Dialog<Choice>, Target) {
+    let dialog = Dialog::new(
+        ui_text::get("maps-switch-title"),
+        vec![
+            ui_text::get_with(
+                "maps-switch-unsaved",
+                &[("id", Arg::Text(&open.to_string()))],
+            ),
+            ui_text::get("maps-switch-instructions"),
+        ],
+        vec![
+            (&ui_text::get("workspace-save"), Choice::Save),
+            (&ui_text::get("workspace-discard"), Choice::Discard),
+            (&ui_text::get("workspace-cancel"), Choice::Cancel),
+        ],
+        2,
+        Some(Choice::Cancel),
+    );
+    (dialog, Target::SwitchMap(to))
 }
 
 /// Shows `lines` under `title` until dismissed.
