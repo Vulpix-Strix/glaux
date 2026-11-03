@@ -37,6 +37,7 @@ mod input;
 mod lifecycle;
 mod log_perf;
 mod map_management;
+mod map_run;
 mod map_unsaved;
 mod menu_state;
 mod new_cartridge;
