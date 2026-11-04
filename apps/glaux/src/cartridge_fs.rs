@@ -703,10 +703,10 @@ impl CartridgeFs {
 
     /// Names of everything inside the directory at `path`, sorted.
     ///
-    /// Unlike [`list`](Self::list), nothing is hidden because it could not
-    /// be reached inside the root: a symlink leading out of it or a name
-    /// the shell cannot address is still named. Only staging leftovers are
-    /// left out, since [`remove_dir`](Self::remove_dir) clears them.
+    /// Unlike [`list`](Self::list), this does not hide entries that cannot be
+    /// reached inside the root, so a symlink leading out of it or a name the
+    /// shell cannot address is still named. Only staging leftovers are left
+    /// out, since [`remove_dir`](Self::remove_dir) clears them.
     pub fn entry_names(&self, path: &str) -> Result<Vec<String>, FsError> {
         let target = self.resolve(path)?;
         let dir = self.directory(&target)?;

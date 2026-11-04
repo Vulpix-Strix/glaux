@@ -167,7 +167,7 @@ struct LayerNamesFile {
     bg2: Option<String>,
 }
 
-/// The rules every map obeys, whether read from a `map.ron` or created.
+/// Applies the rules shared by a map read from disk and a map being created.
 fn check_name_and_size(name: &str, width: usize, height: usize) -> Result<(), MapError> {
     if name.trim().is_empty() {
         return Err(MapError::BlankName);
@@ -320,7 +320,7 @@ pub enum MapDeleteError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapSummary {
     pub id: MapId,
-    /// Why the map cannot be opened, when its `map.ron` is missing or invalid.
+    /// The map's metadata, or the reason it cannot be opened.
     pub meta: Result<MapMeta, MapError>,
 }
 

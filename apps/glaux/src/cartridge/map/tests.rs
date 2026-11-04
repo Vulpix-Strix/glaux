@@ -317,7 +317,7 @@ fn summaries_keep_maps_that_cannot_be_opened() {
     assert_eq!(summaries[2].meta, Ok(good));
 }
 
-/// A map on disk with a layer file, and what `read_map` sees of it.
+/// Creates map `a` with a layer file and returns what `read_map` reads from it.
 fn stored_map(name: &str) -> (Fixture, std::path::PathBuf, LoadedCartridge, MapFiles) {
     let (fixture, dir, cartridge) = loaded(name);
     let meta = MapMeta::new("A", 1, 1).unwrap();
