@@ -7,10 +7,10 @@ python = "3.15"
 uv = "latest"
 
 [tasks.check]
-run = "cargo check --workspace"
+run = "cargo check --workspace --all-targets"
 
 [tasks.test]
-run = "cargo nextest run --workspace --no-tests=warn"
+run = "cargo nextest run --no-tests=warn"
 
 [tasks.fmt]
 run = "cargo fmt --all -- --check"

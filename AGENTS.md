@@ -65,6 +65,7 @@
 - Use `mise` for project tools and existing tasks. Consult `mise.toml` for available commands.
 - Run `mise install` when configured tools are missing.
 - Use `mise run test` for tests. Do not substitute `cargo test` for the project's nextest workflow.
+- While iterating, use `mise run check` (`cargo check --workspace --all-targets`, tests included) and focused tests: `mise run test -- <name filter>` or `mise run test -- -p <crate>`. Do not run the whole suite after every small fix. A warm full run takes about 20 s and an incremental `mise run verify` 55 to 95 s, so run `verify` once, when a complete change is done.
 - Run validation appropriate to the changes, rather than every available command.
 - For code changes, use relevant format, compilation, lint, and test checks.
 - For documentation-only changes, validate documentation and diffs without running unrelated tests.
