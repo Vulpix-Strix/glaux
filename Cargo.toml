@@ -15,7 +15,7 @@ anyhow = "1"
 thiserror = "2"
 clap = { version = "4.5", features = ["derive"] }
 png = "0.18"
-rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
 open = { version = "5.4", features = ["shellexecute-on-windows"] }
 muda = { version = "0.21", default-features = false }
 
@@ -23,7 +23,7 @@ tracing = "0.1"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 
 # Every macro is a no-op until the `hotpath` feature of a crate turns it on.
-hotpath = "0.30"
+hotpath = "0.31"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 
@@ -84,7 +84,7 @@ raylib = { version = "6", default-features = false, features = [
 mlua = { version = "0.12", features = ["luau"] }
 rhai = "1.26"
 
-comrak = { version = "0.57", default-features = false }
+comrak = { version = "0.59", default-features = false }
 rust-embed = { version = "8.13", default-features = false, features = ["debug-embed"] }
 fluent-bundle = "0.16"
 fluent-syntax = "0.12"
