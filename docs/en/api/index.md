@@ -18,6 +18,10 @@ The callbacks a cartridge defines and Glaux calls: [boot](glaux://api/lifecycle/
 
 The [audio](glaux://api/audio/index) functions: [tone](glaux://api/audio/tone), [env](glaux://api/audio/env) and [gate](glaux://api/audio/gate).
 
+## Memory
+
+Luau only: [peek](glaux://api/memory/peek), [poke](glaux://api/memory/poke), [peek16](glaux://api/memory/peek16), [poke16](glaux://api/memory/poke16), [peek32](glaux://api/memory/peek32), [poke32](glaux://api/memory/poke32), [memcpy](glaux://api/memory/memcpy) and [memset](glaux://api/memory/memset) read and write the machine's memory. See [Memory](glaux://guide/memory).
+
 ## Time, logging and modules
 
 [frame](glaux://api/time/frame) and [t](glaux://api/time/t) report logical time. [log](glaux://api/logging/index) records messages. [require](glaux://api/modules/require) and [import](glaux://api/modules/import) load cartridge modules.
@@ -30,6 +34,7 @@ The [audio](glaux://api/audio/index) functions: [tone](glaux://api/audio/tone), 
 | `audio.tone(...)`                     | `audio::tone(...)`                    |
 | `Button.A`                            | `Button::A`                           |
 | `require("game.enemies")`             | `import "game.enemies" as enemies;`   |
+| `peek`, `poke`, `memcpy` and the rest | not available                         |
 | `log.debug(...)`                      | no `log::debug`; use `debug(value)`   |
 | scripts keep state in globals         | callbacks keep state in `this`        |
 | `local function tick()` is not found  | `private fn tick()` is an error       |

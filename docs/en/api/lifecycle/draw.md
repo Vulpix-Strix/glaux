@@ -6,6 +6,8 @@ An optional callback that runs right after [tick](glaux://api/lifecycle/tick) on
 
 Glaux calls `draw()` with no parameters and ignores its result. Each drawing function draws at once, in call order, on the work framebuffer. The frame becomes what the screen shows only when `draw()` returns normally. One that fails, or that is stopped by the debugger, leaves the previous frame on screen, and a failure stops the cartridge.
 
+In Luau, [poke](glaux://api/memory/poke), [memcpy](glaux://api/memory/memcpy) and the other memory functions write to the same framebuffer, in call order with the drawing functions. The master palette a `draw()` leaves is what its frame shows.
+
 Each frame starts from a framebuffer cleared to the backdrop color, so draw the whole frame every time. Begin with [cls](glaux://api/graphics/cls) to choose the background. A cartridge without a `draw` presents the backdrop color.
 
 The drawing functions are [cls](glaux://api/graphics/cls), [pset](glaux://api/graphics/pset), [rectfill](glaux://api/graphics/rectfill), [text](glaux://api/graphics/text) and [spr](glaux://api/graphics/spr). Calling one from the top level, `boot()` or `tick()` fails with `can only be called during draw()`.

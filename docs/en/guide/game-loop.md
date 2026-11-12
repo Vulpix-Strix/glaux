@@ -16,6 +16,8 @@ When a cartridge runs, Glaux does this:
 | `tick()` | every tick, before `draw()`           | reading input, moving things, game rules    | no              |
 | `draw()` | every tick, after `tick()`            | drawing the whole frame from the state      | yes             |
 
+In Luau the top level, `boot()` and `tick()` can also read and write memory, for example to set up tiles before the first frame. See [Memory](glaux://guide/memory). The framebuffer is cleared before each `draw()`, so pixels written earlier do not survive.
+
 All three are optional and none takes parameters or returns a value. A cartridge with only a `draw()` is valid, and so is one with no callbacks at all, although it shows nothing.
 
 ## Logical time
