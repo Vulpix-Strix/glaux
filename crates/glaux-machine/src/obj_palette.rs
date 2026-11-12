@@ -107,6 +107,19 @@ impl ObjPalettes {
         Some(previous)
     }
 
+    /// Writes byte `offset` of the native representation. Entry 0 of each
+    /// bank is reserved, so only 0 can be written there and any other value
+    /// is ignored. Returns `false` past the end.
+    pub fn set_byte(&mut self, offset: usize, value: u8) -> bool {
+        let Some(byte) = self.bytes.get_mut(offset) else {
+            return false;
+        };
+        if !offset.is_multiple_of(OBJ_PALETTE_COLORS) {
+            *byte = value;
+        }
+        true
+    }
+
     /// Returns the complete native byte representation of the banks.
     pub fn as_bytes(&self) -> &[u8; OBJ_PALETTES_BYTES] {
         &self.bytes

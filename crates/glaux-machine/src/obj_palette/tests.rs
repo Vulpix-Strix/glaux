@@ -89,3 +89,23 @@ fn set_writes_one_entry_and_keeps_entry_zero_reserved() {
     assert_eq!(palettes.as_bytes(), &expected);
     assert_eq!(ObjPalettes::from_bytes(palettes.as_bytes()), Ok(palettes));
 }
+
+#[test]
+fn byte_writes_keep_entry_zero_of_each_bank_at_zero() {
+    let mut palettes = ObjPalettes::linear();
+    for offset in 0..OBJ_PALETTES_BYTES {
+        assert!(palettes.set_byte(offset, 0xEE));
+    }
+    for (offset, &byte) in palettes.as_bytes().iter().enumerate() {
+        assert_eq!(
+            byte,
+            if offset % OBJ_PALETTE_COLORS == 0 {
+                0
+            } else {
+                0xEE
+            }
+        );
+    }
+    assert!(!palettes.set_byte(OBJ_PALETTES_BYTES, 1));
+    assert_eq!(palettes.resolve(bank(1), 2), Some(0xEE));
+}

@@ -381,6 +381,26 @@ impl Palette {
         Ok(Self::new(entries))
     }
 
+    /// Returns byte `offset` of the RGB888 encoding, or `None` past its end.
+    pub fn byte(&self, offset: usize) -> Option<u8> {
+        let color = self.entries.get(offset / 3)?;
+        Some([color.r, color.g, color.b][offset % 3])
+    }
+
+    /// Writes byte `offset` of the RGB888 encoding. Returns `false` and
+    /// writes nothing past its end.
+    pub fn set_byte(&mut self, offset: usize, value: u8) -> bool {
+        let Some(color) = self.entries.get_mut(offset / 3) else {
+            return false;
+        };
+        match offset % 3 {
+            0 => color.r = value,
+            1 => color.g = value,
+            _ => color.b = value,
+        }
+        true
+    }
+
     /// Encodes the palette as consecutive `R, G, B` bytes in index order.
     pub fn to_rgb888(&self) -> [u8; PALETTE_RGB888_BYTES] {
         let mut bytes = [0; PALETTE_RGB888_BYTES];

@@ -266,3 +266,21 @@ fn reports_the_invalid_palette_index_position() {
         })
     );
 }
+
+#[test]
+fn tile_bytes_are_written_as_given() {
+    let mut bank = ObjTileBank::new();
+    assert!(bank.set_byte(OBJ_TILE_BYTES, 0xF0));
+    assert_eq!(bank.pixel(1, 0, 0), Some(15));
+    assert_eq!(bank.pixel(1, 1, 0), Some(0));
+    assert!(!bank.set_byte(OBJ_TILE_BANK_BYTES, 1));
+}
+
+#[test]
+fn attribute_byte_writes_keep_only_the_bank_bits() {
+    let mut attributes = ObjTileAttributes::new();
+    assert!(attributes.set_byte(3, 0xFF));
+    assert_eq!(attributes.as_bytes()[3], 0b0000_0111);
+    assert_eq!(attributes.bank(3), ObjBank::new(7).unwrap());
+    assert!(!attributes.set_byte(OBJ_TILE_ATTRIBUTES_BYTES, 1));
+}

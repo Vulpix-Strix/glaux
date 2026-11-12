@@ -114,6 +114,18 @@ impl ObjTileBank {
         Some(previous)
     }
 
+    /// Writes byte `offset` of the native representation. Every byte value
+    /// is valid tile data. Returns `false` past the end.
+    pub fn set_byte(&mut self, offset: usize, value: u8) -> bool {
+        match self.bytes.get_mut(offset) {
+            Some(byte) => {
+                *byte = value;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Returns the complete native byte representation of the bank.
     pub fn as_bytes(&self) -> &[u8; OBJ_TILE_BANK_BYTES] {
         &self.bytes
@@ -198,6 +210,18 @@ impl ObjTileAttributes {
         // A bank number never sets a reserved bit.
         *self.bytes.get_mut(tile)? = bank.get();
         Some(previous)
+    }
+
+    /// Writes byte `offset` of the native representation, keeping only the
+    /// palette bank bits. Returns `false` past the end.
+    pub fn set_byte(&mut self, offset: usize, value: u8) -> bool {
+        match self.bytes.get_mut(offset) {
+            Some(byte) => {
+                *byte = value & ATTRIBUTE_BANK_MASK;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Returns the complete native byte representation of the attributes.

@@ -81,3 +81,17 @@ proptest! {
         prop_assert_eq!(&palette.to_rgb888()[..], &bytes[..]);
     }
 }
+
+#[test]
+fn bytes_are_addressed_in_rgb888_order() {
+    let mut palette = Palette::default();
+    let encoded = palette.to_rgb888();
+    for (offset, &byte) in encoded.iter().enumerate() {
+        assert_eq!(palette.byte(offset), Some(byte));
+    }
+    assert_eq!(palette.byte(PALETTE_RGB888_BYTES), None);
+
+    assert!(palette.set_byte(3 * 9 + 1, 0xAB));
+    assert_eq!(palette.get(9).g, 0xAB);
+    assert!(!palette.set_byte(PALETTE_RGB888_BYTES, 1));
+}

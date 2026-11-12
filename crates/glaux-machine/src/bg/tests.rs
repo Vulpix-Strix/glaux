@@ -83,3 +83,31 @@ fn setting_a_color_never_touches_the_transparent_entry() {
     assert_eq!(palettes.set(bank(1), 16, 200), None);
     assert_eq!(palettes.as_bytes()[16], 0);
 }
+
+#[test]
+fn byte_writes_keep_entry_zero_of_each_bank_at_zero() {
+    let mut palettes = BgPalettes::linear();
+    for offset in 0..BG_PALETTES_BYTES {
+        assert!(palettes.set_byte(offset, 0xEE));
+    }
+    for (offset, &byte) in palettes.as_bytes().iter().enumerate() {
+        assert_eq!(
+            byte,
+            if offset % BG_PALETTE_COLORS == 0 {
+                0
+            } else {
+                0xEE
+            }
+        );
+    }
+    assert!(!palettes.set_byte(BG_PALETTES_BYTES, 1));
+}
+
+#[test]
+fn tile_bytes_are_written_as_given() {
+    let mut bank = BgTileBank::new();
+    assert!(bank.set_byte(0, 0x12));
+    assert_eq!(bank.pixel(0, 0, 0), Some(1));
+    assert_eq!(bank.pixel(0, 1, 0), Some(2));
+    assert!(!bank.set_byte(BG_TILE_BANK_BYTES, 1));
+}

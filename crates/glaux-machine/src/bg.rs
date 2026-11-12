@@ -71,6 +71,12 @@ impl BgTileBank {
         self.0.set_pixel(tile, x, y, index)
     }
 
+    /// Writes byte `offset` of the native representation. See
+    /// [`ObjTileBank::set_byte`].
+    pub fn set_byte(&mut self, offset: usize, value: u8) -> bool {
+        self.0.set_byte(offset, value)
+    }
+
     /// The complete native byte representation of the bank.
     pub fn as_bytes(&self) -> &[u8; BG_TILE_BANK_BYTES] {
         self.0.as_bytes()
@@ -146,6 +152,19 @@ impl BgPalettes {
         let previous = self.resolve(bank, local)?;
         self.bytes[usize::from(bank.get()) * BG_PALETTE_COLORS + usize::from(local)] = master;
         Some(previous)
+    }
+
+    /// Writes byte `offset` of the native representation. Entry 0 of each
+    /// bank is reserved, so only 0 can be written there and any other value
+    /// is ignored. Returns `false` past the end.
+    pub fn set_byte(&mut self, offset: usize, value: u8) -> bool {
+        let Some(byte) = self.bytes.get_mut(offset) else {
+            return false;
+        };
+        if !offset.is_multiple_of(BG_PALETTE_COLORS) {
+            *byte = value;
+        }
+        true
     }
 
     /// The complete native byte representation of the banks.
