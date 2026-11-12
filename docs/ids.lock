@@ -28,6 +28,14 @@ api/logging/index
 api/logging/info
 api/logging/trace
 api/logging/warn
+api/memory/memcpy
+api/memory/memset
+api/memory/peek
+api/memory/peek16
+api/memory/peek32
+api/memory/poke
+api/memory/poke16
+api/memory/poke32
 api/modules/import
 api/modules/require
 api/time/frame
@@ -36,3 +44,4 @@ guide/debugging
 guide/game-loop
 guide/getting-started
 guide/index
+guide/memory

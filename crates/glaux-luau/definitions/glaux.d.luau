@@ -95,6 +95,14 @@ declare function cls(color: number)
 declare function frame(): number
 declare function key(key: Key): boolean
 declare function keyp(key: Key): boolean
+declare function memcpy(destination: number, source: number, length: number)
+declare function memset(destination: number, value: number, length: number)
+declare function peek(address: number): number
+declare function peek16(address: number): number
+declare function peek32(address: number): number
+declare function poke(address: number, value: number)
+declare function poke16(address: number, value: number)
+declare function poke32(address: number, value: number)
 declare function print(value: any, x: number, y: number, color: number)
 declare function pset(x: number, y: number, color: number)
 declare function rectfill(x: number, y: number, width: number, height: number, color: number)

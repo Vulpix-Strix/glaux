@@ -22,3 +22,6 @@ local e: string = frame() -- error
 tick() -- error
 
 local wrong: string = require("util").double(1) -- error
+peek("0") -- error
+poke(0) -- error
+local nothing: number = memset(0, 0, 1) -- error

@@ -26,3 +26,12 @@ local util = require("util")
 
 local doubled: number = util.double(2)
 print(doubled, 0, 0, 0)
+
+local byte: number = peek(0)
+poke(0, byte)
+local word: number = peek16(0)
+poke16(0, word)
+local long: number = peek32(0)
+poke32(0, long)
+memcpy(0, 16, 4)
+memset(0, 0, 4)

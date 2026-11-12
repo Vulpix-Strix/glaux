@@ -1,0 +1,54 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/memory/peek",
+        kind: Function,
+        luau: (name: "peek"),
+        params: [(name: "address", ty: Int)],
+        returns: Int,
+    ),
+    (
+        id: "api/memory/poke",
+        kind: Function,
+        luau: (name: "poke"),
+        params: [(name: "address", ty: Int), (name: "value", ty: Int)],
+    ),
+    (
+        id: "api/memory/peek16",
+        kind: Function,
+        luau: (name: "peek16"),
+        params: [(name: "address", ty: Int)],
+        returns: Int,
+    ),
+    (
+        id: "api/memory/poke16",
+        kind: Function,
+        luau: (name: "poke16"),
+        params: [(name: "address", ty: Int), (name: "value", ty: Int)],
+    ),
+    (
+        id: "api/memory/peek32",
+        kind: Function,
+        luau: (name: "peek32"),
+        params: [(name: "address", ty: Int)],
+        returns: Int,
+    ),
+    (
+        id: "api/memory/poke32",
+        kind: Function,
+        luau: (name: "poke32"),
+        params: [(name: "address", ty: Int), (name: "value", ty: Int)],
+    ),
+    (
+        id: "api/memory/memcpy",
+        kind: Function,
+        luau: (name: "memcpy"),
+        params: [(name: "destination", ty: Int), (name: "source", ty: Int), (name: "length", ty: Int)],
+    ),
+    (
+        id: "api/memory/memset",
+        kind: Function,
+        luau: (name: "memset"),
+        params: [(name: "destination", ty: Int), (name: "value", ty: Int), (name: "length", ty: Int)],
+    ),
+]
