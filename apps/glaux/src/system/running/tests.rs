@@ -164,7 +164,7 @@ fn missing_video_assets_fall_back_to_the_rom() {
     let running =
         RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
     assert_eq!(running.palette(), rom.palette());
-    assert_eq!(running.hardware.obj.palettes(), rom.obj_palettes());
+    assert_eq!(running.hardware().obj.palettes(), rom.obj_palettes());
 }
 
 #[test]
@@ -176,20 +176,20 @@ fn hardware_state_survives_ticks_and_each_run_starts_from_the_initial_values() {
 
     let mut running =
         RunningCartridge::start(load(), &defaults(), VideoOverrides::default()).unwrap();
-    running.hardware.write(0x00100, 0xAB).unwrap();
-    running.hardware.write(0x34000, 0x12).unwrap();
-    running.hardware.write(0x3B000, 0xFF).unwrap();
-    running.hardware.write16(0x3C010, 600).unwrap();
+    running.hardware_mut().write(0x00100, 0xAB).unwrap();
+    running.hardware_mut().write(0x34000, 0x12).unwrap();
+    running.hardware_mut().write(0x3B000, 0xFF).unwrap();
+    running.hardware_mut().write16(0x3C010, 600).unwrap();
     running.tick(&[]).unwrap();
     running.tick(&[]).unwrap();
-    assert_eq!(running.hardware.read(0x00100), Ok(0xAB));
-    assert_eq!(running.hardware.read(0x34000), Ok(0x12));
-    assert_eq!(running.hardware.read(0x3B000), Ok(0xFF));
-    assert_eq!(running.hardware.read16(0x3C010), Ok(600));
+    assert_eq!(running.hardware().read(0x00100), Ok(0xAB));
+    assert_eq!(running.hardware().read(0x34000), Ok(0x12));
+    assert_eq!(running.hardware().read(0x3B000), Ok(0xFF));
+    assert_eq!(running.hardware().read16(0x3C010), Ok(600));
 
     let restarted =
         RunningCartridge::start(running.stop(), &defaults(), VideoOverrides::default()).unwrap();
-    let hardware = &restarted.hardware;
+    let hardware = restarted.hardware();
     assert!(hardware.work_ram.iter().all(|&byte| byte == 0));
     assert!(hardware.oam.as_bytes().iter().all(|&byte| byte == 0));
     assert!(
@@ -199,6 +199,57 @@ fn hardware_state_survives_ticks_and_each_run_starts_from_the_initial_values() {
             .all(|window| window.as_bytes().iter().all(|&byte| byte == 0))
     );
     assert_eq!(hardware.registers, GraphicsRegisters::new());
+}
+
+/// The address of the run's hardware, to tell whether it is the same one.
+fn hardware_address(running: &RunningCartridge) -> Option<*const CartridgeHardware> {
+    running.hardware.as_deref().map(std::ptr::from_ref)
+}
+
+#[test]
+fn the_hardware_stays_the_same_allocation_across_ticks_and_failures() {
+    let fixture = Fixture::new("running-hardware-identity");
+    let dir = fixture.root().join("pong");
+    write_cartridge(&dir, "Pong");
+    fs::write(
+        dir.join("code/main.luau"),
+        "n = 0\nfunction tick()\n  n = n + 1\n  if n == 3 then error(\"boom\") end\nend",
+    )
+    .unwrap();
+    let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+    let mut running =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+    let before = hardware_address(&running);
+    assert!(before.is_some());
+
+    for _ in 0..2 {
+        running.advance(&[]).unwrap();
+        assert_eq!(hardware_address(&running), before);
+    }
+    let error = running.advance(&[]).unwrap_err();
+    assert_eq!(error.phase, Phase::Tick);
+    assert_eq!(hardware_address(&running), before);
+}
+
+#[test]
+fn a_phase_without_hardware_is_an_error_that_runs_no_script() {
+    let fixture = Fixture::new("running-hardware-missing");
+    let dir = fixture.root().join("pong");
+    write_cartridge(&dir, "Pong");
+    fs::write(
+        dir.join("code/main.luau"),
+        "function tick() log.info(\"tick\") end\nfunction draw() log.info(\"draw\") end",
+    )
+    .unwrap();
+    let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+    let mut running =
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+    running.hardware = None;
+
+    let error = running.advance(&[]).unwrap_err();
+    assert_eq!(error.phase, Phase::Tick);
+    assert!(error.to_string().contains("internal error"), "{error}");
+    assert!(running.take_output().is_empty());
 }
 
 /// A cartridge without `obp.bin` keeps drawing OBP0 tiles with their local
@@ -306,7 +357,7 @@ fn imported_examples_resolve_every_png_pixel_to_its_color() {
         let cartridge = LoadedCartridge::load(&storage, name).unwrap();
         let running =
             RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
-        let obj = &running.hardware.obj;
+        let obj = &running.hardware().obj;
 
         let file = fs::File::open(root.join(name).join("sprites.png")).unwrap();
         let mut reader = png::Decoder::new(std::io::BufReader::new(file))

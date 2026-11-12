@@ -3,9 +3,15 @@
 //! The runtime and everything it owns live on that thread, because neither
 //! VM can move between threads. The system talks to it through a
 //! [`DebugLink`], which carries the stops, and a pair of channels that
-//! carry the ticks and what they produced.
+//! carry the phases and what they produced.
 //!
-//! Waiting for a tick ends in one of two ways: the runtime finishes it, or
+//! Each `tick()` and `draw()` is a command of its own. It moves the cartridge
+//! hardware to the thread with it, and the report that answers it moves the
+//! hardware back, whether the script succeeded or failed. The only way the
+//! hardware does not come back is that the thread is gone, which ends the
+//! run.
+//!
+//! Waiting for a phase ends in one of two ways: the runtime finishes it, or
 //! it stops at a breakpoint or a step and waits to be resumed. Both are
 //! prompt, since a script that runs on is bounded by its budget, so the
 //! system never waits on the runtime longer than a run without the debugger
@@ -18,10 +24,13 @@ use std::time::Duration;
 
 use glaux_audio::AudioState;
 use glaux_input::InputState;
+use glaux_machine::hardware::CartridgeHardware;
 use glaux_script::debug::{
     Breakpoint, DebugEvent, DebugLink, DebugReply, DebugRequest, Resume, Stop, session,
 };
-use glaux_script::{DrawCommand, LogEntry, Phase, RuntimeError, ScriptError, StartFailure};
+use glaux_script::{
+    DrawCommand, LoanError, LogEntry, Phase, RuntimeError, ScriptError, StartFailure,
+};
 
 use super::ScriptRuntime;
 use crate::cartridge::{CartridgeModules, Language};
@@ -43,25 +52,34 @@ pub enum Tick {
     Stopped(Stop),
 }
 
+/// A phase to run, with the hardware it runs on.
 enum Command {
-    Tick(InputState),
+    Tick(InputState, Box<CartridgeHardware>),
+    Draw(Box<CartridgeHardware>),
 }
 
 /// What the runtime thread reports once a call into it is over.
 enum Report {
     /// The start ended, with what the script logged while it ran.
     Started(Result<(Vec<LogEntry>, u32), StartFailure>),
-    Ticked(Box<Ticked>),
+    Phase(Box<PhaseReport>),
 }
 
-struct Ticked {
+/// How a `tick()` or `draw()` ended.
+struct PhaseReport {
     result: Result<(), RuntimeError>,
-    frame: Vec<DrawCommand>,
+    /// The hardware the phase ran on. It is always here, also after a script
+    /// error.
+    hardware: Box<CartridgeHardware>,
     output: Vec<LogEntry>,
     dropped: u32,
+    /// What the last `draw()` left, present after a `draw()`.
+    frame: Option<Vec<DrawCommand>>,
     /// A copy of the audio the script wrote, taken before the thread's own
-    /// is committed, so each write reaches the PSG once.
-    audio: AudioState,
+    /// is committed, so each write reaches the PSG once. It comes with the
+    /// report that ends the logical tick: after a `draw()`, or after a
+    /// `tick()` that failed and so has no `draw()`.
+    audio: Option<AudioState>,
 }
 
 /// The system's end of a runtime running under the debugger.
@@ -120,22 +138,42 @@ impl DebugRuntime {
                     }
                 };
                 notifier.idle();
-                while let Ok(Command::Tick(input)) = command_inbox.recv() {
-                    let result = runtime.tick(input);
-                    let audio = {
+                while let Ok(command) = command_inbox.recv() {
+                    let (phase, mut home, result) = match command {
+                        Command::Tick(input, hardware) => {
+                            let mut home = Some(hardware);
+                            let result = runtime.run_tick(input, &mut home);
+                            (Phase::Tick, home, result)
+                        }
+                        Command::Draw(hardware) => {
+                            let mut home = Some(hardware);
+                            let result = runtime.run_draw(&mut home);
+                            (Phase::Draw, home, result)
+                        }
+                    };
+                    // The loan always hands the hardware back. If it did not,
+                    // the ownership of the hardware is broken and the thread
+                    // ends, which the system sees as a lost runtime.
+                    let Some(hardware) = home.take() else {
+                        return;
+                    };
+                    let audio = (phase == Phase::Draw || result.is_err()).then(|| {
                         let mut audio = runtime.audio_mut();
                         let copy = audio.clone();
                         audio.commit();
                         copy
-                    };
-                    let report = Ticked {
+                    });
+                    let report = PhaseReport {
                         result,
-                        frame: runtime.frame().to_vec(),
+                        hardware,
                         output: runtime.take_output(),
                         dropped: runtime.take_dropped(),
+                        frame: (phase == Phase::Draw).then(|| runtime.frame().to_vec()),
                         audio,
                     };
-                    let _ = report_outbox.send(Report::Ticked(Box::new(report)));
+                    if report_outbox.send(Report::Phase(Box::new(report))).is_err() {
+                        return;
+                    }
                     notifier.idle();
                 }
             });
@@ -163,7 +201,7 @@ impl DebugRuntime {
             audio: RefCell::default(),
             ticking: false,
         };
-        match runtime.wait(Phase::Entry) {
+        match runtime.wait(Phase::Entry, &mut None) {
             Ok(Tick::Stopped(stop)) => Ok((runtime, Some(stop))),
             Ok(Tick::Done) => Ok((runtime, None)),
             Err(error) => Err(StartFailure {
@@ -175,14 +213,20 @@ impl DebugRuntime {
     }
 
     /// Waits until the runtime is idle, and reports what it did, or stopped.
-    fn wait(&mut self, phase: Phase) -> Result<Tick, RuntimeError> {
+    /// The hardware the phase ran on comes back into `home` with the report.
+    /// While the runtime is stopped it still holds it.
+    fn wait(
+        &mut self,
+        phase: Phase,
+        home: &mut Option<Box<CartridgeHardware>>,
+    ) -> Result<Tick, RuntimeError> {
         self.ticking = true;
         loop {
             match self.link.wait_event(POLL) {
                 Ok(Some(DebugEvent::Stopped(stop))) => return Ok(Tick::Stopped(stop)),
                 Ok(Some(DebugEvent::Idle)) => {
                     self.ticking = false;
-                    return self.collect(phase);
+                    return self.collect(phase, home);
                 }
                 Ok(Some(DebugEvent::Reply(_))) | Ok(None) => {}
                 Err(_) => {
@@ -194,8 +238,12 @@ impl DebugRuntime {
     }
 
     /// Takes what the thread reported when it went idle: that the start
-    /// ended, or what a tick produced.
-    fn collect(&mut self, phase: Phase) -> Result<Tick, RuntimeError> {
+    /// ended, or what a phase produced and the hardware it ran on.
+    fn collect(
+        &mut self,
+        phase: Phase,
+        home: &mut Option<Box<CartridgeHardware>>,
+    ) -> Result<Tick, RuntimeError> {
         match self.reports.try_recv() {
             Ok(Report::Started(Ok((output, dropped)))) => {
                 self.output.extend(output);
@@ -207,42 +255,84 @@ impl DebugRuntime {
                 self.dropped += failure.dropped;
                 Err(failure.error)
             }
-            Ok(Report::Ticked(ticked)) => {
-                let Ticked {
+            Ok(Report::Phase(report)) => {
+                let PhaseReport {
                     result,
-                    frame,
+                    hardware,
                     output,
                     dropped,
+                    frame,
                     audio,
-                } = *ticked;
-                self.frame = frame;
+                } = *report;
+                *home = Some(hardware);
+                if let Some(frame) = frame {
+                    self.frame = frame;
+                }
                 self.output.extend(output);
                 self.dropped += dropped;
-                *self.audio.get_mut() = audio;
+                if let Some(audio) = audio {
+                    *self.audio.get_mut() = audio;
+                }
                 result.map(|()| Tick::Done)
             }
             Err(_) => Err(lost(phase)),
         }
     }
 
-    /// Runs one tick, until it finishes or stops.
-    pub fn tick(&mut self, input: InputState) -> Result<Tick, RuntimeError> {
+    /// Runs `tick()` on the hardware in `home`, until it finishes or stops.
+    pub fn run_tick(
+        &mut self,
+        input: InputState,
+        home: &mut Option<Box<CartridgeHardware>>,
+    ) -> Result<Tick, RuntimeError> {
+        self.dispatch(Phase::Tick, |hardware| Command::Tick(input, hardware), home)
+    }
+
+    /// Runs `draw()` on the hardware in `home`, until it finishes or stops.
+    pub fn run_draw(
+        &mut self,
+        home: &mut Option<Box<CartridgeHardware>>,
+    ) -> Result<Tick, RuntimeError> {
+        self.dispatch(Phase::Draw, Command::Draw, home)
+    }
+
+    /// Sends a phase to the thread together with the hardware, and waits.
+    ///
+    /// With no hardware in `home` the phase has nothing to run on, and
+    /// nothing is sent. If the thread is gone the command goes nowhere and
+    /// takes the hardware with it. The run cannot go on without its thread.
+    fn dispatch(
+        &mut self,
+        phase: Phase,
+        command: impl FnOnce(Box<CartridgeHardware>) -> Command,
+        home: &mut Option<Box<CartridgeHardware>>,
+    ) -> Result<Tick, RuntimeError> {
+        let Some(hardware) = home.take() else {
+            return Err(LoanError::Unavailable.in_phase(phase));
+        };
         let sent = self
             .commands
             .as_ref()
-            .is_some_and(|commands| commands.send(Command::Tick(input)).is_ok());
+            .is_some_and(|commands| commands.send(command(hardware)).is_ok());
         if !sent {
-            return Err(lost(Phase::Tick));
+            return Err(lost(phase));
         }
-        self.wait(Phase::Tick)
+        self.wait(phase, home)
     }
 
-    /// Resumes a stopped runtime, until its tick finishes or it stops again.
-    pub fn resume(&mut self, resume: Resume) -> Result<Tick, RuntimeError> {
+    /// Resumes a runtime stopped in `phase`, until the phase finishes or it
+    /// stops again. The hardware is still with the runtime and comes back
+    /// into `home` when the phase finishes.
+    pub fn resume(
+        &mut self,
+        resume: Resume,
+        phase: Phase,
+        home: &mut Option<Box<CartridgeHardware>>,
+    ) -> Result<Tick, RuntimeError> {
         if !self.link.send(DebugRequest::Resume(resume)) {
-            return Err(lost(Phase::Tick));
+            return Err(lost(phase));
         }
-        self.wait(Phase::Tick)
+        self.wait(phase, home)
     }
 
     /// Asks a stopped runtime something and waits for its answer.
@@ -310,3 +400,6 @@ fn lost(phase: Phase) -> RuntimeError {
         error: ScriptError::Runtime("the script's thread ended unexpectedly".into()),
     }
 }
+
+#[cfg(test)]
+mod tests;

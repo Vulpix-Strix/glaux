@@ -98,7 +98,7 @@ Labels are `area::name` and appear as such in the report.
 | `syntax::highlighter_update`, `syntax::highlighter_spans`                       | `glaux-syntax`          | Tree-sitter incremental parse and highlight query.                                                                              |
 | `sense::complete`, `sense::signature_help`, `sense::hover`, `sense::definition` | `glaux-sense`           | Run on editor requests, and completion also while typing.                                                                       |
 | `running::advance`, `running::render`                                           | `RunningCartridge`      | Cartridge tick and frame replay.                                                                                                |
-| `luau::tick`, `rhai::tick`                                                      | script runtimes         | One script `tick()` plus `draw()`.                                                                                              |
+| `luau::tick`, `luau::draw`, `rhai::tick`, `rhai::draw`                          | script runtimes         | One script `tick()` and one `draw()` per tick, each lent the cartridge hardware.                                                |
 | `cartridge::load`, `cartridge_fs::replace_file`                                 | cartridge storage       | Cold paths: opening and saving.                                                                                                 |
 | `lsp::sync`, `lsp::poll`                                                        | `Analysis`              | The analyzer's share of a frame on the main thread. Only the `analyzer` scenario calls them.                                    |
 | `lsp::prepare`                                                                  | analyzer workspace      | Runs on a blocking thread once per cartridge: locating the executable, the definitions, the workspace and reading every module. |
@@ -110,10 +110,10 @@ Nothing below the tick level is instrumented (draw commands, pixels, glyphs, per
 
 Times nest, so never add them up.
 
-- `workload::frame` contains `system::update` and `system::render`. `system::update` contains `running::advance`, which contains `luau::tick` or `rhai::tick`. `system::render` contains `workspace::render`, which contains `code_editor::render`, which contains `editing::syntax_refresh` and so on. `% Total` is relative to the outermost function.
+- `workload::frame` contains `system::update` and `system::render`. `system::update` contains `running::advance`, which contains `luau::tick` and `luau::draw`, or their `rhai::` counterparts. `system::render` contains `workspace::render`, which contains `code_editor::render`, which contains `editing::syntax_refresh` and so on. `% Total` is relative to the outermost function.
 - In a window, `app::frame` contains `app::present`, which contains `system::render` and the host's `present`.
 - With `hotpath-alloc`, bytes are exclusive by default: a function does not include the instrumented functions it calls. Set `HOTPATH_ALLOC_CUMULATIVE=1` for inclusive numbers.
-- A script runtime's allocations are the cartridge's own: the VM allocates through Rust's allocator, so `luau::tick` and `rhai::tick` count the garbage a script makes.
+- A script runtime's allocations are the cartridge's own: the VM allocates through Rust's allocator, so the `tick` and `draw` labels of both runtimes count the garbage a script makes.
 
 ### Wall time, CPU time and waiting
 
@@ -142,7 +142,7 @@ Where the time goes (average per tick, microseconds, from `hotpath`):
 
 |                                                        | Luau    | Rhai     |
 |--------------------------------------------------------|---------|----------|
-| `luau::tick` / `rhai::tick` (script `tick` and `draw`) | 52      | 249      |
+| `luau::tick` + `luau::draw` / `rhai::tick` + `rhai::draw` (script `tick` and `draw`) | 52      | 249      |
 | `running::render` (replaying the draw commands)        | 21      | 20       |
 | Allocated per tick by the script                       | 74.9 KB | 307.8 KB |
 | Peak resident memory of the test process               | 24 MB   | 24 MB    |

@@ -12,8 +12,10 @@ use mlua::chunk::ChunkMode;
 use mlua::prelude::{LuaGcIncParams as GcIncParams, LuaGcMode as GcMode};
 use mlua::{Function, Lua, Value, VmState};
 
+use glaux_machine::hardware::CartridgeHardware;
 use glaux_script::{
-    DrawCommand, LogEntry, LogSink, Phase, Recording, RuntimeError, ScriptError, StartFailure,
+    DrawCommand, HardwareSlot, Loan, LogEntry, LogSink, Phase, Recording, RuntimeError,
+    ScriptError, StartFailure,
 };
 
 use crate::api;
@@ -111,6 +113,8 @@ pub struct Runtime {
     meter: Rc<Meter>,
     modules: Rc<RefCell<Modules>>,
     source: Rc<dyn ModuleSource>,
+    /// Holds the cartridge hardware while a phase runs.
+    hardware: HardwareSlot,
     /// Present when the VM is being debugged.
     debug: Option<Attachment>,
 }
@@ -218,6 +222,7 @@ impl Runtime {
             meter,
             modules: Rc::default(),
             source: Rc::new(modules),
+            hardware: HardwareSlot::new(),
             debug,
         };
 
@@ -246,22 +251,62 @@ impl Runtime {
         }
     }
 
-    /// Calls `tick()` and then, if it succeeded, `draw()`. A callback the
+    /// Calls `tick()` with the hardware lent from `home`. A callback the
     /// script does not define is skipped.
     ///
     /// `btn`, `btnp`, `key` and `keyp` report `input` during both
-    /// callbacks, and keep reporting it until the next tick.
+    /// callbacks of a tick, and keep reporting it until the next tick.
+    ///
+    /// `home` must hold the hardware, and holds it again when this returns,
+    /// whether the call succeeded or not. Without it the call fails before
+    /// running any script.
+    ///
+    /// A tick is complete only after [`run_draw`](Self::run_draw) succeeds,
+    /// so this does not advance the logical time.
+    #[hotpath::measure(label = "luau::tick", impl_type = "Runtime")]
+    pub fn run_tick(
+        &mut self,
+        input: InputState,
+        home: &mut Option<Box<CartridgeHardware>>,
+    ) -> Result<(), RuntimeError> {
+        let slot = self.hardware.clone();
+        let _loan = Loan::new(&slot, home).map_err(|error| error.in_phase(Phase::Tick))?;
+        self.tick_callback(input)
+    }
+
+    /// Calls `draw()` with the hardware lent from `home`, after a
+    /// successful [`run_tick`](Self::run_tick). See that method for `home`.
     ///
     /// A `draw()` that returns normally replaces [`frame`](Self::frame) with
     /// the commands it recorded. One that fails leaves the previous frame.
     ///
     /// A successful call advances the logical time read by `frame()` and
     /// `t()`. A failed one does not.
-    #[hotpath::measure(label = "luau::tick", impl_type = "Runtime")]
+    #[hotpath::measure(label = "luau::draw", impl_type = "Runtime")]
+    pub fn run_draw(
+        &mut self,
+        home: &mut Option<Box<CartridgeHardware>>,
+    ) -> Result<(), RuntimeError> {
+        let slot = self.hardware.clone();
+        let _loan = Loan::new(&slot, home).map_err(|error| error.in_phase(Phase::Draw))?;
+        self.draw_callback()
+    }
+
+    /// A whole tick with no hardware lent, for tests of the scripting layer
+    /// that never touch memory.
+    #[cfg(test)]
     pub fn tick(&mut self, input: InputState) -> Result<(), RuntimeError> {
+        self.tick_callback(input)?;
+        self.draw_callback()
+    }
+
+    fn tick_callback(&mut self, input: InputState) -> Result<(), RuntimeError> {
         self.input.set(input);
         self.callback(Phase::Tick)?;
+        Ok(())
+    }
 
+    fn draw_callback(&mut self) -> Result<(), RuntimeError> {
         *self.pending.borrow_mut() = Some(Recording::default());
         let drawn = self.callback(Phase::Draw);
         let recording = self.pending.borrow_mut().take();
@@ -270,6 +315,12 @@ impl Runtime {
         }
         self.ticks.set(self.ticks.get() + 1);
         Ok(())
+    }
+
+    /// The slot the runtime lends the hardware through, for tests.
+    #[cfg(test)]
+    pub(crate) fn hardware_slot(&self) -> HardwareSlot {
+        self.hardware.clone()
     }
 
     /// The VM, for tests that inspect what the runtime installed.

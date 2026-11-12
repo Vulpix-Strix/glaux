@@ -12,7 +12,7 @@ use glaux_machine::hardware::CartridgeHardware;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
 use glaux_script::debug::{Breakpoint, DebugReply, DebugRequest, Resume, Stop};
-use glaux_script::{DrawCommand, LogEntry, RuntimeError, StartFailure};
+use glaux_script::{DrawCommand, LogEntry, Phase, RuntimeError, StartFailure};
 use glaux_video::draw::{
     ObjPaletteChoice, ObjSprite, clear, draw_obj_sprite, draw_text, fill_rect, pixel,
 };
@@ -117,13 +117,31 @@ impl ScriptRuntime {
         }
     }
 
-    /// Runs one tick to its end. A debugged runtime has its own way to tick,
-    /// see [`RunningCartridge::advance`].
-    fn tick(&mut self, input: InputState) -> Result<(), RuntimeError> {
+    /// Runs the `tick()` phase with the hardware lent from `home`. A
+    /// debugged runtime runs its phases through [`DebugRuntime`], see
+    /// [`RunningCartridge::advance`].
+    fn run_tick(
+        &mut self,
+        input: InputState,
+        home: &mut Option<Box<CartridgeHardware>>,
+    ) -> Result<(), RuntimeError> {
         match self {
-            Self::Luau(runtime) => runtime.tick(input),
-            Self::Rhai(runtime) => runtime.tick(input),
-            Self::Debugged(_) => unreachable!("a debugged runtime ticks through `advance`"),
+            Self::Luau(runtime) => runtime.run_tick(input, home),
+            Self::Rhai(runtime) => runtime.run_tick(input, home),
+            Self::Debugged(_) => {
+                unreachable!("a debugged runtime runs its phases through `advance`")
+            }
+        }
+    }
+
+    /// Runs the `draw()` phase, as [`run_tick`](Self::run_tick) does.
+    fn run_draw(&mut self, home: &mut Option<Box<CartridgeHardware>>) -> Result<(), RuntimeError> {
+        match self {
+            Self::Luau(runtime) => runtime.run_draw(home),
+            Self::Rhai(runtime) => runtime.run_draw(home),
+            Self::Debugged(_) => {
+                unreachable!("a debugged runtime runs its phases through `advance`")
+            }
         }
     }
 
@@ -165,7 +183,16 @@ impl ScriptRuntime {
 pub struct RunningCartridge {
     cartridge: LoadedCartridge,
     runtime: ScriptRuntime,
-    hardware: CartridgeHardware,
+    /// The one canonical hardware of the run. It is `None` only while the
+    /// runtime holds it for a phase, and a phase hands it back before
+    /// returning, with one exception: a thread that died under the debugger
+    /// takes it along, and the run ends. See [`hardware`](Self::hardware).
+    hardware: Option<Box<CartridgeHardware>>,
+    /// The phase a debugged run is stopped in. Only a stop in `tick()` is
+    /// followed by a `draw()` when the run is resumed. A stop while starting
+    /// is recorded as [`Phase::Entry`] whether it was in the entry script or
+    /// in `boot()`.
+    stopped_in: Option<Phase>,
     /// Starts with every button and key released, so nothing held during a
     /// previous run reaches this one, and is reset whenever the system
     /// resumes the cartridge from a pause.
@@ -214,7 +241,9 @@ impl RunningCartridge {
         ) {
             Ok((runtime, stop)) => {
                 let runtime = ScriptRuntime::Debugged(Box::new(runtime));
-                Ok((Self::new(cartridge, runtime, hardware), stop))
+                let mut running = Self::new(cartridge, runtime, hardware);
+                running.stopped_in = stop.as_ref().map(|_| Phase::Entry);
+                Ok((running, stop))
             }
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
         }
@@ -223,12 +252,13 @@ impl RunningCartridge {
     fn new(
         cartridge: LoadedCartridge,
         runtime: ScriptRuntime,
-        hardware: CartridgeHardware,
+        hardware: Box<CartridgeHardware>,
     ) -> Self {
         Self {
             cartridge,
             runtime,
-            hardware,
+            hardware: Some(hardware),
+            stopped_in: None,
             input: InputLatch::new(),
             origin: RunOrigin::default(),
         }
@@ -246,26 +276,69 @@ impl RunningCartridge {
         matches!(self.runtime, ScriptRuntime::Debugged(_))
     }
 
-    /// Advances a debugged cartridge by one tick, as [`tick`](Self::tick)
-    /// does, but a tick can also stop at a breakpoint or a step, and then
-    /// it waits to be [resumed](Self::resume). A run that is not debugged
-    /// never stops.
+    /// Advances the cartridge by one logical tick: its `tick()` and then its
+    /// `draw()`. Under the debugger either can also stop at a breakpoint or
+    /// a step, and then the run waits to be [resumed](Self::resume). A run
+    /// that is not debugged never stops.
+    ///
+    /// Each phase borrows the hardware and returns it, so between the two
+    /// it is here. A failed `tick()` skips `draw()`.
     #[hotpath::measure(label = "running::advance", impl_type = "RunningCartridge")]
     pub fn advance(&mut self, input: &[InputEvent]) -> Result<Tick, RuntimeError> {
         let state = self.input.advance(input);
-        match self.debugged() {
-            Some(runtime) => runtime.tick(state),
-            None => self.runtime.tick(state).map(|()| Tick::Done),
+        match self.run_tick(state)? {
+            Tick::Done => self.run_draw(),
+            stopped @ Tick::Stopped(_) => Ok(stopped),
         }
+    }
+
+    fn run_tick(&mut self, state: InputState) -> Result<Tick, RuntimeError> {
+        let tick = match &mut self.runtime {
+            ScriptRuntime::Debugged(runtime) => runtime.run_tick(state, &mut self.hardware)?,
+            runtime => {
+                runtime.run_tick(state, &mut self.hardware)?;
+                Tick::Done
+            }
+        };
+        Ok(self.note_stop(Phase::Tick, tick))
+    }
+
+    fn run_draw(&mut self) -> Result<Tick, RuntimeError> {
+        let tick = match &mut self.runtime {
+            ScriptRuntime::Debugged(runtime) => runtime.run_draw(&mut self.hardware)?,
+            runtime => {
+                runtime.run_draw(&mut self.hardware)?;
+                Tick::Done
+            }
+        };
+        Ok(self.note_stop(Phase::Draw, tick))
+    }
+
+    /// Remembers which phase a debugged run stopped in.
+    fn note_stop(&mut self, phase: Phase, tick: Tick) -> Tick {
+        if matches!(tick, Tick::Stopped(_)) {
+            self.stopped_in = Some(phase);
+        }
+        tick
     }
 
     /// Resumes a stopped, debugged cartridge. The input held while it was
     /// stopped is forgotten.
+    ///
+    /// The phase it stopped in finishes first. If that was `tick()`, the
+    /// `draw()` of the same tick follows, and can stop in turn. A run that
+    /// stopped while starting just finishes starting.
     pub fn resume(&mut self, resume: Resume) -> Result<Tick, RuntimeError> {
         self.input = InputLatch::new();
-        match self.debugged() {
-            Some(runtime) => runtime.resume(resume),
-            None => Ok(Tick::Done),
+        let (Some(phase), ScriptRuntime::Debugged(runtime)) =
+            (self.stopped_in.take(), &mut self.runtime)
+        else {
+            return Ok(Tick::Done);
+        };
+        let tick = runtime.resume(resume, phase, &mut self.hardware)?;
+        match tick {
+            Tick::Done if phase == Phase::Tick => self.run_draw(),
+            tick => Ok(self.note_stop(phase, tick)),
         }
     }
 
@@ -306,9 +379,30 @@ impl RunningCartridge {
         &self.cartridge
     }
 
+    /// The hardware, for whoever draws or inspects the run.
+    ///
+    /// It is present whenever the run is running or paused, which are the
+    /// only states that read it: a phase hands it back before it returns,
+    /// and a run that fails is stopped by the caller before anything else
+    /// reads it. While a debugged run is stopped in a phase the runtime
+    /// holds it, and the system does not read it.
+    fn hardware(&self) -> &CartridgeHardware {
+        self.hardware
+            .as_deref()
+            .expect("the hardware is back with the system between phases")
+    }
+
+    /// The hardware, for tests that write to it.
+    #[cfg(test)]
+    fn hardware_mut(&mut self) -> &mut CartridgeHardware {
+        self.hardware
+            .as_deref_mut()
+            .expect("the hardware is back with the system between phases")
+    }
+
     /// The master palette the cartridge's frames resolve to.
     pub fn palette(&self) -> &Palette {
-        &self.hardware.palette
+        &self.hardware().palette
     }
 
     /// Advances the cartridge by one logical tick, applying the button and
@@ -316,7 +410,8 @@ impl RunningCartridge {
     #[cfg(test)]
     pub fn tick(&mut self, input: &[InputEvent]) -> Result<(), RuntimeError> {
         let state = self.input.advance(input);
-        self.runtime.tick(state)
+        self.runtime.run_tick(state, &mut self.hardware)?;
+        self.runtime.run_draw(&mut self.hardware)
     }
 
     /// Releases every button and key as seen by the cartridge, so its next
@@ -363,7 +458,7 @@ impl RunningCartridge {
                     palette,
                 } => draw_obj_sprite(
                     framebuffer,
-                    &self.hardware.obj,
+                    &self.hardware().obj,
                     &ObjSprite {
                         first: usize::from(tile),
                         x,
@@ -403,7 +498,7 @@ fn prepare(
     cartridge: LoadedCartridge,
     defaults: &CartridgeVideoDefaults,
     overrides: VideoOverrides<'_>,
-) -> Result<(LoadedCartridge, Vec<u8>, CartridgeHardware), Box<FailedStart>> {
+) -> Result<(LoadedCartridge, Vec<u8>, Box<CartridgeHardware>), Box<FailedStart>> {
     let source = match cartridge.entry_source() {
         Ok(source) => source,
         Err(err) => return Err(failed(cartridge, StartError::Cartridge(err))),
@@ -411,7 +506,7 @@ fn prepare(
     let hardware = match CartridgeVideo::load(&cartridge, defaults) {
         Ok(mut video) => {
             overrides.apply(&mut video);
-            video.into_hardware()
+            Box::new(video.into_hardware())
         }
         Err(VideoLoadError::Cartridge(err)) => {
             return Err(failed(cartridge, StartError::Cartridge(err)));

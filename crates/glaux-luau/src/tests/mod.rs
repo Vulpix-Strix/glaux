@@ -5,6 +5,7 @@ mod catalog_consistency;
 mod debug;
 mod definitions_consistency;
 mod draw;
+mod hardware;
 mod input;
 mod limits;
 mod log;

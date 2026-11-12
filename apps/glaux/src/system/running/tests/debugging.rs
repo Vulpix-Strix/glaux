@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use glaux_input::{Button, InputEvent};
 use glaux_script::Phase;
@@ -286,5 +287,250 @@ fn the_examples_play_the_same_under_the_debugger() {
             texts(normal.take_output()),
             "{name}"
         );
+    }
+}
+
+type Cartridge = fn(&Fixture, &str) -> LoadedCartridge;
+
+/// Each language with its cartridge, the script of [`LUAU`] or [`RHAI`] and
+/// the path breakpoints name.
+const LANGUAGES: [(&str, Cartridge, &str, &str); 2] = [
+    ("luau", luau_cartridge, LUAU, "code/main.luau"),
+    ("rhai", rhai_cartridge, RHAI, "code/main.rhai"),
+];
+
+/// Drops the debugged runtime of `running` on another thread and fails if
+/// that takes too long, so a join that never ends fails the test instead of
+/// blocking the suite.
+fn drops_promptly(running: RunningCartridge) {
+    let RunningCartridge { runtime, .. } = running;
+    let ScriptRuntime::Debugged(runtime) = runtime else {
+        panic!("expected a debugged run");
+    };
+    let (done, finished) = std::sync::mpsc::channel();
+    let dropper = std::thread::spawn(move || {
+        drop(runtime);
+        let _ = done.send(());
+    });
+    finished
+        .recv_timeout(Duration::from_secs(10))
+        .expect("dropping the run hung");
+    dropper.join().unwrap();
+}
+
+#[test]
+fn a_debugged_phase_hands_the_hardware_back_as_the_same_allocation() {
+    for (name, cartridge, script, _) in LANGUAGES {
+        let fixture = Fixture::new(&format!("running-debug-owner-{name}"));
+        let (mut running, _) = start_debug(cartridge(&fixture, script), Vec::new());
+        let before = hardware_address(&running);
+        assert!(before.is_some(), "{name}");
+        for _ in 0..3 {
+            assert_eq!(running.advance(&[]), Ok(Tick::Done), "{name}");
+            assert_eq!(hardware_address(&running), before, "{name}");
+        }
+    }
+}
+
+#[test]
+fn a_stop_in_tick_keeps_the_hardware_with_the_runtime_until_the_tick_finishes() {
+    for (name, cartridge, script, path) in LANGUAGES {
+        let fixture = Fixture::new(&format!("running-debug-stop-tick-{name}"));
+        let (mut running, _) = start_debug(cartridge(&fixture, script), vec![at(path, 6)]);
+        let before = hardware_address(&running);
+
+        stopped(running.advance(&[]));
+        assert_eq!(running.hardware, None, "{name}: the runtime holds it");
+        assert_eq!(running.stopped_in, Some(Phase::Tick), "{name}");
+        assert_eq!(running.runtime.frame(), [], "{name}: draw has not run");
+
+        // Nothing can run on hardware the runtime holds, and nothing is sent.
+        let error = running.advance(&[]).unwrap_err();
+        assert!(
+            error.to_string().contains("internal error"),
+            "{name}: {error}"
+        );
+        assert_eq!(running.stopped_in, Some(Phase::Tick), "{name}");
+
+        assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
+        assert_eq!(hardware_address(&running), before, "{name}");
+        assert_eq!(running.stopped_in, None, "{name}");
+        assert_eq!(running.runtime.frame().len(), 2, "{name}: draw ran after");
+    }
+}
+
+#[test]
+fn a_stop_in_draw_keeps_the_hardware_until_the_draw_finishes() {
+    for (name, cartridge, script, path) in LANGUAGES {
+        let fixture = Fixture::new(&format!("running-debug-stop-draw-{name}"));
+        let (mut running, _) = start_debug(cartridge(&fixture, script), vec![at(path, 9)]);
+        let before = hardware_address(&running);
+        running.take_output();
+
+        let stop = stopped(running.advance(&[]));
+        assert_eq!(stop.frames[0].function, "draw", "{name}");
+        assert_eq!(running.hardware, None, "{name}");
+        assert_eq!(running.stopped_in, Some(Phase::Draw), "{name}");
+        assert_eq!(
+            texts(running.take_output()),
+            ["tick"],
+            "{name}: tick finished"
+        );
+        assert_eq!(running.runtime.frame(), [], "{name}: not published yet");
+
+        assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
+        assert_eq!(hardware_address(&running), before, "{name}");
+        assert_eq!(running.runtime.frame().len(), 2, "{name}");
+    }
+}
+
+#[test]
+fn a_stop_while_starting_does_not_lend_the_hardware_or_run_draw() {
+    for (name, cartridge, script, path) in LANGUAGES {
+        let fixture = Fixture::new(&format!("running-debug-stop-boot-{name}"));
+        let (mut running, stop) = start_debug(cartridge(&fixture, script), vec![at(path, 2)]);
+        assert!(stop.is_some(), "{name}: stopped in boot");
+        let before = hardware_address(&running);
+        assert!(before.is_some(), "{name}: starting lends nothing");
+        assert_eq!(running.stopped_in, Some(Phase::Entry), "{name}");
+
+        assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
+        assert_eq!(running.stopped_in, None, "{name}");
+        assert_eq!(running.runtime.frame(), [], "{name}: no tick, so no draw");
+        assert_eq!(hardware_address(&running), before, "{name}");
+        assert_eq!(running.advance(&[]), Ok(Tick::Done), "{name}");
+    }
+}
+
+#[test]
+fn script_errors_in_either_phase_return_the_hardware() {
+    for (phase, luau, rhai) in [
+        (
+            Phase::Tick,
+            "function tick() error(\"boom\") end",
+            "fn tick() { throw \"boom\"; }",
+        ),
+        (
+            Phase::Draw,
+            "function draw() error(\"boom\") end",
+            "fn draw() { throw \"boom\"; }",
+        ),
+    ] {
+        for (name, cartridge, script) in [
+            ("luau", luau_cartridge as Cartridge, luau),
+            ("rhai", rhai_cartridge, rhai),
+        ] {
+            let fixture = Fixture::new(&format!("running-debug-error-{phase:?}-{name}"));
+            let (mut running, _) = start_debug(cartridge(&fixture, script), Vec::new());
+            let before = hardware_address(&running);
+
+            let error = running.advance(&[]).unwrap_err();
+            assert_eq!(error.phase, phase, "{name}");
+            assert_eq!(hardware_address(&running), before, "{name} {phase:?}");
+        }
+    }
+}
+
+#[test]
+fn stopping_the_script_from_a_breakpoint_hands_the_hardware_back() {
+    for (name, cartridge, script, path) in LANGUAGES {
+        let fixture = Fixture::new(&format!("running-debug-stop-resume-{name}"));
+        let (mut running, _) = start_debug(cartridge(&fixture, script), vec![at(path, 6)]);
+        let before = hardware_address(&running);
+        stopped(running.advance(&[]));
+
+        let error = running.resume(Resume::Stop).unwrap_err();
+        assert_eq!(error.error, ScriptError::Stopped, "{name}");
+        assert_eq!(hardware_address(&running), before, "{name}");
+        assert_eq!(running.stopped_in, None, "{name}");
+        drops_promptly(running);
+    }
+}
+
+#[test]
+fn a_step_from_the_end_of_tick_goes_on_in_draw() {
+    for (name, cartridge, script, path) in LANGUAGES {
+        let fixture = Fixture::new(&format!("running-debug-step-draw-{name}"));
+        let (mut running, _) = start_debug(cartridge(&fixture, script), vec![at(path, 6)]);
+        let mut stop = stopped(running.advance(&[]));
+        let mut seen = vec![stop.frames[0].function.clone()];
+        for _ in 0..6 {
+            if stop.frames[0].function == "draw" {
+                break;
+            }
+            stop = stopped(running.resume(Resume::Step(Step::Over)));
+            seen.push(stop.frames[0].function.clone());
+        }
+        assert_eq!(stop.frames[0].function, "draw", "{name}: {seen:?}");
+        assert_eq!(running.stopped_in, Some(Phase::Draw), "{name}");
+        assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
+    }
+}
+
+#[test]
+fn audio_written_in_both_phases_reaches_the_psg_once_even_across_a_stop() {
+    let script = "function tick()\n  audio.tone(0, 440, 8, \"square\")\nend\nfunction draw()\n  audio.gate(0, true)\nend";
+
+    let normal_fixture = Fixture::new("running-debug-audio-normal");
+    let mut normal = RunningCartridge::start(
+        luau_cartridge(&normal_fixture, script),
+        &defaults(),
+        VideoOverrides::default(),
+    )
+    .unwrap();
+    normal.tick(&[]).unwrap();
+    let expected = normal.runtime.audio_mut().writes().len();
+    assert!(expected > 0);
+
+    for breakpoints in [Vec::new(), vec![at("code/main.luau", 5)]] {
+        let stops = !breakpoints.is_empty();
+        let fixture = Fixture::new(&format!("running-debug-audio-split-{stops}"));
+        let (mut running, _) = start_debug(luau_cartridge(&fixture, script), breakpoints);
+        if stops {
+            stopped(running.advance(&[]));
+            assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done));
+        } else {
+            assert_eq!(running.advance(&[]), Ok(Tick::Done));
+        }
+        assert_eq!(
+            running.runtime.audio_mut().writes().len(),
+            expected,
+            "stops: {stops}"
+        );
+        let mut psg = Psg::new();
+        running.apply_audio(&mut psg, true);
+        assert!(
+            running.runtime.audio_mut().writes().is_empty(),
+            "applied once"
+        );
+        running.apply_audio(&mut psg, false);
+        assert!(
+            running.runtime.audio_mut().writes().is_empty(),
+            "stops: {stops}"
+        );
+    }
+}
+
+#[test]
+fn dropping_a_run_stopped_in_any_phase_ends_its_thread_without_hanging() {
+    for (name, cartridge, script, path) in LANGUAGES {
+        // A stop in `tick()`, in `draw()`, and while starting in `boot()`.
+        for (what, line) in [("tick", 6), ("draw", 9), ("boot", 2)] {
+            let fixture = Fixture::new(&format!("running-debug-drop-{what}-{name}"));
+            let (mut running, start) =
+                start_debug(cartridge(&fixture, script), vec![at(path, line)]);
+            if what != "boot" {
+                stopped(running.advance(&[]));
+            } else {
+                assert!(start.is_some(), "{name}: boot stopped");
+            }
+            drops_promptly(running);
+        }
+
+        // Right after a whole tick, with no stop at all.
+        let fixture = Fixture::new(&format!("running-debug-drop-idle-{name}"));
+        let (mut running, _) = start_debug(cartridge(&fixture, script), Vec::new());
+        running.advance(&[]).unwrap();
+        drops_promptly(running);
     }
 }

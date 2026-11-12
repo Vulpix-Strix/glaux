@@ -5,6 +5,7 @@ mod catalog_consistency;
 mod compare;
 mod debug;
 mod draw;
+mod hardware;
 mod input;
 mod isolation;
 mod limits;
