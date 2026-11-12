@@ -10,6 +10,7 @@
 pub mod debug;
 pub mod draw;
 pub mod error;
+pub mod hardware;
 pub mod log;
 pub mod validate;
 
@@ -17,6 +18,7 @@ pub use draw::{
     DrawBudgetExceeded, DrawCommand, MAX_DRAW_COMMANDS, Recording, SPRITE_TILE_COST, TEXT_CHAR_COST,
 };
 pub use error::{Phase, RequireError, RequireFailure, RuntimeError, ScriptError, StartFailure};
+pub use hardware::{HardwareSlot, Loan, LoanError};
 pub use log::{
     LogEntry, LogLevel, LogSink, MAX_ENTRY_BYTES, MAX_ENTRY_LINES, MAX_ORDINARY_ENTRIES,
     MAX_WARN_ENTRIES, cut_entry,
