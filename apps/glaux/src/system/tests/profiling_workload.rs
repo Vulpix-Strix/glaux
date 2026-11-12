@@ -2,7 +2,7 @@
 //! the same `render` and `update` calls the application makes every frame,
 //! with the real System ROM and no window. It asserts nothing about time: it
 //! prints the wall time of each frame per phase and, with a hotpath feature,
-//! the usual report. See `PROFILING.md`.
+//! the usual report. See the Profiling section of `AGENTS.md`.
 //!
 //! The scenario comes from `GLAUX_WORKLOAD`: `luau` (the default) and `rhai`
 //! play Signal Lost for a minute of game time, `editor` edits its Luau
@@ -11,9 +11,6 @@
 //! each frame but no analyzer, to tell what the analyzer costs from what the
 //! wait does to the CPU. Run one scenario per process.
 //!
-//! The commands are in `PROFILING.md`. Edits stay in memory and the
-//! cartridge is copied to a scratch directory first, so the examples are
-//! never written.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -420,7 +417,7 @@ fn edit(analyzed: bool, paced: bool) {
 }
 
 #[test]
-#[ignore = "a profiling workload, see PROFILING.md"]
+#[ignore = "a profiling workload, see the Profiling section of AGENTS.md"]
 #[hotpath::main(functions_limit = 40)]
 fn workload() {
     match std::env::var("GLAUX_WORKLOAD").as_deref() {

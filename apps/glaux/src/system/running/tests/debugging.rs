@@ -344,18 +344,57 @@ fn a_stop_in_tick_keeps_the_hardware_with_the_runtime_until_the_tick_finishes() 
         assert_eq!(running.stopped_in, Some(Phase::Tick), "{name}");
         assert_eq!(running.runtime.frame(), [], "{name}: draw has not run");
 
-        // Nothing can run on hardware the runtime holds, and nothing is sent.
-        let error = running.advance(&[]).unwrap_err();
-        assert!(
-            error.to_string().contains("internal error"),
-            "{name}: {error}"
-        );
-        assert_eq!(running.stopped_in, Some(Phase::Tick), "{name}");
-
         assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
         assert_eq!(hardware_address(&running), before, "{name}");
         assert_eq!(running.stopped_in, None, "{name}");
         assert_eq!(running.runtime.frame().len(), 2, "{name}: draw ran after");
+    }
+}
+
+/// Advancing a stopped run is refused without touching the input or the
+/// thread. A command sent to the thread would be answered as if it were the
+/// reply to the pending resume, so resuming afterwards must still finish the
+/// stopped phase exactly once.
+#[test]
+fn a_stopped_run_refuses_to_advance_and_changes_nothing() {
+    let press = [InputEvent::ButtonDown(Button::A)];
+    for (phase, line) in [(Phase::Entry, 2), (Phase::Tick, 6), (Phase::Draw, 9)] {
+        for (name, cartridge, script, path) in LANGUAGES {
+            let fixture = Fixture::new(&format!("running-debug-refuse-{phase:?}-{name}"));
+            let (mut running, first) =
+                start_debug(cartridge(&fixture, script), vec![at(path, line)]);
+            if phase != Phase::Entry {
+                stopped(running.advance(&[]));
+            } else {
+                assert!(first.is_some(), "{name}: stopped in boot");
+            }
+            let input = running.input.clone();
+            let held = running.hardware.is_some();
+            let frame = running.runtime.frame().len();
+            running.take_output();
+
+            let error = running.advance(&press).unwrap_err();
+            assert_eq!(error.phase, phase, "{name} {phase:?}");
+            assert!(
+                error.to_string().contains("internal error"),
+                "{name} {phase:?}: {error}"
+            );
+            assert_eq!(running.stopped_in, Some(phase), "{name} {phase:?}");
+            assert_eq!(running.input, input, "{name} {phase:?}: input untouched");
+            assert_eq!(running.hardware.is_some(), held, "{name} {phase:?}");
+            assert_eq!(running.runtime.frame().len(), frame, "{name} {phase:?}");
+            assert!(running.take_output().is_empty(), "{name} {phase:?}");
+
+            assert_eq!(
+                running.resume(Resume::Continue),
+                Ok(Tick::Done),
+                "{name} {phase:?}"
+            );
+            assert_eq!(running.stopped_in, None, "{name} {phase:?}");
+            assert!(running.hardware.is_some(), "{name} {phase:?}");
+            let expected = if phase == Phase::Entry { 0 } else { 2 };
+            assert_eq!(running.runtime.frame().len(), expected, "{name} {phase:?}");
+        }
     }
 }
 

@@ -122,7 +122,7 @@ incremental = true
 [profile.dev.package."*"]
 opt-level = 2
 
-# Release speed with symbols, for `hotpath-cpu` attribution. See PROFILING.md.
+# Release speed with symbols, for `hotpath-cpu` attribution.
 [profile.profiling]
 inherits = "release"
 debug = true

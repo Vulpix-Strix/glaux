@@ -12,7 +12,7 @@ use glaux_machine::hardware::CartridgeHardware;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
 use glaux_script::debug::{Breakpoint, DebugReply, DebugRequest, Resume, Stop};
-use glaux_script::{DrawCommand, LogEntry, Phase, RuntimeError, StartFailure};
+use glaux_script::{DrawCommand, LogEntry, Phase, RuntimeError, ScriptError, StartFailure};
 use glaux_video::draw::{
     ObjPaletteChoice, ObjSprite, clear, draw_obj_sprite, draw_text, fill_rect, pixel,
 };
@@ -283,8 +283,21 @@ impl RunningCartridge {
     ///
     /// Each phase borrows the hardware and returns it, so between the two
     /// it is here. A failed `tick()` skips `draw()`.
+    ///
+    /// A run stopped in the debugger has to be [resumed](Self::resume)
+    /// first. Advancing it is refused before the input is read and before
+    /// anything is sent to the debugged thread.
     #[hotpath::measure(label = "running::advance", impl_type = "RunningCartridge")]
     pub fn advance(&mut self, input: &[InputEvent]) -> Result<Tick, RuntimeError> {
+        if let Some(phase) = self.stopped_in {
+            return Err(RuntimeError {
+                phase,
+                error: ScriptError::Runtime(
+                    "internal error: the run is stopped in the debugger and must be resumed first"
+                        .into(),
+                ),
+            });
+        }
         let state = self.input.advance(input);
         match self.run_tick(state)? {
             Tick::Done => self.run_draw(),

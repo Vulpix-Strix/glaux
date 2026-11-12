@@ -9,8 +9,7 @@ Usage examples:
 with `hotpath` for timing and once with `hotpath-alloc` for allocations, and
 writes the JSON reports and the per-phase frame times to
 target/profiling/<label>/. `compare` lists the functions whose p95 time or
-allocated bytes moved by more than a threshold between two labels. See
-PROFILING.md.
+allocated bytes moved by more than a threshold between two labels.
 """
 
 from __future__ import annotations
