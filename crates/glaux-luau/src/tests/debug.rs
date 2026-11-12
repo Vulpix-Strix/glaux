@@ -453,6 +453,25 @@ fn time_spent_stopped_is_not_charged_to_the_budget() {
 }
 
 #[test]
+fn memory_cost_spent_before_a_stop_still_counts_after_it() {
+    // Each memset costs about 6000 units of a 10000 budget, so the second
+    // one fits only if the budget started over at the stop.
+    let vm = debugged(
+        "function tick()\n  memset(0, 1, 12000)\n  local stop = 1\n  memset(0, 2, 12000)\nend",
+        main_at(&[3]),
+    );
+    vm.stop();
+    vm.resume(Resume::Continue);
+    assert_eq!(
+        vm.finish(),
+        Err(RuntimeError {
+            phase: Phase::Tick,
+            error: ScriptError::LimitExceeded
+        })
+    );
+}
+
+#[test]
 fn stopping_a_stopped_vm_ends_the_call_even_if_the_script_catches_errors() {
     let vm = debugged(
         "function tick()\n  local a = 1\n  pcall(function() while true do end end)\n  while true do end\nend",

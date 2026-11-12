@@ -89,6 +89,25 @@ pub(crate) struct Meter {
 }
 
 impl Meter {
+    /// Charges native work the interrupt cannot see to the call in progress,
+    /// and returns whether the budget covers it.
+    ///
+    /// Running out is sticky, as it is for the interrupt. Every later charge
+    /// fails, and [`Runtime::call`] reports the call as over the limit even
+    /// if the script caught the error and finished.
+    pub(crate) fn charge(&self, units: u64) -> bool {
+        if self.exhausted.get() {
+            return false;
+        }
+        let spent = self.checks.get().saturating_add(units);
+        if spent > self.budget {
+            self.exhausted.set(true);
+            return false;
+        }
+        self.checks.set(spent);
+        true
+    }
+
     fn reset(&self) {
         self.checks.set(0);
         self.exhausted.set(false);
@@ -455,6 +474,7 @@ impl Runtime {
         api::input::install(&self.lua, &self.input)?;
         api::time::install(&self.lua, &self.ticks)?;
         api::audio::install(&self.lua, &self.audio)?;
+        api::memory::install(&self.lua, &self.hardware, &self.meter)?;
         modules::install(&self.lua, &self.modules, &self.source, &self.meter)
     }
 

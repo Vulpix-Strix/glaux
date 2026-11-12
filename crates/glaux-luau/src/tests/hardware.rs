@@ -145,32 +145,6 @@ fn a_failing_draw_leaves_the_hardware_as_it_was_and_does_not_advance_time() {
     assert_eq!(texts(runtime.take_output()), ["1"]);
 }
 
-/// Installs `poke(address, value)` and `peek(address)`, which go through
-/// the bus of the lent hardware as an API for memory will. Writing to the
-/// hardware needs no other access than the runtime's slot.
-fn install_bus(runtime: &Runtime) {
-    let slot = runtime.hardware_slot();
-    let poke = {
-        let slot = slot.clone();
-        runtime
-            .lua()
-            .create_function(move |_, (address, value): (u32, u8)| {
-                Ok(slot
-                    .with(|hardware| hardware.write(address, value).is_ok())
-                    .unwrap_or(false))
-            })
-            .unwrap()
-    };
-    let peek = runtime
-        .lua()
-        .create_function(move |_, address: u32| {
-            Ok(slot.with(|hardware| hardware.read(address).unwrap_or(0)))
-        })
-        .unwrap();
-    runtime.lua().globals().set("poke", poke).unwrap();
-    runtime.lua().globals().set("peek", peek).unwrap();
-}
-
 /// The bus address of the framebuffer pixel `(x, y)`.
 const fn fb(x: u32, y: u32) -> u32 {
     glaux_machine::memory_map::FRAMEBUFFER.start + y * 320 + x
@@ -191,7 +165,6 @@ fn drawing_is_immediate_and_the_bus_sees_the_same_framebuffer() {
         fb(5, 4),
         fb(1, 1)
     ));
-    install_bus(&runtime);
     let mut home = hardware();
     runtime.run_tick(NO_INPUT, &mut home).unwrap();
     runtime.run_draw(&mut home).unwrap();
@@ -216,7 +189,6 @@ fn primitives_and_bus_writes_land_in_the_order_they_are_made() {
         a = fb(1, 0),
         b = fb(2, 0)
     ));
-    install_bus(&runtime);
     let mut home = hardware();
     runtime.run_tick(NO_INPUT, &mut home).unwrap();
     runtime.run_draw(&mut home).unwrap();
@@ -241,7 +213,6 @@ fn a_failing_draw_keeps_every_write_it_made_to_the_hardware() {
         ram = glaux_machine::memory_map::WORK_RAM.start + 5,
         palette = glaux_machine::memory_map::MASTER_PALETTE.start
     ));
-    install_bus(&runtime);
     let mut home = hardware();
     let before = home.as_ref().unwrap().palette.get(0);
     runtime.run_tick(NO_INPUT, &mut home).unwrap();
