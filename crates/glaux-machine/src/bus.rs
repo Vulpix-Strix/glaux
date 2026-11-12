@@ -62,7 +62,9 @@ fn locate(address: u32) -> Option<(Device, usize)> {
 /// Checks that `length` bytes from `start` lie inside the address space.
 /// An empty range still needs a valid `start`. The subtraction cannot
 /// underflow after the first test, and nothing is added, so no input can wrap.
-fn check_range(start: u32, length: u32) -> Result<(), BusError> {
+///
+/// Public so a caller can reject a range before paying for the access.
+pub fn check_range(start: u32, length: u32) -> Result<(), BusError> {
     if start < ADDRESS_SPACE_LEN && length <= ADDRESS_SPACE_LEN - start {
         Ok(())
     } else {
