@@ -24,6 +24,8 @@ pub const BG_TILE_CAPACITY: usize = 1024;
 pub const BG_PALETTE_BANKS: usize = 4;
 /// Size of one tilemap entry in bytes.
 pub const TILE_ENTRY_BYTES: usize = 2;
+/// Entries along each side of a VRAM tilemap window.
+pub const TILE_WINDOW_SIDE: usize = 64;
 
 const TILE_MASK: u16 = 0x03FF;
 const FLIP_X: u16 = 1 << 10;
@@ -103,6 +105,9 @@ pub struct TileEntry(u16);
 impl TileEntry {
     /// The empty cell, which is tile 0 with no flags and bank 0.
     pub const EMPTY: Self = Self(0);
+
+    /// The bits an entry can hold. Bit 15 is reserved.
+    pub const VALID_BITS: u16 = !RESERVED;
 
     /// Builds an entry, or `None` if `tile` is not below
     /// [`BG_TILE_CAPACITY`].
