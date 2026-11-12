@@ -868,7 +868,7 @@
     },
     {
       "name": "comrak",
-      "version": "0.57.0",
+      "version": "0.59.0",
       "license": "BSD-2-Clause",
       "repository": "https://github.com/kivikakk/comrak",
       "category": "library",
@@ -1320,7 +1320,7 @@
     },
     {
       "name": "hotpath",
-      "version": "0.30.0",
+      "version": "0.31.2",
       "license": "MIT",
       "repository": "https://github.com/hotpath-rs/hotpath",
       "category": "library",
@@ -1330,7 +1330,7 @@
     },
     {
       "name": "hotpath-macros",
-      "version": "0.30.0",
+      "version": "0.31.2",
       "license": "MIT",
       "repository": "https://github.com/hotpath-rs/hotpath",
       "category": "library",
@@ -1730,6 +1730,16 @@
       ]
     },
     {
+      "name": "objc2-uniform-type-identifiers",
+      "version": "0.3.2",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "repository": "https://github.com/madsmtm/objc2",
+      "category": "library",
+      "text_ids": [
+        23
+      ]
+    },
+    {
       "name": "once_cell",
       "version": "1.21.4",
       "license": "MIT OR Apache-2.0",
@@ -1881,7 +1891,7 @@
     },
     {
       "name": "pollster",
-      "version": "0.4.0",
+      "version": "1.0.1",
       "license": "Apache-2.0 OR MIT",
       "repository": "https://github.com/zesterer/pollster",
       "category": "library",
@@ -2020,7 +2030,7 @@
     },
     {
       "name": "rfd",
-      "version": "0.17.2",
+      "version": "0.18.0",
       "license": "MIT",
       "repository": "https://github.com/PolyMeilex/rfd",
       "category": "library",
