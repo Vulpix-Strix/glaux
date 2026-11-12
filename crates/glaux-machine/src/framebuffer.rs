@@ -54,6 +54,11 @@ impl Framebuffer {
         self.pixels.fill(index);
     }
 
+    /// Makes this framebuffer equal to `other` without allocating.
+    pub fn copy_from(&mut self, other: &Self) {
+        self.pixels.copy_from_slice(&*other.pixels);
+    }
+
     /// Returns the raw row-major pixel indices.
     pub fn as_bytes(&self) -> &[u8; LEN] {
         &self.pixels

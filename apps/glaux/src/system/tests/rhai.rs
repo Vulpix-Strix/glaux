@@ -171,9 +171,8 @@ fn the_rhai_starter_runs_and_draws() {
     let SystemState::Running { running, .. } = system.state() else {
         unreachable!();
     };
-    let rom = fake_rom();
     let mut fb = Framebuffer::new();
-    running.render(&mut fb, rom.font());
+    running.render(&mut fb);
     let sky = fb.pixel(0, 0).unwrap();
     assert_ne!(sky, 0, "the sky is drawn");
     let colors: std::collections::BTreeSet<_> = (0..240)

@@ -9,6 +9,7 @@ repository.workspace = true
 glaux-audio.workspace = true
 glaux-machine.workspace = true
 glaux-modules.workspace = true
+glaux-video.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -65,7 +65,7 @@ fn modules_import_modules_and_see_the_glaux_api() {
         ]),
     );
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.frame(), [glaux_script::DrawCommand::Clear(9)]);
+    assert_eq!(runtime.scratch().framebuffer.pixel(0, 0), Some(9));
 }
 
 #[test]

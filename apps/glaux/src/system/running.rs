@@ -11,11 +11,9 @@ use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::hardware::CartridgeHardware;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
+use glaux_machine::published::PublishedFrame;
 use glaux_script::debug::{Breakpoint, DebugReply, DebugRequest, Resume, Stop};
-use glaux_script::{DrawCommand, LogEntry, Phase, RuntimeError, ScriptError, StartFailure};
-use glaux_video::draw::{
-    ObjPaletteChoice, ObjSprite, clear, draw_obj_sprite, draw_text, fill_rect, pixel,
-};
+use glaux_script::{LogEntry, Phase, RuntimeError, ScriptError, StartFailure};
 
 use self::debug::DebugRuntime;
 pub use self::debug::Tick;
@@ -71,16 +69,25 @@ impl ScriptRuntime {
         entry: &str,
         source: &[u8],
         modules: CartridgeModules,
+        font: BitmapFont,
     ) -> Result<Self, StartFailure> {
         match language {
-            Language::Luau => {
-                glaux_luau::Runtime::start(entry, source, modules, glaux_luau::Budget::default())
-                    .map(Self::Luau)
-            }
-            Language::Rhai => {
-                glaux_rhai::Runtime::start(entry, source, modules, glaux_rhai::Budget::default())
-                    .map(|runtime| Self::Rhai(Box::new(runtime)))
-            }
+            Language::Luau => glaux_luau::Runtime::start(
+                entry,
+                source,
+                modules,
+                glaux_luau::Budget::default(),
+                font,
+            )
+            .map(Self::Luau),
+            Language::Rhai => glaux_rhai::Runtime::start(
+                entry,
+                source,
+                modules,
+                glaux_rhai::Budget::default(),
+                font,
+            )
+            .map(|runtime| Self::Rhai(Box::new(runtime))),
         }
     }
 
@@ -92,6 +99,7 @@ impl ScriptRuntime {
         entry: &str,
         source: &[u8],
         modules: CartridgeModules,
+        font: BitmapFont,
         port: glaux_script::debug::DebugPort,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<Self, StartFailure> {
@@ -101,6 +109,7 @@ impl ScriptRuntime {
                 source,
                 modules,
                 glaux_luau::Budget::default(),
+                font,
                 port,
                 breakpoints,
             )
@@ -110,6 +119,7 @@ impl ScriptRuntime {
                 source,
                 modules,
                 glaux_rhai::Budget::default(),
+                font,
                 port,
                 breakpoints,
             )
@@ -142,14 +152,6 @@ impl ScriptRuntime {
             Self::Debugged(_) => {
                 unreachable!("a debugged runtime runs its phases through `advance`")
             }
-        }
-    }
-
-    fn frame(&self) -> &[DrawCommand] {
-        match self {
-            Self::Luau(runtime) => runtime.frame(),
-            Self::Rhai(runtime) => runtime.frame(),
-            Self::Debugged(runtime) => runtime.frame(),
         }
     }
 
@@ -188,6 +190,10 @@ pub struct RunningCartridge {
     /// returning, with one exception: a thread that died under the debugger
     /// takes it along, and the run ends. See [`hardware`](Self::hardware).
     hardware: Option<Box<CartridgeHardware>>,
+    /// What the user sees: the work framebuffer and master palette as the
+    /// last `draw()` that finished left them. It changes only when one
+    /// does, so a failed or stopped `draw()` never shows a partial frame.
+    published: PublishedFrame,
     /// The phase a debugged run is stopped in. Only a stop in `tick()` is
     /// followed by a `draw()` when the run is resumed. A stop while starting
     /// is recorded as [`Phase::Entry`] whether it was in the entry script or
@@ -204,16 +210,25 @@ impl RunningCartridge {
     /// Creates a fresh VM for `cartridge` and runs its entry script and
     /// `boot()`, with `defaults` standing in for video assets the cartridge
     /// does not supply. The assets in `overrides` replace what the
-    /// cartridge's files hold, so a run can show edits not written back. On
-    /// failure the cartridge is handed back, still loaded.
+    /// cartridge's files hold, so a run can show edits not written back.
+    /// `font` is the System ROM font that `print` draws with. On failure the
+    /// cartridge is handed back, still loaded.
     pub fn start(
         cartridge: LoadedCartridge,
         defaults: &CartridgeVideoDefaults,
         overrides: VideoOverrides<'_>,
+        font: &BitmapFont,
     ) -> Result<Self, Box<FailedStart>> {
         let (cartridge, source, hardware) = prepare(cartridge, defaults, overrides)?;
         let spec = &cartridge.manifest().runtime;
-        match ScriptRuntime::start(spec.language, &spec.entry, &source, cartridge.modules()) {
+        let started = ScriptRuntime::start(
+            spec.language,
+            &spec.entry,
+            &source,
+            cartridge.modules(),
+            font.clone(),
+        );
+        match started {
             Ok(runtime) => Ok(Self::new(cartridge, runtime, hardware)),
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
         }
@@ -228,6 +243,7 @@ impl RunningCartridge {
         cartridge: LoadedCartridge,
         defaults: &CartridgeVideoDefaults,
         overrides: VideoOverrides<'_>,
+        font: &BitmapFont,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<(Self, Option<Stop>), Box<FailedStart>> {
         let (cartridge, source, hardware) = prepare(cartridge, defaults, overrides)?;
@@ -237,6 +253,7 @@ impl RunningCartridge {
             &spec.entry,
             source,
             cartridge.modules(),
+            font.clone(),
             breakpoints,
         ) {
             Ok((runtime, stop)) => {
@@ -257,6 +274,7 @@ impl RunningCartridge {
         Self {
             cartridge,
             runtime,
+            published: PublishedFrame::new(&hardware),
             hardware: Some(hardware),
             stopped_in: None,
             input: InputLatch::new(),
@@ -316,7 +334,15 @@ impl RunningCartridge {
         Ok(self.note_stop(Phase::Tick, tick))
     }
 
+    /// Starts the frame of a tick that finished its `tick()`: the work
+    /// framebuffer is cleared to the backdrop color, and then `draw()` draws
+    /// on it. Whatever `tick()` left in the framebuffer is gone.
     fn run_draw(&mut self) -> Result<Tick, RuntimeError> {
+        if let Some(hardware) = self.hardware.as_deref_mut() {
+            hardware
+                .framebuffer
+                .clear(hardware.registers.backdrop_color());
+        }
         let tick = match &mut self.runtime {
             ScriptRuntime::Debugged(runtime) => runtime.run_draw(&mut self.hardware)?,
             runtime => {
@@ -324,7 +350,20 @@ impl RunningCartridge {
                 Tick::Done
             }
         };
-        Ok(self.note_stop(Phase::Draw, tick))
+        Ok(self.finish_draw(tick))
+    }
+
+    /// Publishes the frame if `draw()` finished, and otherwise remembers
+    /// that it stopped. Only a `draw()` that finished publishes. The
+    /// hardware keeps whatever a failed one wrote, but the frame shown does
+    /// not change.
+    fn finish_draw(&mut self, tick: Tick) -> Tick {
+        if matches!(tick, Tick::Done)
+            && let Some(hardware) = self.hardware.as_deref()
+        {
+            self.published.publish(hardware);
+        }
+        self.note_stop(Phase::Draw, tick)
     }
 
     /// Remembers which phase a debugged run stopped in.
@@ -351,6 +390,7 @@ impl RunningCartridge {
         let tick = runtime.resume(resume, phase, &mut self.hardware)?;
         match tick {
             Tick::Done if phase == Phase::Tick => self.run_draw(),
+            tick if phase == Phase::Draw => Ok(self.finish_draw(tick)),
             tick => Ok(self.note_stop(phase, tick)),
         }
     }
@@ -392,13 +432,12 @@ impl RunningCartridge {
         &self.cartridge
     }
 
-    /// The hardware, for whoever draws or inspects the run.
+    /// The hardware, for tests that read it.
     ///
-    /// It is present whenever the run is running or paused, which are the
-    /// only states that read it: a phase hands it back before it returns,
-    /// and a run that fails is stopped by the caller before anything else
-    /// reads it. While a debugged run is stopped in a phase the runtime
-    /// holds it, and the system does not read it.
+    /// It is present whenever no phase holds it. While a debugged run is
+    /// stopped in a phase the runtime holds it, and the system does not
+    /// read it.
+    #[cfg(test)]
     fn hardware(&self) -> &CartridgeHardware {
         self.hardware
             .as_deref()
@@ -413,18 +452,17 @@ impl RunningCartridge {
             .expect("the hardware is back with the system between phases")
     }
 
-    /// The master palette the cartridge's frames resolve to.
+    /// The master palette of the published frame. A palette change made
+    /// since does not recolor it until the next frame is published.
     pub fn palette(&self) -> &Palette {
-        &self.hardware().palette
+        self.published.palette()
     }
 
     /// Advances the cartridge by one logical tick, applying the button and
     /// key events in `input` received since the previous tick.
     #[cfg(test)]
     pub fn tick(&mut self, input: &[InputEvent]) -> Result<(), RuntimeError> {
-        let state = self.input.advance(input);
-        self.runtime.run_tick(state, &mut self.hardware)?;
-        self.runtime.run_draw(&mut self.hardware)
+        self.advance(input).map(drop)
     }
 
     /// Releases every button and key as seen by the cartridge, so its next
@@ -444,54 +482,11 @@ impl RunningCartridge {
         self.runtime.take_dropped()
     }
 
-    /// Redraws the cartridge's last completed frame: a screen cleared to
-    /// palette index 0, then its draw commands in the order they were made.
+    /// Copies the published frame into `framebuffer`, which is what gets
+    /// presented. The published frame itself is never drawn over.
     #[hotpath::measure(label = "running::render", impl_type = "RunningCartridge")]
-    pub fn render(&self, framebuffer: &mut Framebuffer, font: &BitmapFont) {
-        clear(framebuffer, 0);
-        for command in self.runtime.frame() {
-            match *command {
-                DrawCommand::Clear(color) => clear(framebuffer, color),
-                DrawCommand::Pixel { x, y, color } => pixel(framebuffer, x, y, color),
-                DrawCommand::Rect {
-                    x,
-                    y,
-                    width,
-                    height,
-                    color,
-                } => fill_rect(framebuffer, x, y, width, height, color),
-                DrawCommand::Sprite {
-                    tile,
-                    x,
-                    y,
-                    width,
-                    height,
-                    flip_x,
-                    flip_y,
-                    palette,
-                } => draw_obj_sprite(
-                    framebuffer,
-                    &self.hardware().obj,
-                    &ObjSprite {
-                        first: usize::from(tile),
-                        x,
-                        y,
-                        width: usize::from(width),
-                        height: usize::from(height),
-                        flip_x,
-                        flip_y,
-                        palette: palette
-                            .map_or(ObjPaletteChoice::TileDefault, ObjPaletteChoice::Bank),
-                    },
-                ),
-                DrawCommand::Text {
-                    ref text,
-                    x,
-                    y,
-                    color,
-                } => draw_text(framebuffer, font, text, x, y, color),
-            }
-        }
+    pub fn render(&self, framebuffer: &mut Framebuffer) {
+        framebuffer.copy_from(self.published.framebuffer());
     }
 
     /// Writes the cartridge's audio into `psg` and commits it, as

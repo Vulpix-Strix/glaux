@@ -24,13 +24,12 @@ use std::time::Duration;
 
 use glaux_audio::AudioState;
 use glaux_input::InputState;
+use glaux_machine::font::BitmapFont;
 use glaux_machine::hardware::CartridgeHardware;
 use glaux_script::debug::{
     Breakpoint, DebugEvent, DebugLink, DebugReply, DebugRequest, Resume, Stop, session,
 };
-use glaux_script::{
-    DrawCommand, LoanError, LogEntry, Phase, RuntimeError, ScriptError, StartFailure,
-};
+use glaux_script::{LoanError, LogEntry, Phase, RuntimeError, ScriptError, StartFailure};
 
 use super::ScriptRuntime;
 use crate::cartridge::{CartridgeModules, Language};
@@ -73,8 +72,6 @@ struct PhaseReport {
     hardware: Box<CartridgeHardware>,
     output: Vec<LogEntry>,
     dropped: u32,
-    /// What the last `draw()` left, present after a `draw()`.
-    frame: Option<Vec<DrawCommand>>,
     /// A copy of the audio the script wrote, taken before the thread's own
     /// is committed, so each write reaches the PSG once. It comes with the
     /// report that ends the logical tick: after a `draw()`, or after a
@@ -89,8 +86,6 @@ pub struct DebugRuntime {
     commands: Option<Sender<Command>>,
     reports: Receiver<Report>,
     thread: Option<JoinHandle<()>>,
-    /// What the last finished tick left, as [`ScriptRuntime`] would hold it.
-    frame: Vec<DrawCommand>,
     output: Vec<LogEntry>,
     dropped: u32,
     audio: RefCell<AudioState>,
@@ -106,6 +101,7 @@ impl DebugRuntime {
         entry: &str,
         source: Vec<u8>,
         modules: CartridgeModules,
+        font: BitmapFont,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<(Self, Option<Stop>), StartFailure> {
         let (link, port) = session();
@@ -122,6 +118,7 @@ impl DebugRuntime {
                     &entry,
                     &source,
                     modules,
+                    font,
                     port,
                     breakpoints,
                 );
@@ -168,7 +165,6 @@ impl DebugRuntime {
                         hardware,
                         output: runtime.take_output(),
                         dropped: runtime.take_dropped(),
-                        frame: (phase == Phase::Draw).then(|| runtime.frame().to_vec()),
                         audio,
                     };
                     if report_outbox.send(Report::Phase(Box::new(report))).is_err() {
@@ -195,7 +191,6 @@ impl DebugRuntime {
             commands: Some(commands),
             reports,
             thread,
-            frame: Vec::new(),
             output: Vec::new(),
             dropped: 0,
             audio: RefCell::default(),
@@ -261,13 +256,9 @@ impl DebugRuntime {
                     hardware,
                     output,
                     dropped,
-                    frame,
                     audio,
                 } = *report;
                 *home = Some(hardware);
-                if let Some(frame) = frame {
-                    self.frame = frame;
-                }
                 self.output.extend(output);
                 self.dropped += dropped;
                 if let Some(audio) = audio {
@@ -360,10 +351,6 @@ impl DebugRuntime {
     /// Sends the breakpoints the runtime should stop at from now on.
     pub fn set_breakpoints(&self, breakpoints: Vec<Breakpoint>) {
         self.link.send(DebugRequest::Breakpoints(breakpoints));
-    }
-
-    pub fn frame(&self) -> &[DrawCommand] {
-        &self.frame
     }
 
     pub fn take_output(&mut self) -> Vec<LogEntry> {

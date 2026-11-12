@@ -1,11 +1,12 @@
-//! `cls`, `pset`, `rectfill`, `spr` and `text`, which record
-//! [`DrawCommand`]s during `draw()`.
+//! `cls`, `pset`, `rectfill`, `spr` and `text`, which run
+//! [`DrawCommand`]s on the lent hardware during `draw()`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use glaux_machine::font::BitmapFont;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS};
-use glaux_script::{DrawCommand, Recording};
+use glaux_script::{DrawBudget, DrawCommand, HardwareSlot, LoanError};
 use rhai::{Dynamic, Engine, NativeCallContext};
 
 use crate::args::{
@@ -13,37 +14,55 @@ use crate::args::{
     tile_span_arg, to_text,
 };
 
-/// The recording of the `draw()` call in progress. `None` outside `draw()`,
+/// The draw budget of the `draw()` call in progress. `None` outside `draw()`,
 /// which is how drawing functions reject other phases.
-pub(crate) type PendingFrame = Rc<RefCell<Option<Recording>>>;
+pub(crate) type PendingFrame = Rc<RefCell<Option<DrawBudget>>>;
+
+/// What a drawing function needs to run a command.
+#[derive(Clone)]
+struct Canvas {
+    pending: PendingFrame,
+    hardware: HardwareSlot,
+    font: BitmapFont,
+}
 
 /// Registers `cls`, `pset`, `rectfill`, `spr` and `text`.
-pub(crate) fn install(engine: &mut Engine, pending_frame: &PendingFrame) {
-    let pending = Rc::clone(pending_frame);
+pub(crate) fn install(
+    engine: &mut Engine,
+    pending_frame: &PendingFrame,
+    hardware: &HardwareSlot,
+    font: &BitmapFont,
+) {
+    let shared = Canvas {
+        pending: Rc::clone(pending_frame),
+        hardware: hardware.clone(),
+        font: font.clone(),
+    };
+    let canvas = shared.clone();
     engine.register_fn(
         "cls",
         move |ctx: NativeCallContext, color: Dynamic| -> Result<()> {
-            expect_draw(&ctx, &pending, "cls")?;
+            expect_draw(&ctx, &canvas.pending, "cls")?;
             let color = color_arg(&ctx, "cls", 1, &color)?;
-            record(&ctx, &pending, "cls", DrawCommand::Clear(color))
+            record(&ctx, &canvas, "cls", DrawCommand::Clear(color))
         },
     );
 
-    let pending = Rc::clone(pending_frame);
+    let canvas = shared.clone();
     engine.register_fn(
         "pset",
         move |ctx: NativeCallContext, x: Dynamic, y: Dynamic, color: Dynamic| -> Result<()> {
-            expect_draw(&ctx, &pending, "pset")?;
+            expect_draw(&ctx, &canvas.pending, "pset")?;
             let command = DrawCommand::Pixel {
                 x: coordinate_arg(&ctx, "pset", 1, &x)?,
                 y: coordinate_arg(&ctx, "pset", 2, &y)?,
                 color: color_arg(&ctx, "pset", 3, &color)?,
             };
-            record(&ctx, &pending, "pset", command)
+            record(&ctx, &canvas, "pset", command)
         },
     );
 
-    let pending = Rc::clone(pending_frame);
+    let canvas = shared.clone();
     engine.register_fn(
         "rectfill",
         move |ctx: NativeCallContext,
@@ -53,7 +72,7 @@ pub(crate) fn install(engine: &mut Engine, pending_frame: &PendingFrame) {
               height: Dynamic,
               color: Dynamic|
               -> Result<()> {
-            expect_draw(&ctx, &pending, "rectfill")?;
+            expect_draw(&ctx, &canvas.pending, "rectfill")?;
             let command = DrawCommand::Rect {
                 x: coordinate_arg(&ctx, "rectfill", 1, &x)?,
                 y: coordinate_arg(&ctx, "rectfill", 2, &y)?,
@@ -61,13 +80,13 @@ pub(crate) fn install(engine: &mut Engine, pending_frame: &PendingFrame) {
                 height: size_arg(&ctx, "rectfill", 4, &height, "height")?,
                 color: color_arg(&ctx, "rectfill", 5, &color)?,
             };
-            record(&ctx, &pending, "rectfill", command)
+            record(&ctx, &canvas, "rectfill", command)
         },
     );
 
-    install_spr(engine, pending_frame);
+    install_spr(engine, &shared);
 
-    let pending = Rc::clone(pending_frame);
+    let canvas = shared.clone();
     engine.register_fn(
         "text",
         move |ctx: NativeCallContext,
@@ -76,14 +95,14 @@ pub(crate) fn install(engine: &mut Engine, pending_frame: &PendingFrame) {
               y: Dynamic,
               color: Dynamic|
               -> Result<()> {
-            expect_draw(&ctx, &pending, "text")?;
+            expect_draw(&ctx, &canvas.pending, "text")?;
             let command = DrawCommand::Text {
                 x: coordinate_arg(&ctx, "text", 2, &x)?,
                 y: coordinate_arg(&ctx, "text", 3, &y)?,
                 color: color_arg(&ctx, "text", 4, &color)?,
                 text: to_text(&text),
             };
-            record(&ctx, &pending, "text", command)
+            record(&ctx, &canvas, "text", command)
         },
     );
 }
@@ -91,8 +110,8 @@ pub(crate) fn install(engine: &mut Engine, pending_frame: &PendingFrame) {
 /// Registers `spr(tile, x, y, [w, h, flip_x, flip_y, palette])` for every
 /// argument count from 3 to 8. Rhai has no optional parameters. A missing
 /// argument behaves as `()`, which also selects the default when given.
-fn install_spr(engine: &mut Engine, pending_frame: &PendingFrame) {
-    let p = Rc::clone(pending_frame);
+fn install_spr(engine: &mut Engine, shared: &Canvas) {
+    let p = shared.clone();
     engine.register_fn(
         "spr",
         move |ctx: NativeCallContext, tile: Dynamic, x: Dynamic, y: Dynamic| -> Result<()> {
@@ -112,7 +131,7 @@ fn install_spr(engine: &mut Engine, pending_frame: &PendingFrame) {
             )
         },
     );
-    let p = Rc::clone(pending_frame);
+    let p = shared.clone();
     engine.register_fn(
         "spr",
         move |ctx: NativeCallContext,
@@ -128,7 +147,7 @@ fn install_spr(engine: &mut Engine, pending_frame: &PendingFrame) {
             )
         },
     );
-    let p = Rc::clone(pending_frame);
+    let p = shared.clone();
     engine.register_fn(
         "spr",
         move |ctx: NativeCallContext,
@@ -145,7 +164,7 @@ fn install_spr(engine: &mut Engine, pending_frame: &PendingFrame) {
             )
         },
     );
-    let p = Rc::clone(pending_frame);
+    let p = shared.clone();
     engine.register_fn(
         "spr",
         move |ctx: NativeCallContext,
@@ -159,7 +178,7 @@ fn install_spr(engine: &mut Engine, pending_frame: &PendingFrame) {
             spr(&ctx, &p, [tile, x, y, w, h, flip_x, ().into(), ().into()])
         },
     );
-    let p = Rc::clone(pending_frame);
+    let p = shared.clone();
     engine.register_fn(
         "spr",
         move |ctx: NativeCallContext,
@@ -174,7 +193,7 @@ fn install_spr(engine: &mut Engine, pending_frame: &PendingFrame) {
             spr(&ctx, &p, [tile, x, y, w, h, flip_x, flip_y, ().into()])
         },
     );
-    let p = Rc::clone(pending_frame);
+    let p = shared.clone();
     engine.register_fn(
         "spr",
         move |ctx: NativeCallContext,
@@ -191,9 +210,9 @@ fn install_spr(engine: &mut Engine, pending_frame: &PendingFrame) {
 }
 
 /// `spr` with all eight arguments, `()` standing for those not given.
-fn spr(ctx: &NativeCallContext, pending: &PendingFrame, args: [Dynamic; 8]) -> Result<()> {
+fn spr(ctx: &NativeCallContext, canvas: &Canvas, args: [Dynamic; 8]) -> Result<()> {
     let [tile, x, y, w, h, flip_x, flip_y, palette] = args;
-    expect_draw(ctx, pending, "spr")?;
+    expect_draw(ctx, &canvas.pending, "spr")?;
     let tile = tile_arg(ctx, "spr", 1, &tile)?;
     let x = coordinate_arg(ctx, "spr", 2, &x)?;
     let y = coordinate_arg(ctx, "spr", 3, &y)?;
@@ -211,7 +230,7 @@ fn spr(ctx: &NativeCallContext, pending: &PendingFrame, args: [Dynamic; 8]) -> R
         flip_y: flag_arg(ctx, "spr", 7, &flip_y)?,
         palette: obj_bank_arg(ctx, "spr", 8, &palette)?,
     };
-    record(ctx, pending, "spr", command)
+    record(ctx, canvas, "spr", command)
 }
 
 /// Fails unless a `draw()` call is in progress.
@@ -230,21 +249,29 @@ fn outside_draw(ctx: &NativeCallContext, function: &str) -> Box<rhai::EvalAltRes
     )
 }
 
-/// Appends `command` to the frame in progress.
+/// Charges `command` to the `draw()` call in progress and draws it on the
+/// lent hardware.
 ///
 /// Callers check [`expect_draw`] before validating arguments, so a script
-/// calling from the wrong phase hears about the phase first.
+/// calling from the wrong phase hears about the phase first. A command the
+/// budget rejects is not drawn.
 fn record(
     ctx: &NativeCallContext,
-    pending: &PendingFrame,
+    canvas: &Canvas,
     function: &str,
     command: DrawCommand,
 ) -> Result<()> {
-    let mut pending = pending.borrow_mut();
-    let Some(recording) = pending.as_mut() else {
-        return Err(outside_draw(ctx, function));
-    };
-    recording
-        .push(command)
-        .map_err(|exceeded| located(ctx, exceeded.to_string()))
+    {
+        let mut pending = canvas.pending.borrow_mut();
+        let Some(budget) = pending.as_mut() else {
+            return Err(outside_draw(ctx, function));
+        };
+        budget
+            .charge(&command)
+            .map_err(|exceeded| located(ctx, exceeded.to_string()))?;
+    }
+    canvas
+        .hardware
+        .with(|hardware| command.execute(hardware, &canvas.font))
+        .ok_or_else(|| located(ctx, format!("internal error: {}", LoanError::Unavailable)))
 }

@@ -1,5 +1,3 @@
-//! Lifecycle: the top level, callbacks, `this` and error reporting.
-
 use super::*;
 use pretty_assertions::assert_eq;
 
@@ -26,11 +24,11 @@ fn the_top_level_and_boot_run_once_then_each_tick_calls_tick_then_draw() {
 fn missing_callbacks_are_skipped() {
     let mut runtime = started("fn draw() { cls(1); }");
     assert_eq!(runtime.tick(NO_INPUT), Ok(()));
-    assert_eq!(runtime.frame(), [glaux_script::DrawCommand::Clear(1)]);
+    assert_eq!(runtime.scratch().framebuffer.pixel(0, 0), Some(1));
 
     let mut runtime = started("");
     assert_eq!(runtime.tick(NO_INPUT), Ok(()));
-    assert!(runtime.frame().is_empty());
+    assert_eq!(runtime.scratch().framebuffer.pixel(0, 0), Some(0));
 }
 
 #[test]
@@ -167,7 +165,7 @@ fn a_failed_tick_skips_draw() {
 }
 
 #[test]
-fn a_failed_draw_keeps_the_previous_frame() {
+fn a_failed_draw_leaves_what_it_drew_in_the_hardware() {
     let mut runtime = started(
         r#"
         fn boot() { this.fail = false; }
@@ -183,7 +181,7 @@ fn a_failed_draw_keeps_the_previous_frame() {
         runtime.tick(NO_INPUT),
         Err(runtime_error(Phase::Draw, "main.rhai:5: late"))
     );
-    assert_eq!(runtime.frame(), [glaux_script::DrawCommand::Clear(3)]);
+    assert_eq!(runtime.scratch().framebuffer.pixel(0, 0), Some(3));
 }
 
 #[test]
@@ -245,9 +243,15 @@ fn caught_errors_do_not_stop_the_script() {
 
 #[test]
 fn invalid_utf8_is_a_syntax_error() {
-    let failure = Runtime::start("main.rhai", b"print(\"\xff\");", Files::default(), SMALL)
-        .err()
-        .unwrap();
+    let failure = Runtime::start(
+        "main.rhai",
+        b"print(\"\xff\");",
+        Files::default(),
+        SMALL,
+        font(),
+    )
+    .err()
+    .unwrap();
     assert_eq!(
         failure.error,
         error(

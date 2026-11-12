@@ -12,9 +12,14 @@ use crate::cartridge::fixture::{write_cartridge, write_rhai_cartridge};
 use crate::cartridge_fs::fixture::Fixture;
 
 mod debugging;
+mod publication;
 
 fn defaults() -> CartridgeVideoDefaults {
     CartridgeVideoDefaults::from_rom(&crate::rom::load().unwrap())
+}
+
+fn font() -> BitmapFont {
+    crate::rom::load().unwrap().font().clone()
 }
 
 fn texts(entries: Vec<LogEntry>) -> Vec<String> {
@@ -43,7 +48,8 @@ fn a_cartridge_requires_its_own_modules() {
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
     let mut running =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap();
     assert_eq!(texts(running.take_output()), ["enemies loaded"]);
     running.tick(&[]).unwrap();
     running.tick(&[]).unwrap();
@@ -70,7 +76,8 @@ fn a_rhai_cartridge_imports_its_own_modules() {
     let cartridge = LoadedCartridge::load(&fixture.storage(), "owl").unwrap();
 
     let mut running =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap();
     assert_eq!(texts(running.take_output()), ["enemies loaded"]);
     running.tick(&[]).unwrap();
     assert_eq!(texts(running.take_output()), ["6"]);
@@ -78,7 +85,8 @@ fn a_rhai_cartridge_imports_its_own_modules() {
     fs::write(dir.join("code/main.rhai"), "import \"secret\" as s;").unwrap();
     let cartridge = running.stop();
     let failed =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap_err();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap_err();
     let StartError::Script(failure) = failed.error else {
         panic!("expected a script error");
     };
@@ -98,7 +106,8 @@ fn module_errors_name_cartridge_relative_paths() {
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
     let failed =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap_err();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap_err();
     let StartError::Script(failure) = failed.error else {
         panic!("expected a script error, got {:?}", failed.error);
     };
@@ -108,8 +117,13 @@ fn module_errors_name_cartridge_relative_paths() {
     );
 
     fs::write(dir.join("code/main.luau"), r#"require("nope")"#).unwrap();
-    let failed = RunningCartridge::start(failed.cartridge, &defaults(), VideoOverrides::default())
-        .unwrap_err();
+    let failed = RunningCartridge::start(
+        failed.cartridge,
+        &defaults(),
+        VideoOverrides::default(),
+        &font(),
+    )
+    .unwrap_err();
     let StartError::Script(failure) = failed.error else {
         panic!("expected a script error, got {:?}", failed.error);
     };
@@ -143,11 +157,11 @@ fn sprites_resolve_through_the_cartridge_palette_assets() {
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
     let mut running =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap();
     running.tick(&[]).unwrap();
-    let rom = crate::rom::load().unwrap();
     let mut framebuffer = Framebuffer::new();
-    running.render(&mut framebuffer, rom.font());
+    running.render(&mut framebuffer);
 
     assert_eq!(framebuffer.pixel(0, 0), Some(200));
     assert_eq!(framebuffer.pixel(8, 0), Some(3));
@@ -162,7 +176,8 @@ fn missing_video_assets_fall_back_to_the_rom() {
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
     let rom = crate::rom::load().unwrap();
     let running =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap();
     assert_eq!(running.palette(), rom.palette());
     assert_eq!(running.hardware().obj.palettes(), rom.obj_palettes());
 }
@@ -175,7 +190,7 @@ fn hardware_state_survives_ticks_and_each_run_starts_from_the_initial_values() {
     let load = || LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
     let mut running =
-        RunningCartridge::start(load(), &defaults(), VideoOverrides::default()).unwrap();
+        RunningCartridge::start(load(), &defaults(), VideoOverrides::default(), &font()).unwrap();
     running.hardware_mut().write(0x00100, 0xAB).unwrap();
     running.hardware_mut().write(0x34000, 0x12).unwrap();
     running.hardware_mut().write(0x3B000, 0xFF).unwrap();
@@ -187,8 +202,13 @@ fn hardware_state_survives_ticks_and_each_run_starts_from_the_initial_values() {
     assert_eq!(running.hardware().read(0x3B000), Ok(0xFF));
     assert_eq!(running.hardware().read16(0x3C010), Ok(600));
 
-    let restarted =
-        RunningCartridge::start(running.stop(), &defaults(), VideoOverrides::default()).unwrap();
+    let restarted = RunningCartridge::start(
+        running.stop(),
+        &defaults(),
+        VideoOverrides::default(),
+        &font(),
+    )
+    .unwrap();
     let hardware = restarted.hardware();
     assert!(hardware.work_ram.iter().all(|&byte| byte == 0));
     assert!(hardware.oam.as_bytes().iter().all(|&byte| byte == 0));
@@ -218,7 +238,8 @@ fn the_hardware_stays_the_same_allocation_across_ticks_and_failures() {
     .unwrap();
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
     let mut running =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap();
     let before = hardware_address(&running);
     assert!(before.is_some());
 
@@ -243,7 +264,8 @@ fn a_phase_without_hardware_is_an_error_that_runs_no_script() {
     .unwrap();
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
     let mut running =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap();
     running.hardware = None;
 
     let error = running.advance(&[]).unwrap_err();
@@ -275,11 +297,12 @@ fn rom_default_banks_render_without_obp_bin() {
     let cartridge = LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
 
     let mut running =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap();
     running.tick(&[]).unwrap();
     let rom = crate::rom::load().unwrap();
     let mut framebuffer = Framebuffer::new();
-    running.render(&mut framebuffer, rom.font());
+    running.render(&mut framebuffer);
 
     for bank in 0..8 {
         for local in 1..16 {
@@ -309,11 +332,11 @@ fn the_imported_example_shows_its_png_colors() {
     );
     let cartridge = LoadedCartridge::load(&storage, "palettes").unwrap();
     let mut running =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+            .unwrap();
     running.tick(&[]).unwrap();
-    let rom = crate::rom::load().unwrap();
     let mut framebuffer = Framebuffer::new();
-    running.render(&mut framebuffer, rom.font());
+    running.render(&mut framebuffer);
 
     let file = fs::File::open(root.join("palettes/sprites.png")).unwrap();
     let mut reader = png::Decoder::new(std::io::BufReader::new(file))
@@ -356,7 +379,8 @@ fn imported_examples_resolve_every_png_pixel_to_its_color() {
     for name in ["palettes", "signal-lost"] {
         let cartridge = LoadedCartridge::load(&storage, name).unwrap();
         let running =
-            RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
+            RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
+                .unwrap();
         let obj = &running.hardware().obj;
 
         let file = fs::File::open(root.join(name).join("sprites.png")).unwrap();
@@ -406,6 +430,7 @@ mod signal_lost {
 
     use super::*;
     use crate::cartridge_fs::{CartridgeFs, CartridgeStorage};
+    use glaux_video::draw::draw_text;
 
     const LUAU: &str = "signal-lost";
     const RHAI: &str = "signal-lost-rhai";
@@ -423,7 +448,7 @@ mod signal_lost {
     fn start(name: &str) -> RunningCartridge {
         let storage = CartridgeStorage::Available(CartridgeFs::new(examples_dir()));
         let cartridge = LoadedCartridge::load(&storage, name).unwrap();
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap()
+        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font()).unwrap()
     }
 
     fn down(button: Button) -> InputEvent {
@@ -455,31 +480,54 @@ mod signal_lost {
         running
     }
 
-    fn frame_texts(running: &RunningCartridge) -> Vec<String> {
-        running
-            .runtime
-            .frame()
-            .iter()
-            .filter_map(|command| match command {
-                DrawCommand::Text { text, .. } => Some(text.clone()),
-                _ => None,
-            })
-            .collect()
+    /// The frame the user sees.
+    fn frame(running: &RunningCartridge) -> &Framebuffer {
+        running.published.framebuffer()
     }
 
+    /// Whether `needle` is drawn in the published frame. It looks for a
+    /// place where every pixel `draw_text` sets for it, with the System ROM
+    /// font, has one color and most of the cells around those pixels have
+    /// another.
     fn shows(running: &RunningCartridge, needle: &str) -> bool {
-        frame_texts(running)
-            .iter()
-            .any(|text| text.contains(needle))
+        let font = font();
+        let mut mask = Framebuffer::new();
+        draw_text(&mut mask, &font, needle, 0, 0, 1);
+        let metrics = font.metrics();
+        let width = (font.text_cells(needle) * usize::from(metrics.cell_width())) as i32;
+        let height = i32::from(metrics.cell_height());
+        let (mut set, mut blank) = (Vec::new(), Vec::new());
+        for dy in 0..height {
+            for dx in 0..width {
+                match mask.pixel(dx, dy) {
+                    Some(1) => set.push((dx, dy)),
+                    _ => blank.push((dx, dy)),
+                }
+            }
+        }
+        let frame = frame(running);
+        let (first_set, first_blank) = (set[0], blank[0]);
+        (0..=240 - height).any(|y| {
+            (0..=320 - width).any(|x| {
+                let color = frame.pixel(x + first_set.0, y + first_set.1);
+                frame.pixel(x + first_blank.0, y + first_blank.1) != color
+                    && set
+                        .iter()
+                        .all(|&(dx, dy)| frame.pixel(x + dx, y + dy) == color)
+                    && blank
+                        .iter()
+                        .filter(|&&(dx, dy)| frame.pixel(x + dx, y + dy) != color)
+                        .count()
+                        * 2
+                        > blank.len()
+            })
+        })
     }
 
-    fn sprite_count(running: &RunningCartridge) -> usize {
-        running
-            .runtime
-            .frame()
-            .iter()
-            .filter(|command| matches!(command, DrawCommand::Sprite { .. }))
-            .count()
+    /// Whether the `width` by `height` area at `(x, y)` is not one color.
+    fn varies(frame: &Framebuffer, x: i32, y: i32, width: i32, height: i32) -> bool {
+        let first = frame.pixel(x, y);
+        (y..y + height).any(|row| (x..x + width).any(|column| frame.pixel(column, row) != first))
     }
 
     #[test]
@@ -495,19 +543,11 @@ mod signal_lost {
             idle(&mut running, 120);
             assert!(shows(&running, "SIGNAL LOST"), "{name}");
             assert!(shows(&running, "X DASH"), "{name}");
-            assert!(sprite_count(&running) > 0, "{name}");
-            assert!(
-                running
-                    .runtime
-                    .frame()
-                    .iter()
-                    .any(|command| matches!(command, DrawCommand::Rect { .. })),
-                "{name}"
-            );
+            // The cast lineup of the title screen is drawn with sprites.
+            assert!(varies(frame(&running), 64, 108, 32, 32), "{name}");
 
-            let rom = crate::rom::load().unwrap();
             let mut framebuffer = Framebuffer::new();
-            running.render(&mut framebuffer, rom.font());
+            running.render(&mut framebuffer);
             let first = framebuffer.as_bytes()[0];
             assert!(
                 framebuffer.as_bytes().iter().any(|&index| index != first),
@@ -523,19 +563,13 @@ mod signal_lost {
             assert!(!shows(&running, "PRESS Z TO START"), "{name}");
             assert!(shows(&running, "SCORE 00000"), "{name}");
             assert!(shows(&running, "TIME"), "{name}");
-            let band = DrawCommand::Rect {
-                x: 0,
-                y: 0,
-                width: 320,
-                height: 16,
-                color: 11,
-            };
-            assert!(running.runtime.frame().contains(&band), "{name}");
 
-            let rom = crate::rom::load().unwrap();
             let mut framebuffer = Framebuffer::new();
-            running.render(&mut framebuffer, rom.font());
-            assert_eq!(framebuffer.pixel(150, 14), Some(11), "{name}");
+            running.render(&mut framebuffer);
+            // The HUD band is 320 by 16 pixels.
+            for (x, y) in [(0, 0), (319, 0), (0, 15), (319, 15), (150, 14)] {
+                assert_eq!(framebuffer.pixel(x, y), Some(11), "{name} ({x}, {y})");
+            }
 
             let output = texts(running.take_output());
             assert!(
@@ -554,7 +588,7 @@ mod signal_lost {
             step(&mut still, &[]);
             idle(&mut moved, 20);
             idle(&mut still, 20);
-            assert_ne!(moved.runtime.frame(), still.runtime.frame(), "{name}");
+            assert!(frame(&moved) != frame(&still), "{name}");
         }
     }
 
@@ -567,7 +601,7 @@ mod signal_lost {
             step(&mut still, &[]);
             idle(&mut throwing, 20);
             idle(&mut still, 20);
-            assert!(sprite_count(&throwing) > sprite_count(&still), "{name}");
+            assert!(frame(&throwing) != frame(&still), "{name}");
         }
     }
 
@@ -575,18 +609,16 @@ mod signal_lost {
     fn an_idle_knight_falls_and_the_game_restarts_in_the_same_vm() {
         for name in EXAMPLES {
             let mut running = start_playing(name);
+            let mut output = Vec::new();
             let fell = (0..IDLE_DEATH_LIMIT).any(|_| {
                 step(&mut running, &[]);
-                shows(&running, "KILLS")
-            });
-            assert!(fell, "{name}: still alive after {IDLE_DEATH_LIMIT} ticks");
-            let output = texts(running.take_output());
-            assert!(
+                output.extend(texts(running.take_output()));
                 output
                     .iter()
-                    .any(|line| line.starts_with("signal lost: score")),
-                "{name}: {output:?}"
-            );
+                    .any(|line| line.starts_with("signal lost: score"))
+            });
+            assert!(fell, "{name}: still alive after {IDLE_DEATH_LIMIT} ticks");
+            assert!(shows(&running, "KILLS"), "{name}");
 
             // A is ignored briefly so a held button cannot skip the screen.
             step(&mut running, &[down(Button::A)]);
@@ -623,7 +655,7 @@ mod signal_lost {
                 step(&mut running, &[down(Button::B)]);
                 idle(&mut running, 120);
                 let output = texts(running.take_output());
-                (running.runtime.frame().to_vec(), output)
+                (frame(&running).clone(), output)
             };
             assert_eq!(play(), play(), "{name}");
         }
@@ -726,7 +758,7 @@ mod signal_lost {
             luau.tick(&input).unwrap();
             rhai.tick(&input).unwrap();
             assert!(
-                luau.runtime.frame() == rhai.runtime.frame(),
+                luau.published == rhai.published,
                 "frames differ at tick {n}"
             );
             assert_eq!(

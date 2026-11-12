@@ -69,7 +69,7 @@ fn bytecode_entries_are_rejected() {
     let bytecode = mlua::chunk::Compiler::new()
         .compile(r#"log.info("compiled")"#)
         .unwrap();
-    let failure = match Runtime::start("main.luau", &bytecode, Files::default(), SMALL) {
+    let failure = match Runtime::start("main.luau", &bytecode, Files::default(), SMALL, font()) {
         Ok(_) => panic!("bytecode entry started"),
         Err(failure) => failure,
     };

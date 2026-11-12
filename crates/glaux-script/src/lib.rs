@@ -1,5 +1,5 @@
 //! What every cartridge scripting runtime shares, independent of any
-//! language: the draw commands a script records, the log entries it writes,
+//! language: the draw commands a script runs, the log entries it writes,
 //! how its failures are reported, and the validation of the values it
 //! passes to Glaux.
 //!
@@ -15,7 +15,8 @@ pub mod log;
 pub mod validate;
 
 pub use draw::{
-    DrawBudgetExceeded, DrawCommand, MAX_DRAW_COMMANDS, Recording, SPRITE_TILE_COST, TEXT_CHAR_COST,
+    DrawBudget, DrawBudgetExceeded, DrawCommand, MAX_DRAW_COMMANDS, SPRITE_TILE_COST,
+    TEXT_CHAR_COST,
 };
 pub use error::{Phase, RequireError, RequireFailure, RuntimeError, ScriptError, StartFailure};
 pub use hardware::{HardwareSlot, Loan, LoanError};

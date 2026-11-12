@@ -52,6 +52,7 @@ fn debugged_with(
             source.as_bytes(),
             Files::new(modules),
             budget,
+            font(),
             port,
             breakpoints,
         ) {

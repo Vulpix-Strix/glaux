@@ -92,10 +92,11 @@ pub(super) fn launch(
             cartridge,
             ctx.video_defaults,
             overrides,
+            ctx.font,
             breakpoints.unwrap_or_default(),
         )
     } else {
-        RunningCartridge::start(cartridge, ctx.video_defaults, overrides)
+        RunningCartridge::start(cartridge, ctx.video_defaults, overrides, ctx.font)
             .map(|running| (running, None))
     };
     match started {

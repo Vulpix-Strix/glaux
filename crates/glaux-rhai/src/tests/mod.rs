@@ -19,6 +19,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use glaux_input::{Button, ButtonSet, ButtonState, InputState, Key, KeySet, KeyState};
+use glaux_machine::bg::BgVram;
+use glaux_machine::font::{BitmapFont, FontMetrics};
+use glaux_machine::hardware::CartridgeHardware;
+use glaux_machine::obj_palette::{ObjBank, ObjPalettes};
+use glaux_machine::palette::Palette;
+use glaux_machine::sprite::{ObjTileAttributes, ObjTileBank, ObjVram};
 use glaux_modules::{ModuleLoadError, ModulePath, ModuleSource};
 use glaux_script::{LogEntry, Phase, RuntimeError, ScriptError, StartFailure};
 
@@ -70,12 +76,51 @@ impl ModuleSource for Files {
     }
 }
 
+/// A font with a glyph for every printable ASCII character, each one made
+/// of rows that differ from the next character's.
+pub(crate) fn font() -> BitmapFont {
+    let mut font = BitmapFont::new(FontMetrics::new(4, 5).unwrap());
+    for ch in ' '..='~' {
+        let rows: Vec<u16> = (0..5)
+            .map(|row| ((u32::from(ch) * 7 + row * 3) % 15 + 1) as u16)
+            .collect();
+        font.insert(ch, 1, &rows).unwrap();
+    }
+    font
+}
+
+/// Hardware whose object tiles and palette banks make every sprite
+/// distinguishable: each tile has its own pixel pattern and its own default
+/// bank, and every bank maps to different master indices.
+pub(crate) fn hardware() -> Box<CartridgeHardware> {
+    let mut obj = ObjVram::new(
+        ObjTileBank::new(),
+        ObjTileAttributes::new(),
+        ObjPalettes::linear(),
+    );
+    for tile in 0..1024 {
+        for y in 0..8 {
+            for x in 0..8 {
+                let local = ((tile * 5 + x * 3 + y * 7) % 16) as u8;
+                obj.tiles_mut().set_pixel(tile, x, y, local);
+            }
+        }
+        obj.attributes_mut()
+            .set_bank(tile, ObjBank::new((tile % 8) as u8).unwrap());
+    }
+    Box::new(CartridgeHardware::new(
+        Palette::default(),
+        obj,
+        BgVram::default(),
+    ))
+}
+
 fn start(source: &str) -> Result<Runtime, StartFailure> {
     start_with(source, Files::default())
 }
 
 fn start_with(source: &str, files: Files) -> Result<Runtime, StartFailure> {
-    Runtime::start("main.rhai", source.as_bytes(), files, SMALL)
+    Runtime::start("main.rhai", source.as_bytes(), files, SMALL, font())
 }
 
 fn started_with(source: &str, files: Files) -> Runtime {

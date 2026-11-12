@@ -14,27 +14,27 @@ use crate::cartridge::fixture::{write_cartridge, write_rhai_cartridge};
 use crate::cartridge_fs::fixture::Fixture;
 use crate::cartridge_fs::{CartridgeFs, CartridgeStorage};
 
-fn at(path: &str, line: u32) -> Breakpoint {
+pub(super) fn at(path: &str, line: u32) -> Breakpoint {
     Breakpoint {
         path: path.into(),
         line,
     }
 }
 
-fn luau_cartridge(fixture: &Fixture, script: &str) -> LoadedCartridge {
+pub(super) fn luau_cartridge(fixture: &Fixture, script: &str) -> LoadedCartridge {
     let dir = fixture.root().join("pong");
     write_cartridge(&dir, "Pong");
     fs::write(dir.join("code/main.luau"), script).unwrap();
     LoadedCartridge::load(&fixture.storage(), "pong").unwrap()
 }
 
-fn rhai_cartridge(fixture: &Fixture, script: &str) -> LoadedCartridge {
+pub(super) fn rhai_cartridge(fixture: &Fixture, script: &str) -> LoadedCartridge {
     let dir = fixture.root().join("owl");
     write_rhai_cartridge(&dir, "Owl", script);
     LoadedCartridge::load(&fixture.storage(), "owl").unwrap()
 }
 
-fn start_debug(
+pub(super) fn start_debug(
     cartridge: LoadedCartridge,
     breakpoints: Vec<Breakpoint>,
 ) -> (RunningCartridge, Option<Stop>) {
@@ -42,19 +42,26 @@ fn start_debug(
         cartridge,
         &defaults(),
         VideoOverrides::default(),
+        &font(),
         breakpoints,
     )
     .unwrap_or_else(|failed| panic!("expected the cartridge to start: {failed:?}"))
 }
 
-fn stopped(tick: Result<Tick, RuntimeError>) -> Stop {
+/// The first pixel of the published frame. The scripts of this file draw
+/// `cls(1)`, so it is 1 once a `draw()` has finished and 0 before.
+fn shown(running: &RunningCartridge) -> Option<u8> {
+    running.published.framebuffer().pixel(0, 0)
+}
+
+pub(super) fn stopped(tick: Result<Tick, RuntimeError>) -> Stop {
     match tick {
         Ok(Tick::Stopped(stop)) => stop,
         other => panic!("expected a stop, got {other:?}"),
     }
 }
 
-const LUAU: &str = "function boot()
+pub(super) const LUAU: &str = "function boot()
   log.info(\"boot\")
 end
 function tick()
@@ -66,7 +73,7 @@ function draw()
   print(\"hi\", 2, 2, 7)
 end";
 
-const RHAI: &str = "fn boot() {
+pub(super) const RHAI: &str = "fn boot() {
   log::info(\"boot\");
 }
 fn tick() {
@@ -94,6 +101,7 @@ fn a_debugged_run_without_stops_produces_what_a_normal_run_does() {
             cartridge(&normal_fixture, script),
             &defaults(),
             VideoOverrides::default(),
+            &font(),
         )
         .unwrap();
         let (mut debugged, stop) = start_debug(cartridge(&debug_fixture, script), Vec::new());
@@ -108,7 +116,7 @@ fn a_debugged_run_without_stops_produces_what_a_normal_run_does() {
                 texts(normal.take_output()),
                 "{name}"
             );
-            assert_eq!(debugged.runtime.frame(), normal.runtime.frame(), "{name}");
+            assert!(debugged.published == normal.published, "{name}");
         }
     }
 }
@@ -139,7 +147,7 @@ fn a_breakpoint_stops_the_tick_and_resuming_finishes_it() {
 
         assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
         assert_eq!(texts(running.take_output()), ["tick"], "{name}");
-        assert_eq!(running.runtime.frame().len(), 2, "{name}: draw ran too");
+        assert_eq!(shown(&running), Some(1), "{name}: draw ran too");
     }
 }
 
@@ -178,6 +186,7 @@ fn a_script_that_fails_to_start_is_handed_back_with_its_cartridge() {
         cartridge,
         &defaults(),
         VideoOverrides::default(),
+        &font(),
         Vec::new(),
     )
     .unwrap_err();
@@ -260,7 +269,8 @@ fn the_examples_play_the_same_under_the_debugger() {
             LoadedCartridge::load(&storage, name).unwrap()
         };
         let mut normal =
-            RunningCartridge::start(load(), &defaults(), VideoOverrides::default()).unwrap();
+            RunningCartridge::start(load(), &defaults(), VideoOverrides::default(), &font())
+                .unwrap();
         let (mut debugged, _) = start_debug(load(), Vec::new());
         let inputs = [
             vec![],
@@ -276,11 +286,7 @@ fn the_examples_play_the_same_under_the_debugger() {
                 Ok(Tick::Done),
                 "{name} tick {step}"
             );
-            assert_eq!(
-                debugged.runtime.frame(),
-                normal.runtime.frame(),
-                "{name} tick {step}"
-            );
+            assert!(debugged.published == normal.published, "{name} tick {step}");
         }
         assert_eq!(
             texts(debugged.take_output()),
@@ -342,12 +348,12 @@ fn a_stop_in_tick_keeps_the_hardware_with_the_runtime_until_the_tick_finishes() 
         stopped(running.advance(&[]));
         assert_eq!(running.hardware, None, "{name}: the runtime holds it");
         assert_eq!(running.stopped_in, Some(Phase::Tick), "{name}");
-        assert_eq!(running.runtime.frame(), [], "{name}: draw has not run");
+        assert_eq!(shown(&running), Some(0), "{name}: draw has not run");
 
         assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
         assert_eq!(hardware_address(&running), before, "{name}");
         assert_eq!(running.stopped_in, None, "{name}");
-        assert_eq!(running.runtime.frame().len(), 2, "{name}: draw ran after");
+        assert_eq!(shown(&running), Some(1), "{name}: draw ran after");
     }
 }
 
@@ -370,7 +376,7 @@ fn a_stopped_run_refuses_to_advance_and_changes_nothing() {
             }
             let input = running.input.clone();
             let held = running.hardware.is_some();
-            let frame = running.runtime.frame().len();
+            let published = running.published.clone();
             running.take_output();
 
             let error = running.advance(&press).unwrap_err();
@@ -382,7 +388,7 @@ fn a_stopped_run_refuses_to_advance_and_changes_nothing() {
             assert_eq!(running.stopped_in, Some(phase), "{name} {phase:?}");
             assert_eq!(running.input, input, "{name} {phase:?}: input untouched");
             assert_eq!(running.hardware.is_some(), held, "{name} {phase:?}");
-            assert_eq!(running.runtime.frame().len(), frame, "{name} {phase:?}");
+            assert!(running.published == published, "{name} {phase:?}");
             assert!(running.take_output().is_empty(), "{name} {phase:?}");
 
             assert_eq!(
@@ -392,8 +398,8 @@ fn a_stopped_run_refuses_to_advance_and_changes_nothing() {
             );
             assert_eq!(running.stopped_in, None, "{name} {phase:?}");
             assert!(running.hardware.is_some(), "{name} {phase:?}");
-            let expected = if phase == Phase::Entry { 0 } else { 2 };
-            assert_eq!(running.runtime.frame().len(), expected, "{name} {phase:?}");
+            let expected = if phase == Phase::Entry { 0 } else { 1 };
+            assert_eq!(shown(&running), Some(expected), "{name} {phase:?}");
         }
     }
 }
@@ -415,11 +421,11 @@ fn a_stop_in_draw_keeps_the_hardware_until_the_draw_finishes() {
             ["tick"],
             "{name}: tick finished"
         );
-        assert_eq!(running.runtime.frame(), [], "{name}: not published yet");
+        assert_eq!(shown(&running), Some(0), "{name}: not published yet");
 
         assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
         assert_eq!(hardware_address(&running), before, "{name}");
-        assert_eq!(running.runtime.frame().len(), 2, "{name}");
+        assert_eq!(shown(&running), Some(1), "{name}");
     }
 }
 
@@ -435,7 +441,7 @@ fn a_stop_while_starting_does_not_lend_the_hardware_or_run_draw() {
 
         assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
         assert_eq!(running.stopped_in, None, "{name}");
-        assert_eq!(running.runtime.frame(), [], "{name}: no tick, so no draw");
+        assert_eq!(shown(&running), Some(0), "{name}: no tick, so no draw");
         assert_eq!(hardware_address(&running), before, "{name}");
         assert_eq!(running.advance(&[]), Ok(Tick::Done), "{name}");
     }
@@ -515,6 +521,7 @@ fn audio_written_in_both_phases_reaches_the_psg_once_even_across_a_stop() {
         luau_cartridge(&normal_fixture, script),
         &defaults(),
         VideoOverrides::default(),
+        &font(),
     )
     .unwrap();
     normal.tick(&[]).unwrap();

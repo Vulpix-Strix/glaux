@@ -24,10 +24,13 @@ use crate::system::video::CartridgeVideoDefaults;
 use crate::system::workspace::Workspace;
 use crate::ui_text;
 use glaux_i18n::Arg;
+use glaux_machine::font::BitmapFont;
 
 /// What the states lend the shell and the question about unsaved edits.
 pub(super) struct Context<'a> {
     pub(super) video_defaults: &'a CartridgeVideoDefaults,
+    /// The System ROM font that a running cartridge's `print` draws with.
+    pub(super) font: &'a BitmapFont,
     pub(super) workspace: &'a mut Workspace,
     pub(super) sprites: &'a mut Option<SpriteDocument>,
     pub(super) code: &'a mut Option<CodeSession>,

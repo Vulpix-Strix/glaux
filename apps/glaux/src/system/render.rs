@@ -196,7 +196,7 @@ impl System {
                 return;
             }
             SystemState::Running { running, .. } => {
-                running.render(framebuffer, font);
+                running.render(framebuffer);
                 self.render_log_panel(framebuffer, rom, Some(running));
                 return;
             }
@@ -205,7 +205,7 @@ impl System {
                 view: PausedView::Game(overlay),
                 ..
             } => {
-                running.render(framebuffer, font);
+                running.render(framebuffer);
                 overlay.render(framebuffer, running.palette(), rom.palette());
                 overlay.render_controls(framebuffer, font, running.palette(), rom.palette());
                 return;

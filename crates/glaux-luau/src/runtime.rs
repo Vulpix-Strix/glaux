@@ -12,10 +12,11 @@ use mlua::chunk::ChunkMode;
 use mlua::prelude::{LuaGcIncParams as GcIncParams, LuaGcMode as GcMode};
 use mlua::{Function, Lua, Value, VmState};
 
+use glaux_machine::font::BitmapFont;
 use glaux_machine::hardware::CartridgeHardware;
 use glaux_script::{
-    DrawCommand, HardwareSlot, Loan, LogEntry, LogSink, Phase, Recording, RuntimeError,
-    ScriptError, StartFailure,
+    DrawBudget, HardwareSlot, Loan, LogEntry, LogSink, Phase, RuntimeError, ScriptError,
+    StartFailure,
 };
 
 use crate::api;
@@ -103,8 +104,10 @@ impl Meter {
 pub struct Runtime {
     lua: Lua,
     output: Rc<LogSink>,
+    /// The draw budget of the `draw()` call in progress, if one is.
     pending: PendingFrame,
-    frame: Vec<DrawCommand>,
+    /// The System ROM font that `print` draws with.
+    font: BitmapFont,
     /// The buttons and keys of the tick in progress.
     input: Rc<Cell<InputState>>,
     /// Logical ticks completed so far, as read by `frame()` and `t()`.
@@ -115,6 +118,9 @@ pub struct Runtime {
     source: Rc<dyn ModuleSource>,
     /// Holds the cartridge hardware while a phase runs.
     hardware: HardwareSlot,
+    /// The hardware that [`tick`](Self::tick) lends, for tests.
+    #[cfg(test)]
+    scratch: Option<Box<CartridgeHardware>>,
     /// Present when the VM is being debugged.
     debug: Option<Attachment>,
 }
@@ -123,7 +129,6 @@ impl fmt::Debug for Runtime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Runtime")
             .field("meter", &self.meter)
-            .field("frame", &self.frame.len())
             .finish_non_exhaustive()
     }
 }
@@ -135,14 +140,15 @@ impl Runtime {
     ///
     /// `chunk_name` is shown verbatim in error locations, as in
     /// `main.luau:3: boom`. `source` must be Luau text, and bytecode is
-    /// rejected.
+    /// rejected. `font` is what `print` draws text with.
     pub fn start(
         chunk_name: &str,
         source: &[u8],
         modules: impl ModuleSource + 'static,
         budget: Budget,
+        font: BitmapFont,
     ) -> Result<Self, StartFailure> {
-        Self::start_with(chunk_name, source, modules, budget, None)
+        Self::start_with(chunk_name, source, modules, budget, font, None)
     }
 
     /// Like [`start`](Self::start), for a VM that stops at `breakpoints` and
@@ -157,11 +163,12 @@ impl Runtime {
         source: &[u8],
         modules: impl ModuleSource + 'static,
         budget: Budget,
+        font: BitmapFont,
         port: DebugPort,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<Self, StartFailure> {
         let debug = Some((port, breakpoints));
-        Self::start_with(chunk_name, source, modules, budget, debug)
+        Self::start_with(chunk_name, source, modules, budget, font, debug)
     }
 
     fn start_with(
@@ -169,6 +176,7 @@ impl Runtime {
         source: &[u8],
         modules: impl ModuleSource + 'static,
         budget: Budget,
+        font: BitmapFont,
         debug: Option<(DebugPort, Vec<Breakpoint>)>,
     ) -> Result<Self, StartFailure> {
         let meter = Rc::new(Meter {
@@ -215,7 +223,7 @@ impl Runtime {
             lua,
             output,
             pending: Rc::default(),
-            frame: Vec::new(),
+            font,
             input: Rc::default(),
             ticks: Rc::default(),
             audio: Rc::default(),
@@ -223,6 +231,8 @@ impl Runtime {
             modules: Rc::default(),
             source: Rc::new(modules),
             hardware: HardwareSlot::new(),
+            #[cfg(test)]
+            scratch: Some(crate::tests::hardware()),
             debug,
         };
 
@@ -277,8 +287,10 @@ impl Runtime {
     /// Calls `draw()` with the hardware lent from `home`, after a
     /// successful [`run_tick`](Self::run_tick). See that method for `home`.
     ///
-    /// A `draw()` that returns normally replaces [`frame`](Self::frame) with
-    /// the commands it recorded. One that fails leaves the previous frame.
+    /// The drawing functions draw on the framebuffer of the lent hardware
+    /// as they are called. Whoever owns the hardware decides what to do with
+    /// the result: a `draw()` that fails leaves it half drawn, and nothing
+    /// here reverts it.
     ///
     /// A successful call advances the logical time read by `frame()` and
     /// `t()`. A failed one does not.
@@ -292,12 +304,29 @@ impl Runtime {
         self.draw_callback()
     }
 
-    /// A whole tick with no hardware lent, for tests of the scripting layer
-    /// that never touch memory.
+    /// A whole tick on a hardware of the runtime's own, for tests of the
+    /// scripting layer. The hardware persists across calls, and like the
+    /// system it clears the framebuffer to the backdrop color between
+    /// `tick()` and `draw()`.
     #[cfg(test)]
     pub fn tick(&mut self, input: InputState) -> Result<(), RuntimeError> {
-        self.tick_callback(input)?;
-        self.draw_callback()
+        let mut home = self.scratch.take();
+        let result = self.run_tick(input, &mut home).and_then(|()| {
+            if let Some(hardware) = home.as_deref_mut() {
+                hardware
+                    .framebuffer
+                    .clear(hardware.registers.backdrop_color());
+            }
+            self.run_draw(&mut home)
+        });
+        self.scratch = home;
+        result
+    }
+
+    /// The hardware that [`tick`](Self::tick) lends.
+    #[cfg(test)]
+    pub(crate) fn scratch(&self) -> &CartridgeHardware {
+        self.scratch.as_deref().expect("the hardware is back")
     }
 
     fn tick_callback(&mut self, input: InputState) -> Result<(), RuntimeError> {
@@ -307,12 +336,10 @@ impl Runtime {
     }
 
     fn draw_callback(&mut self) -> Result<(), RuntimeError> {
-        *self.pending.borrow_mut() = Some(Recording::default());
+        *self.pending.borrow_mut() = Some(DrawBudget::default());
         let drawn = self.callback(Phase::Draw);
-        let recording = self.pending.borrow_mut().take();
-        if drawn? && let Some(recording) = recording {
-            self.frame = recording.into_commands();
-        }
+        self.pending.borrow_mut().take();
+        drawn?;
         self.ticks.set(self.ticks.get() + 1);
         Ok(())
     }
@@ -327,12 +354,6 @@ impl Runtime {
     #[cfg(test)]
     pub(crate) fn lua(&self) -> &Lua {
         &self.lua
-    }
-
-    /// The commands recorded by the last `draw()` that completed, in call
-    /// order. Empty until one does.
-    pub fn frame(&self) -> &[DrawCommand] {
-        &self.frame
     }
 
     /// Entries logged since the last call, oldest first.
@@ -383,7 +404,13 @@ impl Runtime {
         // cannot change how Glaux converts values to text.
         let tostring: Function = globals.get("tostring")?;
         api::log::install(&self.lua, &tostring, &self.output)?;
-        api::draw::install(&self.lua, &tostring, &self.pending)?;
+        api::draw::install(
+            &self.lua,
+            &tostring,
+            &self.pending,
+            &self.hardware,
+            &self.font,
+        )?;
         api::input::install(&self.lua, &self.input)?;
         api::time::install(&self.lua, &self.ticks)?;
         api::audio::install(&self.lua, &self.audio)?;

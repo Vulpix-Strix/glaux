@@ -4,9 +4,9 @@ An optional callback that runs right after [tick](glaux://api/lifecycle/tick) on
 
 ## Notes
 
-Glaux calls `draw()` with no parameters and ignores its result. The commands it records, in call order, become the frame the screen shows. The frame is complete only when `draw()` returns normally. One that fails leaves the previous frame, and the cartridge stops.
+Glaux calls `draw()` with no parameters and ignores its result. Each drawing function draws at once, in call order, on the work framebuffer. The frame becomes what the screen shows only when `draw()` returns normally. One that fails, or that is stopped by the debugger, leaves the previous frame on screen, and a failure stops the cartridge.
 
-Each call starts with an empty recording, so draw the whole frame every time. Begin with [cls](glaux://api/graphics/cls) to choose the background. A cartridge without a `draw` presents an empty frame.
+Each frame starts from a framebuffer cleared to the backdrop color, so draw the whole frame every time. Begin with [cls](glaux://api/graphics/cls) to choose the background. A cartridge without a `draw` presents the backdrop color.
 
 The drawing functions are [cls](glaux://api/graphics/cls), [pset](glaux://api/graphics/pset), [rectfill](glaux://api/graphics/rectfill), [text](glaux://api/graphics/text) and [spr](glaux://api/graphics/spr). Calling one from the top level, `boot()` or `tick()` fails with `can only be called during draw()`.
 

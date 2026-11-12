@@ -6,12 +6,13 @@ use std::rc::Rc;
 
 use glaux_audio::AudioState;
 use glaux_input::InputState;
+use glaux_machine::font::BitmapFont;
 use glaux_machine::hardware::CartridgeHardware;
 use glaux_modules::ModuleSource;
 use glaux_script::debug::{Breakpoint, DebugPort};
 use glaux_script::{
-    DrawCommand, HardwareSlot, Loan, LogEntry, LogLevel, LogSink, Phase, Recording, RuntimeError,
-    ScriptError, StartFailure,
+    DrawBudget, HardwareSlot, Loan, LogEntry, LogLevel, LogSink, Phase, RuntimeError, ScriptError,
+    StartFailure,
 };
 use rhai::{AST, CallFnOptions, Dynamic, Engine, EvalAltResult, FnAccess, Map, Module, Scope};
 
@@ -128,14 +129,17 @@ pub struct Runtime {
     /// The object bound as `this` in every callback.
     state: Dynamic,
     output: Rc<LogSink>,
+    /// The draw budget of the `draw()` call in progress, if one is.
     pending: PendingFrame,
-    frame: Vec<DrawCommand>,
     input: Rc<Cell<InputState>>,
     ticks: Rc<Cell<u64>>,
     audio: Rc<RefCell<AudioState>>,
     meter: Rc<Meter>,
     /// Holds the cartridge hardware while a phase runs.
     hardware: HardwareSlot,
+    /// The hardware that [`tick`](Self::tick) lends, for tests.
+    #[cfg(test)]
+    scratch: Option<Box<CartridgeHardware>>,
     /// Present when the engine is being debugged.
     debug: Option<Rc<Debugger>>,
 }
@@ -144,7 +148,6 @@ impl fmt::Debug for Runtime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Runtime")
             .field("meter", &self.meter)
-            .field("frame", &self.frame.len())
             .finish_non_exhaustive()
     }
 }
@@ -155,14 +158,16 @@ impl Runtime {
     /// runtime keeps for its whole life.
     ///
     /// `chunk_name` is shown verbatim in error locations, as in
-    /// `main.rhai:3: boom`. `source` must be UTF-8 Rhai text.
+    /// `main.rhai:3: boom`. `source` must be UTF-8 Rhai text. `font` is what
+    /// `text` draws with.
     pub fn start(
         chunk_name: &str,
         source: &[u8],
         modules: impl ModuleSource + 'static,
         budget: Budget,
+        font: BitmapFont,
     ) -> Result<Self, StartFailure> {
-        Self::start_with(chunk_name, source, modules, budget, None)
+        Self::start_with(chunk_name, source, modules, budget, font, None)
     }
 
     /// Like [`start`](Self::start), for an engine that stops at
@@ -179,11 +184,12 @@ impl Runtime {
         source: &[u8],
         modules: impl ModuleSource + 'static,
         budget: Budget,
+        font: BitmapFont,
         port: DebugPort,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<Self, StartFailure> {
         let debug = Some((port, breakpoints));
-        Self::start_with(chunk_name, source, modules, budget, debug)
+        Self::start_with(chunk_name, source, modules, budget, font, debug)
     }
 
     fn start_with(
@@ -191,6 +197,7 @@ impl Runtime {
         source: &[u8],
         modules: impl ModuleSource + 'static,
         budget: Budget,
+        font: BitmapFont,
         debug: Option<(DebugPort, Vec<Breakpoint>)>,
     ) -> Result<Self, StartFailure> {
         let output: Rc<LogSink> = Rc::default();
@@ -204,6 +211,7 @@ impl Runtime {
             module: RefCell::default(),
         });
         let pending: PendingFrame = Rc::default();
+        let hardware = HardwareSlot::new();
         let input: Rc<Cell<InputState>> = Rc::default();
         let ticks: Rc<Cell<u64>> = Rc::default();
         let audio: Rc<RefCell<AudioState>> = Rc::default();
@@ -214,7 +222,7 @@ impl Runtime {
             debug.attach(&mut engine);
         }
         api::compare::install(&mut engine);
-        api::draw::install(&mut engine, &pending);
+        api::draw::install(&mut engine, &pending, &hardware, &font);
         api::log::install(&mut engine, &output);
         api::input::install(&mut engine, &input);
         api::time::install(&mut engine, &ticks);
@@ -249,12 +257,13 @@ impl Runtime {
             state: Map::new().into(),
             output,
             pending,
-            frame: Vec::new(),
             input,
             ticks,
             audio,
             meter,
-            hardware: HardwareSlot::new(),
+            hardware,
+            #[cfg(test)]
+            scratch: Some(crate::tests::hardware()),
             debug,
         };
         match runtime.callback(Phase::Boot) {
@@ -296,8 +305,10 @@ impl Runtime {
     /// Calls `draw()` with the hardware lent from `home`, after a
     /// successful [`run_tick`](Self::run_tick). See that method for `home`.
     ///
-    /// A `draw()` that returns normally replaces [`frame`](Self::frame) with
-    /// the commands it recorded. One that fails leaves the previous frame.
+    /// The drawing functions draw on the framebuffer of the lent hardware
+    /// as they are called. Whoever owns the hardware decides what to do with
+    /// the result: a `draw()` that fails leaves it half drawn, and nothing
+    /// here reverts it.
     ///
     /// A successful call advances the logical time read by `frame()` and
     /// `t()`. A failed one does not.
@@ -311,12 +322,29 @@ impl Runtime {
         self.draw_callback()
     }
 
-    /// A whole tick with no hardware lent, for tests of the scripting layer
-    /// that never touch memory.
+    /// A whole tick on a hardware of the runtime's own, for tests of the
+    /// scripting layer. The hardware persists across calls, and like the
+    /// system it clears the framebuffer to the backdrop color between
+    /// `tick()` and `draw()`.
     #[cfg(test)]
     pub fn tick(&mut self, input: InputState) -> Result<(), RuntimeError> {
-        self.tick_callback(input)?;
-        self.draw_callback()
+        let mut home = self.scratch.take();
+        let result = self.run_tick(input, &mut home).and_then(|()| {
+            if let Some(hardware) = home.as_deref_mut() {
+                hardware
+                    .framebuffer
+                    .clear(hardware.registers.backdrop_color());
+            }
+            self.run_draw(&mut home)
+        });
+        self.scratch = home;
+        result
+    }
+
+    /// The hardware that [`tick`](Self::tick) lends.
+    #[cfg(test)]
+    pub(crate) fn scratch(&self) -> &CartridgeHardware {
+        self.scratch.as_deref().expect("the hardware is back")
     }
 
     fn tick_callback(&mut self, input: InputState) -> Result<(), RuntimeError> {
@@ -326,12 +354,10 @@ impl Runtime {
     }
 
     fn draw_callback(&mut self) -> Result<(), RuntimeError> {
-        *self.pending.borrow_mut() = Some(Recording::default());
+        *self.pending.borrow_mut() = Some(DrawBudget::default());
         let drawn = self.callback(Phase::Draw);
-        let recording = self.pending.borrow_mut().take();
-        if drawn? && let Some(recording) = recording {
-            self.frame = recording.into_commands();
-        }
+        self.pending.borrow_mut().take();
+        drawn?;
         self.ticks.set(self.ticks.get() + 1);
         Ok(())
     }
@@ -352,12 +378,6 @@ impl Runtime {
     #[cfg(test)]
     pub(crate) fn engine(&self) -> &Engine {
         &self.engine
-    }
-
-    /// The commands recorded by the last `draw()` that completed, in call
-    /// order. Empty until one does.
-    pub fn frame(&self) -> &[DrawCommand] {
-        &self.frame
     }
 
     /// Entries logged since the last call, oldest first.

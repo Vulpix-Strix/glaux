@@ -61,7 +61,7 @@ fn the_pause_screen_shows_the_frozen_frame_under_the_overlay() {
     };
     let frozen = |running: &RunningCartridge| {
         let mut fb = Framebuffer::new();
-        running.render(&mut fb, rom.font());
+        running.render(&mut fb);
         fb
     };
     assert_frame_eq!(frozen(running), filled(1));

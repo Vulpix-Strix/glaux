@@ -12,6 +12,7 @@ pub mod oam;
 pub mod obj_palette;
 pub mod palette;
 pub mod psg;
+pub mod published;
 pub mod registers;
 pub mod sprite;
 pub mod system_rom;

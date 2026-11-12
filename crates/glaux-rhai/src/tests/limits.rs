@@ -133,6 +133,7 @@ fn sized_message(source: &str) -> String {
         source.as_bytes(),
         Files::default(),
         Budget::default(),
+        font(),
     ) {
         Err(StartFailure {
             error:
@@ -176,6 +177,7 @@ fn state_kept_in_this_is_bounded_across_ticks() {
         b"fn boot() { this.log = []; }\nfn tick() { this.log.push(frame()); }",
         Files::default(),
         SMALL,
+        font(),
     )
     .unwrap();
     let mut failed = None;
@@ -206,8 +208,14 @@ fn maps_grown_by_index_in_this_are_bounded_across_ticks() {
             4 * 1024 - 1,
         ),
     ] {
-        let mut runtime =
-            Runtime::start("main.rhai", source.as_bytes(), Files::default(), SMALL).unwrap();
+        let mut runtime = Runtime::start(
+            "main.rhai",
+            source.as_bytes(),
+            Files::default(),
+            SMALL,
+            font(),
+        )
+        .unwrap();
         let mut stopped = None;
         for tick in 0..10_000 {
             if let Err(err) = runtime.tick(NO_INPUT) {

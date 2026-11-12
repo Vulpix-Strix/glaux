@@ -93,6 +93,7 @@ fn a_chime_cut_off_by_the_shell_leaves_nothing_behind() {
         audio_source: AudioSource::Silent,
         sound,
         video_defaults: video_defaults(),
+        font: fake_rom().font().clone(),
         workspace: Workspace::new(fake_rom().font(), fake_rom().palette().clone()),
         sprites: None,
         code: None,

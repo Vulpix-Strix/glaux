@@ -1,6 +1,7 @@
 //! Drawing functions and frame publication.
 
 use super::*;
+use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::obj_palette::ObjBank;
 use pretty_assertions::assert_eq;
 
@@ -60,39 +61,63 @@ fn sprite_with_palette(tile: u16, width: u8, palette: u8) -> DrawCommand {
     }
 }
 
-/// The frame published by one tick of a script whose `draw()` body is
-/// `body`.
-fn drawn(body: &str) -> Vec<DrawCommand> {
+/// The framebuffer of the test hardware after one tick of a script whose
+/// `draw()` body is `body`.
+fn drawn(body: &str) -> Framebuffer {
     let mut runtime = started(&format!("function draw() {body} end"));
     runtime.tick(NO_INPUT).unwrap();
-    runtime.frame().to_vec()
+    runtime.scratch().framebuffer.clone()
 }
 
-/// The runtime error raised by the first tick of `draw()` `body`.
-fn draw_error(body: &str) -> String {
+/// The framebuffer that executing `commands` on fresh test hardware gives.
+fn after(commands: &[DrawCommand]) -> Framebuffer {
+    let mut hardware = hardware();
+    for command in commands {
+        command.execute(&mut hardware, &font());
+    }
+    hardware.framebuffer
+}
+
+/// Asserts that `body` draws exactly what `commands` do. What they draw must
+/// show on screen, so that two drawings cannot match by both being blank.
+#[track_caller]
+fn assert_drew(body: &str, commands: &[DrawCommand]) {
+    let expected = after(commands);
+    assert!(expected != Framebuffer::new(), "{commands:?} draw nothing");
+    assert!(
+        drawn(body) == expected,
+        "`{body}` did not draw {commands:?}"
+    );
+}
+
+/// The error of the first tick of `draw()` `body`, and what it had drawn
+/// by then.
+fn draw_failure(body: &str) -> (String, Framebuffer) {
     let mut runtime = started(&format!("function draw() {body} end"));
     match runtime.tick(NO_INPUT) {
         Err(RuntimeError {
             phase: Phase::Draw,
             error: ScriptError::Runtime(message),
-        }) => message,
+        }) => (message, runtime.scratch().framebuffer.clone()),
         other => panic!("expected a runtime error in draw, got {other:?}"),
     }
 }
 
-#[test]
-fn the_frame_starts_empty() {
-    assert_eq!(started("").frame(), []);
+/// The runtime error raised by the first tick of `draw()` `body`.
+fn draw_error(body: &str) -> String {
+    draw_failure(body).0
 }
 
 #[test]
-fn draw_functions_record_commands_in_call_order() {
-    assert_eq!(drawn("cls(3)"), [DrawCommand::Clear(3)]);
-    assert_eq!(
-        drawn(
-            r#"cls(1) rectfill(1, 2, 3, 4, 9) spr(3, 7, 8) pset(5, 5, 2) rectfill(0, 0, 8, 8, 6) print("HI", 10, 20, 16) cls(0)"#
-        ),
-        [
+fn the_framebuffer_starts_blank() {
+    assert!(started("").scratch().framebuffer == Framebuffer::new());
+}
+
+#[test]
+fn draw_functions_draw_in_call_order() {
+    assert_drew(
+        r#"cls(1) rectfill(1, 2, 3, 4, 9) spr(3, 7, 8) pset(5, 5, 2) rectfill(0, 0, 8, 8, 6) print("HI", 10, 20, 16)"#,
+        &[
             DrawCommand::Clear(1),
             rect(1, 2, 3, 4, 9),
             sprite(3, 7, 8),
@@ -104,26 +129,29 @@ fn draw_functions_record_commands_in_call_order() {
                 y: 20,
                 color: 16,
             },
-            DrawCommand::Clear(0),
-        ]
+        ],
     );
+    // The last writer of a pixel wins, and a later `cls` erases everything.
+    assert_eq!(drawn("pset(1, 1, 2) pset(1, 1, 3)").pixel(1, 1), Some(3));
+    assert_eq!(drawn("pset(1, 1, 3) pset(1, 1, 2)").pixel(1, 1), Some(2));
+    assert!(drawn("rectfill(0, 0, 9, 9, 5) cls(0)") == Framebuffer::new());
 }
 
 #[test]
 fn print_converts_text_with_the_original_tostring() {
-    assert_eq!(
-        drawn(r#"tostring = function() return "x" end print(42, 0, 0, 1)"#),
-        [DrawCommand::Text {
+    assert_drew(
+        r#"tostring = function() return "x" end print(42, 0, 0, 1)"#,
+        &[DrawCommand::Text {
             text: "42".into(),
             x: 0,
             y: 0,
             color: 1,
-        }]
+        }],
     );
 }
 
 #[test]
-fn each_successful_draw_replaces_the_frame() {
+fn each_tick_draws_on_a_framebuffer_cleared_to_the_backdrop() {
     let mut runtime = started(
         r#"
         local n = 0
@@ -131,47 +159,43 @@ fn each_successful_draw_replaces_the_frame() {
         "#,
     );
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.frame(), [pixel(1, 0, 1)]);
+    assert!(runtime.scratch().framebuffer == after(&[pixel(1, 0, 1)]));
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.frame(), [pixel(1, 0, 2), pixel(2, 0, 2)]);
+    assert!(runtime.scratch().framebuffer == after(&[pixel(1, 0, 2), pixel(2, 0, 2)]));
 }
 
 #[test]
-fn a_draw_that_records_nothing_publishes_an_empty_frame() {
+fn a_draw_that_draws_nothing_leaves_the_backdrop() {
     let mut runtime =
         started("local first = true function draw() if first then cls(1) end first = false end");
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.frame(), [DrawCommand::Clear(1)]);
+    assert!(runtime.scratch().framebuffer == after(&[DrawCommand::Clear(1)]));
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.frame(), []);
+    assert!(runtime.scratch().framebuffer == Framebuffer::new());
 }
 
 #[test]
-fn a_failing_draw_keeps_the_previous_frame() {
-    // A runtime error, the interrupt budget and the draw-cost cap.
+fn a_failing_draw_leaves_what_it_drew_before_failing() {
+    // A runtime error, the interrupt budget and the draw-cost cap. The
+    // command that exceeds the cap is not drawn.
     for failure in [
         r#"error("boom")"#,
         "while true do end",
         "spr(0, 0, 0, 16, 64)",
     ] {
         let mut runtime = started(&format!(
-            r#"
-            local n = 0
-            function draw()
-                n += 1
-                cls(n)
-                if n == 2 then pset(1, 1, 1) {failure} end
-            end
-            "#
+            "function draw() cls(2) pset(1, 1, 1) {failure} end"
         ));
-        runtime.tick(NO_INPUT).unwrap();
         assert!(runtime.tick(NO_INPUT).is_err(), "{failure}");
-        assert_eq!(runtime.frame(), [DrawCommand::Clear(1)], "{failure}");
+        assert!(
+            runtime.scratch().framebuffer == after(&[DrawCommand::Clear(2), pixel(1, 1, 1)]),
+            "{failure}"
+        );
     }
 }
 
 #[test]
-fn a_failing_tick_keeps_the_previous_frame() {
+fn a_failing_tick_does_not_reach_draw() {
     let mut runtime = started(
         r#"
         local n = 0
@@ -181,15 +205,16 @@ fn a_failing_tick_keeps_the_previous_frame() {
     );
     runtime.tick(NO_INPUT).unwrap();
     assert!(runtime.tick(NO_INPUT).is_err());
-    assert_eq!(runtime.frame(), [DrawCommand::Clear(1)]);
+    assert!(runtime.scratch().framebuffer == after(&[DrawCommand::Clear(1)]));
 }
 
 #[test]
-fn removing_draw_keeps_the_last_frame() {
+fn removing_draw_leaves_only_the_backdrop() {
     let mut runtime = started("function draw() cls(4) draw = nil end");
     runtime.tick(NO_INPUT).unwrap();
+    assert!(runtime.scratch().framebuffer == after(&[DrawCommand::Clear(4)]));
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.frame(), [DrawCommand::Clear(4)]);
+    assert!(runtime.scratch().framebuffer == Framebuffer::new());
 }
 
 #[test]
@@ -234,9 +259,9 @@ fn draw_functions_fail_after_draw_returns() {
 
 #[test]
 fn colors_must_be_palette_indices() {
-    assert_eq!(
-        drawn("cls(0) cls(255)"),
-        [DrawCommand::Clear(0), DrawCommand::Clear(255)]
+    assert_drew(
+        "cls(0) cls(255)",
+        &[DrawCommand::Clear(0), DrawCommand::Clear(255)],
     );
     for (call, detail) in [
         (
@@ -306,17 +331,22 @@ fn coordinates_must_be_numbers() {
 
 #[test]
 fn fractional_coordinates_are_floored() {
-    assert_eq!(
-        drawn("pset(1.9, 2.5, 1) pset(-0.5, -1.5, 1) spr(2, 3.9, -0.5)"),
-        [pixel(1, 2, 1), pixel(-1, -2, 1), sprite(2, 3, -1)]
+    assert_drew(
+        "pset(1.9, 2.5, 1) pset(10.5, 20.9, 2) spr(2, 3.9, 4.1) spr(2, -0.5, 1.5)",
+        &[
+            pixel(1, 2, 1),
+            pixel(10, 20, 2),
+            sprite(2, 3, 4),
+            sprite(2, -1, 1),
+        ],
     );
 }
 
 #[test]
 fn sprite_tile_indices_must_be_integers_in_range() {
-    assert_eq!(
-        drawn("spr(0, 1, 2) spr(1023, 3, 4)"),
-        [sprite(0, 1, 2), sprite(1023, 3, 4)]
+    assert_drew(
+        "spr(0, 1, 2) spr(1023, 3, 4)",
+        &[sprite(0, 1, 2), sprite(1023, 3, 4)],
     );
     for (call, detail) in [
         (
@@ -346,28 +376,28 @@ fn sprite_tile_indices_must_be_integers_in_range() {
 }
 
 #[test]
-fn sprite_blocks_record_one_command_per_call() {
-    assert_eq!(
-        drawn("cls(1) spr(24, 7, 8, 2, 2) pset(0, 0, 2) spr(5, 0.5, -1.5, 3, 2) spr(6, 0, 0)"),
-        [
+fn sprite_blocks_draw_one_block_per_call() {
+    assert_drew(
+        "cls(1) spr(24, 7, 8, 2, 2) pset(0, 0, 2) spr(5, 0.5, -1.5, 3, 2) spr(6, 0, 0)",
+        &[
             DrawCommand::Clear(1),
             sprite_block(24, 7, 8, 2, 2),
             pixel(0, 0, 2),
             sprite_block(5, 0, -2, 3, 2),
             sprite(6, 0, 0),
-        ]
+        ],
     );
 }
 
 #[test]
 fn a_missing_sprite_dimension_defaults_to_one_tile() {
-    assert_eq!(
-        drawn("spr(0, 0, 0, nil, nil) spr(0, 0, 0, 3) spr(0, 0, 0, nil, 4)"),
-        [
+    assert_drew(
+        "spr(0, 0, 0, nil, nil) spr(0, 0, 0, 3) spr(0, 0, 0, nil, 4)",
+        &[
             sprite(0, 0, 0),
             sprite_block(0, 0, 0, 3, 1),
             sprite_block(0, 0, 0, 1, 4),
-        ]
+        ],
     );
 }
 
@@ -405,17 +435,14 @@ fn sprite_dimensions_must_be_positive_integers() {
 
 #[test]
 fn sprite_blocks_must_fit_the_object_tile_grid() {
-    assert_eq!(
-        drawn("spr(14, 0, 0, 2, 1) spr(1008, 0, 0, 16, 1)"),
-        [
+    assert_drew(
+        "spr(14, 0, 0, 2, 1) spr(1008, 0, 0, 16, 1)",
+        &[
             sprite_block(14, 0, 0, 2, 1),
             sprite_block(1008, 0, 0, 16, 1),
-        ]
+        ],
     );
-    assert_eq!(
-        drawn("spr(0, 0, 0, 16, 64)"),
-        [sprite_block(0, 0, 0, 16, 64)]
-    );
+    assert_drew("spr(0, 0, 0, 16, 64)", &[sprite_block(0, 0, 0, 16, 64)]);
     for (call, detail) in [
         (
             "spr(15, 0, 0, 2, 1)",
@@ -444,36 +471,32 @@ fn sprite_blocks_must_fit_the_object_tile_grid() {
 
 #[test]
 fn omitted_or_nil_sprite_options_use_their_defaults() {
-    assert_eq!(
-        drawn(
-            "spr(0, 0, 0) spr(0, 0, 0, nil, nil, nil, nil, nil) \
-             spr(0, 0, 0, 2, 2, false) spr(3, 0, 0, 1, 1, false, false, nil)"
-        ),
-        [
+    assert_drew(
+        "spr(0, 0, 0) spr(0, 0, 0, nil, nil, nil, nil, nil) \
+             spr(0, 0, 0, 2, 2, false) spr(3, 0, 0, 1, 1, false, false, nil)",
+        &[
             sprite(0, 0, 0),
             sprite(0, 0, 0),
             sprite_block(0, 0, 0, 2, 2),
             sprite(3, 0, 0),
-        ]
+        ],
     );
 }
 
 #[test]
-fn sprite_flips_are_recorded_for_single_tiles_and_blocks() {
-    assert_eq!(
-        drawn(
-            "spr(3, 1, 2, nil, nil, true) spr(3, 1, 2, nil, nil, false, true) \
+fn sprite_flips_apply_to_single_tiles_and_blocks() {
+    assert_drew(
+        "spr(3, 1, 2, nil, nil, true) spr(3, 1, 2, nil, nil, false, true) \
              spr(3, 1, 2, 1, 1, true, true) spr(24, 7, 8, 2, 3, true, false) \
-             spr(24, 7, 8, 2, 3, false, true) spr(24, 7, 8, 2, 3, true, true)"
-        ),
-        [
+             spr(24, 7, 8, 2, 3, false, true) spr(24, 7, 8, 2, 3, true, true)",
+        &[
             sprite_flipped(3, 1, 2, 1, 1, true, false),
             sprite_flipped(3, 1, 2, 1, 1, false, true),
             sprite_flipped(3, 1, 2, 1, 1, true, true),
             sprite_flipped(24, 7, 8, 2, 3, true, false),
             sprite_flipped(24, 7, 8, 2, 3, false, true),
             sprite_flipped(24, 7, 8, 2, 3, true, true),
-        ]
+        ],
     );
 }
 
@@ -510,10 +533,10 @@ fn sprite_flips_must_be_booleans() {
 }
 
 #[test]
-fn sprite_palettes_are_recorded_for_every_bank() {
-    assert_eq!(
-        drawn("spr(3, 0, 0, 1, 1, false, false, 0) spr(4, 0, 0, 2, 1, nil, nil, 7)"),
-        [sprite_with_palette(3, 1, 0), sprite_with_palette(4, 2, 7)]
+fn sprite_palettes_apply_for_every_bank() {
+    assert_drew(
+        "spr(3, 0, 0, 1, 1, false, false, 0) spr(4, 0, 0, 2, 1, nil, nil, 7)",
+        &[sprite_with_palette(3, 1, 0), sprite_with_palette(4, 2, 7)],
     );
 }
 
@@ -550,12 +573,12 @@ fn flipped_sprites_cost_the_same_as_unflipped_ones() {
     const BLOCKS: usize = MAX_DRAW_COMMANDS / (4 * SPRITE_TILE_COST);
     for flips in ["true, false", "false, true", "true, true"] {
         let fits = format!("for i = 1, {BLOCKS} do spr(0, 0, 0, 2, 2, {flips}) end");
-        assert_eq!(drawn(&fits).len(), BLOCKS, "{flips}");
-        let over = format!("for i = 1, {BLOCKS} do spr(0, 0, 0, 2, 2, {flips}) end pset(0, 0, 1)");
-        assert!(
-            draw_error(&over).contains("too many draw commands"),
-            "{flips}"
-        );
+        assert!(drawn(&fits) != Framebuffer::new(), "{flips}");
+        let over =
+            format!("for i = 1, {BLOCKS} do spr(0, 0, 0, 2, 2, {flips}) end pset(300, 200, 1)");
+        let (message, framebuffer) = draw_failure(&over);
+        assert!(message.contains("too many draw commands"), "{flips}");
+        assert_eq!(framebuffer.pixel(300, 200), Some(0), "{flips}: not drawn");
     }
     assert!(
         draw_error("spr(0, 0, 0, 16, 64, true, true) cls(0)").contains("too many draw commands")
@@ -563,20 +586,15 @@ fn flipped_sprites_cost_the_same_as_unflipped_ones() {
 }
 
 #[test]
-fn rectfill_records_one_rectangle() {
-    assert_eq!(
-        drawn("rectfill(10, 20, 30, 40, 5)"),
-        [rect(10, 20, 30, 40, 5)]
+fn rectfill_draws_one_rectangle() {
+    assert_drew("rectfill(10, 20, 30, 40, 5)", &[rect(10, 20, 30, 40, 5)]);
+    // Off-screen rectangles draw nothing, and one that is partly off-screen
+    // is clipped to the screen.
+    assert_drew(
+        "rectfill(-500, 1000, 1, 1, 7) rectfill(1.9, -0.5, 2, 3, 255)",
+        &[rect(1, -1, 2, 3, 255)],
     );
-    // Off-screen and oversized rectangles are recorded unclipped.
-    assert_eq!(
-        drawn("rectfill(-500, 1000, 1, 1, 0) rectfill(1.9, -0.5, 2, 3, 255)"),
-        [rect(-500, 1000, 1, 1, 0), rect(1, -1, 2, 3, 255)]
-    );
-    assert_eq!(
-        drawn("rectfill(0, 0, 1e300, 4, 1)"),
-        [rect(0, 0, i32::MAX, 4, 1)]
-    );
+    assert_drew("rectfill(0, 0, 1e300, 4, 1)", &[rect(0, 0, i32::MAX, 4, 1)]);
 }
 
 #[test]
@@ -671,13 +689,22 @@ fn a_rectfill_costs_one_draw_unit_whatever_its_area() {
     let run = |extra: &str| {
         let source = format!(
             "function draw() for i = 1, {MAX_DRAW_COMMANDS} - 1 do pset(0, 0, 1) end \
-             rectfill(-1000, -1000, 100000, 100000, 1) {extra} end"
+             rectfill(-1000, -1000, 100000, 100000, 2) {extra} end"
         );
-        let mut runtime =
-            Runtime::start("main.luau", source.as_bytes(), Files::default(), budget).unwrap();
-        runtime.tick(NO_INPUT).map(|()| runtime.frame().len())
+        let mut runtime = Runtime::start(
+            "main.luau",
+            source.as_bytes(),
+            Files::default(),
+            budget,
+            font(),
+        )
+        .unwrap();
+        runtime
+            .tick(NO_INPUT)
+            .map(|()| runtime.scratch().framebuffer.clone())
     };
-    assert_eq!(run("").unwrap(), MAX_DRAW_COMMANDS);
+    let framebuffer = run("").unwrap();
+    assert_eq!(framebuffer.pixel(319, 239), Some(2), "the rectangle drew");
 
     let err = run("pset(0, 0, 1)").unwrap_err();
     assert_eq!(err.phase, Phase::Draw);
@@ -688,14 +715,15 @@ fn a_rectfill_costs_one_draw_unit_whatever_its_area() {
 }
 
 #[test]
-fn huge_coordinates_saturate() {
-    assert_eq!(
-        drawn("pset(1e300, -1e300, 1) pset(math.huge, -math.huge, 2) pset(400, -3, 3)"),
-        [
-            pixel(i32::MAX, i32::MIN, 1),
-            pixel(i32::MAX, i32::MIN, 2),
-            pixel(400, -3, 3),
-        ]
+fn huge_coordinates_saturate_off_screen() {
+    // A coordinate that wrapped instead of saturating could land on screen.
+    assert!(
+        drawn("pset(1e300, -1e300, 1) pset(math.huge, -math.huge, 2) pset(400, -3, 3)")
+            == Framebuffer::new()
+    );
+    assert_drew(
+        "pset(1e300, 5, 1) pset(-math.huge, 6, 2) pset(7, 8, 3)",
+        &[pixel(7, 8, 3)],
     );
 }
 
@@ -704,16 +732,31 @@ fn draw_commands_are_capped_per_frame() {
     let budget = Budget {
         interrupts: 4 * MAX_DRAW_COMMANDS as u64,
     };
+    // Each command writes the same pixel with its own number, so the pixel
+    // holds the color of the last command that was drawn.
     let source = format!(
         r#"
         local extra = 0
-        function draw() for i = 1, {MAX_DRAW_COMMANDS} + extra do pset(0, 0, 1) end extra = 1 end
+        function draw()
+            for i = 1, {MAX_DRAW_COMMANDS} + extra do pset(0, 0, i % 255 + 1) end
+            extra = 1
+        end
         "#
     );
-    let mut runtime =
-        Runtime::start("main.luau", source.as_bytes(), Files::default(), budget).unwrap();
+    let mut runtime = Runtime::start(
+        "main.luau",
+        source.as_bytes(),
+        Files::default(),
+        budget,
+        font(),
+    )
+    .unwrap();
+    let last_accepted = (MAX_DRAW_COMMANDS % 255 + 1) as u8;
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.frame().len(), MAX_DRAW_COMMANDS);
+    assert_eq!(
+        runtime.scratch().framebuffer.pixel(0, 0),
+        Some(last_accepted)
+    );
 
     let err = runtime.tick(NO_INPUT).unwrap_err();
     assert_eq!(err.phase, Phase::Draw);
@@ -721,7 +764,11 @@ fn draw_commands_are_capped_per_frame() {
         matches!(&err.error, ScriptError::Runtime(m) if m.contains("too many draw commands")),
         "{err:?}"
     );
-    assert_eq!(runtime.frame().len(), MAX_DRAW_COMMANDS);
+    assert_eq!(
+        runtime.scratch().framebuffer.pixel(0, 0),
+        Some(last_accepted),
+        "the rejected command was not drawn"
+    );
 }
 
 #[test]
@@ -730,7 +777,7 @@ fn text_characters_count_toward_the_cap() {
     let fits = format!(
         r#"print(string.rep("x", {CHARS} - 1), 0, 0, 1) for i = 1, {TEXT_CHAR_COST} do pset(0, 0, 1) end"#
     );
-    assert_eq!(drawn(&fits).len(), 1 + TEXT_CHAR_COST);
+    assert_eq!(drawn(&fits).pixel(0, 0), Some(1));
     for over in [
         format!(r#"print(string.rep("x", {CHARS}), 0, 0, 1) cls(0)"#),
         format!(r#"print(string.rep("x", {CHARS} + 1), 0, 0, 1)"#),
@@ -750,17 +797,29 @@ fn sprites_cost_sixty_four_draw_units() {
         interrupts: 4 * MAX_DRAW_COMMANDS as u64,
     };
     let fits = format!("function draw() for i = 1, {SPRITES} do spr(0, 0, 0) end end");
-    let mut runtime =
-        Runtime::start("main.luau", fits.as_bytes(), Files::default(), budget).unwrap();
+    let mut runtime = Runtime::start(
+        "main.luau",
+        fits.as_bytes(),
+        Files::default(),
+        budget,
+        font(),
+    )
+    .unwrap();
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(runtime.frame().len(), SPRITES);
+    assert!(runtime.scratch().framebuffer != Framebuffer::new());
 
     let over = format!(
         "function draw() for i = 1, {} do spr(0, 0, 0) end end",
         SPRITES + 1
     );
-    let mut runtime =
-        Runtime::start("main.luau", over.as_bytes(), Files::default(), budget).unwrap();
+    let mut runtime = Runtime::start(
+        "main.luau",
+        over.as_bytes(),
+        Files::default(),
+        budget,
+        font(),
+    )
+    .unwrap();
     let err = runtime.tick(NO_INPUT).unwrap_err();
     assert!(matches!(
         err.error,
@@ -772,11 +831,11 @@ fn sprites_cost_sixty_four_draw_units() {
 fn sprite_blocks_cost_sixty_four_units_per_tile() {
     const BLOCKS: usize = MAX_DRAW_COMMANDS / (4 * SPRITE_TILE_COST);
     let fits = format!("for i = 1, {BLOCKS} do spr(0, 0, 0, 2, 2) end");
-    assert_eq!(drawn(&fits).len(), BLOCKS);
+    assert!(drawn(&fits) != Framebuffer::new());
     let over = format!("for i = 1, {BLOCKS} do spr(0, 0, 0, 2, 2) end pset(0, 0, 1)");
     assert!(draw_error(&over).contains("too many draw commands"));
 
-    assert_eq!(drawn("spr(0, 0, 0, 16, 64)").len(), 1);
+    assert!(drawn("spr(0, 0, 0, 16, 64)") != Framebuffer::new());
     assert!(draw_error("spr(0, 0, 0, 16, 64) cls(0)").contains("too many draw commands"));
 }
 
@@ -789,38 +848,64 @@ fn tile_viewer_example_draws_and_navigates_its_visible_range() {
     )]);
     let mut runtime = started_with(source, files);
     assert_eq!(texts(runtime.take_output()), ["grid module loaded"]);
-    let sprite_tiles = |runtime: &Runtime| {
-        runtime
-            .frame()
-            .iter()
-            .filter_map(|command| match command {
-                DrawCommand::Sprite { tile, .. } => Some(*tile),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
+    // The grid starts at (4, 34) in cells of 39 by 39 pixels, and each
+    // sprite sits at (14, 2) inside its cell.
+    let sprite_at = |runtime: &Runtime, offset: i32, tile: usize| {
+        let hardware = runtime.scratch();
+        let (x, y) = (4 + 14 + offset % 8 * 39, 34 + 2 + offset / 8 * 39);
+        (0..64).all(|n| {
+            let (dx, dy) = (n % 8, n / 8);
+            let local = hardware
+                .obj
+                .tiles()
+                .pixel(tile, dx as usize, dy as usize)
+                .unwrap();
+            let bank = hardware.obj.attributes().bank(tile);
+            let expected = hardware.obj.palettes().resolve(bank, local);
+            let shown = hardware.framebuffer.pixel(x + dx, y + dy);
+            // The selection border is around cell 0, never inside the tile.
+            shown == Some(expected.unwrap_or(0))
+        })
+    };
+    let sprite_at_blank = |runtime: &Runtime, offset: i32| {
+        let (x, y) = (4 + 14 + offset % 8 * 39, 34 + 2 + offset / 8 * 39);
+        (0..64).all(|n| runtime.scratch().framebuffer.pixel(x + n % 8, y + n / 8) == Some(0))
     };
 
+    let showing = |runtime: &Runtime, first: usize, count: i32| {
+        let shown_all =
+            (0..count).all(|offset| sprite_at(runtime, offset, first + offset as usize));
+        let blank_after = (count..40).all(|offset| sprite_at_blank(runtime, offset));
+        shown_all && blank_after
+    };
     runtime.tick(NO_INPUT).unwrap();
-    assert_eq!(sprite_tiles(&runtime), (0..40).collect::<Vec<_>>());
+    assert!(showing(&runtime, 0, 40));
+    // The selected tile has the border drawn around it.
+    assert_eq!(runtime.scratch().framebuffer.pixel(16, 36), Some(15));
 
     runtime.tick(buttons(&[], &[Button::Right])).unwrap();
-    assert_eq!(sprite_tiles(&runtime), (1..41).collect::<Vec<_>>());
+    assert!(showing(&runtime, 1, 40));
 
     runtime.tick(buttons(&[], &[Button::Down])).unwrap();
-    assert_eq!(sprite_tiles(&runtime), (17..57).collect::<Vec<_>>());
+    assert!(showing(&runtime, 17, 40));
 
     for _ in 0..130 {
         runtime.tick(buttons(&[], &[Button::Down])).unwrap();
     }
-    assert_eq!(sprite_tiles(&runtime), vec![1023]);
-    assert!(runtime.frame().iter().any(|command| matches!(
-        command,
-        DrawCommand::Text { text, .. } if text == "SELECTED TILE 1023"
-    )));
+    assert!(showing(&runtime, 1023, 1));
+    // The header names the selected tile, drawn with the font.
+    let header = after(&[DrawCommand::Text {
+        text: "SELECTED TILE 1023".into(),
+        x: 6,
+        y: 5,
+        color: 7,
+    }]);
+    let framebuffer = &runtime.scratch().framebuffer;
     assert!(
-        runtime
-            .frame()
-            .iter()
-            .any(|command| matches!(command, DrawCommand::Pixel { .. }))
+        (0..320 * 240).all(|n| {
+            let (x, y) = (n % 320, n / 320);
+            y > 12 || header.pixel(x, y) == Some(0) || framebuffer.pixel(x, y) == header.pixel(x, y)
+        }),
+        "the header text"
     );
 }

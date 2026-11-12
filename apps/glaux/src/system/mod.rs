@@ -261,6 +261,8 @@ pub struct System {
     sound: SystemSound,
     /// Video state for the assets a started cartridge does not supply.
     video_defaults: CartridgeVideoDefaults,
+    /// The System ROM font, which cartridges draw text with.
+    font: BitmapFont,
     /// Kept across visits, so the workspace reopens on the tab it was left
     /// on.
     workspace: Workspace,
@@ -318,6 +320,7 @@ impl System {
             audio_source: AudioSource::Silent,
             sound: SystemSound::new(sounds),
             video_defaults,
+            font: font.clone(),
             workspace: Workspace::new(font, palette),
             sprites: None,
             code: None,
@@ -445,6 +448,7 @@ impl System {
         let mut state = self.state;
         let mut ctx = Context {
             video_defaults: &self.video_defaults,
+            font: &self.font,
             workspace: &mut self.workspace,
             sprites: &mut self.sprites,
             code: &mut self.code,

@@ -1045,6 +1045,7 @@ dependencies = [
  "glaux-audio",
  "glaux-machine",
  "glaux-modules",
+ "glaux-video",
  "pretty_assertions",
  "thiserror",
 ]

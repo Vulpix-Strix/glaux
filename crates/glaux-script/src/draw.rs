@@ -1,17 +1,21 @@
-//! [`DrawCommand`]s and the draw cost one `draw()` call may spend on them.
+//! [`DrawCommand`]s, the draw cost one `draw()` call may spend on them, and
+//! their execution on the cartridge's work framebuffer.
 
+use glaux_machine::font::BitmapFont;
+use glaux_machine::hardware::CartridgeHardware;
 use glaux_machine::obj_palette::ObjBank;
 use glaux_machine::sprite::{OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH};
+use glaux_video::draw::{
+    ObjPaletteChoice, ObjSprite, clear, draw_obj_sprite, draw_text, fill_rect, pixel,
+};
 
 /// Draw cost one `draw()` call may spend: each clear, pixel or filled
 /// rectangle costs one whatever area it covers, each sprite costs the 64
 /// pixels per tile it may draw, and each text costs [`TEXT_CHAR_COST`] per
 /// character.
 ///
-/// The completed frame is replayed on every host presentation frame, which
-/// may run faster than the 60 Hz tick, so this bounds per-frame host work as
-/// well as memory. Without it, a runtime's execution budget alone would let
-/// one `draw()` record millions of commands.
+/// The whole `draw()` call shares one [`DrawBudget`], also when a debugger
+/// stops it and it is resumed.
 pub const MAX_DRAW_COMMANDS: usize = 65_536;
 
 /// Draw cost of one object tile drawn by a sprite: the 64 pixels it may set.
@@ -21,10 +25,10 @@ pub const SPRITE_TILE_COST: usize = OBJ_TILE_WIDTH * OBJ_TILE_HEIGHT;
 /// font glyph sets, so that text and single pixels cost alike per pixel.
 pub const TEXT_CHAR_COST: usize = 16;
 
-/// One drawing operation recorded during `draw()`.
+/// One drawing operation of `draw()`.
 ///
-/// Colors are palette indices. Coordinates are unclipped: whoever replays
-/// the commands clips them to the screen.
+/// Colors are palette indices. Coordinates are unclipped: the primitives
+/// that [`execute`](Self::execute) calls clip them to the screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DrawCommand {
     /// Fill the whole screen.
@@ -67,6 +71,54 @@ pub enum DrawCommand {
 }
 
 impl DrawCommand {
+    /// Draws the command on the work framebuffer of `hardware`, at once.
+    ///
+    /// Sprites read the object tiles and palettes of the same hardware, and
+    /// text uses the System ROM `font`.
+    pub fn execute(&self, hardware: &mut CartridgeHardware, font: &BitmapFont) {
+        let framebuffer = &mut hardware.framebuffer;
+        match *self {
+            Self::Clear(color) => clear(framebuffer, color),
+            Self::Pixel { x, y, color } => pixel(framebuffer, x, y, color),
+            Self::Rect {
+                x,
+                y,
+                width,
+                height,
+                color,
+            } => fill_rect(framebuffer, x, y, width, height, color),
+            Self::Sprite {
+                tile,
+                x,
+                y,
+                width,
+                height,
+                flip_x,
+                flip_y,
+                palette,
+            } => draw_obj_sprite(
+                framebuffer,
+                &hardware.obj,
+                &ObjSprite {
+                    first: usize::from(tile),
+                    x,
+                    y,
+                    width: usize::from(width),
+                    height: usize::from(height),
+                    flip_x,
+                    flip_y,
+                    palette: palette.map_or(ObjPaletteChoice::TileDefault, ObjPaletteChoice::Bank),
+                },
+            ),
+            Self::Text {
+                ref text,
+                x,
+                y,
+                color,
+            } => draw_text(framebuffer, font, text, x, y, color),
+        }
+    }
+
     /// What this command charges against [`MAX_DRAW_COMMANDS`].
     pub fn cost(&self) -> usize {
         match self {
@@ -87,28 +139,21 @@ impl DrawCommand {
 #[error("too many draw commands in one frame (limit {MAX_DRAW_COMMANDS})")]
 pub struct DrawBudgetExceeded;
 
-/// Commands recorded by one `draw()` call, in call order.
+/// The draw cost spent so far by one `draw()` call.
 #[derive(Debug, Default)]
-pub struct Recording {
-    commands: Vec<DrawCommand>,
-    /// Draw cost spent so far, charged against [`MAX_DRAW_COMMANDS`].
+pub struct DrawBudget {
     cost: usize,
 }
 
-impl Recording {
-    /// Appends `command` unless its cost takes the frame past
-    /// [`MAX_DRAW_COMMANDS`]. A rejected command is not recorded, but its
+impl DrawBudget {
+    /// Charges `command` against [`MAX_DRAW_COMMANDS`]. A command that takes
+    /// the call past it is rejected, and the caller must not execute it. Its
     /// cost stays spent, so every later command is rejected too.
-    pub fn push(&mut self, command: DrawCommand) -> Result<(), DrawBudgetExceeded> {
+    pub fn charge(&mut self, command: &DrawCommand) -> Result<(), DrawBudgetExceeded> {
         self.cost = self.cost.saturating_add(command.cost());
         if self.cost > MAX_DRAW_COMMANDS {
             return Err(DrawBudgetExceeded);
         }
-        self.commands.push(command);
         Ok(())
-    }
-
-    pub fn into_commands(self) -> Vec<DrawCommand> {
-        self.commands
     }
 }

@@ -1,11 +1,12 @@
-//! `cls`, `pset`, `rectfill`, `spr` and `print`, which record
-//! [`DrawCommand`]s during `draw()`.
+//! `cls`, `pset`, `rectfill`, `spr` and `print`, which run
+//! [`DrawCommand`]s on the lent hardware during `draw()`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use glaux_machine::font::BitmapFont;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS};
-use glaux_script::{DrawCommand, Recording};
+use glaux_script::{DrawBudget, DrawCommand, HardwareSlot, LoanError};
 use mlua::{Function, Lua, Value};
 
 use crate::args::{
@@ -13,42 +14,57 @@ use crate::args::{
     to_text,
 };
 
-/// The recording of the `draw()` call in progress. `None` outside `draw()`,
+/// The draw budget of the `draw()` call in progress. `None` outside `draw()`,
 /// which is how drawing functions reject other phases.
-pub(crate) type PendingFrame = Rc<RefCell<Option<Recording>>>;
+pub(crate) type PendingFrame = Rc<RefCell<Option<DrawBudget>>>;
+
+/// What a drawing function needs to run a command.
+#[derive(Clone)]
+struct Canvas {
+    pending: PendingFrame,
+    hardware: HardwareSlot,
+    font: BitmapFont,
+}
 
 /// Installs `cls`, `pset`, `rectfill`, `spr` and `print`.
 pub(crate) fn install(
     lua: &Lua,
     tostring: &Function,
     pending_frame: &PendingFrame,
+    hardware: &HardwareSlot,
+    font: &BitmapFont,
 ) -> mlua::Result<()> {
     let globals = lua.globals();
+    let shared = Canvas {
+        pending: Rc::clone(pending_frame),
+        hardware: hardware.clone(),
+        font: font.clone(),
+    };
 
-    let pending = Rc::clone(pending_frame);
+    let canvas = shared.clone();
     let cls = lua.create_function(move |lua, color: Value| {
-        expect_draw(lua, &pending, "cls")?;
+        expect_draw(lua, &canvas.pending, "cls")?;
         let color = color_arg(lua, "cls", 1, &color)?;
-        record(lua, &pending, "cls", DrawCommand::Clear(color))
+        record(lua, &canvas, "cls", DrawCommand::Clear(color))
     })?;
     globals.raw_set("cls", cls)?;
 
-    let pending = Rc::clone(pending_frame);
+    let canvas = shared.clone();
     let pset = lua.create_function(move |lua, (x, y, color): (Value, Value, Value)| {
-        expect_draw(lua, &pending, "pset")?;
+        expect_draw(lua, &canvas.pending, "pset")?;
         let command = DrawCommand::Pixel {
             x: coordinate_arg(lua, "pset", 1, &x)?,
             y: coordinate_arg(lua, "pset", 2, &y)?,
             color: color_arg(lua, "pset", 3, &color)?,
         };
-        record(lua, &pending, "pset", command)
+        record(lua, &canvas, "pset", command)
     })?;
     globals.raw_set("pset", pset)?;
 
-    let pending = Rc::clone(pending_frame);
+    let canvas = shared.clone();
     let rectfill = lua.create_function(
         move |lua, (x, y, width, height, color): (Value, Value, Value, Value, Value)| {
-            expect_draw(lua, &pending, "rectfill")?;
+            expect_draw(lua, &canvas.pending, "rectfill")?;
             let command = DrawCommand::Rect {
                 x: coordinate_arg(lua, "rectfill", 1, &x)?,
                 y: coordinate_arg(lua, "rectfill", 2, &y)?,
@@ -56,12 +72,12 @@ pub(crate) fn install(
                 height: size_arg(lua, "rectfill", 4, &height, "height")?,
                 color: color_arg(lua, "rectfill", 5, &color)?,
             };
-            record(lua, &pending, "rectfill", command)
+            record(lua, &canvas, "rectfill", command)
         },
     )?;
     globals.raw_set("rectfill", rectfill)?;
 
-    let pending = Rc::clone(pending_frame);
+    let canvas = shared.clone();
     let spr = lua.create_function(
         move |lua,
               (tile, x, y, w, h, flip_x, flip_y, palette): (
@@ -74,7 +90,7 @@ pub(crate) fn install(
             Value,
             Value,
         )| {
-            expect_draw(lua, &pending, "spr")?;
+            expect_draw(lua, &canvas.pending, "spr")?;
             let tile = tile_arg(lua, "spr", 1, &tile)?;
             let x = coordinate_arg(lua, "spr", 2, &x)?;
             let y = coordinate_arg(lua, "spr", 3, &y)?;
@@ -92,16 +108,16 @@ pub(crate) fn install(
                 flip_y: flag_arg(lua, "spr", 7, &flip_y)?,
                 palette: obj_bank_arg(lua, "spr", 8, &palette)?,
             };
-            record(lua, &pending, "spr", command)
+            record(lua, &canvas, "spr", command)
         },
     )?;
     globals.raw_set("spr", spr)?;
 
-    let pending = Rc::clone(pending_frame);
+    let canvas = shared.clone();
     let tostring = tostring.clone();
     let print = lua.create_function(
         move |lua, (text, x, y, color): (Value, Value, Value, Value)| {
-            expect_draw(lua, &pending, "print")?;
+            expect_draw(lua, &canvas.pending, "print")?;
             let command = DrawCommand::Text {
                 x: coordinate_arg(lua, "print", 2, &x)?,
                 y: coordinate_arg(lua, "print", 3, &y)?,
@@ -110,7 +126,7 @@ pub(crate) fn install(
                 // code, which must not see a half-validated call.
                 text: to_text(lua, &tostring, text, "print")?,
             };
-            record(lua, &pending, "print", command)
+            record(lua, &canvas, "print", command)
         },
     )?;
     globals.raw_set("print", print)
@@ -132,21 +148,24 @@ fn outside_draw(lua: &Lua, function: &str) -> mlua::Error {
     )
 }
 
-/// Appends `command` to the frame in progress.
+/// Charges `command` to the `draw()` call in progress and draws it on the
+/// lent hardware.
 ///
 /// Callers check [`expect_draw`] before validating arguments, so a script
-/// calling from the wrong phase hears about the phase first.
-fn record(
-    lua: &Lua,
-    pending: &PendingFrame,
-    function: &str,
-    command: DrawCommand,
-) -> mlua::Result<()> {
-    let mut pending = pending.borrow_mut();
-    let Some(recording) = pending.as_mut() else {
-        return Err(outside_draw(lua, function));
-    };
-    recording
-        .push(command)
-        .map_err(|exceeded| located(lua, exceeded.to_string()))
+/// calling from the wrong phase hears about the phase first. A command the
+/// budget rejects is not drawn.
+fn record(lua: &Lua, canvas: &Canvas, function: &str, command: DrawCommand) -> mlua::Result<()> {
+    {
+        let mut pending = canvas.pending.borrow_mut();
+        let Some(budget) = pending.as_mut() else {
+            return Err(outside_draw(lua, function));
+        };
+        budget
+            .charge(&command)
+            .map_err(|exceeded| located(lua, exceeded.to_string()))?;
+    }
+    canvas
+        .hardware
+        .with(|hardware| command.execute(hardware, &canvas.font))
+        .ok_or_else(|| located(lua, format!("internal error: {}", LoanError::Unavailable)))
 }
