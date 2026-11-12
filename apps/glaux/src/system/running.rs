@@ -165,7 +165,7 @@ impl ScriptRuntime {
 pub struct RunningCartridge {
     cartridge: LoadedCartridge,
     runtime: ScriptRuntime,
-    video: CartridgeHardware,
+    hardware: CartridgeHardware,
     /// Starts with every button and key released, so nothing held during a
     /// previous run reaches this one, and is reset whenever the system
     /// resumes the cartridge from a pause.
@@ -184,10 +184,10 @@ impl RunningCartridge {
         defaults: &CartridgeVideoDefaults,
         overrides: VideoOverrides<'_>,
     ) -> Result<Self, Box<FailedStart>> {
-        let (cartridge, source, video) = prepare(cartridge, defaults, overrides)?;
+        let (cartridge, source, hardware) = prepare(cartridge, defaults, overrides)?;
         let spec = &cartridge.manifest().runtime;
         match ScriptRuntime::start(spec.language, &spec.entry, &source, cartridge.modules()) {
-            Ok(runtime) => Ok(Self::new(cartridge, runtime, video)),
+            Ok(runtime) => Ok(Self::new(cartridge, runtime, hardware)),
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
         }
     }
@@ -203,7 +203,7 @@ impl RunningCartridge {
         overrides: VideoOverrides<'_>,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<(Self, Option<Stop>), Box<FailedStart>> {
-        let (cartridge, source, video) = prepare(cartridge, defaults, overrides)?;
+        let (cartridge, source, hardware) = prepare(cartridge, defaults, overrides)?;
         let spec = &cartridge.manifest().runtime;
         match DebugRuntime::start(
             spec.language,
@@ -214,17 +214,21 @@ impl RunningCartridge {
         ) {
             Ok((runtime, stop)) => {
                 let runtime = ScriptRuntime::Debugged(Box::new(runtime));
-                Ok((Self::new(cartridge, runtime, video), stop))
+                Ok((Self::new(cartridge, runtime, hardware), stop))
             }
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
         }
     }
 
-    fn new(cartridge: LoadedCartridge, runtime: ScriptRuntime, video: CartridgeHardware) -> Self {
+    fn new(
+        cartridge: LoadedCartridge,
+        runtime: ScriptRuntime,
+        hardware: CartridgeHardware,
+    ) -> Self {
         Self {
             cartridge,
             runtime,
-            video,
+            hardware,
             input: InputLatch::new(),
             origin: RunOrigin::default(),
         }
@@ -304,7 +308,7 @@ impl RunningCartridge {
 
     /// The master palette the cartridge's frames resolve to.
     pub fn palette(&self) -> &Palette {
-        &self.video.palette
+        &self.hardware.palette
     }
 
     /// Advances the cartridge by one logical tick, applying the button and
@@ -359,7 +363,7 @@ impl RunningCartridge {
                     palette,
                 } => draw_obj_sprite(
                     framebuffer,
-                    &self.video.obj,
+                    &self.hardware.obj,
                     &ObjSprite {
                         first: usize::from(tile),
                         x,

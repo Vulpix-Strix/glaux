@@ -163,7 +163,7 @@ fn missing_video_assets_fall_back_to_the_rom() {
     let running =
         RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
     assert_eq!(running.palette(), rom.palette());
-    assert_eq!(running.video.obj.palettes(), rom.obj_palettes());
+    assert_eq!(running.hardware.obj.palettes(), rom.obj_palettes());
 }
 
 /// A cartridge without `obp.bin` keeps drawing OBP0 tiles with their local
@@ -271,7 +271,7 @@ fn imported_examples_resolve_every_png_pixel_to_its_color() {
         let cartridge = LoadedCartridge::load(&storage, name).unwrap();
         let running =
             RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
-        let obj = &running.video.obj;
+        let obj = &running.hardware.obj;
 
         let file = fs::File::open(root.join(name).join("sprites.png")).unwrap();
         let mut reader = png::Decoder::new(std::io::BufReader::new(file))
