@@ -1,11 +1,15 @@
-//! The state of a running cartridge: its graphics memory, Work RAM and work
-//! framebuffer.
+//! The state of a running cartridge: its graphics memory and registers, Work
+//! RAM and work framebuffer.
 
 use crate::bg::BgVram;
 use crate::framebuffer::Framebuffer;
 use crate::memory_map::WORK_RAM_LEN;
+use crate::oam::Oam;
 use crate::palette::Palette;
+use crate::registers::GraphicsRegisters;
 use crate::sprite::ObjVram;
+use crate::tile_window::TileWindow;
+use crate::tilemap::BG_LAYERS;
 
 /// The state a cartridge runs against.
 ///
@@ -25,11 +29,16 @@ pub struct CartridgeHardware {
     pub work_ram: Box<[u8; WORK_RAM_LEN]>,
     /// The cartridge's own surface, separate from the machine's framebuffer.
     pub framebuffer: Framebuffer,
+    /// The tilemap window of each BG layer.
+    pub tilemaps: [TileWindow; BG_LAYERS],
+    pub oam: Oam,
+    pub registers: GraphicsRegisters,
 }
 
 impl CartridgeHardware {
-    /// Creates the hardware around the given graphics state, with Work RAM
-    /// and the framebuffer zeroed.
+    /// Creates the hardware around the given graphics state. Work RAM, the
+    /// framebuffer, the tilemap windows and OAM start zeroed, and the
+    /// registers start at their power-on values.
     pub fn new(palette: Palette, obj: ObjVram, bg: BgVram) -> Self {
         Self {
             palette,
@@ -37,6 +46,9 @@ impl CartridgeHardware {
             bg,
             work_ram: Box::new([0; WORK_RAM_LEN]),
             framebuffer: Framebuffer::new(),
+            tilemaps: std::array::from_fn(|_| TileWindow::new()),
+            oam: Oam::new(),
+            registers: GraphicsRegisters::new(),
         }
     }
 }

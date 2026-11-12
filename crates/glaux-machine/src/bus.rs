@@ -7,9 +7,10 @@
 
 use crate::hardware::CartridgeHardware;
 use crate::memory_map::{
-    ADDRESS_SPACE_LEN, BG_PALETTES, BG_TILES, FRAMEBUFFER, MASTER_PALETTE, OBJ_ATTRIBUTES,
-    OBJ_PALETTES, OBJ_TILES, Region, WORK_RAM,
+    ADDRESS_SPACE_LEN, BG_PALETTES, BG_TILES, BG0_TILEMAP, BG1_TILEMAP, BG2_TILEMAP, FRAMEBUFFER,
+    MASTER_PALETTE, OAM, OBJ_ATTRIBUTES, OBJ_PALETTES, OBJ_TILES, REGISTERS, Region, WORK_RAM,
 };
+use crate::tilemap::BgLayer;
 
 /// A bus access that leaves the 20-bit address space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -24,21 +25,29 @@ enum Device {
     Framebuffer,
     BgTiles,
     ObjTiles,
+    Tilemap(BgLayer),
     MasterPalette,
     BgPalettes,
     ObjPalettes,
     ObjAttributes,
+    Oam,
+    Registers,
 }
 
-const DEVICES: [(Device, Region); 8] = [
+const DEVICES: [(Device, Region); 13] = [
     (Device::WorkRam, WORK_RAM),
     (Device::Framebuffer, FRAMEBUFFER),
     (Device::BgTiles, BG_TILES),
     (Device::ObjTiles, OBJ_TILES),
+    (Device::Tilemap(BgLayer::Bg0), BG0_TILEMAP),
+    (Device::Tilemap(BgLayer::Bg1), BG1_TILEMAP),
+    (Device::Tilemap(BgLayer::Bg2), BG2_TILEMAP),
     (Device::MasterPalette, MASTER_PALETTE),
     (Device::BgPalettes, BG_PALETTES),
     (Device::ObjPalettes, OBJ_PALETTES),
     (Device::ObjAttributes, OBJ_ATTRIBUTES),
+    (Device::Oam, OAM),
+    (Device::Registers, REGISTERS),
 ];
 
 /// The device behind `address` and the offset into it, or `None` if the
@@ -163,10 +172,13 @@ impl CartridgeHardware {
             Device::Framebuffer => self.framebuffer.as_bytes()[offset],
             Device::BgTiles => self.bg.tiles().as_bytes()[offset],
             Device::ObjTiles => self.obj.tiles().as_bytes()[offset],
+            Device::Tilemap(layer) => self.tilemaps[layer.index()].as_bytes()[offset],
             Device::MasterPalette => self.palette.byte(offset).unwrap_or(0),
             Device::BgPalettes => self.bg.palettes().as_bytes()[offset],
             Device::ObjPalettes => self.obj.palettes().as_bytes()[offset],
             Device::ObjAttributes => self.obj.attributes().as_bytes()[offset],
+            Device::Oam => self.oam.as_bytes()[offset],
+            Device::Registers => self.registers.byte(offset).unwrap_or(0),
         }
     }
 
@@ -185,6 +197,9 @@ impl CartridgeHardware {
             Device::ObjTiles => {
                 self.obj.tiles_mut().set_byte(offset, value);
             }
+            Device::Tilemap(layer) => {
+                self.tilemaps[layer.index()].set_byte(offset, value);
+            }
             Device::MasterPalette => {
                 self.palette.set_byte(offset, value);
             }
@@ -196,6 +211,12 @@ impl CartridgeHardware {
             }
             Device::ObjAttributes => {
                 self.obj.attributes_mut().set_byte(offset, value);
+            }
+            Device::Oam => {
+                self.oam.set_byte(offset, value);
+            }
+            Device::Registers => {
+                self.registers.set_byte(offset, value);
             }
         }
     }

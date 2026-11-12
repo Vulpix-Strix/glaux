@@ -2,11 +2,12 @@ use std::sync::OnceLock;
 
 use super::*;
 use crate::bg::BgVram;
-use crate::memory_map::WORK_RAM_LEN;
+use crate::memory_map::{REGISTER_BYTES, REGISTER_PAGE_LEN, WORK_RAM_LEN};
+use crate::oam::{OAM_ENTRIES, OAM_ENTRY_BYTES, OamEntry};
 use crate::obj_palette::ObjBank;
 use crate::palette::{Palette, Rgb};
 use crate::sprite::ObjVram;
-use crate::tilemap::BgBank;
+use crate::tilemap::{BG_LAYERS, BgBank, BgLayer, TileEntry};
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
 
@@ -57,6 +58,19 @@ fn filled() -> CartridgeHardware {
             .attributes_mut()
             .set_byte(index, (index % 7 + 1) as u8);
     }
+    // The low bit is always set, so no byte stays zero once its reserved
+    // bits are dropped.
+    for layer in 0..BG_LAYERS {
+        for index in 0..BG0_TILEMAP.len as usize {
+            hardware.tilemaps[layer].set_byte(index, (index % 227) as u8 | 1);
+        }
+    }
+    for index in 0..OAM.len as usize {
+        hardware.oam.set_byte(index, (index % 199) as u8 | 1);
+    }
+    for index in 0..REGISTER_BYTES {
+        hardware.registers.set_byte(index, index as u8 | 1);
+    }
     hardware
 }
 
@@ -67,18 +81,28 @@ fn filled_copy() -> CartridgeHardware {
 }
 
 /// The bytes of the typed storage behind each region.
-fn device_bytes(hardware: &CartridgeHardware) -> [(Region, Vec<u8>); 8] {
+fn device_bytes(hardware: &CartridgeHardware) -> [(Region, Vec<u8>); 13] {
     [
         (WORK_RAM, hardware.work_ram.to_vec()),
         (FRAMEBUFFER, hardware.framebuffer.as_bytes().to_vec()),
         (BG_TILES, hardware.bg.tiles().as_bytes().to_vec()),
         (OBJ_TILES, hardware.obj.tiles().as_bytes().to_vec()),
+        (BG0_TILEMAP, hardware.tilemaps[0].as_bytes().to_vec()),
+        (BG1_TILEMAP, hardware.tilemaps[1].as_bytes().to_vec()),
+        (BG2_TILEMAP, hardware.tilemaps[2].as_bytes().to_vec()),
         (MASTER_PALETTE, hardware.palette.to_rgb888().to_vec()),
         (BG_PALETTES, hardware.bg.palettes().as_bytes().to_vec()),
         (OBJ_PALETTES, hardware.obj.palettes().as_bytes().to_vec()),
         (
             OBJ_ATTRIBUTES,
             hardware.obj.attributes().as_bytes().to_vec(),
+        ),
+        (OAM, hardware.oam.as_bytes().to_vec()),
+        (
+            REGISTERS,
+            (0..REGISTER_BYTES)
+                .map(|offset| hardware.registers.byte(offset).unwrap_or(0))
+                .collect(),
         ),
     ]
 }
@@ -95,10 +119,15 @@ fn the_regions_match_the_specified_map() {
         (FRAMEBUFFER, 0x10000, 0x22BFF),
         (BG_TILES, 0x24000, 0x2BFFF),
         (OBJ_TILES, 0x2C000, 0x33FFF),
+        (BG0_TILEMAP, 0x34000, 0x35FFF),
+        (BG1_TILEMAP, 0x36000, 0x37FFF),
+        (BG2_TILEMAP, 0x38000, 0x39FFF),
         (MASTER_PALETTE, 0x3A000, 0x3A2FF),
         (BG_PALETTES, 0x3A300, 0x3A33F),
         (OBJ_PALETTES, 0x3A340, 0x3A3BF),
         (OBJ_ATTRIBUTES, 0x3A400, 0x3A7FF),
+        (OAM, 0x3B000, 0x3B3FF),
+        (REGISTERS, 0x3C000, 0x3C034),
     ];
     for (region, start, last) in expected {
         assert_eq!((region.start, region.last()), (start, last));
@@ -188,7 +217,18 @@ fn changes_to_the_typed_storage_are_read_at_once() {
 fn contiguous_regions_hand_over_at_their_boundaries() {
     let hardware = filled();
     let bytes = device_bytes(&hardware);
-    let pairs = [(0, 1), (2, 3), (4, 5), (5, 6)];
+    // Work RAM and the framebuffer, both tile banks, the three windows, the
+    // last window and the palette, then the three palette regions.
+    let pairs = [
+        (0, 1),
+        (2, 3),
+        (3, 4),
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 8),
+        (8, 9),
+    ];
     for (before, after) in pairs {
         let (previous, previous_bytes) = &bytes[before];
         let (next, next_bytes) = &bytes[after];
@@ -204,8 +244,10 @@ fn contiguous_regions_hand_over_at_their_boundaries() {
 #[test]
 fn addresses_around_the_gaps_are_unmapped_and_their_neighbours_are_not() {
     let hardware = filled();
-    let mapped_before = [0x22BFF, 0x33FFF, 0x3A3BF, 0x3A7FF];
-    let mapped_after = [0x24000, 0x3A400, 0x2C000];
+    let mapped_before = [
+        0x22BFF, 0x33FFF, 0x39FFF, 0x3A3BF, 0x3A7FF, 0x3B3FF, 0x3C034,
+    ];
+    let mapped_after = [0x24000, 0x3A400, 0x2C000, 0x34000, 0x3B000, 0x3C000];
     for address in mapped_before.into_iter().chain(mapped_after) {
         assert_ne!(
             hardware.read(address),
@@ -216,13 +258,14 @@ fn addresses_around_the_gaps_are_unmapped_and_their_neighbours_are_not() {
 
     let unmapped = [
         0x22C00, 0x23FFF, // Between the framebuffer and the BG tiles.
-        0x34000, 0x39FFF, // Tilemap windows, mapped in a later stage.
         0x3A3C0, 0x3A3FF, // Between OBP and the attributes.
         0x3A800, 0x3AFFF, // The rest of the palette page.
-        0x3B000, 0x3C000, 0x3D000, 0xFFFFF,
+        0x3B400, 0x3BFFF, // The rest of the OAM page.
+        0x3C002, 0x3C00F, 0x3C015, 0x3C035, 0x3CFFF, // Holes in the register page.
+        0x3D000, 0xFFFFF,
     ];
     for address in unmapped {
-        let mut hardware = filled();
+        let mut hardware = filled_copy();
         assert_eq!(hardware.read(address), Ok(0), "{address:#x}");
         hardware.write(address, 0xFF).unwrap();
         assert_eq!(hardware.read(address), Ok(0), "{address:#x}");
@@ -512,6 +555,282 @@ fn a_block_with_an_invalid_range_writes_nothing() {
     assert_unchanged(&hardware, &before);
 }
 
+/// What the approved map says about each byte of the register page, written
+/// independently of the implementation: the writable bits, or `None` where
+/// nothing is mapped.
+fn expected_register_mask(offset: u32) -> Option<u8> {
+    match offset {
+        0x00 => Some(0x0F),
+        0x01 => Some(0xFF),
+        0x10..=0x13 | 0x20..=0x23 | 0x30..=0x33 => Some(0xFF),
+        0x14 | 0x24 | 0x34 => Some(0x03),
+        _ => None,
+    }
+}
+
+#[test]
+fn every_byte_of_the_register_page_starts_at_its_initial_value() {
+    let hardware = hardware();
+    let mapped = (0..REGISTER_PAGE_LEN)
+        .filter(|&offset| expected_register_mask(offset).is_some())
+        .count();
+    assert_eq!(mapped, 17);
+    for offset in 0..REGISTER_PAGE_LEN {
+        let initial = match offset {
+            0x14 => 3,
+            0x24 => 2,
+            0x34 => 1,
+            _ => 0,
+        };
+        assert_eq!(hardware.read(0x3C000 + offset), Ok(initial), "{offset:#x}");
+    }
+}
+
+#[test]
+fn writing_every_byte_of_the_register_page_keeps_only_the_mapped_bits() {
+    let before = filled_copy();
+    let mut hardware = before.clone();
+    for offset in 0..REGISTER_PAGE_LEN {
+        hardware.write(0x3C000 + offset, 0xFF).unwrap();
+    }
+    for offset in 0..REGISTER_PAGE_LEN {
+        assert_eq!(
+            hardware.read(0x3C000 + offset),
+            Ok(expected_register_mask(offset).unwrap_or(0)),
+            "{offset:#x}"
+        );
+    }
+    // The typed view sees the same bytes, and nothing else changed.
+    assert_eq!(hardware.registers.display_enable(), 0x0F);
+    assert_eq!(hardware.registers.backdrop_color(), 0xFF);
+    assert_eq!(hardware.registers.bg_scroll_y(BgLayer::Bg2), 0xFFFF);
+    assert_eq!(hardware.registers.bg_priority(BgLayer::Bg1), 3);
+    hardware.registers = before.registers.clone();
+    assert_unchanged(&hardware, &before);
+}
+
+#[test]
+fn writing_the_holes_of_the_register_page_changes_nothing() {
+    let before = filled_copy();
+    let mut hardware = before.clone();
+    for offset in (0..REGISTER_PAGE_LEN).filter(|&o| expected_register_mask(o).is_none()) {
+        hardware.write(0x3C000 + offset, 0xFF).unwrap();
+    }
+    assert_unchanged(&hardware, &before);
+}
+
+#[test]
+fn registers_are_read_and_written_as_little_endian_values() {
+    let mut hardware = hardware();
+    hardware.write16(0x3C010, 600).unwrap();
+    hardware.write16(0x3C022, 0xFFFF).unwrap();
+    assert_eq!(hardware.registers.bg_scroll_x(BgLayer::Bg0), 600);
+    assert_eq!(hardware.registers.bg_scroll_y(BgLayer::Bg1), 0xFFFF);
+    assert_eq!(hardware.read16(0x3C010), Ok(600));
+
+    // A register changed through its type is read through the bus.
+    assert!(hardware.registers.set_byte(1, 77));
+    assert_eq!(hardware.read(0x3C001), Ok(77));
+}
+
+#[test]
+fn registers_accept_multi_byte_accesses_across_their_hole_boundaries() {
+    let mut hardware = hardware();
+    hardware.write16(0x3C000, 0xFFFF).unwrap();
+    assert_eq!(hardware.registers.display_enable(), 0x0F);
+    assert_eq!(hardware.registers.backdrop_color(), 0xFF);
+    assert_eq!(hardware.read16(0x3C000), Ok(0xFF0F));
+
+    // Scroll Y, then the priority, then the hole after it.
+    hardware.write32(0x3C012, 0xFFFF_FFFF).unwrap();
+    assert_eq!(hardware.registers.bg_scroll_y(BgLayer::Bg0), 0xFFFF);
+    assert_eq!(hardware.registers.bg_priority(BgLayer::Bg0), 3);
+    assert_eq!(hardware.read32(0x3C012), Ok(0x0003_FFFF));
+}
+
+#[test]
+fn each_window_fills_exactly_its_own_range() {
+    let mut hardware = hardware();
+    hardware.write(0x36000, 0xAA).unwrap();
+    hardware.write(0x37FFF, 0x55).unwrap();
+    hardware.write(0x38000, 0xBB).unwrap();
+    assert_eq!(hardware.tilemaps[1].as_bytes()[0], 0xAA);
+    assert_eq!(hardware.tilemaps[1].as_bytes()[0x1FFF], 0x55);
+    assert_eq!(hardware.tilemaps[2].as_bytes()[0], 0xBB);
+    assert!(
+        hardware.tilemaps[0]
+            .as_bytes()
+            .iter()
+            .all(|&byte| byte == 0)
+    );
+}
+
+#[test]
+fn window_entries_sit_at_twice_their_row_major_index() {
+    let mut hardware = hardware();
+    let entry = TileEntry::new(0x155, true, false, true, BgBank::new(2).unwrap()).unwrap();
+    assert!(hardware.tilemaps[1].set_entry(5, 7, entry));
+    let address = 0x36000 + 2 * (7 * 64 + 5);
+    assert_eq!(hardware.read16(address), Ok(entry.raw()));
+    assert_eq!(hardware.read16(address + 2), Ok(0));
+
+    hardware
+        .write16(0x34000 + 2 * (63 * 64 + 63), 0x0123)
+        .unwrap();
+    assert_eq!(hardware.tilemaps[0].entry(63, 63).unwrap().raw(), 0x0123);
+}
+
+#[test]
+fn a_raw_write_of_all_ones_is_stored_without_the_reserved_bit() {
+    let mut hardware = hardware();
+    hardware.write16(0x34000, 0xFFFF).unwrap();
+    assert_eq!(hardware.read16(0x34000), Ok(0x7FFF));
+    let entry = hardware.tilemaps[0].entry(0, 0).unwrap();
+    assert_eq!(entry.raw(), 0x7FFF);
+    assert_eq!(entry.tile(), 0x3FF);
+    hardware.write(0x34001, 0x80).unwrap();
+    assert_eq!(hardware.read(0x34001), Ok(0));
+}
+
+#[test]
+fn an_oam_entry_written_through_the_bus_decodes_to_its_fields() {
+    let mut hardware = hardware();
+    let start = 0x3B000 + 127 * OAM_ENTRY_BYTES as u32;
+    for (offset, byte) in [0xFE, 0xFF, 0x2C, 0x01, 0xFF, 0x03, 0x5D, 0x0E]
+        .into_iter()
+        .enumerate()
+    {
+        hardware.write(start + offset as u32, byte).unwrap();
+    }
+    assert_eq!(
+        hardware.oam.entry(127),
+        Some(OamEntry {
+            x: -2,
+            y: 300,
+            tile: 0x3FF,
+            bank: ObjBank::new(5).unwrap(),
+            flip_x: true,
+            flip_y: true,
+            priority: 2,
+            size: 6,
+            enabled: true,
+        })
+    );
+    assert_eq!(hardware.oam.entry(126), Some(OamEntry::default()));
+}
+
+#[test]
+fn an_oam_entry_set_through_its_type_is_read_through_the_bus() {
+    let mut hardware = hardware();
+    let entry = OamEntry {
+        x: 7,
+        y: -1,
+        tile: 513,
+        bank: ObjBank::new(3).unwrap(),
+        priority: 1,
+        size: 2,
+        enabled: true,
+        ..OamEntry::default()
+    };
+    assert!(hardware.oam.set_entry(2, entry));
+    assert_eq!(hardware.read16(0x3B010), Ok(7));
+    assert_eq!(hardware.read16(0x3B012), Ok(0xFFFF));
+    assert_eq!(hardware.read16(0x3B014), Ok(513));
+    assert_eq!(hardware.read(0x3B016), Ok(3 | 1 << 5));
+    assert_eq!(hardware.read(0x3B017), Ok(0b1010));
+}
+
+#[test]
+fn raw_oam_writes_lose_the_reserved_bits_of_every_entry() {
+    let mut hardware = hardware();
+    hardware.fill(0x3B000, 0xFF, 0x400).unwrap();
+    for index in 0..OAM_ENTRIES as u32 {
+        let start = 0x3B000 + index * OAM_ENTRY_BYTES as u32;
+        let bytes: Vec<u8> = (0..8)
+            .map(|offset| hardware.read(start + offset).unwrap())
+            .collect();
+        assert_eq!(bytes, [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x03, 0x7F, 0x0F]);
+    }
+    assert_eq!(hardware.read(0x3B400), Ok(0));
+}
+
+#[test]
+fn multi_byte_accesses_cross_the_new_region_boundaries() {
+    let mut hardware = hardware();
+
+    // The last byte of the OBJ tiles and the first of BG0's window.
+    hardware.write16(0x33FFF, 0xFFFF).unwrap();
+    assert_eq!(
+        hardware.obj.tiles().as_bytes()[OBJ_TILES.len as usize - 1],
+        0xFF
+    );
+    assert_eq!(hardware.tilemaps[0].as_bytes()[0], 0xFF);
+
+    // The last byte of BG0's window is a high byte, so it is masked.
+    hardware.write16(0x35FFF, 0xFFFF).unwrap();
+    assert_eq!(hardware.tilemaps[0].as_bytes()[0x1FFF], 0x7F);
+    assert_eq!(hardware.tilemaps[1].as_bytes()[0], 0xFF);
+
+    // The last window runs straight into the master palette.
+    hardware.write16(0x39FFF, 0xFFFF).unwrap();
+    assert_eq!(hardware.tilemaps[2].as_bytes()[0x1FFF], 0x7F);
+    assert_eq!(hardware.palette.byte(0), Some(0xFF));
+
+    // The gap before OAM, then the end of OAM into the gap after it.
+    hardware.write16(0x3AFFF, 0xFFFF).unwrap();
+    assert_eq!(hardware.oam.as_bytes()[0], 0xFF);
+    hardware.write32(0x3B3FE, 0xFFFF_FFFF).unwrap();
+    assert_eq!(hardware.read32(0x3B3FE), Ok(0x0000_0F7F));
+}
+
+#[test]
+fn blocks_over_the_new_regions_apply_their_masks() {
+    let mut hardware = hardware();
+    hardware.fill(0x34000, 0xFF, 3 * 0x2000).unwrap();
+    for window in &hardware.tilemaps {
+        for (offset, &byte) in window.as_bytes().iter().enumerate() {
+            assert_eq!(byte, if offset % 2 == 1 { 0x7F } else { 0xFF });
+        }
+    }
+    assert_eq!(
+        hardware.palette.byte(0),
+        Some(Palette::default().to_rgb888()[0])
+    );
+
+    hardware.fill(0x3C000, 0xFF, REGISTER_PAGE_LEN).unwrap();
+    assert_eq!(hardware.registers.display_enable(), 0x0F);
+    for layer in BgLayer::ALL {
+        assert_eq!(hardware.registers.bg_scroll_x(layer), 0xFFFF);
+        assert_eq!(hardware.registers.bg_priority(layer), 3);
+    }
+    assert_eq!(hardware.read(0x3C012), Ok(0xFF));
+    assert_eq!(hardware.read(0x3C002), Ok(0));
+    assert_eq!(hardware.read(0x3C015), Ok(0));
+}
+
+#[test]
+fn an_overlapping_copy_inside_a_window_masks_the_shifted_high_bytes() {
+    let mut hardware = hardware();
+    for (offset, byte) in [0xFF, 0x7F, 0xFF, 0x7F, 0xFF, 0x7F, 0xFF, 0x7F]
+        .into_iter()
+        .enumerate()
+    {
+        hardware.write(0x34000 + offset as u32, byte).unwrap();
+    }
+    // Moving up by one byte puts every even byte in an odd position.
+    hardware.copy(0x34001, 0x34000, 7).unwrap();
+    assert_eq!(
+        hardware.tilemaps[0].as_bytes()[..9],
+        [0xFF, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0x7F, 0]
+    );
+
+    // Moving down by two bytes keeps the parity.
+    let mut hardware = filled_copy();
+    let before = hardware.tilemaps[1].as_bytes().to_vec();
+    hardware.copy(0x36000, 0x36002, 0x20).unwrap();
+    assert_eq!(hardware.tilemaps[1].as_bytes()[..0x20], before[2..0x22]);
+}
+
 proptest! {
     // The range check agrees with arithmetic that cannot wrap.
     #[test]
@@ -592,12 +911,12 @@ proptest! {
     }
 }
 
-/// Starts of blocks near the seams between regions, gaps and the palette page.
+/// Starts of blocks within 0x80 bytes of a seam between regions or gaps.
 fn block_start() -> impl Strategy<Value = u32> {
-    prop_oneof![
-        0xFF00u32..0x10100,
-        0x22B80u32..0x24080,
-        0x2BF80u32..0x2C080,
-        0x3A280u32..0x3A900,
-    ]
+    const SEAMS: [u32; 18] = [
+        0x10000, 0x22C00, 0x24000, 0x2C000, 0x34000, 0x36000, 0x38000, 0x3A000, 0x3A300, 0x3A340,
+        0x3A3C0, 0x3A400, 0x3A800, 0x3B000, 0x3B400, 0x3C000, 0x3C035, 0x3D000,
+    ];
+    (proptest::sample::select(SEAMS.to_vec()), 0u32..0x100)
+        .prop_map(|(seam, delta)| seam - 0x80 + delta)
 }
