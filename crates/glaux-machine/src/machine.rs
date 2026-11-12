@@ -14,7 +14,12 @@ pub const GENERATION: &str = "G1";
 /// per tick, regardless of how often the host presents frames.
 pub const TICK_RATE: u32 = 60;
 
-/// its framebuffer and the System ROM it was built with.
+/// The Glaux machine, made of a framebuffer, a PSG and the System ROM it was
+/// built with.
+///
+/// The graphics state a cartridge runs against is not part of the machine. It
+/// lives in [`CartridgeHardware`](crate::hardware::CartridgeHardware), which
+/// the running cartridge owns.
 #[derive(Debug, Clone)]
 pub struct Machine {
     framebuffer: Framebuffer,
