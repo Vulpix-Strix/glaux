@@ -253,3 +253,41 @@ fn the_create_window_fits_the_view_at_the_system_font() {
     assert!(!layout.create.overlaps(layout.cancel));
     assert!(layout.message_y + 12 <= layout.create.y);
 }
+
+#[test]
+fn the_status_bar_has_its_own_room_below_the_view() {
+    let layout = editor().layout();
+    let status = layout.status();
+
+    assert!(layout.body().bottom() <= status.y);
+    let rows = layout.visible_rows();
+    assert!(layout.row(rows - 1).bottom() <= status.y);
+}
+
+#[test]
+fn cart_rom_shows_in_the_status_bar_without_a_notice() {
+    use crate::cartridge::rom::RomUsage;
+    use glaux_machine::framebuffer::Framebuffer;
+
+    let editor = editor();
+    let rom = crate::rom::load().unwrap();
+    let status = editor.layout().status();
+    let usage = RomUsage {
+        used: 100 * 1024,
+        ..RomUsage::default()
+    };
+    let bar = |usage: Option<&RomUsage>| {
+        let mut fb = Framebuffer::new();
+        let info = crate::system::workspace::StatusInfo {
+            rom: usage,
+            ..Default::default()
+        };
+        editor.render(&mut fb, rom.font(), None, None, info, false);
+        (status.y..status.bottom())
+            .flat_map(|y| (status.x..status.right()).map(move |x| (x, y)))
+            .map(|(x, y)| fb.pixel(x, y))
+            .collect::<Vec<_>>()
+    };
+
+    assert_ne!(bar(Some(&usage)), bar(None));
+}

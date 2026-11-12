@@ -41,6 +41,7 @@ pub(super) fn open_workspace(
 ) -> SystemState {
     let Documents { sprites, code, .. } = documents;
     workspace.refresh_maps();
+    workspace.rom_measured(cartridge.rom_selection().usage());
     let identity = cartridge_identity(cartridge.manifest());
     tracing::info!(cartridge = %identity, tab = ?workspace.tab(), "workspace opened");
     workspace.end_stroke(sprites.as_mut());
@@ -86,6 +87,8 @@ pub(in crate::system) fn workspace_tick(
     workspace.tick(Some(code));
     let mut host_requests = Vec::new();
     let mut run_requested = None;
+    // Whether file work may have changed what the cartridge distributes.
+    let mut measure_rom = false;
     // The Map view lists the maps when it shows, before any input.
     if let Some(request) = workspace.take_map_request() {
         serve_maps(request, workspace, maps, &cartridge);
@@ -124,9 +127,11 @@ pub(in crate::system) fn workspace_tick(
                 host_requests.push(HostRequest::SaveEditorSettings(settings));
             }
             WorkspaceRequest::Scripts(request) => {
+                measure_rom = true;
                 serve_scripts(request, workspace, code, &cartridge);
             }
             WorkspaceRequest::Maps(request) => {
+                measure_rom = true;
                 serve_maps(request, workspace, maps, &cartridge);
             }
             WorkspaceRequest::Navigate(request) => {
@@ -136,6 +141,7 @@ pub(in crate::system) fn workspace_tick(
                 serve_host(request, workspace, code, clipboard, &mut host_requests);
             }
             WorkspaceRequest::Assets(request) => {
+                measure_rom = true;
                 if let Some(document) = sprites.as_mut().filter(|_| video.is_ready()) {
                     serve_assets(
                         request,
@@ -148,6 +154,9 @@ pub(in crate::system) fn workspace_tick(
                 }
             }
         }
+    }
+    if measure_rom {
+        workspace.rom_measured(cartridge.rom_selection().usage());
     }
     if let Some(document) = sprites.as_ref() {
         workspace.refresh_video(&mut video, document);

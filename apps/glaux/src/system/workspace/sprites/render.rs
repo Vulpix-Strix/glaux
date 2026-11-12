@@ -22,8 +22,11 @@ use super::layout::{
 };
 use super::sheet::{SheetView, Visible, grid_position};
 use super::{EditorDialog, SpriteEditor, SpriteSource};
+use crate::cartridge::rom::RomUsage;
 use crate::rom::ICON_SIZE;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::system::workspace::StatusInfo;
+use crate::system::workspace::rom_tag::rom_tag;
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
 use crate::ui_text;
 
@@ -71,7 +74,7 @@ impl SpriteEditor {
         ui: &SystemUi,
         source: Result<SpriteSource<'_>, &str>,
         pointer: Option<Point>,
-        notice: Option<(&str, u8)>,
+        info: StatusInfo<'_>,
     ) {
         let layout = self.layout();
         // Nothing under a dialog reacts to the pointer.
@@ -118,17 +121,17 @@ impl SpriteEditor {
         let notice = if self.awaiting_file {
             Some((waiting.as_str(), PALE))
         } else {
-            notice
+            info.notice
         };
         match notice {
             // A notice answers what the user just did, so it wins over the
             // hint when both don't fit.
-            Some((text, color)) => painter.status_bar(text, color, &right, false),
+            Some((text, color)) => painter.status_bar(text, color, &right, false, info.rom),
             None => {
                 // A hint about the control under the pointer matters more
                 // than the tile summary when both don't fit.
                 let control = !matches!(hover, Hit::None | Hit::Canvas { .. });
-                painter.status_bar(&left, PALE, &right, control);
+                painter.status_bar(&left, PALE, &right, control, info.rom);
             }
         }
         match (&self.dialog, source) {
@@ -642,7 +645,14 @@ impl Painter<'_> {
     }
 
     /// The status bar: `left` in `left_color`, and `right` if both fit.
-    fn status_bar(&mut self, left: &str, left_color: u8, right: &str, prefer_right: bool) {
+    fn status_bar(
+        &mut self,
+        left: &str,
+        left_color: u8,
+        right: &str,
+        prefer_right: bool,
+        rom: Option<&RomUsage>,
+    ) {
         let bar = self.layout.status;
         self.fill(bar, BAR);
         let y = self.bar_text_y(bar.y, bar.height);
@@ -653,6 +663,14 @@ impl Painter<'_> {
             self.text(left, 4, y, left_color);
             let x = bar.right() - 4 - self.cells(right);
             self.text(right, x, y, DIM);
+            // Cart ROM sits between the two, in the room they leave once
+            // each keeps a gap of two cells.
+            let free = usize::try_from(columns - left_len - right_len - 4).unwrap_or(0);
+            if let Some(tag) = rom_tag(rom, self.font, free) {
+                let gap = if right.is_empty() { 0 } else { 2 };
+                let x = x - self.cells(" ") * gap - self.cells(&tag.text);
+                self.text(&tag.text, x, y, tag.color);
+            }
         } else if prefer_right {
             self.text(right, 4, y, PALE);
         } else {

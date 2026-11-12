@@ -66,7 +66,7 @@ fn render(editor: &SpriteEditor, fixture: &Fixture) -> Framebuffer {
         &SystemUi::default(),
         Ok(fixture.source()),
         None,
-        None,
+        StatusInfo::default(),
     );
     fb
 }
@@ -291,7 +291,14 @@ fn the_options_bar_names_the_tool_and_flags_unsaved_edits() {
             ..fixture.source()
         };
         let ui = SystemUi::default();
-        editor.render(&mut fb, &coded_font(), &ui, Ok(source), None, None);
+        editor.render(
+            &mut fb,
+            &coded_font(),
+            &ui,
+            Ok(source),
+            None,
+            StatusInfo::default(),
+        );
         fb
     };
 
@@ -322,5 +329,38 @@ fn long_messages_wrap_at_spaces() {
     assert_eq!(
         wrap(&crate::system::test_font::LAYOUT_FONT, "abcdefghij", 4),
         ["abcd", "efgh", "ij"]
+    );
+}
+
+#[test]
+fn cart_rom_shares_the_status_bar_when_the_status_leaves_room() {
+    use crate::cartridge::rom::RomUsage;
+
+    let fixture = Fixture::new();
+    let editor = SpriteEditor::new(METRICS);
+    let status = editor.layout().status;
+    let usage = RomUsage {
+        used: 128 * 1024,
+        ..RomUsage::default()
+    };
+    let mut fb = Framebuffer::new();
+    let ui = SystemUi::default();
+    editor.render(
+        &mut fb,
+        &coded_font(),
+        &ui,
+        Ok(fixture.source()),
+        None,
+        StatusInfo {
+            rom: Some(&usage),
+            ..StatusInfo::default()
+        },
+    );
+
+    // The form depends on how much room the tile status leaves.
+    let shown = texts(&fb, status, PALE);
+    assert!(
+        shown.iter().any(|text| text.starts_with("ROM ")),
+        "{shown:?}"
     );
 }

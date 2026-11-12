@@ -3,8 +3,8 @@
 use super::sprites::SpriteSource;
 use super::tab::{Layout, Tab, fit_name, text_width};
 use super::{
-    BAR, CURSOR_FRAME_TICKS, DOCS_PAD, HOVER_SHADE, IDLE_SHADE, OUTLINE, PLATE_PAD, Workspace,
-    docs_source,
+    BAR, CURSOR_FRAME_TICKS, DOCS_PAD, HOVER_SHADE, IDLE_SHADE, OUTLINE, PLATE_PAD, StatusInfo,
+    Workspace, docs_source,
 };
 use crate::cartridge::LoadedCartridge;
 use crate::rom::ICON_SIZE;
@@ -136,22 +136,23 @@ impl Workspace {
             .notice
             .as_ref()
             .map(|notice| (notice.text.as_str(), notice.color));
+        let info = StatusInfo {
+            notice,
+            rom: self.rom.as_ref(),
+        };
         if self.docs_open {
             self.docs
                 .render(framebuffer, font, docs_source(), pointer, notice);
         } else {
             match self.tab {
-                Tab::Sprites => {
-                    self.sprites
-                        .render(framebuffer, font, ui, sprites, pointer, notice)
-                }
-                Tab::Code => self
-                    .code
-                    .render(framebuffer, font, ui, code, pointer, notice),
+                Tab::Sprites => self
+                    .sprites
+                    .render(framebuffer, font, ui, sprites, pointer, info),
+                Tab::Code => self.code.render(framebuffer, font, ui, code, pointer, info),
                 Tab::Map => {
                     let lit = (self.ticks / (TICK_RATE / 2)).is_multiple_of(2);
                     self.maps
-                        .render(framebuffer, font, maps, pointer, notice, lit);
+                        .render(framebuffer, font, maps, pointer, info, lit);
                 }
                 _ => self.render_placeholder(framebuffer, font),
             }

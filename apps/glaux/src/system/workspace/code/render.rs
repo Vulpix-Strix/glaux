@@ -21,6 +21,7 @@ use super::symbols::{PAD, PanelLayout, SymbolPanel, clip_name, kind_letter};
 use super::text_view::{TextGeometry, thumb};
 use super::{CodeEditor, labels, picker_layout, settings_layout};
 use crate::cartridge::Language;
+use crate::cartridge::rom::RomUsage;
 use crate::system::editing::diagnostics::{AnalyzerStatus, EditorDiagnostic, Severity, Summary};
 use crate::system::editing::document::{Breakpoints, CodeDocument};
 use crate::system::editing::metrics::{Spot, TextMetrics, spot, visual_rows};
@@ -29,7 +30,9 @@ use crate::system::editor_settings::EditorSettings;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT, WARN};
 use crate::system::syntax_theme;
 use crate::system::text::clip;
+use crate::system::workspace::StatusInfo;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
+use crate::system::workspace::rom_tag::rom_tag;
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
 use crate::ui_text;
 
@@ -88,7 +91,7 @@ impl CodeEditor {
         ui: &SystemUi,
         session: Option<&CodeSession>,
         pointer: Option<Point>,
-        notice: Option<(&str, u8)>,
+        info: StatusInfo<'_>,
     ) {
         let mut painter = Painter {
             framebuffer,
@@ -231,7 +234,8 @@ impl CodeEditor {
         painter.settings_button(ui, settings_lit);
         let hint = self.hint();
         let problem = session.and_then(|session| self.problem_at_caret(session));
-        let (status, color) = notice
+        let (status, color) = info
+            .notice
             .or_else(|| {
                 problem.map(|found| (found.message.as_str(), severity_color(found.severity)))
             })
@@ -240,7 +244,7 @@ impl CodeEditor {
             let id = session.active_document()?.id();
             session.diagnostic_summary(id)
         });
-        painter.status_bar(status, color, summary);
+        painter.status_bar(status, color, summary, info.rom);
 
         if let (Some(menu), Some(session)) = (self.menu, session) {
             let (window, rows) = self.menu_rows(session.tabs().len(), menu.focus);
@@ -973,7 +977,13 @@ impl Painter<'_> {
         }
     }
 
-    fn status_bar(&mut self, text: &str, color: u8, summary: Option<Summary>) {
+    fn status_bar(
+        &mut self,
+        text: &str,
+        color: u8,
+        summary: Option<Summary>,
+        rom: Option<&RomUsage>,
+    ) {
         let bar = self.layout.status;
         self.fill(bar, BAR);
         let y = self.bar_text_y(bar.y, bar.height);
@@ -984,6 +994,12 @@ impl Painter<'_> {
             usize::try_from((bar.width - 8 - reserved) / self.cell_w().max(1)).unwrap_or(0);
         let text = clip(self.font, text.lines().next().unwrap_or_default(), columns);
         self.text(&text, 4, y, color);
+        // Cart ROM takes only the room the text and the counts leave.
+        let free = columns.saturating_sub(self.font.text_cells(&text) + 1);
+        if let Some(tag) = rom_tag(rom, self.font, free) {
+            let width = i32::try_from(self.font.text_cells(&tag.text)).unwrap_or(0) * self.cell_w();
+            self.text(&tag.text, bar.right() - 4 - reserved - width, y, tag.color);
+        }
         if let Some(counts) = counts {
             self.diagnostic_summary(&counts, bar.right() - 4, y);
         }

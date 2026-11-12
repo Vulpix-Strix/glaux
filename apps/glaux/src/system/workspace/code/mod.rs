@@ -92,7 +92,7 @@ const UNDO_IDLE_TICKS: u32 = TICK_RATE;
 
 /// The status bar hint while nothing covers the view.
 fn view_hint() -> String {
-    ui_text::get("code-ctrl-s-save-ctrl-f-find-ctrl-n-new-esc-shell")
+    ui_text::get("code-ctrl-s-save-ctrl-f-find")
 }
 /// The status bar hint while a debugged cartridge is stopped.
 fn stopped_hint() -> String {

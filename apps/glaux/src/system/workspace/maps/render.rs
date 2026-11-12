@@ -2,16 +2,19 @@
 
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
+use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::system_rom::SystemCursor;
 use glaux_video::draw::{draw_text, draw_text_scaled, fill_rect};
 
 use super::layout::{Action, Hit, Layout, first_visible};
 use super::{MapEditor, Overlay};
 use crate::cartridge::map::{MapMeta, MapSummary};
+use crate::cartridge::rom::RomUsage;
 use crate::system::map_document::MapDocument;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::system::workspace::StatusInfo;
 use crate::system::workspace::dialog::{INK, text_cells};
+use crate::system::workspace::rom_tag::rom_tag;
 use crate::system::workspace::{BAR, HOVER_SHADE, Rect, take_cells};
 use crate::ui_text;
 use glaux_i18n::Arg;
@@ -31,7 +34,7 @@ impl MapEditor {
         font: &BitmapFont,
         document: Option<&MapDocument>,
         pointer: Option<Point>,
-        notice: Option<(&str, u8)>,
+        info: StatusInfo<'_>,
         lit: bool,
     ) {
         let layout = self.layout();
@@ -45,7 +48,7 @@ impl MapEditor {
         } else {
             self.body(framebuffer, font, &layout, document, hover);
         }
-        self.status_bar(framebuffer, font, notice);
+        self.status_bar(framebuffer, font, &layout, info.notice, info.rom);
         self.overlay(framebuffer, font, lit);
     }
 
@@ -256,32 +259,38 @@ impl MapEditor {
         }
     }
 
+    /// The status bar: the notice on the left and, in the room it leaves,
+    /// Cart ROM on the right.
     fn status_bar(
         &self,
         framebuffer: &mut Framebuffer,
         font: &BitmapFont,
+        layout: &Layout,
         notice: Option<(&str, u8)>,
+        rom: Option<&RomUsage>,
     ) {
-        let Some((text, color)) = notice else {
-            return;
-        };
-        let height = self.metrics.cell_h + 2;
-        let bar = Rect {
-            x: 0,
-            y: HEIGHT as i32 - height,
-            width: WIDTH as i32,
-            height,
-        };
+        let bar = layout.status();
+        let cell_w = self.metrics.cell_w;
         fill(framebuffer, bar, BAR);
-        let columns = usize::try_from(bar.width / self.metrics.cell_w - 2).unwrap_or(0);
-        draw_text(
-            framebuffer,
-            font,
-            take_cells(font, text, columns),
-            self.metrics.cell_w,
-            bar.y + 2,
-            color,
-        );
+        let columns = usize::try_from(bar.width / cell_w - 2).unwrap_or(0);
+        let mut taken = 0;
+        if let Some((text, color)) = notice {
+            let shown = take_cells(font, text, columns);
+            taken = font.text_cells(shown);
+            draw_text(framebuffer, font, shown, cell_w, bar.y + 2, color);
+        }
+        let free = columns.saturating_sub(taken + 1);
+        if let Some(tag) = rom_tag(rom, font, free) {
+            let width = i32::try_from(font.text_cells(&tag.text)).unwrap_or(0) * cell_w;
+            draw_text(
+                framebuffer,
+                font,
+                &tag.text,
+                bar.right() - cell_w - width,
+                bar.y + 2,
+                tag.color,
+            );
+        }
     }
 
     fn overlay(&self, framebuffer: &mut Framebuffer, font: &BitmapFont, lit: bool) {

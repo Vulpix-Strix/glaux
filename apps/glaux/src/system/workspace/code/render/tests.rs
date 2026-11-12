@@ -15,6 +15,7 @@ mod completion;
 mod debugging;
 mod diagnostics;
 mod highlight;
+mod rom_status;
 mod selection;
 mod signature;
 mod symbols;
@@ -36,7 +37,7 @@ fn render(editor: &CodeEditor, session: &CodeSession) -> Framebuffer {
         rom.ui(),
         Some(session),
         None,
-        None,
+        StatusInfo::default(),
     );
     framebuffer
 }
@@ -344,7 +345,7 @@ fn render_at(editor: &CodeEditor, session: &CodeSession, pointer: Option<Point>)
         rom.ui(),
         Some(session),
         pointer,
-        None,
+        StatusInfo::default(),
     );
     framebuffer
 }

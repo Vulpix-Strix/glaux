@@ -23,6 +23,7 @@ mod menu;
 mod modal;
 mod render;
 mod request;
+mod rom_tag;
 mod sprites;
 mod tab;
 mod text_field;
@@ -38,6 +39,7 @@ use super::docs as library_docs;
 use super::editing::session::CodeSession;
 use super::editor_settings::EditorSettings;
 use super::screen::PALE;
+use crate::cartridge::rom::RomUsage;
 use crate::ui_text;
 pub(super) use answers::saved_before_stopping;
 use code::CodeEditor;
@@ -107,6 +109,15 @@ const NOTICE_TICKS: u32 = 3 * TICK_RATE;
 /// busy hourglass's source frames.
 const CURSOR_FRAME_TICKS: u32 = TICK_RATE * 15 / 100;
 
+/// What the editors' status bars show besides their own text.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StatusInfo<'a> {
+    /// A message answering what the user just did. It takes the left side.
+    pub notice: Option<(&'a str, u8)>,
+    /// The cartridge's Cart ROM use, shown where the rest leaves room.
+    pub rom: Option<&'a RomUsage>,
+}
+
 /// A short message in the status bar answering what the user just did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Notice {
@@ -174,6 +185,9 @@ pub struct Workspace {
     /// The system palette, whose first [`SYSTEM_COLORS`] entries the UI is
     /// drawn with.
     system_palette: Palette,
+    /// Cart ROM as last measured, shown in the editors' status bars. `None`
+    /// until the system has measured the cartridge.
+    rom: Option<RomUsage>,
 }
 
 impl Workspace {
@@ -199,6 +213,7 @@ impl Workspace {
             notice: None,
             ticks: 0,
             system_palette,
+            rom: None,
         }
     }
 
@@ -215,6 +230,11 @@ impl Workspace {
     /// Shows code with `settings` from now on.
     pub fn set_editor_settings(&mut self, settings: EditorSettings) {
         self.code.set_settings(settings);
+    }
+
+    #[cfg(test)]
+    pub fn rom(&self) -> Option<&RomUsage> {
+        self.rom.as_ref()
     }
 
     pub fn tab(&self) -> Tab {
@@ -252,6 +272,12 @@ impl Workspace {
     #[cfg(test)]
     pub fn notice_text(&self) -> Option<&str> {
         self.notice.as_ref().map(|notice| notice.text.as_str())
+    }
+
+    /// Shows `usage`, the cartridge's current Cart ROM use, in the status
+    /// bars until the next measurement.
+    pub fn rom_measured(&mut self, usage: RomUsage) {
+        self.rom = Some(usage);
     }
 
     /// Shows `text` in the status bar for a while.

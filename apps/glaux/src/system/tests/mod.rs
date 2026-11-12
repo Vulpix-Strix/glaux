@@ -46,6 +46,7 @@ mod pausing;
 mod profiling_workload;
 mod rhai;
 mod rom_audio;
+mod rom_budget;
 mod script_management;
 mod shell_screen;
 mod sprite_editor;

@@ -20,6 +20,11 @@ A cartridge is a folder with these parts that matter here:
 | `code/main.luau`      | The entry script. A Rhai cartridge has `code/main.rhai`. |
 | Other `code/` files   | Modules the entry script loads.                          |
 | `sprites.bin`, `objattr.bin`, `obp.bin` | The owl sprite and its palettes. |
+| `assets/` | Optional. Your own resources, of any file type. |
+
+Other folders of resources can be listed in `cartridge.ron` with `resources: ["data"]`. Names with a leading dot, symbolic links and everything outside these files, such as `README.md`, source images and tools, are not part of the cartridge.
+
+The editors show how much of the 1 MiB Cart ROM budget the cartridge uses. Going over it never stops you from editing or running.
 
 ## Run it
 

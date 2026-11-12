@@ -104,9 +104,21 @@ impl Layout {
         self.metrics.cell_h + 2
     }
 
-    /// Rows of the list that fit below the selector.
+    /// The bar along the bottom of the view, for notices and Cart ROM.
+    pub(super) fn status(&self) -> Rect {
+        let height = self.metrics.cell_h + 2;
+        Rect {
+            x: 0,
+            y: HEIGHT as i32 - height,
+            width: WIDTH as i32,
+            height,
+        }
+    }
+
+    /// Rows of the list that fit below the selector and above the status
+    /// bar.
     pub(super) fn visible_rows(&self) -> usize {
-        let room = HEIGHT as i32 - self.selector().bottom() - MARGIN;
+        let room = self.status().y - self.selector().bottom() - MARGIN;
         usize::try_from(room / self.row_height()).unwrap_or(0)
     }
 
@@ -129,7 +141,7 @@ impl Layout {
             x: header.x,
             y: header.bottom() + MARGIN,
             width: header.width,
-            height: HEIGHT as i32 - header.bottom() - 2 * MARGIN,
+            height: self.status().y - header.bottom() - 2 * MARGIN,
         }
     }
 

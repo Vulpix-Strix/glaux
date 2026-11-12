@@ -175,6 +175,14 @@ workspace-overwrite-disk-writes-your-edits-to-it-again = OVERWRITE DISK writes y
 workspace-reload-failed = RELOAD FAILED
 workspace-reloaded-from-disk = Reloaded { $value } from disk
 workspace-renamed-to = Renamed to { $to }
+workspace-rom = ROM { $used } KiB / 1 MiB
+workspace-rom-compact = ROM { $used }/1024 KiB
+workspace-rom-over = ROM { $used } KiB / 1 MiB +{ $excess } KiB
+workspace-rom-over-compact = ROM +{ $excess } KiB
+workspace-rom-over-tiny = ROM +{ $excess }K
+workspace-rom-partial = ROM >={ $used } KiB / 1 MiB !
+workspace-rom-partial-tiny = ROM >={ $used }K !
+workspace-rom-tiny = ROM { $used }K
 workspace-save = SAVE
 workspace-save-all = SAVE ALL
 workspace-save-failed = SAVE FAILED
@@ -218,7 +226,7 @@ code-completion-close = { $key }: close
 code-completion-pick = { $key }: pick
 code-copy = Copy
 code-creates = Creates { $path }
-code-ctrl-s-save-ctrl-f-find-ctrl-n-new-esc-shell = Ctrl+S: save  Ctrl+F: find  Ctrl+N: new  Esc: shell
+code-ctrl-s-save-ctrl-f-find = Ctrl+S Save  Ctrl+F Find
 code-cut = Cut
 code-debug-engine = [engine]
 code-debug-locals = Locals
@@ -715,6 +723,7 @@ error-cartridge-entry-not-rhai = cartridge.ron: runtime.entry must be a .rhai fi
 error-cartridge-entry-unreadable = Cannot read entry: { $path }
 error-cartridge-invalid-entry-path = cartridge.ron: runtime.entry must be a relative path
 error-cartridge-invalid-min-glaux = cartridge.ron: compatibility.min_glaux is not semver
+error-cartridge-invalid-resource-dir = cartridge.ron: resources: invalid directory { $path }
 error-cartridge-invalid-version = cartridge.ron: cartridge.version is not semver
 error-cartridge-legacy-manifest = cart.json is no longer supported; use cartridge.ron
 error-cartridge-malformed = cartridge.ron line { $line }: { $reason }
@@ -723,7 +732,6 @@ error-cartridge-manifest-unreadable = Cannot read cartridge.ron
 error-cartridge-missing-field = cartridge.ron: missing { $field }
 error-cartridge-missing-manifest = No cartridge.ron in { $directory }
 error-cartridge-requires-glaux = Cartridge requires Glaux { $required } (this is { $running })
-error-cartridge-invalid-resource-dir = cartridge.ron: resources: invalid directory { $path }
 error-cartridge-unknown-field = cartridge.ron: unknown field { $field }
 error-cartridge-unsupported-format = cartridge.ron: unsupported format { $format }
 error-cartridge-unsupported-graphics = cartridge.ron: unsupported graphics profile { $profile }
@@ -806,6 +814,10 @@ error-script-limit = { $phase ->
     [entry] Execution limit exceeded
    *[callback] Execution limit exceeded in { $callback }
     }
+error-script-memory-limit = { $phase ->
+    [entry] Memory limit exceeded
+   *[callback] Memory limit exceeded in { $callback }
+    }
 error-script-module-limit = { $phase ->
     [entry] Execution limit exceeded in { $path }
    *[callback] Execution limit exceeded in { $callback }: { $path }
@@ -815,10 +827,6 @@ error-script-require = { $kind ->
     [missing] Module not found
     [unreadable] Cannot read module
    *[cycle] Cyclic require
-error-script-memory-limit = { $phase ->
-    [entry] Memory limit exceeded
-   *[callback] Memory limit exceeded in { $callback }
-    }
     }{ $phase ->
     [entry] { "" }
    *[callback] { " in " }{ $callback }
