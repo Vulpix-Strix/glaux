@@ -187,6 +187,7 @@ impl NewCartridge {
             compatibility: CompatibilityFile {
                 min_glaux: glaux_version().to_string(),
             },
+            resources: Vec::new(),
         };
         let config = ron::ser::PrettyConfig::new().indentor("    ".to_owned());
         let mut text = ron::ser::to_string_pretty(&file, config)

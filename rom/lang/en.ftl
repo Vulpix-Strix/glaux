@@ -723,6 +723,7 @@ error-cartridge-manifest-unreadable = Cannot read cartridge.ron
 error-cartridge-missing-field = cartridge.ron: missing { $field }
 error-cartridge-missing-manifest = No cartridge.ron in { $directory }
 error-cartridge-requires-glaux = Cartridge requires Glaux { $required } (this is { $running })
+error-cartridge-invalid-resource-dir = cartridge.ron: resources: invalid directory { $path }
 error-cartridge-unknown-field = cartridge.ron: unknown field { $field }
 error-cartridge-unsupported-format = cartridge.ron: unsupported format { $format }
 error-cartridge-unsupported-graphics = cartridge.ron: unsupported graphics profile { $profile }

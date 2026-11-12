@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::cartridge_fs::{CartridgeFs, CartridgeStorage, FsError, ReplaceError};
 
+pub use rom::ResourceDir;
+
 /// Path of the manifest from the cartridge root.
 const MANIFEST: &str = "/cartridge.ron";
 
@@ -133,6 +135,9 @@ pub enum CartridgeError {
     EntryNotAFile(String),
     #[error("Cannot read entry: {0}")]
     EntryUnreadable(String),
+    /// A `resources` entry that is not a plain, unreserved directory name.
+    #[error("cartridge.ron: resources: invalid directory {0:?}")]
+    InvalidResourceDir(String),
     #[error("{0} is not a file")]
     AssetNotAFile(VideoAsset),
     #[error("Cannot read {0}")]
@@ -153,6 +158,8 @@ pub struct CartridgeManifest {
     pub runtime: RuntimeSpec,
     pub hardware: HardwareSpec,
     pub compatibility: Compatibility,
+    /// Extra directories of game resources, besides `assets/`.
+    pub resources: Vec<ResourceDir>,
 }
 
 /// The game's own identity.
@@ -252,6 +259,9 @@ pub(crate) struct ManifestFile {
     pub(crate) runtime: RuntimeSpec,
     pub(crate) hardware: HardwareSpec,
     pub(crate) compatibility: CompatibilityFile,
+    /// Left out of written manifests when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) resources: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -313,6 +323,7 @@ impl TryFrom<ManifestFile> for CartridgeManifest {
         let min_glaux = Version::parse(&file.compatibility.min_glaux)
             .map_err(|_| CartridgeError::InvalidMinGlaux)?;
         validate_entry(&file.runtime.entry, file.runtime.language)?;
+        let resources = ResourceDir::parse_all(&file.resources)?;
         Ok(Self {
             format: file.format,
             cartridge: CartridgeInfo {
@@ -323,6 +334,7 @@ impl TryFrom<ManifestFile> for CartridgeManifest {
             runtime: file.runtime,
             hardware: file.hardware,
             compatibility: Compatibility { min_glaux },
+            resources,
         })
     }
 }
@@ -625,6 +637,8 @@ fn entry_error(err: FsError, entry: &str) -> CartridgeError {
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) mod map;
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) mod rom;
 pub(crate) mod source;
 
 #[cfg(test)]

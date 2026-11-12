@@ -66,6 +66,7 @@ fn parses_the_specified_v1_manifest() {
             compatibility: Compatibility {
                 min_glaux: Version::new(0, 1, 0),
             },
+            resources: Vec::new(),
         })
     );
 }

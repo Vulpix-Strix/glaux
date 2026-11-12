@@ -89,6 +89,10 @@ pub(super) fn cartridge(error: &crate::cartridge::CartridgeError) -> String {
             ],
         ),
         CartridgeError::InvalidEntryPath => ui_text::get("error-cartridge-invalid-entry-path"),
+        CartridgeError::InvalidResourceDir(value) => ui_text::get_with(
+            "error-cartridge-invalid-resource-dir",
+            &[("path", Arg::Text(value))],
+        ),
         CartridgeError::EntryNotLuau => ui_text::get("error-cartridge-entry-not-luau"),
         CartridgeError::EntryNotRhai => ui_text::get("error-cartridge-entry-not-rhai"),
         CartridgeError::EntryNotFound(value) => ui_text::get_with(
