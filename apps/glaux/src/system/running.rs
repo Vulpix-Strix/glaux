@@ -8,6 +8,7 @@ use glaux_audio::AudioState;
 use glaux_input::{InputEvent, InputLatch, InputState};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
+use glaux_machine::hardware::CartridgeHardware;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
 use glaux_script::debug::{Breakpoint, DebugReply, DebugRequest, Resume, Stop};
@@ -164,7 +165,7 @@ impl ScriptRuntime {
 pub struct RunningCartridge {
     cartridge: LoadedCartridge,
     runtime: ScriptRuntime,
-    video: CartridgeVideo,
+    video: CartridgeHardware,
     /// Starts with every button and key released, so nothing held during a
     /// previous run reaches this one, and is reset whenever the system
     /// resumes the cartridge from a pause.
@@ -219,7 +220,7 @@ impl RunningCartridge {
         }
     }
 
-    fn new(cartridge: LoadedCartridge, runtime: ScriptRuntime, video: CartridgeVideo) -> Self {
+    fn new(cartridge: LoadedCartridge, runtime: ScriptRuntime, video: CartridgeHardware) -> Self {
         Self {
             cartridge,
             runtime,
@@ -398,15 +399,15 @@ fn prepare(
     cartridge: LoadedCartridge,
     defaults: &CartridgeVideoDefaults,
     overrides: VideoOverrides<'_>,
-) -> Result<(LoadedCartridge, Vec<u8>, CartridgeVideo), Box<FailedStart>> {
+) -> Result<(LoadedCartridge, Vec<u8>, CartridgeHardware), Box<FailedStart>> {
     let source = match cartridge.entry_source() {
         Ok(source) => source,
         Err(err) => return Err(failed(cartridge, StartError::Cartridge(err))),
     };
-    let video = match CartridgeVideo::load(&cartridge, defaults) {
+    let hardware = match CartridgeVideo::load(&cartridge, defaults) {
         Ok(mut video) => {
             overrides.apply(&mut video);
-            video
+            video.into_hardware()
         }
         Err(VideoLoadError::Cartridge(err)) => {
             return Err(failed(cartridge, StartError::Cartridge(err)));
@@ -415,7 +416,7 @@ fn prepare(
             return Err(failed(cartridge, StartError::Video(err)));
         }
     };
-    Ok((cartridge, source, video))
+    Ok((cartridge, source, hardware))
 }
 
 fn failed(cartridge: LoadedCartridge, error: StartError) -> Box<FailedStart> {

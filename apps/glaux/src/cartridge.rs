@@ -1,6 +1,6 @@
 //! Development cartridges. A directory holding a `cartridge.ron` manifest
 //! and the entry script it names, plus optional binary assets: `sprites.bin`,
-//! `objattr.bin`, `obp.bin` and `palette.bin`.
+//! `objattr.bin`, `obp.bin`, `palette.bin`, `bgtiles.bin` and `bgp.bin`.
 //!
 //! Loading only validates the cartridge. Its entry script runs only when
 //! asked to, through [`LoadedCartridge::entry_source`].

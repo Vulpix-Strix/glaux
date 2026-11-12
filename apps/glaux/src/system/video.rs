@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use glaux_machine::bg::{BgPalettes, BgPalettesError, BgTileBank, BgTileBankError, BgVram};
+use glaux_machine::hardware::CartridgeHardware;
 use glaux_machine::obj_palette::{ObjPalettes, ObjPalettesError};
 use glaux_machine::palette::{Palette, PaletteBytesError};
 use glaux_machine::sprite::{
@@ -211,6 +212,11 @@ impl CartridgeVideo {
         }
     }
 
+    /// Moves this state into the hardware a cartridge runs against.
+    pub fn into_hardware(self) -> CartridgeHardware {
+        CartridgeHardware::new(self.palette, self.obj, self.bg)
+    }
+
     /// Takes the state of `asset` from `other`, keeping the rest.
     pub fn copy_asset(&mut self, other: &Self, asset: VideoAsset) {
         match asset {
@@ -300,6 +306,20 @@ mod tests {
         );
         let plain = CartridgeVideo::decode(&VideoFiles::default(), &defaults()).unwrap();
         assert_eq!(video.obj, plain.obj);
+    }
+
+    #[test]
+    fn the_hardware_takes_over_every_part_of_the_video_state() {
+        let files = VideoFiles {
+            bg_tiles: Some(vec![0x34; 64]),
+            ..VideoFiles::default()
+        };
+        let video = CartridgeVideo::decode(&files, &defaults()).unwrap();
+        let (palette, obj, bg) = (video.palette.clone(), video.obj.clone(), video.bg.clone());
+        let hardware = video.into_hardware();
+        assert_eq!(hardware.palette, palette);
+        assert_eq!(hardware.obj, obj);
+        assert_eq!(hardware.bg, bg);
     }
 
     #[test]
