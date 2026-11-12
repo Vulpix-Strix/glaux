@@ -28,6 +28,7 @@ fn messages_without_a_position_give_none() {
         ScriptError::Runtime("Error: oops:3: spaced".into()),
         ScriptError::LimitExceeded,
         ScriptError::ModuleLimitExceeded("code/x.luau".into()),
+        ScriptError::MemoryLimitExceeded,
         ScriptError::Require(Box::new(RequireFailure {
             at: None,
             error: RequireError::Cycle(vec!["a".into()]),

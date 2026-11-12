@@ -110,6 +110,14 @@ fn start_failures_keep_the_cartridge_loaded() {
             vec!["! Execution limit exceeded in boot"],
         ),
         ("while true do end", vec!["! Execution limit exceeded"]),
+        (
+            r#"local s = string.rep("x", 8 * 1024 * 1024)"#,
+            vec!["! Memory limit exceeded"],
+        ),
+        (
+            "function boot() local t = {} while true do t[#t + 1] = { 1 } end end",
+            vec!["! Memory limit exceeded in boot"],
+        ),
     ] {
         let system = started(&fixture, script);
         assert_eq!(after(&system, "> run"), expected, "{script}");
@@ -146,6 +154,14 @@ fn callback_failures_stop_the_cartridge() {
                    function draw() pcall(function() while true do end end) end"#,
             "! Execution limit exceeded in draw",
         ),
+        (
+            r#"function tick()
+                       log.info("t")
+                       local t = {}
+                       pcall(function() while true do t[#t + 1] = { 1 } end end)
+                   end"#,
+            "! Memory limit exceeded in tick",
+        ),
     ] {
         let system = ticks(started(&fixture, script), 1);
         assert_eq!(
@@ -155,6 +171,31 @@ fn callback_failures_stop_the_cartridge() {
         );
         assert_eq!(loaded_name(&system), Some("Pong"), "{script}");
     }
+}
+
+#[test]
+fn a_cartridge_that_ran_out_of_memory_can_run_again() {
+    let fixture = Fixture::new("sys-memory-rerun");
+    let script = r#"function tick()
+        count = (count or 0) + 1
+        log.info(count)
+        local hog = {}
+        while count == 2 do hog[#hog + 1] = { 1 } end
+    end"#;
+    let mut system = started(&fixture, script);
+    for _ in 0..2 {
+        system = ticks(enter(system, "run"), 3);
+    }
+    // Each run starts from an empty heap, so both fail on their second tick.
+    assert_eq!(
+        after(&system, "> run"),
+        [
+            "Running Pong 0.1.0",
+            "1",
+            "2",
+            "! Memory limit exceeded in tick"
+        ]
+    );
 }
 
 #[test]

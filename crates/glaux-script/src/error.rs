@@ -43,6 +43,9 @@ pub enum ScriptError {
     /// path was running.
     #[error("Execution limit exceeded in {0}")]
     ModuleLimitExceeded(String),
+    /// The script needed more memory than the runtime allows it.
+    #[error("Memory limit exceeded")]
+    MemoryLimitExceeded,
     #[error("{0}")]
     Require(Box<RequireFailure>),
     /// The debugger ended the call. It is not a failure of the script.
@@ -61,7 +64,10 @@ impl ScriptError {
         match self {
             Self::Syntax(message) | Self::Runtime(message) => leading_position(message),
             Self::Require(failure) => failure.at.as_deref().and_then(trailing_position),
-            Self::LimitExceeded | Self::ModuleLimitExceeded(_) | Self::Stopped => None,
+            Self::LimitExceeded
+            | Self::ModuleLimitExceeded(_)
+            | Self::MemoryLimitExceeded
+            | Self::Stopped => None,
         }
     }
 }
@@ -173,6 +179,7 @@ impl fmt::Display for RuntimeError {
             ScriptError::ModuleLimitExceeded(path) => {
                 write!(f, "Execution limit exceeded in {callback}: {path}")
             }
+            ScriptError::MemoryLimitExceeded => write!(f, "Memory limit exceeded in {callback}"),
             ScriptError::Require(failure) => f.write_str(&failure.message(Some(callback))),
             ScriptError::Stopped => write!(f, "Stopped by the debugger in {callback}"),
         }

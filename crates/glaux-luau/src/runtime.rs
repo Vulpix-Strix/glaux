@@ -9,6 +9,7 @@ use glaux_input::InputState;
 use glaux_modules::ModuleSource;
 use glaux_script::debug::{Breakpoint, DebugPort};
 use mlua::chunk::ChunkMode;
+use mlua::prelude::{LuaGcIncParams as GcIncParams, LuaGcMode as GcMode};
 use mlua::{Function, Lua, Value, VmState};
 
 use glaux_script::{
@@ -25,7 +26,32 @@ use crate::modules::{self, Modules};
 ///
 /// Measured in a debug build, `while true do end` passes about 15 million
 /// checks per second, so a runaway call stops in roughly a third of a second.
+/// Checks are not time, so this is not a real-time guarantee: the collector
+/// and the builtins a script calls run between checks and are not counted.
 pub const DEFAULT_INTERRUPT_BUDGET: u64 = 5_000_000;
+
+/// Bytes of heap a script may use, counting garbage the collector has not
+/// freed yet. An allocation that would pass it fails with an ordinary Luau
+/// memory error, which `pcall` and coroutines can catch.
+pub const MEMORY_LIMIT: usize = 4 << 20;
+
+/// Heap size above which the interrupt stops the call with
+/// [`ScriptError::MemoryLimitExceeded`], which a script cannot catch.
+///
+/// It is below [`MEMORY_LIMIT`] so that a script growing its heap is stopped
+/// before an allocation fails inside a `pcall`. The gap is what a single
+/// builtin such as `string.rep` can allocate between two interrupt checks.
+/// This is an internal policy, not part of the machine contract.
+const MEMORY_SOFT_LIMIT: usize = MEMORY_LIMIT / 8 * 7;
+
+/// Heap size, as a percentage of live data, the collector aims for.
+/// Luau's default of 200 lets garbage double the heap, which makes a script
+/// with little live data reach the limit.
+const GC_GOAL: i32 = 130;
+
+/// How much collector work runs per allocated byte, as a percentage. A small
+/// goal needs a large multiplier for the collector to keep up.
+const GC_STEP_MULTIPLIER: i32 = 1000;
 
 /// How long each call into a script may execute before it is stopped.
 ///
@@ -52,6 +78,8 @@ pub(crate) struct Meter {
     pub(crate) budget: u64,
     pub(crate) checks: Cell<u64>,
     pub(crate) exhausted: Cell<bool>,
+    /// Whether the heap went above [`MEMORY_SOFT_LIMIT`].
+    memory_exhausted: Cell<bool>,
     /// Path of the innermost module whose top-level code was running when
     /// the budget ran out, if any.
     pub(crate) module: RefCell<Option<String>>,
@@ -61,6 +89,7 @@ impl Meter {
     fn reset(&self) {
         self.checks.set(0);
         self.exhausted.set(false);
+        self.memory_exhausted.set(false);
         self.module.borrow_mut().take();
     }
 }
@@ -142,9 +171,25 @@ impl Runtime {
             budget: budget.interrupts,
             checks: Cell::new(0),
             exhausted: Cell::new(false),
+            memory_exhausted: Cell::new(false),
             module: RefCell::default(),
         });
         let lua = Lua::new();
+        lua.gc_set_mode(GcMode::Incremental(
+            GcIncParams::default()
+                .goal(GC_GOAL)
+                .step_multiplier(GC_STEP_MULTIPLIER),
+        ));
+        if let Err(err) = lua.set_memory_limit(MEMORY_LIMIT) {
+            return Err(StartFailure {
+                error: RuntimeError {
+                    phase: Phase::Entry,
+                    error: script_error(&err),
+                },
+                output: Vec::new(),
+                dropped: 0,
+            });
+        }
         let output: Rc<LogSink> = Rc::default();
         let debug = match debug
             .map(|(port, breakpoints)| Attachment::new(&lua, port, Rc::clone(&output), breakpoints))
@@ -261,11 +306,15 @@ impl Runtime {
     fn install_globals(&self) -> mlua::Result<()> {
         let meter = Rc::clone(&self.meter);
         let stopped = self.debug.as_ref().map(Attachment::stopper);
-        // The failure is sticky for the rest of the call so a `pcall` around
-        // a runaway loop cannot resume it.
-        self.lua.set_interrupt(move |_| {
+        // The failures are sticky for the rest of the call so a `pcall` around
+        // a runaway loop or a growing table cannot resume it.
+        self.lua.set_interrupt(move |lua| {
             if stopped.as_ref().is_some_and(|stopped| stopped()) {
                 return Err(mlua::Error::runtime("stopped by the debugger"));
+            }
+            if meter.memory_exhausted.get() || lua.used_memory() > MEMORY_SOFT_LIMIT {
+                meter.memory_exhausted.set(true);
+                return Err(mlua::Error::runtime("memory limit exceeded"));
             }
             if !meter.exhausted.get() {
                 let passed = meter.checks.get() + 1;
@@ -326,6 +375,12 @@ impl Runtime {
             return Err(RuntimeError {
                 phase,
                 error: ScriptError::Stopped,
+            });
+        }
+        if self.meter.memory_exhausted.get() {
+            return Err(RuntimeError {
+                phase,
+                error: ScriptError::MemoryLimitExceeded,
             });
         }
         if self.meter.exhausted.get() {

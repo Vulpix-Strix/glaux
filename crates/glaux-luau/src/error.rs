@@ -12,6 +12,7 @@ pub(crate) fn script_error(err: &mlua::Error) -> ScriptError {
     let first_line = |message: &str| message.lines().next().unwrap_or("").to_owned();
     match err {
         mlua::Error::SyntaxError { message, .. } => ScriptError::Syntax(first_line(message)),
+        mlua::Error::MemoryError(_) => ScriptError::MemoryLimitExceeded,
         mlua::Error::RuntimeError(message) => ScriptError::Runtime(first_line(message)),
         mlua::Error::ExternalError(external) => match external.downcast_ref::<RequireFailure>() {
             Some(failure) => ScriptError::Require(Box::new(failure.clone())),

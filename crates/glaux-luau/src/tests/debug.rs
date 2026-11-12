@@ -545,3 +545,20 @@ fn what_the_script_logged_so_far_can_be_read_while_it_is_stopped() {
     assert!(entries.is_empty());
     assert_eq!(vm.finish(), Ok(()));
 }
+
+#[test]
+fn a_debugged_vm_has_the_same_memory_limit() {
+    let vm = debugged_with(
+        "function tick()\n  local t = {}\n  pcall(function() for i = 1, 1e8 do t[i] = { i } end end)\nend",
+        &[],
+        Vec::new(),
+        Budget::default(),
+    );
+    assert_eq!(
+        vm.finished.recv_timeout(LIMIT).unwrap(),
+        Err(RuntimeError {
+            phase: Phase::Tick,
+            error: ScriptError::MemoryLimitExceeded
+        })
+    );
+}

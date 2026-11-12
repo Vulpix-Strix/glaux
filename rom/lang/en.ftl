@@ -814,6 +814,10 @@ error-script-require = { $kind ->
     [missing] Module not found
     [unreadable] Cannot read module
    *[cycle] Cyclic require
+error-script-memory-limit = { $phase ->
+    [entry] Memory limit exceeded
+   *[callback] Memory limit exceeded in { $callback }
+    }
     }{ $phase ->
     [entry] { "" }
    *[callback] { " in " }{ $callback }

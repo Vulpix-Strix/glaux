@@ -86,15 +86,21 @@ After an error the cartridge is not resumed, because the script may have stopped
 
 Every call into the script has its own execution limit: the top level, `boot()`, each `tick()` and each `draw()`. Running out stops the cartridge with `Execution limit exceeded`, and a `pcall` or `try` cannot catch it.
 
+The execution limits count interrupt checks, not time. The collector and the builtins a script calls run between checks and are not counted, so a call can take longer than its limit suggests.
+
 ### Luau
 
 The limit counts loop iterations and function calls, about 5 million per call. Straight-line code is free.
+
+The heap is limited to 4 MiB, which includes the VM itself and the garbage the collector has not freed yet. The collector keeps garbage to about 30% of the live data, so a script can hold roughly 2 MiB of its own data under heavy allocation. A script whose heap passes 3.5 MiB stops with `Memory limit exceeded`, and a `pcall` or coroutine cannot resume it. A single allocation that does not fit, such as a huge `string.rep`, is an ordinary error that `pcall` can catch.
 
 ### Rhai
 
 The limit counts operations, about 1.5 million per call. Every statement and expression costs at least one, so even code without loops adds up.
 
-`draw()` also has a draw cost limit. See [draw](glaux://api/lifecycle/draw). In Rhai, strings, arrays and object maps have size limits, and `this` is checked after every callback, so state cannot grow without bound.
+`draw()` also has a draw cost limit. See [draw](glaux://api/lifecycle/draw). In Rhai, strings, arrays and object maps have size limits, and `this` is checked after every callback, so state kept in `this` cannot grow without bound.
+
+Rhai has no memory limit. A single call can still allocate tens of megabytes, so Rhai is experimental and should not run cartridges you do not trust. Luau enforces its heap limit.
 
 ## Common mistakes
 

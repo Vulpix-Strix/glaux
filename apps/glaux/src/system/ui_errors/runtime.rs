@@ -40,6 +40,10 @@ pub(in crate::system) fn runtime(error: &glaux_script::RuntimeError) -> String {
                 ("path", Arg::Text(path)),
             ],
         ),
+        ScriptError::MemoryLimitExceeded => ui_text::get_with(
+            "error-script-memory-limit",
+            &[("phase", phase), ("callback", callback)],
+        ),
         ScriptError::Stopped => ui_text::get("error-script-stopped"),
         ScriptError::Require(failure) => {
             let at = failure.at.as_deref();
@@ -129,6 +133,15 @@ mod tests {
         assert_eq!(
             runtime(&failure),
             "Module not found in tick: code/game/player.luau (code/main.luau:3)"
+        );
+        let memory = |phase| RuntimeError {
+            phase,
+            error: ScriptError::MemoryLimitExceeded,
+        };
+        assert_eq!(runtime(&memory(Phase::Entry)), "Memory limit exceeded");
+        assert_eq!(
+            runtime(&memory(Phase::Draw)),
+            "Memory limit exceeded in draw"
         );
         let module = RuntimeError {
             phase: Phase::Entry,
