@@ -55,6 +55,50 @@ pub struct WalkLimits {
     pub max_files: usize,
 }
 
+/// What a path is on the host, without following symlinks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RealKind {
+    File,
+    Directory,
+    Symlink,
+    /// A FIFO, socket or device, or an entry whose name cannot be addressed.
+    Other,
+}
+
+/// An entry as [`CartridgeFs::real_entry`] and [`CartridgeFs::real_entries`]
+/// report it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RealEntry {
+    pub kind: RealKind,
+    /// Size in bytes of a regular file, 0 for anything else.
+    pub len: u64,
+}
+
+impl RealEntry {
+    fn of(meta: &fs::Metadata) -> Self {
+        let file_type = meta.file_type();
+        let (kind, len) = if file_type.is_symlink() {
+            (RealKind::Symlink, 0)
+        } else if file_type.is_dir() {
+            (RealKind::Directory, 0)
+        } else if file_type.is_file() {
+            (RealKind::File, meta.len())
+        } else {
+            (RealKind::Other, 0)
+        };
+        Self { kind, len }
+    }
+}
+
+/// What [`CartridgeFs::real_entries`] found in a directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealListing {
+    pub entries: Vec<(String, RealEntry)>,
+    /// The directory holds more entries than were asked for, so `entries`
+    /// is only some of them.
+    pub truncated: bool,
+}
+
 /// A part of the tree a [`Walk`] did not search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkGap {
@@ -359,6 +403,97 @@ impl CartridgeFs {
         // A canonical root joined with a plain name that is a real directory
         // is itself canonical.
         Ok(Self::new(dir))
+    }
+
+    /// The entry at `path` as it is on the host, or `None` when it does not
+    /// exist. A symlink is reported as [`RealKind::Symlink`] and never
+    /// followed.
+    ///
+    /// Every directory on the way must be a real directory: one reached
+    /// through a symlink is [`FsError::NotFound`], as in
+    /// [`real_subdir`](Self::real_subdir). Staging leftovers do not exist.
+    pub fn real_entry(&self, path: &str) -> Result<Option<RealEntry>, FsError> {
+        let components = real_components(path)?;
+        let Some((name, parent)) = components.split_last() else {
+            return Ok(Some(RealEntry {
+                kind: RealKind::Directory,
+                len: 0,
+            }));
+        };
+        if name.starts_with(STAGING_PREFIX) {
+            return Ok(None);
+        }
+        let Some(dir) = self.real_dir(parent)? else {
+            return Ok(None);
+        };
+        match fs::symlink_metadata(dir.join(name)) {
+            Ok(meta) => Ok(Some(RealEntry::of(&meta))),
+            Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(io_failure(err, &components)),
+        }
+    }
+
+    /// Up to `max` of the entries directly inside the real directory at
+    /// `path`, sorted by name, each as [`real_entry`](Self::real_entry)
+    /// would report it. The directory is read no further than `max`, so a
+    /// huge one costs no more than that, and [`RealListing::truncated`] says
+    /// when there was more.
+    ///
+    /// Nothing is followed or hidden except staging leftovers: an entry whose
+    /// name cannot be addressed is listed as [`RealKind::Other`] under its
+    /// lossy name, so callers can report it instead of missing it.
+    pub fn real_entries(&self, path: &str, max: usize) -> Result<RealListing, FsError> {
+        let components = real_components(path)?;
+        let Some(dir) = self.real_dir(&components)? else {
+            return Err(FsError::NotFound(virtual_path(&components)));
+        };
+        let mut entries = Vec::new();
+        let mut truncated = false;
+        for entry in fs::read_dir(&dir).map_err(|err| io_failure(err, &components))? {
+            let entry = entry.map_err(|err| io_failure(err, &components))?;
+            let raw = entry.file_name();
+            let name = raw.to_string_lossy().into_owned();
+            if name.starts_with(STAGING_PREFIX) {
+                continue;
+            }
+            if entries.len() == max {
+                truncated = true;
+                break;
+            }
+            let meta = entry
+                .metadata()
+                .map_err(|err| io_failure(err, &components))?;
+            let mut real = RealEntry::of(&meta);
+            if !raw.to_str().is_some_and(is_name) {
+                real.kind = RealKind::Other;
+            }
+            entries.push((name, real));
+        }
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(RealListing { entries, truncated })
+    }
+
+    /// Host path of the real directory at `components`, `None` when it does
+    /// not exist. A symlink on the way is [`FsError::NotFound`] and a file
+    /// is [`FsError::NotADirectory`].
+    fn real_dir(&self, components: &[String]) -> Result<Option<PathBuf>, FsError> {
+        let mut current = self.root.clone();
+        for (depth, name) in components.iter().enumerate() {
+            let walked = &components[..=depth];
+            current.push(name);
+            let meta = match fs::symlink_metadata(&current) {
+                Ok(meta) => meta,
+                Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+                Err(err) => return Err(io_failure(err, walked)),
+            };
+            if meta.file_type().is_symlink() {
+                return Err(FsError::NotFound(virtual_path(walked)));
+            }
+            if !meta.is_dir() {
+                return Err(FsError::NotADirectory(virtual_path(walked)));
+            }
+        }
+        Ok(Some(current))
     }
 
     /// Every file below the root whose path `keep` accepts, searching
@@ -1264,6 +1399,20 @@ fn is_name(name: &str) -> bool {
             Path::new(name).components().collect::<Vec<_>>()[..],
             [Component::Normal(_)]
         )
+}
+
+/// The plain-name components of `path`, ignoring empty ones. Any other
+/// component, such as `.` or `..`, is [`FsError::NotFound`]: real lookups
+/// never navigate.
+fn real_components(path: &str) -> Result<Vec<String>, FsError> {
+    let mut components = Vec::new();
+    for part in path.split('/').filter(|part| !part.is_empty()) {
+        components.push(part.to_owned());
+        if !is_name(part) {
+            return Err(FsError::NotFound(virtual_path(&components)));
+        }
+    }
+    Ok(components)
 }
 
 /// `components` as a virtual path: `/` or `/a/b`.

@@ -1227,3 +1227,183 @@ mod removing_and_moving {
         }
     }
 }
+
+mod real_entries {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    fn kinds(entries: Vec<(String, RealEntry)>) -> Vec<(String, RealKind)> {
+        entries
+            .into_iter()
+            .map(|(name, entry)| (name, entry.kind))
+            .collect()
+    }
+
+    #[test]
+    fn report_kind_and_size_without_reading_contents() {
+        let fixture = Fixture::new("real-entry-basic");
+        fs::write(fixture.root().join("tools/a.bin"), [0; 12]).unwrap();
+        let files = fixture.open();
+
+        assert_eq!(
+            files.real_entry("tools/a.bin"),
+            Ok(Some(RealEntry {
+                kind: RealKind::File,
+                len: 12
+            }))
+        );
+        assert_eq!(
+            files.real_entry("/tools"),
+            Ok(Some(RealEntry {
+                kind: RealKind::Directory,
+                len: 0
+            }))
+        );
+        assert_eq!(files.real_entry("tools/missing"), Ok(None));
+        assert_eq!(files.real_entry("missing/deeper"), Ok(None));
+        assert_eq!(
+            files.real_entry("tools/a.bin/x"),
+            Err(FsError::NotADirectory("/tools/a.bin".into()))
+        );
+    }
+
+    #[test]
+    fn never_navigate() {
+        let files = Fixture::new("real-entry-dots").open();
+
+        for path in ["tools/../A.txt", "./A.txt", "tools/./x", "..", "a\\b"] {
+            assert!(
+                matches!(files.real_entry(path), Err(FsError::NotFound(_))),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_a_directory_sorted_and_without_staging_leftovers() {
+        let fixture = Fixture::new("real-entries-list");
+        let tools = fixture.root().join("tools");
+        fs::write(tools.join("b"), "").unwrap();
+        fs::write(tools.join("a"), "").unwrap();
+        fs::create_dir(tools.join("c")).unwrap();
+        fs::create_dir(tools.join(".glaux-staging-x")).unwrap();
+
+        assert_eq!(
+            kinds(
+                fixture
+                    .open()
+                    .real_entries("tools", usize::MAX)
+                    .unwrap()
+                    .entries
+            ),
+            [
+                ("a".to_owned(), RealKind::File),
+                ("b".to_owned(), RealKind::File),
+                ("c".to_owned(), RealKind::Directory),
+            ]
+        );
+        assert_eq!(
+            fixture.open().real_entry("tools/.glaux-staging-x"),
+            Ok(None)
+        );
+        assert_eq!(
+            fixture.open().real_entries("missing", usize::MAX),
+            Err(not_found("/missing"))
+        );
+    }
+
+    #[test]
+    fn stop_reading_a_directory_at_the_requested_count() {
+        let fixture = Fixture::new("real-entries-max");
+        let tools = fixture.root().join("tools");
+        for name in ["a", "b", "c", "d"] {
+            fs::write(tools.join(name), "").unwrap();
+        }
+        let files = fixture.open();
+
+        let some = files.real_entries("tools", 3).unwrap();
+        assert_eq!(some.entries.len(), 3);
+        assert!(some.truncated);
+        let all = files.real_entries("tools", 4).unwrap();
+        assert_eq!(all.entries.len(), 4);
+        assert!(!all.truncated);
+    }
+
+    #[cfg(unix)]
+    mod symlinks {
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::symlink;
+
+        use super::*;
+        use pretty_assertions::assert_eq;
+
+        #[test]
+        fn links_are_reported_and_never_followed() {
+            let fixture = Fixture::new("real-entries-links");
+            let root = fixture.root();
+            fs::write(root.join("tools/real"), "x").unwrap();
+            symlink(root.join("tools/real"), root.join("tools/inside")).unwrap();
+            symlink(fixture.outside().join("secret"), root.join("tools/out")).unwrap();
+            symlink("missing", root.join("tools/dangling")).unwrap();
+            symlink("loop", root.join("tools/loop")).unwrap();
+            let files = fixture.open();
+
+            assert_eq!(
+                kinds(files.real_entries("tools", usize::MAX).unwrap().entries),
+                [
+                    ("dangling".to_owned(), RealKind::Symlink),
+                    ("inside".to_owned(), RealKind::Symlink),
+                    ("loop".to_owned(), RealKind::Symlink),
+                    ("out".to_owned(), RealKind::Symlink),
+                    ("real".to_owned(), RealKind::File),
+                ]
+            );
+            for name in ["inside", "out", "dangling", "loop"] {
+                let entry = files.real_entry(&format!("tools/{name}")).unwrap().unwrap();
+                assert_eq!(entry.kind, RealKind::Symlink, "{name}");
+                assert_eq!(entry.len, 0, "{name}");
+            }
+        }
+
+        #[test]
+        fn a_link_on_the_way_is_not_found_even_when_it_stays_inside() {
+            let fixture = Fixture::new("real-entries-link-way");
+            let root = fixture.root();
+            fs::write(root.join("tools/x"), "").unwrap();
+            symlink(root.join("tools"), root.join("alias")).unwrap();
+            symlink(fixture.outside(), root.join("out")).unwrap();
+            let files = fixture.open();
+
+            assert_eq!(files.real_entry("alias/x"), Err(not_found("/alias")));
+            assert_eq!(
+                files.real_entries("alias", usize::MAX),
+                Err(not_found("/alias"))
+            );
+            assert_eq!(files.real_entry("out/secret"), Err(not_found("/out")));
+            assert_eq!(
+                files.real_entries("out", usize::MAX),
+                Err(not_found("/out"))
+            );
+        }
+
+        #[test]
+        fn names_that_cannot_be_addressed_are_listed_as_other() {
+            let fixture = Fixture::new("real-entries-names");
+            let name = std::ffi::OsStr::from_bytes(b"bad\xff");
+            if fs::write(fixture.root().join("tools").join(name), "").is_err() {
+                return; // The host file system refuses non-UTF-8 names.
+            }
+
+            let entries = fixture
+                .open()
+                .real_entries("tools", usize::MAX)
+                .unwrap()
+                .entries;
+
+            assert_eq!(
+                kinds(entries),
+                [("bad\u{fffd}".to_owned(), RealKind::Other)]
+            );
+        }
+    }
+}
