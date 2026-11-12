@@ -64,12 +64,17 @@ enum ScriptRuntime {
 
 impl ScriptRuntime {
     /// Starts `source` with the default budget of `language`'s runtime.
+    ///
+    /// Luau lends the hardware in `home` to the entry script and `boot()`.
+    /// Rhai has no API that reaches the hardware, so it never takes it and
+    /// `home` still holds it when the start returns, as it does for Luau.
     fn start(
         language: Language,
         entry: &str,
         source: &[u8],
         modules: CartridgeModules,
         font: BitmapFont,
+        home: &mut Option<Box<CartridgeHardware>>,
     ) -> Result<Self, StartFailure> {
         match language {
             Language::Luau => glaux_luau::Runtime::start(
@@ -78,6 +83,7 @@ impl ScriptRuntime {
                 modules,
                 glaux_luau::Budget::default(),
                 font,
+                home,
             )
             .map(Self::Luau),
             Language::Rhai => glaux_rhai::Runtime::start(
@@ -93,13 +99,15 @@ impl ScriptRuntime {
 
     /// Starts `source` under the debugger with the default budget, to be
     /// driven by whoever holds the other end of `port`. Called on the thread
-    /// the runtime will live on.
+    /// the runtime will live on. See [`start`](Self::start) for `home`.
+    #[allow(clippy::too_many_arguments)]
     fn start_debug(
         language: Language,
         entry: &str,
         source: &[u8],
         modules: CartridgeModules,
         font: BitmapFont,
+        home: &mut Option<Box<CartridgeHardware>>,
         port: glaux_script::debug::DebugPort,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<Self, StartFailure> {
@@ -110,6 +118,7 @@ impl ScriptRuntime {
                 modules,
                 glaux_luau::Budget::default(),
                 font,
+                home,
                 port,
                 breakpoints,
             )
@@ -220,6 +229,10 @@ impl RunningCartridge {
         font: &BitmapFont,
     ) -> Result<Self, Box<FailedStart>> {
         let (cartridge, source, hardware) = prepare(cartridge, defaults, overrides)?;
+        // Taken before any script runs, so the first frame shown is the same
+        // whether or not the start stopped in the debugger.
+        let published = PublishedFrame::new(&hardware);
+        let mut home = Some(hardware);
         let spec = &cartridge.manifest().runtime;
         let started = ScriptRuntime::start(
             spec.language,
@@ -227,9 +240,10 @@ impl RunningCartridge {
             &source,
             cartridge.modules(),
             font.clone(),
+            &mut home,
         );
         match started {
-            Ok(runtime) => Ok(Self::new(cartridge, runtime, hardware)),
+            Ok(runtime) => Ok(Self::new(cartridge, runtime, home, published)),
             Err(failure) => Err(failed(cartridge, StartError::Script(failure))),
         }
     }
@@ -247,6 +261,8 @@ impl RunningCartridge {
         breakpoints: Vec<Breakpoint>,
     ) -> Result<(Self, Option<Stop>), Box<FailedStart>> {
         let (cartridge, source, hardware) = prepare(cartridge, defaults, overrides)?;
+        let published = PublishedFrame::new(&hardware);
+        let mut home = Some(hardware);
         let spec = &cartridge.manifest().runtime;
         match DebugRuntime::start(
             spec.language,
@@ -255,10 +271,11 @@ impl RunningCartridge {
             cartridge.modules(),
             font.clone(),
             breakpoints,
+            &mut home,
         ) {
             Ok((runtime, stop)) => {
                 let runtime = ScriptRuntime::Debugged(Box::new(runtime));
-                let mut running = Self::new(cartridge, runtime, hardware);
+                let mut running = Self::new(cartridge, runtime, home, published);
                 running.stopped_in = stop.as_ref().map(|_| Phase::Entry);
                 Ok((running, stop))
             }
@@ -266,16 +283,20 @@ impl RunningCartridge {
         }
     }
 
+    /// `hardware` is `None` when a debugged start stopped before it
+    /// finished, and the runtime still holds it. `published` is the frame
+    /// of the hardware before any script ran.
     fn new(
         cartridge: LoadedCartridge,
         runtime: ScriptRuntime,
-        hardware: Box<CartridgeHardware>,
+        hardware: Option<Box<CartridgeHardware>>,
+        published: PublishedFrame,
     ) -> Self {
         Self {
             cartridge,
             runtime,
-            published: PublishedFrame::new(&hardware),
-            hardware: Some(hardware),
+            published,
+            hardware,
             stopped_in: None,
             input: InputLatch::new(),
             origin: RunOrigin::default(),

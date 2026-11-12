@@ -5,11 +5,12 @@
 //! [`DebugLink`], which carries the stops, and a pair of channels that
 //! carry the phases and what they produced.
 //!
-//! Each `tick()` and `draw()` is a command of its own. It moves the cartridge
-//! hardware to the thread with it, and the report that answers it moves the
-//! hardware back, whether the script succeeded or failed. The only way the
-//! hardware does not come back is that the thread is gone, which ends the
-//! run.
+//! The start, which runs the entry script and `boot()`, takes the cartridge
+//! hardware to the thread. Each `tick()` and `draw()` is a command of its
+//! own that moves it there too. The report that answers the start or a phase
+//! moves the hardware back, whether the script succeeded or failed. The only
+//! way the hardware does not come back is that the thread is gone, which
+//! ends the run.
 //!
 //! Waiting for a phase ends in one of two ways: the runtime finishes it, or
 //! it stops at a breakpoint or a step and waits to be resumed. Both are
@@ -59,9 +60,18 @@ enum Command {
 
 /// What the runtime thread reports once a call into it is over.
 enum Report {
-    /// The start ended, with what the script logged while it ran.
-    Started(Result<(Vec<LogEntry>, u32), StartFailure>),
+    /// The start ended.
+    Started(Box<StartReport>),
     Phase(Box<PhaseReport>),
+}
+
+/// How the start ended: the entry script and `boot()`.
+struct StartReport {
+    /// What the script logged while it ran, or why it failed to start.
+    result: Result<(Vec<LogEntry>, u32), StartFailure>,
+    /// The hardware the start ran on. It is always here, also after a script
+    /// error.
+    hardware: Box<CartridgeHardware>,
 }
 
 /// How a `tick()` or `draw()` ended.
@@ -96,6 +106,11 @@ pub struct DebugRuntime {
 impl DebugRuntime {
     /// Starts `source` on a new thread, stopping at `breakpoints`. The start
     /// itself may stop, so the answer says whether the runtime is waiting.
+    ///
+    /// The hardware in `home` moves to the thread for the entry script and
+    /// `boot()`. It is back in `home` when the start finishes, whether it
+    /// succeeded or not. If the start stops, the runtime still holds it and
+    /// `home` stays empty until the run is resumed and the start finishes.
     pub fn start(
         language: Language,
         entry: &str,
@@ -103,7 +118,15 @@ impl DebugRuntime {
         modules: CartridgeModules,
         font: BitmapFont,
         breakpoints: Vec<Breakpoint>,
+        home: &mut Option<Box<CartridgeHardware>>,
     ) -> Result<(Self, Option<Stop>), StartFailure> {
+        let Some(hardware) = home.take() else {
+            return Err(StartFailure {
+                error: LoanError::Unavailable.in_phase(Phase::Entry),
+                output: Vec::new(),
+                dropped: 0,
+            });
+        };
         let (link, port) = session();
         let (commands, command_inbox) = mpsc::channel();
         let (report_outbox, reports) = mpsc::channel();
@@ -113,23 +136,37 @@ impl DebugRuntime {
             .name("debugged-script".into())
             .stack_size(STACK)
             .spawn(move || {
+                let mut start_home = Some(hardware);
                 let runtime = ScriptRuntime::start_debug(
                     language,
                     &entry,
                     &source,
                     modules,
                     font,
+                    &mut start_home,
                     port,
                     breakpoints,
                 );
+                // The loan hands the hardware back on every path.
+                let Some(hardware) = start_home.take() else {
+                    return;
+                };
                 let mut runtime = match runtime {
                     Ok(mut runtime) => {
                         let started = (runtime.take_output(), runtime.take_dropped());
-                        let _ = report_outbox.send(Report::Started(Ok(started)));
+                        let report = StartReport {
+                            result: Ok(started),
+                            hardware,
+                        };
+                        let _ = report_outbox.send(Report::Started(Box::new(report)));
                         runtime
                     }
                     Err(failure) => {
-                        let _ = report_outbox.send(Report::Started(Err(failure)));
+                        let report = StartReport {
+                            result: Err(failure),
+                            hardware,
+                        };
+                        let _ = report_outbox.send(Report::Started(Box::new(report)));
                         notifier.idle();
                         return;
                     }
@@ -196,7 +233,7 @@ impl DebugRuntime {
             audio: RefCell::default(),
             ticking: false,
         };
-        match runtime.wait(Phase::Entry, &mut None) {
+        match runtime.wait(Phase::Entry, home) {
             Ok(Tick::Stopped(stop)) => Ok((runtime, Some(stop))),
             Ok(Tick::Done) => Ok((runtime, None)),
             Err(error) => Err(StartFailure {
@@ -240,15 +277,21 @@ impl DebugRuntime {
         home: &mut Option<Box<CartridgeHardware>>,
     ) -> Result<Tick, RuntimeError> {
         match self.reports.try_recv() {
-            Ok(Report::Started(Ok((output, dropped)))) => {
-                self.output.extend(output);
-                self.dropped += dropped;
-                Ok(Tick::Done)
-            }
-            Ok(Report::Started(Err(failure))) => {
-                self.output.extend(failure.output);
-                self.dropped += failure.dropped;
-                Err(failure.error)
+            Ok(Report::Started(report)) => {
+                let StartReport { result, hardware } = *report;
+                *home = Some(hardware);
+                match result {
+                    Ok((output, dropped)) => {
+                        self.output.extend(output);
+                        self.dropped += dropped;
+                        Ok(Tick::Done)
+                    }
+                    Err(failure) => {
+                        self.output.extend(failure.output);
+                        self.dropped += failure.dropped;
+                        Err(failure.error)
+                    }
+                }
             }
             Ok(Report::Phase(report)) => {
                 let PhaseReport {

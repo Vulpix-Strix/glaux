@@ -430,20 +430,65 @@ fn a_stop_in_draw_keeps_the_hardware_until_the_draw_finishes() {
 }
 
 #[test]
-fn a_stop_while_starting_does_not_lend_the_hardware_or_run_draw() {
+fn a_stop_while_starting_keeps_the_hardware_with_the_runtime_and_runs_no_draw() {
     for (name, cartridge, script, path) in LANGUAGES {
         let fixture = Fixture::new(&format!("running-debug-stop-boot-{name}"));
         let (mut running, stop) = start_debug(cartridge(&fixture, script), vec![at(path, 2)]);
         assert!(stop.is_some(), "{name}: stopped in boot");
-        let before = hardware_address(&running);
-        assert!(before.is_some(), "{name}: starting lends nothing");
+        assert_eq!(running.hardware, None, "{name}: the start still holds it");
         assert_eq!(running.stopped_in, Some(Phase::Entry), "{name}");
+        assert!(running.advance(&[]).is_err(), "{name}: stopped runs refuse");
 
         assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done), "{name}");
         assert_eq!(running.stopped_in, None, "{name}");
         assert_eq!(shown(&running), Some(0), "{name}: no tick, so no draw");
-        assert_eq!(hardware_address(&running), before, "{name}");
+        let after = hardware_address(&running);
+        assert!(after.is_some(), "{name}: the start gave it back");
         assert_eq!(running.advance(&[]), Ok(Tick::Done), "{name}");
+        assert_eq!(hardware_address(&running), after, "{name}");
+    }
+}
+
+/// A `boot()` that stops at line 2 and then fails.
+const FAILING_BOOT: [(&str, Cartridge, &str, &str); 2] = [
+    (
+        "luau",
+        luau_cartridge,
+        "function boot()\n  log.info(\"boot\")\n  error(\"boom\")\nend",
+        "code/main.luau",
+    ),
+    (
+        "rhai",
+        rhai_cartridge,
+        "fn boot() {\n  log::info(\"boot\");\n  throw \"boom\";\n}",
+        "code/main.rhai",
+    ),
+];
+
+#[test]
+fn a_boot_that_fails_after_a_stop_gives_the_hardware_back() {
+    for (name, cartridge, script, path) in FAILING_BOOT {
+        let fixture = Fixture::new(&format!("running-debug-boot-fails-{name}"));
+        let (mut running, stop) = start_debug(cartridge(&fixture, script), vec![at(path, 2)]);
+        assert!(stop.is_some(), "{name}");
+        assert_eq!(running.hardware, None, "{name}");
+
+        let error = running.resume(Resume::Continue).unwrap_err();
+        assert_eq!(error.phase, Phase::Boot, "{name}");
+        assert!(running.hardware.is_some(), "{name}: the report brings it");
+    }
+}
+
+#[test]
+fn cancelling_a_stopped_start_gives_the_hardware_back() {
+    for (name, cartridge, script, path) in LANGUAGES {
+        let fixture = Fixture::new(&format!("running-debug-cancel-boot-{name}"));
+        let (mut running, stop) = start_debug(cartridge(&fixture, script), vec![at(path, 2)]);
+        assert!(stop.is_some(), "{name}");
+
+        let error = running.resume(Resume::Stop).unwrap_err();
+        assert_eq!(error.error, ScriptError::Stopped, "{name}");
+        assert!(running.hardware.is_some(), "{name}");
     }
 }
 

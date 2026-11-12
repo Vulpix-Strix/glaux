@@ -85,7 +85,7 @@ fn errors_name_their_phase() {
 /// Starts `source` under the default budget, which is large enough to reach
 /// the memory limit before the interrupt budget runs out.
 fn roomy_with(source: &str, files: Files) -> Result<Runtime, StartFailure> {
-    Runtime::start(
+    Runtime::start_on_scratch(
         "main.luau",
         source.as_bytes(),
         files,

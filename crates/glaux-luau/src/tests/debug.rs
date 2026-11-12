@@ -47,16 +47,18 @@ fn debugged_with(
     let (link, port) = session();
     let (done, finished) = mpsc::channel();
     let thread = thread::spawn(move || {
+        let mut home = Some(hardware());
         let result = match Runtime::start_debug(
             "main.luau",
             source.as_bytes(),
             Files::new(modules),
             budget,
             font(),
+            &mut home,
             port,
             breakpoints,
         ) {
-            Ok(mut runtime) => runtime.tick(NO_INPUT),
+            Ok(runtime) => runtime.with_scratch(home).tick(NO_INPUT),
             Err(failure) => Err(failure.error),
         };
         let _ = done.send(result);

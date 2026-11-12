@@ -118,7 +118,7 @@ fn start(source: &str) -> Result<Runtime, StartFailure> {
 }
 
 fn start_with(source: &str, files: Files) -> Result<Runtime, StartFailure> {
-    Runtime::start("main.luau", source.as_bytes(), files, SMALL, font())
+    Runtime::start_on_scratch("main.luau", source.as_bytes(), files, SMALL, font())
 }
 
 fn started_with(source: &str, files: Files) -> Runtime {

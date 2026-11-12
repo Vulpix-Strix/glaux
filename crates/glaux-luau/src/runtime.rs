@@ -141,14 +141,20 @@ impl Runtime {
     /// `chunk_name` is shown verbatim in error locations, as in
     /// `main.luau:3: boom`. `source` must be Luau text, and bytecode is
     /// rejected. `font` is what `print` draws text with.
+    ///
+    /// The hardware in `home` is lent to the entry script and to `boot()`,
+    /// so the script can set up memory before the first `tick()`. It is back
+    /// in `home` when this returns, whether the start succeeded or not.
+    /// Without hardware the start fails before running any script.
     pub fn start(
         chunk_name: &str,
         source: &[u8],
         modules: impl ModuleSource + 'static,
         budget: Budget,
         font: BitmapFont,
+        home: &mut Option<Box<CartridgeHardware>>,
     ) -> Result<Self, StartFailure> {
-        Self::start_with(chunk_name, source, modules, budget, font, None)
+        Self::start_with(chunk_name, source, modules, budget, font, home, None)
     }
 
     /// Like [`start`](Self::start), for a VM that stops at `breakpoints` and
@@ -158,17 +164,23 @@ impl Runtime {
     /// information needed to name their variables, so the VM runs slower
     /// than one started with [`start`](Self::start). Breakpoints are
     /// cartridge-relative paths, as in `code/main.luau`.
+    ///
+    /// A start that stops at a breakpoint does not return until it is resumed
+    /// and finishes, so the hardware stays lent meanwhile. See
+    /// [`start`](Self::start) for `home`.
+    #[allow(clippy::too_many_arguments)]
     pub fn start_debug(
         chunk_name: &str,
         source: &[u8],
         modules: impl ModuleSource + 'static,
         budget: Budget,
         font: BitmapFont,
+        home: &mut Option<Box<CartridgeHardware>>,
         port: DebugPort,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<Self, StartFailure> {
         let debug = Some((port, breakpoints));
-        Self::start_with(chunk_name, source, modules, budget, font, debug)
+        Self::start_with(chunk_name, source, modules, budget, font, home, debug)
     }
 
     fn start_with(
@@ -177,6 +189,7 @@ impl Runtime {
         modules: impl ModuleSource + 'static,
         budget: Budget,
         font: BitmapFont,
+        home: &mut Option<Box<CartridgeHardware>>,
         debug: Option<(DebugPort, Vec<Breakpoint>)>,
     ) -> Result<Self, StartFailure> {
         let meter = Rc::new(Meter {
@@ -232,22 +245,28 @@ impl Runtime {
             source: Rc::new(modules),
             hardware: HardwareSlot::new(),
             #[cfg(test)]
-            scratch: Some(crate::tests::hardware()),
+            scratch: None,
             debug,
         };
 
-        let started = runtime
-            .call(Phase::Entry, |lua| {
-                runtime.install_globals()?;
-                let entry = lua
-                    .load(source)
-                    .set_name(format!("={chunk_name}"))
-                    .set_mode(ChunkMode::Text)
-                    .into_function()?;
-                debug::chunk_loaded(lua, chunk_name, source, &entry);
-                entry.call::<()>(())
-            })
-            .and_then(|()| runtime.callback(Phase::Boot).map(drop));
+        // The loan ends before the result is used, so the hardware is back in
+        // `home` on every path.
+        let slot = runtime.hardware.clone();
+        let started = match Loan::new(&slot, home) {
+            Ok(_loan) => runtime
+                .call(Phase::Entry, |lua| {
+                    runtime.install_globals()?;
+                    let entry = lua
+                        .load(source)
+                        .set_name(format!("={chunk_name}"))
+                        .set_mode(ChunkMode::Text)
+                        .into_function()?;
+                    debug::chunk_loaded(lua, chunk_name, source, &entry);
+                    entry.call::<()>(())
+                })
+                .and_then(|()| runtime.callback(Phase::Boot).map(drop)),
+            Err(error) => Err(error.in_phase(Phase::Entry)),
+        };
         match started {
             Ok(()) => Ok(runtime),
             Err(error) => {
@@ -321,6 +340,28 @@ impl Runtime {
         });
         self.scratch = home;
         result
+    }
+
+    /// Starts a runtime on the hardware of [`hardware`](crate::tests::hardware),
+    /// which [`tick`](Self::tick) keeps lending after the start.
+    #[cfg(test)]
+    pub(crate) fn start_on_scratch(
+        chunk_name: &str,
+        source: &[u8],
+        modules: impl ModuleSource + 'static,
+        budget: Budget,
+        font: BitmapFont,
+    ) -> Result<Self, StartFailure> {
+        let mut home = Some(crate::tests::hardware());
+        let runtime = Self::start(chunk_name, source, modules, budget, font, &mut home)?;
+        Ok(runtime.with_scratch(home))
+    }
+
+    /// Makes `home` the hardware that [`tick`](Self::tick) lends.
+    #[cfg(test)]
+    pub(crate) fn with_scratch(mut self, home: Option<Box<CartridgeHardware>>) -> Self {
+        self.scratch = home;
+        self
     }
 
     /// The hardware that [`tick`](Self::tick) lends.

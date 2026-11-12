@@ -691,7 +691,7 @@ fn a_rectfill_costs_one_draw_unit_whatever_its_area() {
             "function draw() for i = 1, {MAX_DRAW_COMMANDS} - 1 do pset(0, 0, 1) end \
              rectfill(-1000, -1000, 100000, 100000, 2) {extra} end"
         );
-        let mut runtime = Runtime::start(
+        let mut runtime = Runtime::start_on_scratch(
             "main.luau",
             source.as_bytes(),
             Files::default(),
@@ -743,7 +743,7 @@ fn draw_commands_are_capped_per_frame() {
         end
         "#
     );
-    let mut runtime = Runtime::start(
+    let mut runtime = Runtime::start_on_scratch(
         "main.luau",
         source.as_bytes(),
         Files::default(),
@@ -797,7 +797,7 @@ fn sprites_cost_sixty_four_draw_units() {
         interrupts: 4 * MAX_DRAW_COMMANDS as u64,
     };
     let fits = format!("function draw() for i = 1, {SPRITES} do spr(0, 0, 0) end end");
-    let mut runtime = Runtime::start(
+    let mut runtime = Runtime::start_on_scratch(
         "main.luau",
         fits.as_bytes(),
         Files::default(),
@@ -812,7 +812,7 @@ fn sprites_cost_sixty_four_draw_units() {
         "function draw() for i = 1, {} do spr(0, 0, 0) end end",
         SPRITES + 1
     );
-    let mut runtime = Runtime::start(
+    let mut runtime = Runtime::start_on_scratch(
         "main.luau",
         over.as_bytes(),
         Files::default(),
