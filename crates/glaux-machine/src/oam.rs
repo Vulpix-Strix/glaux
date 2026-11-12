@@ -102,20 +102,21 @@ impl Oam {
 
     /// The object at `index`, or `None` past the last one.
     pub fn entry(&self, index: usize) -> Option<OamEntry> {
-        let start = index.checked_mul(OAM_ENTRY_BYTES)?;
-        let bytes = self.bytes.get(start..start + OAM_ENTRY_BYTES)?;
-        Some(OamEntry::from_bytes(bytes.try_into().ok()?))
+        if index >= OAM_ENTRIES {
+            return None;
+        }
+        let start = index * OAM_ENTRY_BYTES;
+        let bytes = self.bytes[start..start + OAM_ENTRY_BYTES].try_into().ok()?;
+        Some(OamEntry::from_bytes(bytes))
     }
 
     /// Writes the object at `index`. Returns `false` past the last one.
     /// Each byte goes through [`set_byte`](Self::set_byte), like a bus write.
     pub fn set_entry(&mut self, index: usize, entry: OamEntry) -> bool {
-        let Some(start) = index.checked_mul(OAM_ENTRY_BYTES) else {
-            return false;
-        };
-        if start >= OAM_BYTES {
+        if index >= OAM_ENTRIES {
             return false;
         }
+        let start = index * OAM_ENTRY_BYTES;
         for (offset, byte) in entry.to_bytes().into_iter().enumerate() {
             self.set_byte(start + offset, byte);
         }

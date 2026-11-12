@@ -107,11 +107,27 @@ fn raw_bytes_lose_the_reserved_bits_of_their_position() {
 }
 
 #[test]
-fn entries_past_the_table_are_refused() {
+fn entries_past_the_table_are_refused_without_touching_it() {
     let mut oam = Oam::new();
-    assert_eq!(oam.entry(OAM_ENTRIES), None);
-    assert_eq!(oam.entry(usize::MAX), None);
-    assert!(!oam.set_entry(OAM_ENTRIES, OamEntry::default()));
-    assert!(!oam.set_entry(usize::MAX, OamEntry::default()));
+    let entry = OamEntry {
+        x: 1,
+        y: 2,
+        tile: 3,
+        enabled: true,
+        ..OamEntry::default()
+    };
+    assert!(oam.set_entry(OAM_ENTRIES - 1, entry));
+    let before = oam.clone();
+
+    // The last index whose offset would still fit a multiplication but not
+    // the addition of an entry's length.
+    for index in [OAM_ENTRIES, usize::MAX / OAM_ENTRY_BYTES, usize::MAX] {
+        assert_eq!(oam.entry(index), None, "{index:#x}");
+        assert!(!oam.set_entry(index, entry), "{index:#x}");
+    }
     assert!(!oam.set_byte(OAM_BYTES, 1));
+    // A failed comparison would print the whole table.
+    assert!(oam == before, "the table was modified");
+
+    assert_eq!(oam.entry(OAM_ENTRIES - 1), Some(entry));
 }
