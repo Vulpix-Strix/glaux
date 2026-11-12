@@ -43,7 +43,8 @@ pub(super) enum Command {
     /// A cartridge was loaded, with the tabs open on it.
     Load {
         generation: u64,
-        cartridge: LoadedCartridge,
+        /// Boxed so the rare large command does not size every other one.
+        cartridge: Box<LoadedCartridge>,
         tabs: Vec<TabText>,
     },
     /// The tabs changed: `open` lists every tab, `changed` the texts that are
@@ -303,7 +304,7 @@ impl Actor {
                 self.tabs = Tabs::default();
                 self.tabs
                     .update(tabs.iter().map(|tab| tab.path.clone()).collect(), tabs);
-                self.begin(cartridge);
+                self.begin(*cartridge);
             }
             Command::Tabs {
                 generation,

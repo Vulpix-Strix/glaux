@@ -282,7 +282,7 @@ impl Analysis {
         self.status = AnalyzerStatus::Starting;
         self.send(Command::Load {
             generation: self.generation,
-            cartridge: input.cartridge.clone(),
+            cartridge: Box::new(input.cartridge.clone()),
             tabs,
         });
     }
