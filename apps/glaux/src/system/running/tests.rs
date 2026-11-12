@@ -4,6 +4,7 @@ use std::path::Path;
 
 use glaux_luau::ScriptError;
 use glaux_machine::obj_palette::{ObjBank, ObjPalettes};
+use glaux_machine::registers::GraphicsRegisters;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -164,6 +165,40 @@ fn missing_video_assets_fall_back_to_the_rom() {
         RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default()).unwrap();
     assert_eq!(running.palette(), rom.palette());
     assert_eq!(running.hardware.obj.palettes(), rom.obj_palettes());
+}
+
+#[test]
+fn hardware_state_survives_ticks_and_each_run_starts_from_the_initial_values() {
+    let fixture = Fixture::new("running-hardware-lifecycle");
+    let dir = fixture.root().join("pong");
+    write_cartridge(&dir, "Pong");
+    let load = || LoadedCartridge::load(&fixture.storage(), "pong").unwrap();
+
+    let mut running =
+        RunningCartridge::start(load(), &defaults(), VideoOverrides::default()).unwrap();
+    running.hardware.write(0x00100, 0xAB).unwrap();
+    running.hardware.write(0x34000, 0x12).unwrap();
+    running.hardware.write(0x3B000, 0xFF).unwrap();
+    running.hardware.write16(0x3C010, 600).unwrap();
+    running.tick(&[]).unwrap();
+    running.tick(&[]).unwrap();
+    assert_eq!(running.hardware.read(0x00100), Ok(0xAB));
+    assert_eq!(running.hardware.read(0x34000), Ok(0x12));
+    assert_eq!(running.hardware.read(0x3B000), Ok(0xFF));
+    assert_eq!(running.hardware.read16(0x3C010), Ok(600));
+
+    let restarted =
+        RunningCartridge::start(running.stop(), &defaults(), VideoOverrides::default()).unwrap();
+    let hardware = &restarted.hardware;
+    assert!(hardware.work_ram.iter().all(|&byte| byte == 0));
+    assert!(hardware.oam.as_bytes().iter().all(|&byte| byte == 0));
+    assert!(
+        hardware
+            .tilemaps
+            .iter()
+            .all(|window| window.as_bytes().iter().all(|&byte| byte == 0))
+    );
+    assert_eq!(hardware.registers, GraphicsRegisters::new());
 }
 
 /// A cartridge without `obp.bin` keeps drawing OBP0 tiles with their local
