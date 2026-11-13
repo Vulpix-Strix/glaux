@@ -33,7 +33,9 @@ Each device decides what a write does. Some bits are reserved and are dropped, s
 
 Memory can be read and written at the top level, in `boot()`, in `tick()` and in `draw()`. What a script writes stays until it changes it again, with one exception.
 
-The framebuffer is cleared to the backdrop color just before each `draw()`. Pixels a script writes there at the top level, in `boot()` or in `tick()` are gone when `draw()` starts. During `draw()` memory writes and drawing functions share the framebuffer, and the later one wins.
+The framebuffer is cleared to the backdrop color just before each `draw()`, and then the background layers are drawn on it. Pixels a script writes there at the top level, in `boot()` or in `tick()` are gone when `draw()` starts. During `draw()` memory writes and drawing functions share the framebuffer, and the later one wins.
+
+Bits 0, 1 and 2 of the register at `0x3C000` switch background 0, 1 and 2 on. All of them are off at power-on, so no layer is drawn until a script sets them. Each layer reads its tilemap and tiles at the moment the frame is composed, after `tick()` and before `draw()`. Memory a script changes during `draw()` shows up in the next frame's layers, not in the one being drawn.
 
 The frame the player sees is published when `draw()` finishes without an error. It holds the framebuffer and the master palette as they were at that moment, so changing the palette in `draw()` shows up in that same frame. If `draw()` fails, the writes it made stay in memory, but the frame on screen stays the last one that was published.
 
