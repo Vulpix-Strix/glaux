@@ -226,6 +226,7 @@ fn a_failing_start_hands_the_hardware_back_with_what_it_wrote() {
         Files::default(),
         SMALL,
         font(),
+        Default::default(),
         &mut home,
     );
     assert!(failure.is_err());
@@ -242,6 +243,7 @@ fn starting_without_hardware_fails_before_running_the_script() {
         Files::default(),
         SMALL,
         font(),
+        Default::default(),
         &mut home,
     ) {
         Ok(_) => panic!("the start needs hardware"),

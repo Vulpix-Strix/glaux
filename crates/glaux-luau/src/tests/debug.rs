@@ -54,6 +54,7 @@ fn debugged_with(
             Files::new(modules),
             budget,
             font(),
+            Default::default(),
             &mut home,
             port,
             breakpoints,

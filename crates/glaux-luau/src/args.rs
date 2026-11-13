@@ -4,6 +4,7 @@
 use glaux_audio::Waveform;
 use glaux_input::{Button, Key};
 use glaux_machine::obj_palette::ObjBank;
+use glaux_machine::tilemap::{BG_LAYERS, BgLayer};
 use glaux_script::validate;
 use mlua::{Function, Lua, Value};
 
@@ -149,6 +150,30 @@ pub(crate) fn bounded_arg(
     checked(lua, function, position, value, |n| {
         validate::bounded(n, what, max)
     })
+}
+
+/// A map cell in world coordinates, as [`validate::world_cell`] takes it.
+pub(crate) fn world_cell_arg(
+    lua: &Lua,
+    function: &str,
+    position: usize,
+    value: &Value,
+) -> mlua::Result<i32> {
+    checked(lua, function, position, value, validate::world_cell)
+}
+
+/// A background or map layer number, `0..=2`.
+pub(crate) fn layer_arg(
+    lua: &Lua,
+    function: &str,
+    position: usize,
+    value: &Value,
+    what: &str,
+) -> mlua::Result<BgLayer> {
+    let index = bounded_arg(lua, function, position, value, what, BG_LAYERS as u32 - 1)?;
+    // `bounded_arg` keeps `index` below BG_LAYERS.
+    BgLayer::from_index(index as usize)
+        .ok_or_else(|| bad_argument(lua, function, position, &format!("{what} 0-2 expected")))
 }
 
 /// An optional object palette bank: `nil` means each tile's default bank.

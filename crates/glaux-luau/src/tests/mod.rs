@@ -9,6 +9,7 @@ mod hardware;
 mod input;
 mod limits;
 mod log;
+mod map;
 mod memory;
 mod modules;
 mod runtime;
