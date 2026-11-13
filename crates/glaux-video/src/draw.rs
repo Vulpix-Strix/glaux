@@ -3,12 +3,14 @@
 //! All primitives clip to the framebuffer. Anything that falls outside it is
 //! silently dropped.
 
+use glaux_machine::bg::BgVram;
 use glaux_machine::font::{BitmapFont, GlyphId};
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::ink_image::{INK_SLOTS, InkImage};
 use glaux_machine::obj_palette::ObjBank;
 use glaux_machine::palette::PALETTE_LEN;
 use glaux_machine::sprite::{OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjVram, obj_grid_tile};
+use glaux_machine::tilemap::BgBank;
 
 /// Fills the whole framebuffer with a palette index.
 pub fn clear(framebuffer: &mut Framebuffer, color: u8) {
@@ -165,6 +167,51 @@ pub fn draw_obj_tile_scaled(
         ObjPaletteChoice::TileDefault => vram.attributes().bank(tile),
         ObjPaletteChoice::Bank(bank) => bank,
     };
+    for local_y in 0..OBJ_TILE_HEIGHT {
+        for local_x in 0..OBJ_TILE_WIDTH {
+            let Some(local) = vram.tiles().pixel(tile, local_x, local_y) else {
+                return;
+            };
+            let Some(master) = vram.palettes().resolve(bank, local) else {
+                continue;
+            };
+            // Clip in i64: a block far from the origin may not fit in i32.
+            let px = i64::from(x) + local_x as i64 * i64::from(scale);
+            let py = i64::from(y) + local_y as i64 * i64::from(scale);
+            if let (Ok(px), Ok(py)) = (i32::try_from(px), i32::try_from(py)) {
+                fill_rect(
+                    framebuffer,
+                    px,
+                    py,
+                    scale,
+                    scale,
+                    slots[usize::from(master)],
+                );
+            }
+        }
+    }
+}
+
+/// Draws background tile `tile` through palette bank `bank` with its
+/// top-left corner at `(x, y)`, each pixel enlarged to a `scale`×`scale`
+/// block. Master index `m` is written as `slots[m]`, as in
+/// [`draw_obj_tile_scaled`].
+///
+/// Tile-local index 0 is transparent. Tile 0 is drawn like any other: the
+/// transparency the hardware gives it belongs to tilemap cells, not to the
+/// tile's pixels. A non-positive `scale` or an invalid tile draws nothing.
+pub fn draw_bg_tile_scaled(
+    framebuffer: &mut Framebuffer,
+    vram: &BgVram,
+    tile: usize,
+    bank: BgBank,
+    (x, y): (i32, i32),
+    scale: i32,
+    slots: &[u8; PALETTE_LEN],
+) {
+    if scale <= 0 {
+        return;
+    }
     for local_y in 0..OBJ_TILE_HEIGHT {
         for local_x in 0..OBJ_TILE_WIDTH {
             let Some(local) = vram.tiles().pixel(tile, local_x, local_y) else {

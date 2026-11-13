@@ -1105,3 +1105,67 @@ proptest! {
         prop_assert_eq!(differences(&fb, &expected), None);
     }
 }
+
+#[test]
+fn background_tiles_draw_through_the_chosen_bank_and_slots() {
+    use glaux_machine::bg::{BgPalettes, BgTileBank, BgVram};
+    use glaux_machine::tilemap::BgBank;
+
+    // Tile 1 holds local 3 in every pixel.
+    let mut tiles = BgTileBank::new();
+    for y in 0..8 {
+        for x in 0..8 {
+            tiles.set_pixel(1, x, y, 3);
+        }
+    }
+    let vram = BgVram::new(tiles, BgPalettes::linear());
+    let bank = BgBank::new(2).unwrap();
+    let mut fb = filled(9);
+    draw_bg_tile_scaled(&mut fb, &vram, 1, bank, (4, 5), 2, &reversed_slots());
+
+    // BGP2 maps local 3 to master 35.
+    for y in 0..240 {
+        for x in 0..320 {
+            let inside = (4..20).contains(&x) && (5..21).contains(&y);
+            let want = if inside { 255 - 35 } else { 9 };
+            assert_eq!(fb.pixel(x, y), Some(want), "({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn background_tiles_keep_local_zero_transparent_and_ignore_a_bad_tile() {
+    use glaux_machine::bg::BgVram;
+    use glaux_machine::tilemap::BgBank;
+
+    let vram = BgVram::default();
+    let mut fb = filled(9);
+    draw_bg_tile_scaled(
+        &mut fb,
+        &vram,
+        0,
+        BgBank::ZERO,
+        (0, 0),
+        1,
+        &reversed_slots(),
+    );
+    draw_bg_tile_scaled(
+        &mut fb,
+        &vram,
+        5000,
+        BgBank::ZERO,
+        (0, 0),
+        1,
+        &reversed_slots(),
+    );
+    draw_bg_tile_scaled(
+        &mut fb,
+        &vram,
+        0,
+        BgBank::ZERO,
+        (0, 0),
+        0,
+        &reversed_slots(),
+    );
+    assert!(fb.as_bytes().iter().all(|&p| p == 9));
+}
