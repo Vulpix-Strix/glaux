@@ -6,6 +6,7 @@ mod debug;
 mod definitions_consistency;
 mod draw;
 mod hardware;
+mod hardware_constants;
 mod input;
 mod limits;
 mod log;

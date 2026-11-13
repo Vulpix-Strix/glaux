@@ -500,6 +500,7 @@ impl Runtime {
         api::input::install(&self.lua, &self.input)?;
         api::time::install(&self.lua, &self.ticks)?;
         api::audio::install(&self.lua, &self.audio)?;
+        api::hardware::install(&self.lua)?;
         api::memory::install(&self.lua, &self.hardware, &self.meter)?;
         api::map::install(&self.lua, &self.hardware, &self.meter, &self.maps)?;
         modules::install(&self.lua, &self.modules, &self.source, &self.meter)

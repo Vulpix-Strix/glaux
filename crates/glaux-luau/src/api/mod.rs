@@ -3,6 +3,7 @@
 
 pub(crate) mod audio;
 pub(crate) mod draw;
+pub(crate) mod hardware;
 pub(crate) mod input;
 pub(crate) mod log;
 pub(crate) mod map;

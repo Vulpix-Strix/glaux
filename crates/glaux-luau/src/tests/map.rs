@@ -16,7 +16,7 @@ fn entry(tile: u16) -> TileEntry {
 
 /// The tile of cell `(x, y)` in a layer `width` cells wide. The count wraps
 /// at 700 so even the biggest map stays inside the 1024 tiles.
-fn tile_of(base: u16, width: usize, x: usize, y: usize) -> u16 {
+pub(super) fn tile_of(base: u16, width: usize, x: usize, y: usize) -> u16 {
     base + ((y * width + x) % 700) as u16
 }
 
@@ -32,7 +32,7 @@ fn numbered(width: usize, height: usize, base: u16) -> TileLayer {
 
 /// `town` is 6 x 4 and `big` is 100 x 70, each layer numbered from its own
 /// base so a copy from the wrong layer shows.
-fn store() -> Arc<MapStore> {
+pub(super) fn store() -> Arc<MapStore> {
     let mut store = MapStore::default();
     for (id, width, height) in [("town", 6, 4), ("big", 100, 70)] {
         let layers = [0, 100, 200].map(|base| numbered(width, height, base));
