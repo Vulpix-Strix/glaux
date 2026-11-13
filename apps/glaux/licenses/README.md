@@ -35,8 +35,7 @@ The inventory covers Linux, macOS and Windows at once (see `targets` in `about.t
 set of dependencies of all supported platforms, not necessarily those of one executable.
 
 Dev and build dependencies are excluded because they are not distributed. The code that build
-dependencies compile into the binary is not: raylib's C sources and the vendored tree-sitter
-parser are listed in `extra.json`.
+dependencies compile into the binary is not: raylib's C sources are listed in `extra.json`.
 
 ## Licenses
 
