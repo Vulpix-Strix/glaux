@@ -1,4 +1,5 @@
 use super::*;
+use glaux_machine::bg::{BG_PALETTES_BYTES, BgPalettes};
 use glaux_machine::obj_palette::ObjPalettes;
 use glaux_machine::palette::{PALETTE_RGB888_BYTES, Palette};
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_TILE_BYTES};
@@ -112,7 +113,7 @@ fn fill_replaces_the_region_joined_by_edges() {
         "00000000", //
         "00000001", //
     ])));
-    assert!(doc.fill(0, 7, 0, 3));
+    assert!(doc.fill_in(TileSet::Obj, 0, 7, 0, 3));
     assert_eq!(
         rows(&doc, 0),
         [
@@ -127,7 +128,7 @@ fn fill_replaces_the_region_joined_by_edges() {
         ]
     );
     // The enclosed pixel touches the fill only diagonally.
-    assert!(doc.fill(0, 1, 1, 4));
+    assert!(doc.fill_in(TileSet::Obj, 0, 1, 1, 4));
     assert_eq!(doc.pixel(0, 1, 1), Some(4));
     assert_eq!(doc.pixel(0, 0, 0), Some(1));
 }
@@ -136,7 +137,7 @@ fn fill_replaces_the_region_joined_by_edges() {
 fn fill_stays_inside_the_tile() {
     let mut doc = document(None);
     let tile = OBJ_GRID_COLUMNS + 1;
-    assert!(doc.fill(tile, 7, 7, 6));
+    assert!(doc.fill_in(TileSet::Obj, tile, 7, 7, 6));
     assert!(rows(&doc, tile).iter().all(|row| row == "66666666"));
     for neighbour in [
         tile - 1,
@@ -154,19 +155,19 @@ fn fill_stays_inside_the_tile() {
 #[test]
 fn filling_with_the_same_color_is_a_no_op() {
     let mut doc = document(Some(vec![0x55; OBJ_TILE_BYTES]));
-    assert!(!doc.fill(0, 3, 3, 5));
+    assert!(!doc.fill_in(TileSet::Obj, 0, 3, 3, 5));
     assert!(!doc.is_modified());
-    assert!(!doc.fill(0, 8, 0, 1));
-    assert!(!doc.fill(0, 0, 0, 16));
+    assert!(!doc.fill_in(TileSet::Obj, 0, 8, 0, 1));
+    assert!(!doc.fill_in(TileSet::Obj, 0, 0, 0, 16));
     assert!(!doc.is_modified());
 }
 
 #[test]
 fn filling_back_to_the_original_color_is_clean() {
     let mut doc = document(Some(vec![0x55; OBJ_TILE_BYTES]));
-    doc.fill(0, 0, 0, 2);
+    doc.fill_in(TileSet::Obj, 0, 0, 0, 2);
     assert!(doc.is_modified());
-    doc.fill(0, 0, 0, 5);
+    doc.fill_in(TileSet::Obj, 0, 0, 0, 5);
     assert!(!doc.is_modified());
 }
 
@@ -215,7 +216,7 @@ fn edits_that_change_nothing_leave_no_history() {
     doc.set_pixel(0, 0, 0, 2);
     doc.set_pixel(0, 0, 0, 5);
     doc.end_edit();
-    assert!(!doc.fill(0, 0, 0, 5));
+    assert!(!doc.fill_in(TileSet::Obj, 0, 0, 0, 5));
     assert!(!doc.can_undo());
     assert!(!doc.undo());
 }
@@ -223,7 +224,7 @@ fn edits_that_change_nothing_leave_no_history() {
 #[test]
 fn a_fill_is_one_edit() {
     let mut doc = document(None);
-    assert!(doc.fill(0, 3, 3, 4));
+    assert!(doc.fill_in(TileSet::Obj, 0, 3, 3, 4));
     assert!(doc.undo());
     assert_eq!(rows(&doc, 0).concat(), "0".repeat(64));
     assert!(!doc.can_undo());
@@ -372,17 +373,26 @@ fn a_new_palette_edit_drops_the_redo_steps() {
 
 fn color(bank_number: u8, local: u8) -> ColorTarget {
     ColorTarget {
-        bank: bank(bank_number),
+        bank: PaletteBank::Obj(bank(bank_number)),
         local,
     }
 }
 
 /// A document on linear palettes, where every (bank, local) entry has a
 /// master of its own, except that OBP0 L2 and OBP3 L4 share OBP0 L1's
-/// master 1. Tile 0 is the one edited; tiles 1–4 each hold one pixel.
+/// master 1. Tile 0 is the one edited; tiles 1–4 each hold one pixel. The
+/// background palettes only map masters 201–215, so they share nothing
+/// with the object entries.
 fn shared_master_document() -> SpriteDocument {
+    let mut bg = [0; BG_PALETTES_BYTES];
+    for (offset, byte) in bg.iter_mut().enumerate() {
+        if offset % 16 != 0 {
+            *byte = 200 + (offset % 16) as u8;
+        }
+    }
     let files = VideoFiles {
         obj_palettes: Some(ObjPalettes::linear().as_bytes().to_vec()),
+        bg_palettes: Some(bg.to_vec()),
         ..VideoFiles::default()
     };
     let mut doc = SpriteDocument::from_files(&files, &defaults()).unwrap();
@@ -409,8 +419,8 @@ fn color_uses_count_entries_banks_and_tiles_apart() {
     assert_eq!(uses.master, 1);
     assert_eq!(uses.entries, [color(0, 2), color(3, 4)]);
     assert_eq!(
-        uses.other_banks(bank(0)),
-        [bank(3)],
+        uses.other_banks(PaletteBank::Obj(bank(0))),
+        [PaletteBank::Obj(bank(3))],
         "two entries, one other bank"
     );
     assert_eq!(uses.tiles, 2, "tiles 1 and 2; never the edited tile 0");
@@ -454,11 +464,7 @@ fn recolor_changes_the_shared_master_as_one_undoable_edit() {
 fn recoloring_to_the_same_color_or_transparency_records_nothing() {
     let mut doc = document(None);
     let target = color(2, 5);
-    let master = doc
-        .obj()
-        .palettes()
-        .resolve(target.bank, target.local)
-        .unwrap();
+    let master = doc.obj().palettes().resolve(bank(2), target.local).unwrap();
     let current = doc.video().palette.get(master);
     for scope in [ColorScope::All, ColorScope::Palette] {
         assert!(!doc.recolor(target, current, scope), "{scope:?}");
@@ -556,13 +562,13 @@ fn the_spare_master_skips_every_mapped_and_code_color() {
     let banks = ObjPalettes::from_bytes(&bytes).unwrap();
     let palette = Palette::default();
     assert_eq!(
-        spare_master(&palette, &banks, 136, ODD),
+        spare_master(&palette, &banks, &BgPalettes::linear(), 136, ODD),
         Spare::Unmapped(135)
     );
     let mut palette = palette;
     palette.set(140, ODD);
     assert_eq!(
-        spare_master(&palette, &banks, 136, ODD),
+        spare_master(&palette, &banks, &BgPalettes::linear(), 136, ODD),
         Spare::Reused(140),
         "a master that already has the color changes nothing"
     );
@@ -887,7 +893,7 @@ fn saving_writes_the_native_bytes_and_keeps_the_file_length() {
     let mut doc = disk.document();
     doc.set_pixel(1, 0, 0, 0xf);
     // Erasing a whole tile inside the file keeps its bytes in the file.
-    doc.fill(2, 0, 0, 0);
+    doc.fill_in(TileSet::Obj, 2, 0, 0, 0);
     for y in 0..8 {
         for x in 0..8 {
             doc.set_pixel(2, x, y, 0);
@@ -1505,4 +1511,195 @@ fn reopening_over_unreadable_or_invalid_files_keeps_everything() {
     fs::create_dir(disk.path(TILES)).unwrap();
     assert!(doc.reopen(&disk.cartridge, &defaults()).is_err());
     assert_eq!(doc, before);
+}
+
+// Background tiles and palettes.
+
+const BG_TILES: VideoAsset = VideoAsset::BgTiles;
+const BGP: VideoAsset = VideoAsset::BgPalettes;
+
+fn bg_bank(n: u8) -> BgBank {
+    BgBank::new(n).unwrap()
+}
+
+fn bg_color(bank: u8, local: u8) -> ColorTarget {
+    ColorTarget {
+        bank: PaletteBank::Bg(bg_bank(bank)),
+        local,
+    }
+}
+
+#[test]
+fn background_pixels_are_edited_apart_from_object_pixels() {
+    let mut doc = document(None);
+    assert!(doc.set_bg_pixel(3, 1, 2, 9));
+    assert_eq!(doc.bg_pixel(3, 1, 2), Some(9));
+    assert_eq!(doc.bg_tiles().as_bytes()[3 * OBJ_TILE_BYTES + 2 * 4], 0x09);
+    assert_eq!(doc.pixel(3, 1, 2), Some(0), "the object tile is untouched");
+    assert_eq!(modified(&doc), [BG_TILES]);
+
+    assert!(
+        !doc.set_bg_pixel(3, 1, 2, 9),
+        "the same value changes nothing"
+    );
+    assert!(!doc.set_bg_pixel(1024, 0, 0, 1));
+    assert!(!doc.set_bg_pixel(0, 8, 0, 1));
+    assert!(!doc.set_bg_pixel(0, 0, 0, 16));
+}
+
+#[test]
+fn background_tile_zero_is_stored_like_any_other_tile() {
+    let mut doc = document(None);
+    assert!(doc.set_bg_pixel(0, 0, 0, 5));
+    assert_eq!(doc.bg_pixel(0, 0, 0), Some(5));
+}
+
+#[test]
+fn a_background_edit_undoes_redoes_and_restores_cleanliness() {
+    let mut doc = document(None);
+    doc.begin_edit();
+    doc.set_bg_pixel(2, 0, 0, 4);
+    doc.set_bg_pixel(2, 1, 0, 5);
+    doc.end_edit();
+    assert!(doc.undo());
+    assert_eq!(doc.bg_pixel(2, 0, 0), Some(0));
+    assert_eq!(doc.bg_pixel(2, 1, 0), Some(0));
+    assert!(!doc.is_modified(), "restored values leave the asset clean");
+    assert!(doc.redo());
+    assert_eq!(doc.bg_pixel(2, 1, 0), Some(5));
+    assert_eq!(modified(&doc), [BG_TILES]);
+}
+
+#[test]
+fn background_palette_entries_map_to_masters_and_keep_local_zero() {
+    let mut doc = document(None);
+    assert!(doc.set_bg_color(bg_bank(2), 3, 200));
+    assert_eq!(doc.bg().palettes().resolve(bg_bank(2), 3), Some(200));
+    assert!(
+        !doc.set_bg_color(bg_bank(2), 0, 5),
+        "local 0 is transparent"
+    );
+    assert!(!doc.set_bg_color(bg_bank(2), 16, 5));
+    assert!(!doc.set_bg_color(bg_bank(2), 3, 200));
+    assert_eq!(modified(&doc), [BGP]);
+    assert!(doc.undo());
+    assert!(!doc.is_modified());
+}
+
+#[test]
+fn filling_a_background_tile_stays_inside_it() {
+    let mut doc = document(None);
+    assert!(doc.fill_in(TileSet::Bg, 5, 0, 0, 3));
+    for y in 0..8 {
+        for x in 0..8 {
+            assert_eq!(doc.bg_pixel(5, x, y), Some(3));
+        }
+    }
+    assert_eq!(doc.bg_pixel(6, 0, 0), Some(0));
+    assert_eq!(doc.pixel(5, 0, 0), Some(0), "object tiles are separate");
+    assert!(!doc.fill_in(TileSet::Bg, 5, 0, 0, 3));
+    assert!(doc.undo(), "a fill is one edit");
+    assert!(!doc.is_modified());
+}
+
+#[test]
+fn background_edits_save_to_their_own_files() {
+    let disk = Disk::with(
+        "doc-bg-save",
+        &[
+            (BG_TILES, &[0x11; OBJ_TILE_BYTES * 2]),
+            (BGP, BgPalettes::linear().as_bytes()),
+        ],
+    );
+    let mut doc = disk.document();
+    doc.set_bg_pixel(0, 0, 0, 2);
+    doc.set_bg_color(bg_bank(1), 1, 99);
+
+    assert_eq!(
+        doc.save(&disk.cartridge),
+        written(&[(BGP, 64), (BG_TILES, 2 * OBJ_TILE_BYTES)])
+    );
+    assert_eq!(disk.read(BG_TILES).unwrap()[0], 0x21);
+    assert_eq!(disk.read(BGP).unwrap()[17], 99);
+    assert_eq!(disk.tiles(), None, "no object file appears");
+    assert!(!doc.is_modified());
+
+    let reloaded = disk.document();
+    assert_eq!(reloaded.bg(), doc.bg());
+}
+
+#[test]
+fn background_tiles_grow_their_file_by_whole_tiles() {
+    let disk = Disk::with("doc-bg-grow", &[(BG_TILES, &[0x11; OBJ_TILE_BYTES])]);
+    let mut doc = disk.document();
+    doc.set_bg_pixel(4, 7, 7, 2);
+    assert_eq!(
+        doc.save(&disk.cartridge),
+        written(&[(BG_TILES, 5 * OBJ_TILE_BYTES)])
+    );
+    assert_eq!(disk.read(BG_TILES).unwrap()[5 * OBJ_TILE_BYTES - 1], 0x02);
+}
+
+#[test]
+fn a_color_shared_by_both_kinds_of_bank_lists_every_entry() {
+    let mut doc = document(None);
+    doc.set_obj_color(bank(0), 1, 200);
+    doc.set_bg_color(bg_bank(1), 2, 200);
+
+    let uses = doc.color_uses(bg_color(1, 2), 0).unwrap();
+    assert_eq!(uses.master, 200);
+    assert_eq!(uses.entries, [color(0, 1)]);
+    assert_eq!((uses.tiles, uses.palette_tiles), (0, 0), "no tiles for BG");
+
+    let uses = doc.color_uses(color(0, 1), 0).unwrap();
+    assert_eq!(uses.entries, [bg_color(1, 2)]);
+    assert_eq!(
+        uses.other_banks(PaletteBank::Obj(bank(0))),
+        [PaletteBank::Bg(bg_bank(1))]
+    );
+    assert_eq!(doc.color_uses(bg_color(1, 0), 0), None);
+}
+
+#[test]
+fn recoloring_one_background_palette_keeps_the_object_palettes() {
+    let mut doc = document(None);
+    doc.set_obj_color(bank(0), 1, 200);
+    doc.set_bg_color(bg_bank(1), 2, 200);
+    let before = doc.video().clone();
+
+    assert!(doc.recolor(bg_color(1, 2), ODD, ColorScope::Palette));
+    assert_eq!(doc.obj().palettes().resolve(bank(0), 1), Some(200));
+    let moved = doc.bg().palettes().resolve(bg_bank(1), 2).unwrap();
+    assert_ne!(moved, 200);
+    assert_eq!(doc.video().palette.get(moved), ODD);
+    assert_eq!(doc.video().palette.get(200), before.palette.get(200));
+
+    assert!(doc.undo(), "the recolor is one step");
+    assert_eq!(doc.bg().palettes().resolve(bg_bank(1), 2), Some(200));
+    assert_eq!(doc.video().palette, before.palette);
+}
+
+#[test]
+fn recoloring_the_master_changes_it_for_both_kinds_of_bank() {
+    let mut doc = document(None);
+    doc.set_obj_color(bank(0), 1, 200);
+    doc.set_bg_color(bg_bank(1), 2, 200);
+    assert!(doc.recolor(bg_color(1, 2), ODD, ColorScope::All));
+    assert_eq!(doc.video().palette.get(200), ODD);
+    assert_eq!(doc.bg().palettes().resolve(bg_bank(1), 2), Some(200));
+    assert_eq!(doc.obj().palettes().resolve(bank(0), 1), Some(200));
+}
+
+#[test]
+fn the_spare_master_skips_masters_the_background_banks_map() {
+    let mut bytes = [255; BG_PALETTES_BYTES];
+    for bank in 0..4 {
+        bytes[bank * 16] = 0;
+    }
+    let bg = BgPalettes::from_bytes(&bytes).unwrap();
+    let obj = ObjPalettes::from_bytes(&[0; 128]).unwrap();
+    assert_eq!(
+        spare_master(&Palette::default(), &obj, &bg, 1, ODD),
+        Spare::Unmapped(254)
+    );
 }

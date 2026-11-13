@@ -27,6 +27,9 @@ const BUTTON_PAD: i32 = 2;
 /// Space between neighbouring palette cells, wide enough that the
 /// two-digit master indices under them read as separate numbers.
 const SWATCH_GAP: i32 = 3;
+/// Character cells of the button that switches tile sets, wide enough for
+/// OBJ.
+const SET_BUTTON_CELLS: i32 = 3;
 /// Character cells reserved for the palette panel's row labels.
 const LABEL_CELLS: i32 = 7;
 /// The labels of the buttons under the canvas caption.
@@ -37,9 +40,9 @@ pub fn import_label() -> String {
     ui_text::get("sprites-import")
 }
 /// Row labels of the palette panel in Advanced mode, top to bottom.
-pub fn advanced_labels() -> [String; 3] {
+pub fn advanced_labels(background: bool) -> [String; 3] {
     [
-        "OBP".to_owned(),
+        if background { "BGP" } else { "OBP" }.to_owned(),
         ui_text::get("sprites-local"),
         ui_text::get("sprites-master"),
     ]
@@ -117,6 +120,8 @@ pub enum Hit {
     /// An object palette bank in Advanced mode's OBP row.
     Bank(u8),
     GridButton,
+    /// Switches between the object and the background tiles.
+    SetButton,
     AdvancedButton,
     ZoomOut,
     ZoomIn,
@@ -147,6 +152,7 @@ pub struct SpriteLayout {
     pub visible: Visible,
     pub tools: [(ToolSlot, Rect); 4],
     pub grid_button: Rect,
+    pub set_button: Rect,
     pub advanced_button: Rect,
     pub zoom_out: Rect,
     pub zoom_label: Rect,
@@ -267,7 +273,8 @@ impl SpriteLayout {
             BUTTON_PAD,
             GAP,
         );
-        let grid_button = button(text_cells(&ui_text::get("sprites-grid")), BUTTON_PAD, 0);
+        let grid_button = button(text_cells(&ui_text::get("sprites-grid")), BUTTON_PAD, GAP);
+        let set_button = button(SET_BUTTON_CELLS, BUTTON_PAD, 0);
 
         let caption_cells = text_cells(&caption(OBJ_TILE_CAPACITY - 1, advanced));
         let under_canvas = Rect {
@@ -339,6 +346,7 @@ impl SpriteLayout {
             visible,
             tools,
             grid_button,
+            set_button,
             advanced_button,
             zoom_out,
             zoom_label,
@@ -382,6 +390,7 @@ impl SpriteLayout {
         let (x, y) = (i32::from(point.x), i32::from(point.y));
         let buttons = [
             (self.grid_button, Hit::GridButton),
+            (self.set_button, Hit::SetButton),
             (self.advanced_button, Hit::AdvancedButton),
             (self.zoom_out, Hit::ZoomOut),
             (self.zoom_in, Hit::ZoomIn),

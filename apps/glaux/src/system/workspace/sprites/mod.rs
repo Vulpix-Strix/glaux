@@ -12,12 +12,14 @@ mod sheet;
 mod stroke;
 
 use glaux_input::{InputEvent, Point, PointerButton};
+use glaux_machine::bg::BgVram;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::machine::TICK_RATE;
 use glaux_machine::obj_palette::{OBJ_PALETTE_COLORS, ObjBank};
 use glaux_machine::palette::{Palette, Rgb};
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, ObjVram};
 use glaux_machine::system_rom::SystemCursor;
+use glaux_machine::tilemap::{BG_PALETTE_BANKS, BgBank};
 use glaux_video::preview::ObjPreviewPalette;
 
 use color_editor::{ColorEditor, ColorEditorLayout, ColorOutcome};
@@ -29,7 +31,9 @@ use layout::{Hit, SpriteLayout, ToolSlot};
 use palette_picker::{PalettePicker, PickerLayout, PickerOutcome};
 use sheet::{SheetView, grid_position};
 
-use crate::system::sprite_document::{ColorScope, ColorTarget, SpriteDocument};
+use crate::system::sprite_document::{
+    ColorScope, ColorTarget, PaletteBank, SpriteDocument, TileSet,
+};
 use crate::ui_text;
 
 /// Most ticks between the presses of a double click.
@@ -39,6 +43,8 @@ const DOUBLE_CLICK_TICKS: u32 = TICK_RATE * 2 / 5;
 #[derive(Debug, Clone, Copy)]
 pub struct SpriteSource<'a> {
     pub obj: &'a ObjVram,
+    /// The background tiles and palettes, as edited and not yet saved.
+    pub bg: &'a BgVram,
     /// The cartridge's master palette, for the colors Advanced mode names.
     pub master: &'a Palette,
     /// Where the frame palette holds each master color.
@@ -91,6 +97,12 @@ struct Stroke {
 pub struct SpriteEditor {
     metrics: Metrics,
     selected: usize,
+    /// Which tile bank the sheet, the canvas and the palette show.
+    tileset: TileSet,
+    /// The background palette bank background tiles are shown and edited
+    /// through. Background tiles have no palette of their own: each map
+    /// cell chooses one, so this only affects what the editor shows.
+    bg_bank: BgBank,
     sheet: SheetView,
     grid: bool,
     advanced: bool,
@@ -118,6 +130,8 @@ impl SpriteEditor {
         Self {
             metrics,
             selected: 0,
+            tileset: TileSet::default(),
+            bg_bank: BgBank::ZERO,
             sheet: SheetView::default(),
             grid: true,
             advanced: false,
@@ -138,6 +152,16 @@ impl SpriteEditor {
     #[cfg(test)]
     pub fn is_advanced(&self) -> bool {
         self.advanced
+    }
+
+    #[cfg(test)]
+    pub fn tileset(&self) -> TileSet {
+        self.tileset
+    }
+
+    #[cfg(test)]
+    pub fn bg_bank(&self) -> BgBank {
+        self.bg_bank
     }
 
     /// Whether a dialog is open, or the host's file dialog is awaited,
@@ -370,7 +394,7 @@ impl SpriteEditor {
                 match layout.hit(at, &self.sheet) {
                     Hit::Canvas { .. } => {
                         if let Some(document) = document {
-                            self.press(document, layout.canvas_pixel(at));
+                            return self.press(document, layout.canvas_pixel(at));
                         }
                     }
                     // A tile under the pointer is on screen, so selecting
@@ -379,13 +403,14 @@ impl SpriteEditor {
                     Hit::Swatch(local) => return self.press_swatch(local, document),
                     Hit::Tool(tool) => self.set_tool(tool, document),
                     Hit::GridButton => self.grid = !self.grid,
+                    Hit::SetButton => self.toggle_tileset(document),
                     Hit::AdvancedButton => self.toggle_advanced(),
                     Hit::ZoomOut => self.zoom(-1),
                     Hit::ZoomIn => self.zoom(1),
                     Hit::SaveButton => return self.save(document),
                     Hit::ImportButton => return self.import(document),
                     Hit::PaletteButton => self.open_picker(document, None),
-                    Hit::Bank(bank) => self.open_picker(document, ObjBank::new(bank)),
+                    Hit::Bank(bank) => self.pick_bank(document, bank),
                     Hit::None => {}
                 }
             }
@@ -417,6 +442,7 @@ impl SpriteEditor {
             InputEvent::Down { .. } => self.step(0, 1, document),
             InputEvent::Text('g' | 'G') => self.grid = !self.grid,
             InputEvent::Text('a' | 'A') => self.toggle_advanced(),
+            InputEvent::Text('b' | 'B') => self.toggle_tileset(document),
             InputEvent::Text('+' | '=') => self.zoom(1),
             InputEvent::Text('-' | '_') => self.zoom(-1),
             InputEvent::Text('c' | 'C') => return self.open_color_editor(document, self.color),
@@ -547,7 +573,7 @@ impl SpriteEditor {
     ) -> Option<SpriteRequest> {
         let document = document?;
         let target = ColorTarget {
-            bank: document.obj().attributes().bank(self.selected),
+            bank: self.document_palette_bank(document),
             local,
         };
         let Some(uses) = document.color_uses(target, self.selected) else {
@@ -574,11 +600,50 @@ impl SpriteEditor {
             return;
         };
         self.end_stroke(Some(&mut *document));
+        if self.tileset == TileSet::Bg {
+            // Background tiles have no default palette to choose, so the
+            // button steps through the banks the editor shows them with.
+            self.bg_bank = next_bg_bank(self.bg_bank);
+            return;
+        }
         let current = document.obj().attributes().bank(self.selected);
         self.dialog = Some(EditorDialog::Palette(PalettePicker::new(
             self.selected,
             pending.unwrap_or(current),
         )));
+    }
+
+    /// Uses background palette `bank` for the editor's view of background
+    /// tiles. Object banks are chosen per tile through the palette picker,
+    /// so there is nothing to do for them here.
+    fn pick_bank(&mut self, document: Option<&mut SpriteDocument>, bank: u8) {
+        match self.tileset {
+            TileSet::Obj => self.open_picker(document, ObjBank::new(bank)),
+            TileSet::Bg => {
+                self.end_stroke(document);
+                if let Some(bank) = BgBank::new(bank) {
+                    self.bg_bank = bank;
+                }
+            }
+        }
+    }
+
+    /// The palette bank of the selected tile, as the editor shows it.
+    fn document_palette_bank(&self, document: &SpriteDocument) -> PaletteBank {
+        match self.tileset {
+            TileSet::Obj => PaletteBank::Obj(document.obj().attributes().bank(self.selected)),
+            TileSet::Bg => PaletteBank::Bg(self.bg_bank),
+        }
+    }
+
+    /// Switches between object and background tiles. A drag never carries
+    /// over, and the selected tile and local color stay as they are.
+    fn toggle_tileset(&mut self, document: Option<&mut SpriteDocument>) {
+        self.end_stroke(document);
+        self.tileset = match self.tileset {
+            TileSet::Obj => TileSet::Bg,
+            TileSet::Bg => TileSet::Obj,
+        };
     }
 
     /// Ends any drag, then asks to save `document` if it has changes.
@@ -605,7 +670,14 @@ impl SpriteEditor {
 
     /// Uses the tool at tile pixel `at`, starting a drag if the tool keeps
     /// acting while dragged.
-    fn press(&mut self, document: &mut SpriteDocument, at: (i32, i32)) {
+    fn press(&mut self, document: &mut SpriteDocument, at: (i32, i32)) -> Option<SpriteRequest> {
+        // The hardware draws nothing for background tile 0, so drawing on
+        // it would leave pixels that never show.
+        if self.tileset == TileSet::Bg && self.selected == 0 && self.tool != ToolSlot::Eyedropper {
+            return Some(SpriteRequest::Notice(ui_text::get(
+                "sprites-background-tile-0-is-always-transparent",
+            )));
+        }
         // A fill records itself as one edit. A drag's edit stays open
         // until the stroke ends.
         if matches!(self.tool, ToolSlot::Pencil | ToolSlot::Eraser) {
@@ -615,6 +687,7 @@ impl SpriteEditor {
         if self.tool.drags() {
             self.stroke = Some(Stroke { last: at });
         }
+        None
     }
 
     /// Continues the drag in progress to the pixel under `at`, using the
@@ -639,18 +712,18 @@ impl SpriteEditor {
         let tile = self.selected;
         match self.tool {
             ToolSlot::Pencil => {
-                document.set_pixel(tile, x, y, self.color());
+                document.set_pixel_in(self.tileset, tile, x, y, self.color());
             }
             ToolSlot::Eraser => {
-                document.set_pixel(tile, x, y, 0);
+                document.set_pixel_in(self.tileset, tile, x, y, 0);
             }
             ToolSlot::Eyedropper => {
-                if let Some(local) = document.pixel(tile, x, y) {
+                if let Some(local) = document.pixel_in(self.tileset, tile, x, y) {
                     self.color = local;
                 }
             }
             ToolSlot::Fill => {
-                document.fill(tile, x, y, self.color());
+                document.fill_in(self.tileset, tile, x, y, self.color());
             }
         }
     }
@@ -703,6 +776,11 @@ impl SpriteEditor {
         debug_assert!(usize::from(self.color) < OBJ_PALETTE_COLORS);
         self.color
     }
+}
+
+/// The background palette bank after `bank`, wrapping to the first.
+fn next_bg_bank(bank: BgBank) -> BgBank {
+    BgBank::new((bank.get() + 1) % BG_PALETTE_BANKS as u8).unwrap_or(BgBank::ZERO)
 }
 
 #[cfg(test)]

@@ -316,3 +316,22 @@ fn tile_captions_keep_their_padding_and_advanced_coordinates() {
     assert_eq!(caption(7, false), "Tile 0007");
     assert_eq!(caption(7, true), "Tile 0007 (7,0)");
 }
+
+#[test]
+fn advanced_labels_name_the_bank_row_after_the_tile_set() {
+    assert_eq!(advanced_labels(false)[0], "OBP");
+    assert_eq!(advanced_labels(true)[0], "BGP");
+}
+
+#[test]
+fn the_set_button_sits_in_the_options_bar_and_is_hit_there() {
+    let layout = SpriteLayout::new(METRICS, false, Zoom::X1);
+    let button = layout.set_button;
+    assert_eq!(button.y, layout.options.y);
+    assert!(button.right() <= layout.grid_button.x, "left of Grid");
+    let middle = Point::new(
+        (button.x + button.width / 2) as u16,
+        (button.y + button.height / 2) as u16,
+    );
+    assert_eq!(layout.hit(middle, &SheetView::default()), Hit::SetButton);
+}

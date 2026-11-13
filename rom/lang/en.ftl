@@ -419,23 +419,32 @@ sprites-color-code-index-changes = Code drawing { $index } changes too.
 sprites-color-code-master-changes = Code drawing color { $master } changes too.
 sprites-color-code-number-changes = Code using that color number changes.
 sprites-color-game-code = Game code may use it too.
-sprites-color-heading = Palette { $bank }, color { $local }
-sprites-color-heading-advanced = OBP{ $bank } L{ $local }  Master ${ $master-hex } ({ $master })
+sprites-color-heading = { $kind ->
+    [bg] BG palette
+   *[obj] Palette
+    } { $bank }, color { $local }
+sprites-color-heading-advanced = { $prefix }{ $bank } L{ $local }  Master ${ $master-hex } ({ $master })
 sprites-color-other-palettes-unchanged = Other palettes keep the old color.
 sprites-color-scope-all-master = All: master ${ $hex }, { $entries ->
     [one] { $entries } more entry
    *[other] { $entries } more entries
     }
-sprites-color-scope-all-palettes = All { $banks } palettes, { $tiles ->
-    [0] no other tiles
-    [one] { $tiles } other tile
-   *[other] { $tiles } other tiles
+sprites-color-scope-all-palettes = { $kind ->
+    [bg] All { $banks } palettes
+   *[obj] All { $banks } palettes, { $tiles ->
+        [0] no other tiles
+        [one] { $tiles } other tile
+       *[other] { $tiles } other tiles
+        }
     }
-sprites-color-scope-only-master = OBP{ $bank } only: master ${ $hex } ({ $index })
-sprites-color-scope-only-palette = Only Palette { $bank }, { $tiles ->
-    [0] no other tiles
-    [one] { $tiles } other tile
-   *[other] { $tiles } other tiles
+sprites-color-scope-only-master = { $prefix }{ $bank } only: master ${ $hex } ({ $index })
+sprites-color-scope-only-palette = { $kind ->
+    [bg] Only BG palette { $bank }
+   *[obj] Only Palette { $bank }, { $tiles ->
+        [0] no other tiles
+        [one] { $tiles } other tile
+       *[other] { $tiles } other tiles
+        }
     }
 sprites-color-shared-master = ! Master ${ $hex }: { $entries ->
     [one] { $entries } more entry
@@ -454,19 +463,25 @@ sprites-color-shared-palettes = { $banks ->
    *[other] ! Shared: also in { $banks } other palettes
     }
 sprites-color-shared-tiles = { "  " }{ $banks ->
-    [0] this palette; { $tiles ->
-        [0] no other tiles
-        [one] { $tiles } other tile
-       *[other] { $tiles } other tiles
-        }.
+    [0] this palette{ $kind ->
+        [bg] .
+       *[obj] ; { $tiles ->
+            [0] no other tiles
+            [one] { $tiles } other tile
+           *[other] { $tiles } other tiles
+            }.
+        }
    *[other] ({ $entries ->
         [one] { $entries } palette color
        *[other] { $entries } palette colors
-        }), { $tiles ->
-        [0] no other tiles
-        [one] { $tiles } other tile
-       *[other] { $tiles } other tiles
-        }.
+        }){ $kind ->
+        [bg] .
+       *[obj] , { $tiles ->
+            [0] no other tiles
+            [one] { $tiles } other tile
+           *[other] { $tiles } other tiles
+            }.
+        }
     }
 sprites-color-tiles-code = { $tiles ->
     [one] { $tiles } other tile
@@ -476,11 +491,18 @@ sprites-color-tiles-code = { $tiles ->
    *[other] code using { $master } too.
     }
 sprites-color-unshared-master = Master ${ $hex } ({ $master }) is not shared.
-sprites-color-unshared-tiles = { $tiles ->
-    [0] Changes it in every tile that uses it.
-    [one] Also shows in { $tiles } other tile.
-   *[other] Also shows in { $tiles } other tiles.
+sprites-color-unshared-tiles = { $kind ->
+    [bg] Changes it in every map cell that uses it.
+   *[obj] { $tiles ->
+        [0] Changes it in every tile that uses it.
+        [one] Also shows in { $tiles } other tile.
+       *[other] Also shows in { $tiles } other tiles.
+        }
     }
+sprites-b-switch-between-object-and-background-tiles = B: switch between object and background tiles
+sprites-background-tile-0-is-always-transparent = Background tile 0 is always transparent
+sprites-click-show-background-tiles-with-bgp = Click: show background tiles with BGP { $bank }
+sprites-click-show-the-next-background-palette = Click: show tiles with the next background palette
 sprites-ctrl-s-write-the-changed-files = Ctrl+S: write the changed files
 sprites-current = Current: { $value }
 sprites-drag-draw = Drag: draw
@@ -518,8 +540,14 @@ sprites-nothing-to-undo = Nothing to undo
 sprites-old = OLD
 sprites-palette-2 = Palette
 sprites-palette-button = { $advanced ->
-    [yes] OBP{ $bank }...
-   *[no] Palette { $bank }...
+    [yes] { $kind ->
+        [bg] BGP{ $bank }...
+       *[obj] OBP{ $bank }...
+        }
+   *[no] { $kind ->
+        [bg] BG palette { $bank }...
+       *[obj] Palette { $bank }...
+        }
     }
 sprites-palette-name = Palette { $bank }
 sprites-palettes-and-master-colors-change = { $value } palettes and master colors { $range } change.
@@ -533,7 +561,7 @@ sprites-selected-color = Selected: Local { $local } -> Master { $master } (${ $m
 sprites-selected-local-transparent = Selected: Local { $local } -> transparent
 sprites-status = Tile { $tile }{ $advanced ->
     [yes] { " " }({ $column },{ $row }){ $has-bank ->
-        [yes] { " | OBP " }{ $bank } | 4 bpp
+        [yes] { " | " }{ $prefix } { $bank } | 4 bpp
        *[no] { "" }
         }
    *[no] { "" }
@@ -547,6 +575,10 @@ sprites-the-sheet-is-at-its-largest = The sheet is at its largest
 sprites-the-sheet-is-at-its-smallest = The sheet is at its smallest
 sprites-the-sheet-matches-the-current-sprites-nothing-changes = The sheet matches the current sprites: nothing changes.
 sprites-tile = Tile { $tile }
+sprites-tile-set = { $set ->
+    [bg] BG
+   *[obj] OBJ
+    }
 sprites-tile-coordinates = Tile { $tile } ({ $column },{ $row })
 sprites-tool-hint = { $key }: { $tool ->
     [pencil] Pencil

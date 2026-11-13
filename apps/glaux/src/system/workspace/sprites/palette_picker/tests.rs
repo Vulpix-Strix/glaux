@@ -1,4 +1,5 @@
 use super::*;
+use glaux_machine::bg::BgVram;
 use glaux_machine::font::FontMetrics;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::obj_palette::ObjPalettes;
@@ -189,6 +190,7 @@ fn the_dialog_fits_the_screen_in_both_modes() {
 /// `l` to master `16 * n + l` and every bank shows different colors.
 struct Fixture {
     obj: ObjVram,
+    bg: BgVram,
     master: Palette,
     preview: ObjPreviewPalette,
 }
@@ -217,6 +219,7 @@ impl Fixture {
                 .unwrap();
         Self {
             obj,
+            bg: BgVram::default(),
             master,
             preview,
         }
@@ -225,6 +228,7 @@ impl Fixture {
     fn source(&self) -> SpriteSource<'_> {
         SpriteSource {
             obj: &self.obj,
+            bg: &self.bg,
             master: &self.master,
             preview: &self.preview,
             modified: false,

@@ -1,10 +1,12 @@
 use super::*;
+use glaux_machine::bg::BgVram;
 use glaux_machine::font::FontMetrics;
 use glaux_machine::obj_palette::{OBJ_PALETTES_BYTES, ObjPalettes};
 use glaux_machine::palette::Palette;
 use glaux_machine::sprite::{
     OBJ_TILE_BYTES, OBJ_TILE_CAPACITY, ObjTileAttributes, ObjTileBank, ObjVram,
 };
+use glaux_machine::tilemap::BgBank;
 use glaux_video::preview::ObjPreviewPalette;
 use pretty_assertions::assert_eq;
 
@@ -17,6 +19,7 @@ const METRICS: Metrics = crate::system::workspace::tests_support::SPRITE_METRICS
 /// master `200 + n`, so frame slots and master indices differ.
 struct Fixture {
     obj: ObjVram,
+    bg: BgVram,
     master: Palette,
     preview: ObjPreviewPalette,
 }
@@ -40,8 +43,23 @@ impl Fixture {
         let preview =
             ObjPreviewPalette::new(&Palette::default(), SYSTEM_COLORS, &master, obj.palettes())
                 .unwrap();
+        // Background tile 1 is solid local 3. BGP2 maps local 3 to master
+        // 205, a color the object banks show too, so it has a frame slot.
+        let mut bg_tiles = glaux_machine::bg::BgTileBank::new();
+        for y in 0..8 {
+            for x in 0..8 {
+                bg_tiles.set_pixel(1, x, y, 3);
+            }
+        }
+        let mut bgp = glaux_machine::bg::BgPalettes::linear().as_bytes().to_vec();
+        bgp[2 * 16 + 3] = 205;
+        let bg = BgVram::new(
+            bg_tiles,
+            glaux_machine::bg::BgPalettes::from_bytes(&bgp).unwrap(),
+        );
         Self {
             obj,
+            bg,
             master,
             preview,
         }
@@ -50,6 +68,7 @@ impl Fixture {
     fn source(&self) -> SpriteSource<'_> {
         SpriteSource {
             obj: &self.obj,
+            bg: &self.bg,
             master: &self.master,
             preview: &self.preview,
             modified: false,
@@ -156,15 +175,21 @@ fn advanced_text_names_cartridge_master_indices_not_frame_slots() {
     let slot = fixture.preview.slot(202).unwrap();
     assert_ne!(slot, 202);
     assert_eq!(
-        selection_text(&source, ObjBank::ZERO, 2),
+        selection_text(&source, PaletteBank::Obj(ObjBank::ZERO), 2),
         "Selected: Local 2 -> Master 202 ($CA) -> #62A7D5"
     );
     assert_eq!(
-        selection_text(&source, ObjBank::ZERO, 0),
+        selection_text(&source, PaletteBank::Obj(ObjBank::ZERO), 0),
         "Selected: Local 0 -> transparent"
     );
-    assert_eq!(master_label(&source, ObjBank::ZERO, 2), "CA");
-    assert_eq!(master_label(&source, ObjBank::ZERO, 0), "--");
+    assert_eq!(
+        master_label(&source, PaletteBank::Obj(ObjBank::ZERO), 2),
+        "CA"
+    );
+    assert_eq!(
+        master_label(&source, PaletteBank::Obj(ObjBank::ZERO), 0),
+        "--"
+    );
 }
 
 #[test]
@@ -363,4 +388,75 @@ fn cart_rom_shares_the_status_bar_when_the_status_leaves_room() {
         shown.iter().any(|text| text.starts_with("ROM ")),
         "{shown:?}"
     );
+}
+
+#[test]
+fn background_tiles_are_shown_through_the_chosen_background_bank() {
+    let fixture = Fixture::new();
+    let mut editor = SpriteEditor::new(METRICS);
+    editor.tileset = TileSet::Bg;
+    editor.selected = 1;
+    editor.grid = false;
+    let slot = fixture.preview.slot(205).unwrap();
+
+    // BGP0 maps local 3 to master 3, which no object bank shows, so the
+    // frame has no slot for it and the tile falls back to index 0.
+    editor.bg_bank = BgBank::new(2).unwrap();
+    let fb = render(&editor, &fixture);
+    let canvas = editor.layout().canvas;
+    assert_eq!(fb.pixel(canvas.x + 5, canvas.y + 5), Some(slot));
+    let cell = editor.layout().sheet_cell(1, 0, editor.sheet.zoom());
+    assert!(pixels(&fb, cell).iter().all(|&p| p == slot));
+
+    // Tile 0 is empty in the background set, though not in the object one.
+    let cell = editor.layout().sheet_cell(0, 0, editor.sheet.zoom());
+    let empty = pixels(&fb, cell);
+    assert!(empty.contains(&CHECK_DARK) && !empty.contains(&slot));
+}
+
+#[test]
+fn the_palette_panel_names_and_resolves_the_background_bank() {
+    let fixture = Fixture::new();
+    let source = fixture.source();
+    let bank = PaletteBank::Bg(BgBank::new(2).unwrap());
+    assert_eq!(master_label(&source, bank, 3), "CD");
+    assert_eq!(master_label(&source, bank, 0), "--");
+    assert_eq!(
+        selection_text(&source, bank, 3),
+        format!(
+            "Selected: Local 3 -> Master 205 ($CD) -> #{:02X}{:02X}{:02X}",
+            source.master.get(205).r,
+            source.master.get(205).g,
+            source.master.get(205).b
+        )
+    );
+
+    let mut editor = SpriteEditor::new(METRICS);
+    editor.tileset = TileSet::Bg;
+    editor.bg_bank = BgBank::new(2).unwrap();
+    assert_eq!(editor.palette_bank(&source), bank);
+    let (left, _) = editor.status(Some(&source), Hit::None);
+    assert!(!left.contains("OBP"), "{left}");
+}
+
+#[test]
+fn the_options_bar_names_the_tile_set_being_shown() {
+    let fixture = Fixture::new();
+    let mut editor = SpriteEditor::new(METRICS);
+    let draw = |editor: &SpriteEditor| {
+        let mut fb = Framebuffer::new();
+        editor.render(
+            &mut fb,
+            &coded_font(),
+            &SystemUi::default(),
+            Ok(fixture.source()),
+            None,
+            StatusInfo::default(),
+        );
+        fb
+    };
+    let button = editor.layout().set_button;
+    assert_eq!(texts(&draw(&editor), button, DIM), ["OBJ"]);
+    editor.tileset = TileSet::Bg;
+    assert_eq!(texts(&draw(&editor), button, ACCENT), ["BG"]);
 }

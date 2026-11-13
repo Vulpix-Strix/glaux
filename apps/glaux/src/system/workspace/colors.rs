@@ -4,12 +4,13 @@ use super::sprites::SpriteSource;
 use super::{SYSTEM_COLORS, Workspace};
 use crate::system::sprite_document::SpriteDocument;
 use crate::ui_text;
+use glaux_machine::bg::BgPalettes;
 use glaux_machine::obj_palette::ObjPalettes;
 use glaux_machine::palette::Palette;
 use glaux_video::preview::ObjPreviewPalette;
 
 /// How the workspace shows the cartridge's colors: where the frame palette
-/// holds each master color the object palettes use, or why the cartridge's
+/// holds each master color the object and background palettes use, or why the cartridge's
 /// video state can't be shown.
 #[derive(Debug)]
 // Boxed: a frame palette would make every system state as large as this
@@ -27,6 +28,7 @@ pub(super) struct PreparedVideo {
     frame: Palette,
     master: Palette,
     obj: ObjPalettes,
+    bg: BgPalettes,
 }
 
 impl WorkspaceVideo {
@@ -58,6 +60,7 @@ impl WorkspaceVideo {
             .ok_or_else(|| ui_text::get("workspace-the-cartridge-s-sprites-are-not-loaded"))?;
         Ok(SpriteSource {
             obj: document.obj(),
+            bg: document.bg(),
             master: &document.video().palette,
             preview: &video.preview,
             modified: document.is_modified(),
@@ -68,7 +71,9 @@ impl WorkspaceVideo {
     /// they are now.
     fn matches(&self, document: &SpriteDocument) -> bool {
         self.0.as_ref().is_ok_and(|video| {
-            video.master == document.video().palette && video.obj == *document.obj().palettes()
+            video.master == document.video().palette
+                && video.obj == *document.obj().palettes()
+                && video.bg == *document.bg().palettes()
         })
     }
 }
@@ -79,17 +84,19 @@ impl Workspace {
     /// [`refresh_video`](Self::refresh_video).
     pub fn prepare_video(&self, document: &SpriteDocument) -> WorkspaceVideo {
         let video = document.video();
-        match ObjPreviewPalette::new(
+        match ObjPreviewPalette::with_background(
             &self.system_palette,
             SYSTEM_COLORS,
             &video.palette,
             video.obj.palettes(),
+            video.bg.palettes(),
         ) {
             Ok(preview) => WorkspaceVideo(Ok(Box::new(PreparedVideo {
                 frame: preview.palette().clone(),
                 preview,
                 master: video.palette.clone(),
                 obj: video.obj.palettes().clone(),
+                bg: video.bg.palettes().clone(),
             }))),
             Err(err) => {
                 WorkspaceVideo::unavailable(super::super::ui_errors::video::preview_palette(&err))

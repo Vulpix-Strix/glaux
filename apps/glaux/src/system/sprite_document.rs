@@ -4,11 +4,13 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 
+use glaux_machine::bg::{BG_PALETTE_COLORS, BgPalettes, BgTileBank, BgVram};
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjBank, ObjPalettes};
 use glaux_machine::palette::{PALETTE_LEN, Palette, Rgb};
 use glaux_machine::sprite::{
     OBJ_TILE_BYTES, OBJ_TILE_CAPACITY, OBJ_TILE_HEIGHT, OBJ_TILE_WIDTH, ObjTileBank, ObjVram,
 };
+use glaux_machine::tilemap::{BG_PALETTE_BANKS, BgBank};
 
 use super::video::{
     CartridgeVideo, CartridgeVideoDefaults, VideoAssetError, VideoFiles, VideoLoadError,
@@ -31,11 +33,13 @@ pub const HISTORY_CHANGE_LIMIT: usize = 131_072;
 /// The order saving writes assets in. It is fixed so that saves are
 /// reproducible. It does not keep the files consistent with each other if
 /// a save stops partway.
-const SAVE_ORDER: [VideoAsset; 4] = [
+const SAVE_ORDER: [VideoAsset; 6] = [
     VideoAsset::MasterPalette,
     VideoAsset::ObjPalettes,
+    VideoAsset::BgPalettes,
     VideoAsset::ObjAttributes,
     VideoAsset::ObjTiles,
+    VideoAsset::BgTiles,
 ];
 
 const ASSETS: usize = VideoAsset::ALL.len();
@@ -45,11 +49,13 @@ const ASSETS: usize = VideoAsset::ALL.len();
 /// every frame starts cleared to it.
 pub const CODE_COLORS: u8 = 32;
 
-// At most this many masters are mapped by object palette entries, fewer
+// At most this many masters are mapped by palette entries, fewer
 // than the masters from CODE_COLORS on, so `spare_master` always finds one
 // no entry maps.
-const _: () =
-    assert!(OBJ_PALETTE_BANKS * (OBJ_PALETTE_COLORS - 1) < PALETTE_LEN - CODE_COLORS as usize);
+const _: () = assert!(
+    OBJ_PALETTE_BANKS * (OBJ_PALETTE_COLORS - 1) + BG_PALETTE_BANKS * (BG_PALETTE_COLORS - 1)
+        < PALETTE_LEN - CODE_COLORS as usize
+);
 
 /// What the asset files held when the document read or last saved them:
 /// the state saving compares the disk against.
@@ -184,11 +190,33 @@ pub struct Reopened {
     pub conflicts: Vec<Conflict>,
 }
 
-/// A visible color of one object palette bank: local index `local` (1–15)
-/// of `bank`.
+/// A palette bank of either kind. Object and background banks map to the
+/// same master palette, so editing a color has to look at both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PaletteBank {
+    Obj(ObjBank),
+    Bg(BgBank),
+}
+
+impl PaletteBank {
+    /// The bank's number within its own kind.
+    pub fn number(self) -> u8 {
+        match self {
+            Self::Obj(bank) => bank.get(),
+            Self::Bg(bank) => bank.get(),
+        }
+    }
+
+    pub fn is_background(self) -> bool {
+        matches!(self, Self::Bg(_))
+    }
+}
+
+/// A visible color of one palette bank: local index `local` (1–15) of
+/// `bank`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ColorTarget {
-    pub bank: ObjBank,
+    pub bank: PaletteBank,
     pub local: u8,
 }
 
@@ -203,10 +231,13 @@ pub struct ColorUses {
     /// The master index the target resolves to.
     pub master: u8,
     /// The other (bank, local) entries resolving to `master`, in bank then
-    /// local order. Other locals of the target's own bank are included.
+    /// local order, object banks before background ones. Other locals of
+    /// the target's own bank are included.
     pub entries: Vec<ColorTarget>,
-    /// Tiles, besides the one being edited, with at least one pixel that
-    /// resolves to `master` through the tile's stored default bank.
+    /// Object tiles, besides the one being edited, with at least one pixel
+    /// that resolves to `master` through the tile's stored default bank.
+    /// Background tiles take their palette from each map cell, so none are
+    /// counted, and a background target counts no tiles at all.
     pub tiles: usize,
     /// Those of [`tiles`](Self::tiles) whose stored default bank is the
     /// target's.
@@ -222,8 +253,8 @@ impl ColorUses {
 
     /// The distinct banks among [`entries`](Self::entries) other than
     /// `own`, in bank order.
-    pub fn other_banks(&self, own: ObjBank) -> Vec<ObjBank> {
-        let mut banks: Vec<ObjBank> = self
+    pub fn other_banks(&self, own: PaletteBank) -> Vec<PaletteBank> {
+        let mut banks: Vec<PaletteBank> = self
             .entries
             .iter()
             .map(|entry| entry.bank)
@@ -253,7 +284,7 @@ pub enum Spare {
     /// This master already holds the new color, so no master color
     /// changes.
     Reused(u8),
-    /// No object palette entry maps this master, so its color can change
+    /// No palette entry maps this master, so its color can change
     /// without changing any palette. Game code may still draw it by its
     /// number, and would then show the new color.
     Unmapped(u8),
@@ -270,15 +301,29 @@ impl Spare {
 /// Where [`ColorScope::Palette`] puts `color` for entries now resolving to
 /// `master`: the lowest other master already holding `color`, never the
 /// background master 0, or else the highest master from [`CODE_COLORS`] on
-/// that no entry of `banks` maps.
-pub fn spare_master(palette: &Palette, banks: &ObjPalettes, master: u8, color: Rgb) -> Spare {
+/// that no entry of the object banks `obj` or the background banks `bg`
+/// maps.
+pub fn spare_master(
+    palette: &Palette,
+    obj: &ObjPalettes,
+    bg: &BgPalettes,
+    master: u8,
+    color: Rgb,
+) -> Spare {
     if let Some(reused) = (1..=u8::MAX).find(|&i| i != master && palette.get(i) == color) {
         return Spare::Reused(reused);
     }
     let mut mapped = [false; PALETTE_LEN];
     for bank in (0..OBJ_PALETTE_BANKS as u8).filter_map(ObjBank::new) {
         for local in 1..OBJ_PALETTE_COLORS as u8 {
-            if let Some(index) = banks.resolve(bank, local) {
+            if let Some(index) = obj.resolve(bank, local) {
+                mapped[usize::from(index)] = true;
+            }
+        }
+    }
+    for bank in (0..BG_PALETTE_BANKS as u8).filter_map(BgBank::new) {
+        for local in 1..BG_PALETTE_COLORS as u8 {
+            if let Some(index) = bg.resolve(bank, local) {
                 mapped[usize::from(index)] = true;
             }
         }
@@ -331,8 +376,10 @@ fn tile_pixels(video: &CartridgeVideo, tile: usize) -> impl Iterator<Item = u8> 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Target {
     Pixel { tile: u16, x: u8, y: u8 },
+    BgPixel { tile: u16, x: u8, y: u8 },
     TileBank { tile: u16 },
     ObjColor { bank: ObjBank, local: u8 },
+    BgColor { bank: BgBank, local: u8 },
     MasterColor { index: u8 },
 }
 
@@ -340,8 +387,10 @@ impl Target {
     fn asset(self) -> VideoAsset {
         match self {
             Self::Pixel { .. } => VideoAsset::ObjTiles,
+            Self::BgPixel { .. } => VideoAsset::BgTiles,
             Self::TileBank { .. } => VideoAsset::ObjAttributes,
             Self::ObjColor { .. } => VideoAsset::ObjPalettes,
+            Self::BgColor { .. } => VideoAsset::BgPalettes,
             Self::MasterColor { .. } => VideoAsset::MasterPalette,
         }
     }
@@ -350,8 +399,16 @@ impl Target {
 /// One value an edit changed, with what it held before and after.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Change {
-    /// A tile-local palette index.
+    /// A tile-local palette index of an object tile.
     Pixel {
+        tile: u16,
+        x: u8,
+        y: u8,
+        before: u8,
+        after: u8,
+    },
+    /// A tile-local palette index of a background tile.
+    BgPixel {
         tile: u16,
         x: u8,
         y: u8,
@@ -372,6 +429,14 @@ enum Change {
         before: u8,
         after: u8,
     },
+    /// The master index a local index resolves to in a background palette
+    /// bank.
+    BgColor {
+        bank: BgBank,
+        local: u8,
+        before: u8,
+        after: u8,
+    },
     /// A master palette color.
     MasterColor { index: u8, before: Rgb, after: Rgb },
 }
@@ -383,17 +448,20 @@ impl Change {
     fn target(self) -> Target {
         match self {
             Self::Pixel { tile, x, y, .. } => Target::Pixel { tile, x, y },
+            Self::BgPixel { tile, x, y, .. } => Target::BgPixel { tile, x, y },
             Self::TileBank { tile, .. } => Target::TileBank { tile },
             Self::ObjColor { bank, local, .. } => Target::ObjColor { bank, local },
+            Self::BgColor { bank, local, .. } => Target::BgColor { bank, local },
             Self::MasterColor { index, .. } => Target::MasterColor { index },
         }
     }
 
     fn is_noop(self) -> bool {
         match self {
-            Self::Pixel { before, after, .. } | Self::ObjColor { before, after, .. } => {
-                before == after
-            }
+            Self::Pixel { before, after, .. }
+            | Self::BgPixel { before, after, .. }
+            | Self::ObjColor { before, after, .. }
+            | Self::BgColor { before, after, .. } => before == after,
             Self::TileBank { before, after, .. } => before == after,
             Self::MasterColor { before, after, .. } => before == after,
         }
@@ -404,7 +472,9 @@ impl Change {
     fn followed_by(mut self, later: Self) -> Self {
         match (&mut self, later) {
             (Self::Pixel { after, .. }, Self::Pixel { after: new, .. })
-            | (Self::ObjColor { after, .. }, Self::ObjColor { after: new, .. }) => *after = new,
+            | (Self::BgPixel { after, .. }, Self::BgPixel { after: new, .. })
+            | (Self::ObjColor { after, .. }, Self::ObjColor { after: new, .. })
+            | (Self::BgColor { after, .. }, Self::BgColor { after: new, .. }) => *after = new,
             (Self::TileBank { after, .. }, Self::TileBank { after: new, .. }) => *after = new,
             (Self::MasterColor { after, .. }, Self::MasterColor { after: new, .. }) => {
                 *after = new;
@@ -417,9 +487,10 @@ impl Change {
     /// The change that undoes this one.
     fn reversed(mut self) -> Self {
         match &mut self {
-            Self::Pixel { before, after, .. } | Self::ObjColor { before, after, .. } => {
-                std::mem::swap(before, after);
-            }
+            Self::Pixel { before, after, .. }
+            | Self::BgPixel { before, after, .. }
+            | Self::ObjColor { before, after, .. }
+            | Self::BgColor { before, after, .. } => std::mem::swap(before, after),
             Self::TileBank { before, after, .. } => std::mem::swap(before, after),
             Self::MasterColor { before, after, .. } => std::mem::swap(before, after),
         }
@@ -532,10 +603,19 @@ impl History {
     }
 }
 
+/// Which tile bank an operation works on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TileSet {
+    #[default]
+    Obj,
+    Bg,
+}
+
 /// A cartridge's video state as the editors change it, held in memory.
 ///
 /// Every asset is editable: object tiles, their attributes, the object
-/// palette banks and the master palette. The document remembers what each
+/// palette banks, the background tiles and palette banks, and the master
+/// palette. The document remembers what each
 /// asset's file held when it was read or last saved, so it knows exactly
 /// which assets differ from their files. Restoring every changed value, by
 /// hand or by undo, leaves an asset unmodified again.
@@ -595,6 +675,15 @@ impl SpriteDocument {
         self.video.obj.tiles()
     }
 
+    /// The background tiles and palette banks as edited, saved or not.
+    pub fn bg(&self) -> &BgVram {
+        &self.video.bg
+    }
+
+    pub fn bg_tiles(&self) -> &BgTileBank {
+        self.video.bg.tiles()
+    }
+
     /// What the assets are saved against, to tell whether their files
     /// changed on disk since.
     #[cfg(test)]
@@ -648,6 +737,12 @@ impl SpriteDocument {
         self.tiles().pixel(tile, x, y)
     }
 
+    /// One tile-local palette index of a background tile, or `None` for an
+    /// invalid tile or pixel.
+    pub fn bg_pixel(&self, tile: usize, x: usize, y: usize) -> Option<u8> {
+        self.bg_tiles().pixel(tile, x, y)
+    }
+
     /// Starts recording one undoable edit, closing any still open. Every
     /// change until [`end_edit`](Self::end_edit) is undone as one, whatever
     /// assets it involves.
@@ -677,6 +772,47 @@ impl SpriteDocument {
             y: y as u8,
             before: previous,
             after: index,
+        });
+        true
+    }
+
+    /// Writes local index `index` to one pixel of a background tile. Returns
+    /// whether the pixel changed. Invalid positions and indices above 15
+    /// change nothing.
+    ///
+    /// Tile 0 is transparent whatever it holds, but the document stores it
+    /// like any other tile. Keeping it untouched is up to the editors.
+    ///
+    /// Outside an open edit, the write is an edit of its own.
+    pub fn set_bg_pixel(&mut self, tile: usize, x: usize, y: usize, index: u8) -> bool {
+        let Some(previous) = self.write_bg_pixel(tile, x, y, index) else {
+            return false;
+        };
+        // `write_bg_pixel` only succeeds for a valid tile and pixel, which fit.
+        self.record(Change::BgPixel {
+            tile: tile as u16,
+            x: x as u8,
+            y: y as u8,
+            before: previous,
+            after: index,
+        });
+        true
+    }
+
+    /// Maps `local` in background palette `bank` to master index `master`.
+    /// Returns whether the mapping changed. The transparent local 0 and
+    /// locals above 15 change nothing.
+    ///
+    /// Outside an open edit, the write is an edit of its own.
+    pub fn set_bg_color(&mut self, bank: BgBank, local: u8, master: u8) -> bool {
+        let Some(previous) = self.write_bg_color(bank, local, master) else {
+            return false;
+        };
+        self.record(Change::BgColor {
+            bank,
+            local,
+            before: previous,
+            after: master,
         });
         true
     }
@@ -732,42 +868,69 @@ impl SpriteDocument {
         true
     }
 
+    /// The master index `target` resolves to, `None` for the transparent
+    /// local 0 and locals above 15.
+    fn target_master(&self, target: ColorTarget) -> Option<u8> {
+        match target.bank {
+            PaletteBank::Obj(bank) => self.obj().palettes().resolve(bank, target.local),
+            PaletteBank::Bg(bank) => self.bg().palettes().resolve(bank, target.local),
+        }
+    }
+
     /// Who else shows the master color `target` resolves to, counting
-    /// tiles other than `edited`. `None` for the transparent local 0 and
-    /// locals above 15.
+    /// object tiles other than `edited`. `None` for the transparent
+    /// local 0 and locals above 15.
     pub fn color_uses(&self, target: ColorTarget, edited: usize) -> Option<ColorUses> {
-        let palettes = self.obj().palettes();
-        let master = palettes.resolve(target.bank, target.local)?;
+        let master = self.target_master(target)?;
         let mut entries = Vec::new();
-        // Per bank, which locals resolve to `master`.
+        // Per object bank, which locals resolve to `master`.
         let mut shows = [[false; OBJ_PALETTE_COLORS]; OBJ_PALETTE_BANKS];
         for bank in (0..OBJ_PALETTE_BANKS as u8).filter_map(ObjBank::new) {
             for local in 1..OBJ_PALETTE_COLORS as u8 {
-                if palettes.resolve(bank, local) != Some(master) {
+                if self.obj().palettes().resolve(bank, local) != Some(master) {
                     continue;
                 }
                 shows[usize::from(bank.get())][usize::from(local)] = true;
-                let entry = ColorTarget { bank, local };
+                let entry = ColorTarget {
+                    bank: PaletteBank::Obj(bank),
+                    local,
+                };
                 if entry != target {
                     entries.push(entry);
                 }
             }
         }
-        let attributes = self.obj().attributes();
+        for bank in (0..BG_PALETTE_BANKS as u8).filter_map(BgBank::new) {
+            for local in 1..BG_PALETTE_COLORS as u8 {
+                if self.bg().palettes().resolve(bank, local) != Some(master) {
+                    continue;
+                }
+                let entry = ColorTarget {
+                    bank: PaletteBank::Bg(bank),
+                    local,
+                };
+                if entry != target {
+                    entries.push(entry);
+                }
+            }
+        }
         let (mut tiles, mut palette_tiles) = (0, 0);
-        for tile in (0..OBJ_TILE_CAPACITY).filter(|&tile| tile != edited) {
-            let bank = attributes.bank(tile);
-            let locals = &shows[usize::from(bank.get())];
-            let shown = locals.contains(&true)
-                && (0..OBJ_TILE_HEIGHT).any(|y| {
-                    (0..OBJ_TILE_WIDTH).any(|x| {
-                        self.pixel(tile, x, y)
-                            .is_some_and(|local| locals[usize::from(local)])
-                    })
-                });
-            if shown {
-                tiles += 1;
-                palette_tiles += usize::from(bank == target.bank);
+        if !target.bank.is_background() {
+            let attributes = self.obj().attributes();
+            for tile in (0..OBJ_TILE_CAPACITY).filter(|&tile| tile != edited) {
+                let bank = attributes.bank(tile);
+                let locals = &shows[usize::from(bank.get())];
+                let shown = locals.contains(&true)
+                    && (0..OBJ_TILE_HEIGHT).any(|y| {
+                        (0..OBJ_TILE_WIDTH).any(|x| {
+                            self.pixel(tile, x, y)
+                                .is_some_and(|local| locals[usize::from(local)])
+                        })
+                    });
+                if shown {
+                    tiles += 1;
+                    palette_tiles += usize::from(PaletteBank::Obj(bank) == target.bank);
+                }
             }
         }
         Some(ColorUses {
@@ -778,15 +941,25 @@ impl SpriteDocument {
         })
     }
 
+    /// Maps `local` in palette `bank` to master index `master`. Returns
+    /// whether the mapping changed. See [`set_obj_color`](Self::set_obj_color)
+    /// and [`set_bg_color`](Self::set_bg_color).
+    pub fn set_palette_color(&mut self, bank: PaletteBank, local: u8, master: u8) -> bool {
+        match bank {
+            PaletteBank::Obj(bank) => self.set_obj_color(bank, local, master),
+            PaletteBank::Bg(bank) => self.set_bg_color(bank, local, master),
+        }
+    }
+
     /// Makes the color `target` shows `color`, as far as `scope` reaches.
     /// Returns whether anything changed. The transparent local 0, locals
     /// above 15 and the color already shown change nothing.
     ///
-    /// [`ColorScope::Palette`] may change both the object palettes and the
+    /// [`ColorScope::Palette`] may change both the target's palette and the
     /// master palette. Outside an open edit, the change is an edit of its
     /// own either way.
     pub fn recolor(&mut self, target: ColorTarget, color: Rgb, scope: ColorScope) -> bool {
-        let Some(master) = self.obj().palettes().resolve(target.bank, target.local) else {
+        let Some(master) = self.target_master(target) else {
             return false;
         };
         if self.video.palette.get(master) == color {
@@ -795,14 +968,24 @@ impl SpriteDocument {
         match scope {
             ColorScope::All => self.set_master_color(master, color),
             ColorScope::Palette => {
-                let spare = spare_master(&self.video.palette, self.obj().palettes(), master, color);
+                let spare = spare_master(
+                    &self.video.palette,
+                    self.obj().palettes(),
+                    self.bg().palettes(),
+                    master,
+                    color,
+                );
                 let standalone = self.history.open.is_none();
                 if standalone {
                     self.begin_edit();
                 }
                 for local in 1..OBJ_PALETTE_COLORS as u8 {
-                    if self.obj().palettes().resolve(target.bank, local) == Some(master) {
-                        self.set_obj_color(target.bank, local, spare.master());
+                    let own = ColorTarget {
+                        bank: target.bank,
+                        local,
+                    };
+                    if self.target_master(own) == Some(master) {
+                        self.set_palette_color(target.bank, local, spare.master());
                     }
                 }
                 if let Spare::Unmapped(index) = spare {
@@ -821,8 +1004,8 @@ impl SpriteDocument {
     /// tile. Returns whether any pixel changed.
     ///
     /// Outside an open edit, the fill is an edit of its own.
-    pub fn fill(&mut self, tile: usize, x: usize, y: usize, index: u8) -> bool {
-        let Some(target) = self.pixel(tile, x, y) else {
+    pub fn fill_in(&mut self, set: TileSet, tile: usize, x: usize, y: usize, index: u8) -> bool {
+        let Some(target) = self.pixel_in(set, tile, x, y) else {
             return false;
         };
         if target == index || index > 0x0f {
@@ -834,10 +1017,10 @@ impl SpriteDocument {
         }
         let mut pending = vec![(x, y)];
         while let Some((x, y)) = pending.pop() {
-            if self.pixel(tile, x, y) != Some(target) {
+            if self.pixel_in(set, tile, x, y) != Some(target) {
                 continue;
             }
-            self.set_pixel(tile, x, y, index);
+            self.set_pixel_in(set, tile, x, y, index);
             if x > 0 {
                 pending.push((x - 1, y));
             }
@@ -955,17 +1138,16 @@ impl SpriteDocument {
     }
 
     /// The bytes saving writes for `asset`. The palettes are written whole.
-    /// The tiles and their attributes keep the whole original file length,
+    /// The object and background tiles, and the object attributes, keep the whole original file length,
     /// grown in whole tiles to cover every non-empty tile past it.
     pub fn save_bytes(&self, asset: VideoAsset) -> Cow<'_, [u8]> {
         let bytes = self.video.native_bytes(asset);
         let unit = match asset {
-            VideoAsset::ObjTiles => OBJ_TILE_BYTES,
+            VideoAsset::ObjTiles | VideoAsset::BgTiles => OBJ_TILE_BYTES,
             VideoAsset::ObjAttributes => 1,
-            VideoAsset::ObjPalettes
-            | VideoAsset::MasterPalette
-            | VideoAsset::BgTiles
-            | VideoAsset::BgPalettes => return bytes,
+            VideoAsset::ObjPalettes | VideoAsset::MasterPalette | VideoAsset::BgPalettes => {
+                return bytes;
+            }
         };
         let used = bytes
             .chunks(unit)
@@ -1211,8 +1393,18 @@ impl SpriteDocument {
             } => {
                 self.write_pixel(tile.into(), x.into(), y.into(), after);
             }
+            Change::BgPixel {
+                tile, x, y, after, ..
+            } => {
+                self.write_bg_pixel(tile.into(), x.into(), y.into(), after);
+            }
             Change::TileBank { tile, after, .. } => {
                 self.write_tile_bank(tile.into(), after);
+            }
+            Change::BgColor {
+                bank, local, after, ..
+            } => {
+                self.write_bg_color(bank, local, after);
             }
             Change::ObjColor {
                 bank, local, after, ..
@@ -1245,6 +1437,57 @@ impl SpriteDocument {
         let original = self.origin.video.obj.tiles().pixel(tile, x, y);
         self.track(VideoAsset::ObjTiles, original, Some(previous), Some(index));
         Some(previous)
+    }
+
+    /// Writes one background pixel. Returns the previous index if it changed.
+    fn write_bg_pixel(&mut self, tile: usize, x: usize, y: usize, index: u8) -> Option<u8> {
+        let previous = self.video.bg.tiles_mut().set_pixel(tile, x, y, index)?;
+        if previous == index {
+            return None;
+        }
+        let original = self.origin.video.bg.tiles().pixel(tile, x, y);
+        self.track(VideoAsset::BgTiles, original, Some(previous), Some(index));
+        Some(previous)
+    }
+
+    /// Writes one background palette entry. Returns the previous master
+    /// index if it changed.
+    fn write_bg_color(&mut self, bank: BgBank, local: u8, master: u8) -> Option<u8> {
+        let previous = self.video.bg.palettes_mut().set(bank, local, master)?;
+        if previous == master {
+            return None;
+        }
+        let original = self.origin.video.bg.palettes().resolve(bank, local);
+        self.track(
+            VideoAsset::BgPalettes,
+            original,
+            Some(previous),
+            Some(master),
+        );
+        Some(previous)
+    }
+
+    /// One tile-local palette index of a tile of `set`.
+    pub fn pixel_in(&self, set: TileSet, tile: usize, x: usize, y: usize) -> Option<u8> {
+        match set {
+            TileSet::Obj => self.pixel(tile, x, y),
+            TileSet::Bg => self.bg_pixel(tile, x, y),
+        }
+    }
+
+    /// [`set_pixel`](Self::set_pixel) on a tile of `set`.
+    pub fn set_pixel_in(
+        &mut self,
+        set: TileSet,
+        tile: usize,
+        x: usize,
+        y: usize,
+        index: u8,
+    ) -> bool {
+        match set {
+            TileSet::Obj => self.set_pixel(tile, x, y, index),
+            TileSet::Bg => self.set_bg_pixel(tile, x, y, index),
+        }
     }
 
     /// Writes one tile's bank. Returns the previous bank if it changed.

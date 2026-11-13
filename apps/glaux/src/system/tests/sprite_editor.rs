@@ -972,6 +972,15 @@ fn editing_a_low_master_never_touches_the_ui_entry_of_that_index() {
     // OBP0 local 3, tile 0's color, resolves to master 5.
     obp[3] = 5;
     std::fs::write(fixture.root().join("pong/obp.bin"), obp).unwrap();
+    // The default background palettes also map master 5, which would offer
+    // a choice of scope. Move them out of the way so the master is not shared.
+    let mut bgp = [0; 64];
+    for (offset, byte) in bgp.iter_mut().enumerate() {
+        if offset % 16 != 0 {
+            *byte = 200 + (offset % 16) as u8;
+        }
+    }
+    std::fs::write(fixture.root().join("pong/bgp.bin"), bgp).unwrap();
     let system = enter(system, "load pong");
 
     let system =
@@ -1048,4 +1057,101 @@ fn quitting_with_unsaved_graphics_asks_and_save_all_writes_them() {
     assert!(system.exit_confirmed());
     assert!(!document(&system).is_modified());
     assert_ne!(std::fs::read(&tiles).unwrap(), before);
+}
+
+/// Adds background tiles and palettes to `pong`: every tile empty and every
+/// entry mapping to a master of its own, `150 + 16 * bank + local`, which no
+/// object bank maps.
+fn write_background_assets(fixture: &Fixture) {
+    let dir = fixture.root().join("pong");
+    std::fs::write(dir.join("bgtiles.bin"), vec![0u8; 64 * 32]).unwrap();
+    let bgp: Vec<u8> = (0..64)
+        .map(|offset| {
+            if offset % 16 == 0 {
+                0
+            } else {
+                150 + offset as u8
+            }
+        })
+        .collect();
+    std::fs::write(dir.join("bgp.bin"), bgp).unwrap();
+}
+
+/// The sprite editor on background tile 1, with assets from
+/// `write_video_assets` and `write_background_assets`.
+fn on_background_tile(fixture: &Fixture) -> System {
+    let system = shell_with_cartridge(fixture, "");
+    write_video_assets(fixture);
+    write_background_assets(fixture);
+    let system = open_sprites(enter(system, "load pong"));
+    system.update(&[InputEvent::Text('b'), InputEvent::Right { select: false }])
+}
+
+#[test]
+fn background_tiles_edit_show_in_their_own_colors_and_save_to_their_own_file() {
+    let fixture = Fixture::new("sys-sprites-bg-edit-save");
+    let rom = fake_rom();
+    let system = on_background_tile(&fixture);
+    let objects_before = tiles_on_disk(&fixture);
+    let system = click_pixel(system, 0, 0);
+    assert_eq!(document(&system).bg_pixel(1, 0, 0), Some(1));
+    assert_eq!(
+        document(&system).pixel(1, 0, 0),
+        Some(5),
+        "the object tile keeps its own pixel"
+    );
+    assert_eq!(
+        document(&system).modified_assets().collect::<Vec<_>>(),
+        [crate::cartridge::VideoAsset::BgTiles]
+    );
+
+    // The pixel shows in master 151, which only the background banks map.
+    let canvas = workspace::tests_support::sprite_canvas(&system.workspace);
+    let pixel = render(&system).pixel(canvas.x + 5, canvas.y + 5).unwrap();
+    assert_eq!(
+        system.frame_palette(&rom).get(pixel),
+        distinct_palette().get(151)
+    );
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(
+        workspace::tests_support::notice(&system.workspace),
+        Some("Saved bgtiles.bin (2048 bytes)")
+    );
+    let saved = std::fs::read(fixture.root().join("pong/bgtiles.bin")).unwrap();
+    assert_eq!(saved.len(), 64 * 32);
+    assert_eq!(saved[32], 0x10);
+    assert_eq!(tiles_on_disk(&fixture), objects_before);
+    assert!(!document(&system).is_modified());
+
+    let system = system.update(&[InputEvent::Undo]);
+    assert_eq!(document(&system).bg_pixel(1, 0, 0), Some(0));
+    assert!(document(&system).is_modified());
+}
+
+#[test]
+fn a_background_palette_change_reaches_the_frame_and_saves_bgp_bin() {
+    let fixture = Fixture::new("sys-sprites-bg-palette-save");
+    let rom = fake_rom();
+    let system = click_pixel(on_background_tile(&fixture), 0, 0);
+    // Color 1 of BGP0 is master 151, which no other entry shows, so applying
+    // changes the master itself.
+    let at = centre(workspace::tests_support::sprite_swatch(
+        &system.workspace,
+        1,
+    ));
+    let system = system.update(&click(at)).update(&click(at));
+    assert!(system.workspace.has_modal());
+    let system = type_hex(system, "E6482E").update(&[InputEvent::Enter, InputEvent::Enter]);
+    assert_eq!(document(&system).video().palette.get(151), RED);
+
+    let canvas = workspace::tests_support::sprite_canvas(&system.workspace);
+    let pixel = render(&system).pixel(canvas.x + 5, canvas.y + 5).unwrap();
+    assert_eq!(system.frame_palette(&rom).get(pixel), RED);
+
+    let system = system.update(&[InputEvent::Save]);
+    assert!(!document(&system).is_modified());
+    assert!(!fixture.root().join("pong/obp.bin.tmp").exists());
+    let palette = std::fs::read(fixture.root().join("pong/palette.bin")).unwrap();
+    assert_eq!(&palette[151 * 3..151 * 3 + 3], [0xe6, 0x48, 0x2e]);
 }

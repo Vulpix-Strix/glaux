@@ -11,14 +11,16 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::palette::{PALETTE_LEN, Rgb};
 use glaux_machine::sprite::{OBJ_TILE_CAPACITY, OBJ_TILE_WIDTH};
-use glaux_video::draw::{ObjPaletteChoice, draw_obj_tile_scaled, draw_text, fill_rect};
+use glaux_video::draw::{
+    ObjPaletteChoice, draw_bg_tile_scaled, draw_obj_tile_scaled, draw_text, fill_rect,
+};
 
 use super::SpriteSource;
 use super::layout::Metrics;
 use super::render::{checker, contrasting, outline};
 use crate::system::screen::ERROR;
 use crate::system::sprite_document::{
-    CODE_COLORS, ColorScope, ColorTarget, ColorUses, Spare, spare_master,
+    CODE_COLORS, ColorScope, ColorTarget, ColorUses, PaletteBank, Spare, spare_master,
 };
 use crate::system::workspace::Rect;
 use crate::system::workspace::dialog::{
@@ -691,15 +693,27 @@ impl ColorEditor {
         checker(framebuffer, layout.preview, CHECKER);
         let mut slots = *source.preview.slots();
         slots[usize::from(self.uses.master)] = NEW_SLOT;
-        draw_obj_tile_scaled(
-            framebuffer,
-            source.obj,
-            self.tile,
-            ObjPaletteChoice::Bank(self.target.bank),
-            (layout.preview.x, layout.preview.y),
-            PREVIEW_SCALE,
-            &slots,
-        );
+        let at = (layout.preview.x, layout.preview.y);
+        match self.target.bank {
+            PaletteBank::Obj(bank) => draw_obj_tile_scaled(
+                framebuffer,
+                source.obj,
+                self.tile,
+                ObjPaletteChoice::Bank(bank),
+                at,
+                PREVIEW_SCALE,
+                &slots,
+            ),
+            PaletteBank::Bg(bank) => draw_bg_tile_scaled(
+                framebuffer,
+                source.bg,
+                self.tile,
+                bank,
+                at,
+                PREVIEW_SCALE,
+                &slots,
+            ),
+        }
         let old_slot = source.preview.slots()[usize::from(self.uses.master)];
         fill(framebuffer, layout.swatches, INK);
         for (rect, slot, color, label) in [
@@ -794,6 +808,7 @@ impl ColorEditor {
                 let spare = spare_master(
                     source.master,
                     source.obj.palettes(),
+                    source.bg.palettes(),
                     self.uses.master,
                     self.rgb,
                 );
@@ -878,7 +893,8 @@ fn heading(target: ColorTarget, uses: &ColorUses, advanced: bool) -> String {
         ui_text::get_with(
             "sprites-color-heading-advanced",
             &[
-                ("bank", Arg::Text(&(bank.get().to_string()))),
+                ("prefix", Arg::Text(prefix(bank))),
+                ("bank", Arg::Text(&(bank.number().to_string()))),
                 ("local", Arg::Text(&format!("{:X}", local))),
                 ("master-hex", Arg::Text(&format!("{:02X}", master))),
                 ("master", Arg::Text(&master.to_string())),
@@ -888,11 +904,22 @@ fn heading(target: ColorTarget, uses: &ColorUses, advanced: bool) -> String {
         ui_text::get_with(
             "sprites-color-heading",
             &[
-                ("bank", Arg::Text(&(bank.get().to_string()))),
+                ("kind", Arg::Text(kind(bank))),
+                ("bank", Arg::Text(&(bank.number().to_string()))),
                 ("local", Arg::Text(&format!("{:X}", local))),
             ],
         )
     }
+}
+
+/// The kind of palette `bank` is, as the messages select on it.
+fn kind(bank: PaletteBank) -> &'static str {
+    if bank.is_background() { "bg" } else { "obj" }
+}
+
+/// The name of `bank` in Advanced mode, without its number.
+fn prefix(bank: PaletteBank) -> &'static str {
+    if bank.is_background() { "BGP" } else { "OBP" }
 }
 
 /// The name of the tile the preview shows.
@@ -921,7 +948,10 @@ pub fn impact_lines(
     if !uses.is_shared() {
         let first = ui_text::get_with(
             "sprites-color-unshared-tiles",
-            &[("tiles", Arg::Number(uses.tiles as f64))],
+            &[
+                ("kind", Arg::Text(kind(target.bank))),
+                ("tiles", Arg::Number(uses.tiles as f64)),
+            ],
         );
         let second = if advanced {
             ui_text::get_with(
@@ -948,7 +978,14 @@ pub fn impact_lines(
         let list: Vec<String> = uses
             .entries
             .iter()
-            .map(|entry| format!("OBP{} L{:X}", entry.bank.get(), entry.local))
+            .map(|entry| {
+                format!(
+                    "{}{} L{:X}",
+                    prefix(entry.bank),
+                    entry.bank.number(),
+                    entry.local
+                )
+            })
             .collect();
         return [
             first,
@@ -966,6 +1003,7 @@ pub fn impact_lines(
     let second = ui_text::get_with(
         "sprites-color-shared-tiles",
         &[
+            ("kind", Arg::Text(kind(target.bank))),
             ("entries", Arg::Number(entries as f64)),
             ("banks", Arg::Number(banks.len() as f64)),
             ("tiles", Arg::Number(uses.tiles as f64)),
@@ -983,7 +1021,7 @@ pub fn scope_lines(
     advanced: bool,
 ) -> [String; IMPACT_LINES] {
     let master = uses.master;
-    let bank = target.bank.get();
+    let bank = target.bank.number();
     let all = if advanced {
         ui_text::get_with(
             "sprites-color-scope-all-master",
@@ -996,6 +1034,7 @@ pub fn scope_lines(
         ui_text::get_with(
             "sprites-color-scope-all-palettes",
             &[
+                ("kind", Arg::Text(kind(target.bank))),
                 (
                     "banks",
                     Arg::Number((uses.other_banks(target.bank).len() + 1) as f64),
@@ -1009,6 +1048,7 @@ pub fn scope_lines(
         ui_text::get_with(
             "sprites-color-scope-only-master",
             &[
+                ("prefix", Arg::Text(prefix(target.bank))),
                 ("bank", Arg::Number(bank.into())),
                 ("hex", Arg::Text(&format!("{index:02X}"))),
                 ("index", Arg::Number(index.into())),
@@ -1018,6 +1058,7 @@ pub fn scope_lines(
         ui_text::get_with(
             "sprites-color-scope-only-palette",
             &[
+                ("kind", Arg::Text(kind(target.bank))),
                 ("bank", Arg::Number(bank.into())),
                 ("tiles", Arg::Number(uses.palette_tiles as f64)),
             ],

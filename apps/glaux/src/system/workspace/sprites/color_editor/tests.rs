@@ -23,7 +23,7 @@ fn layout(advanced: bool) -> ColorEditorLayout {
 
 fn target(bank: u8, local: u8) -> ColorTarget {
     ColorTarget {
-        bank: ObjBank::new(bank).unwrap(),
+        bank: PaletteBank::Obj(ObjBank::new(bank).unwrap()),
         local,
     }
 }

@@ -12,8 +12,10 @@ use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, ObjBank};
 use glaux_machine::palette::Rgb;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, OBJ_TILE_WIDTH};
 use glaux_machine::system_rom::{SystemIcon, SystemUi};
+use glaux_machine::tilemap::{BG_PALETTE_BANKS, BgBank};
 use glaux_video::draw::{
-    ObjPaletteChoice, draw_ink_image, draw_obj_tile_scaled, draw_text, fill_rect,
+    ObjPaletteChoice, draw_bg_tile_scaled, draw_ink_image, draw_obj_tile_scaled, draw_text,
+    fill_rect,
 };
 
 use super::layout::{
@@ -25,6 +27,7 @@ use super::{EditorDialog, SpriteEditor, SpriteSource};
 use crate::cartridge::rom::RomUsage;
 use crate::rom::ICON_SIZE;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::system::sprite_document::{PaletteBank, TileSet};
 use crate::system::workspace::StatusInfo;
 use crate::system::workspace::rom_tag::rom_tag;
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
@@ -155,10 +158,10 @@ impl SpriteEditor {
     /// left, and a hint for the hovered control on the right.
     fn status(&self, source: Option<&SpriteSource<'_>>, hover: Hit) -> (String, String) {
         let (column, row) = grid_position(self.selected);
-        let bank = source.map(|s| s.obj.attributes().bank(self.selected).get());
+        let bank = source.map(|s| self.palette_bank(s).number());
         let pixel = match hover {
             Hit::Canvas { x, y } => source
-                .and_then(|s| s.obj.tiles().pixel(self.selected, x.into(), y.into()))
+                .and_then(|s| self.tile_pixel(s, x.into(), y.into()))
                 .map(|local| (x, y, local)),
             _ => None,
         };
@@ -177,6 +180,14 @@ impl SpriteEditor {
                     Arg::Text(if bank.is_some() { "yes" } else { "no" }),
                 ),
                 ("bank", Arg::Number(bank.unwrap_or_default().into())),
+                (
+                    "prefix",
+                    Arg::Text(if self.tileset == TileSet::Bg {
+                        "BGP"
+                    } else {
+                        "OBP"
+                    }),
+                ),
                 (
                     "has-pixel",
                     Arg::Text(if pixel.is_some() { "yes" } else { "no" }),
@@ -213,11 +224,19 @@ impl SpriteEditor {
                 "sprites-click-select-color-double-click-edit",
                 &[("local", Arg::Text(&format!("{:X}", local)))],
             ),
+            Hit::Bank(bank) if self.tileset == TileSet::Bg => ui_text::get_with(
+                "sprites-click-show-background-tiles-with-bgp",
+                &[("bank", Arg::Text(&bank.to_string()))],
+            ),
             Hit::Bank(bank) => ui_text::get_with(
                 "sprites-click-choose-this-tile-s-palette-from-obp",
                 &[("bank", Arg::Text(&bank.to_string()))],
             ),
+            Hit::PaletteButton if self.tileset == TileSet::Bg => {
+                ui_text::get("sprites-click-show-the-next-background-palette")
+            }
             Hit::PaletteButton => ui_text::get("sprites-click-choose-this-tile-s-palette"),
+            Hit::SetButton => ui_text::get("sprites-b-switch-between-object-and-background-tiles"),
             Hit::Tool(tool) => ui_text::get_with(
                 "sprites-tool-hint",
                 &[
@@ -259,6 +278,25 @@ impl SpriteEditor {
             Hit::None => ui_text::get("sprites-wheel-scroll-arrows-select"),
         };
         (left, right)
+    }
+}
+
+impl SpriteEditor {
+    /// The palette bank the selected tile is shown with: its own for an
+    /// object tile, the chosen one for a background tile.
+    pub(super) fn palette_bank(&self, source: &SpriteSource<'_>) -> PaletteBank {
+        match self.tileset {
+            TileSet::Obj => PaletteBank::Obj(source.obj.attributes().bank(self.selected)),
+            TileSet::Bg => PaletteBank::Bg(self.bg_bank),
+        }
+    }
+
+    /// One pixel of the selected tile, in the editor's tile set.
+    fn tile_pixel(&self, source: &SpriteSource<'_>, x: usize, y: usize) -> Option<u8> {
+        match self.tileset {
+            TileSet::Obj => source.obj.tiles().pixel(self.selected, x, y),
+            TileSet::Bg => source.bg.tiles().pixel(self.selected, x, y),
+        }
     }
 }
 
@@ -329,7 +367,24 @@ impl Painter<'_> {
         }
 
         let zoom = editor.sheet.zoom();
-        let buttons: [(Rect, &str, Hit, bool, bool); 4] = [
+        let set_label = ui_text::get_with(
+            "sprites-tile-set",
+            &[(
+                "set",
+                Arg::Text(match editor.tileset {
+                    TileSet::Obj => "obj",
+                    TileSet::Bg => "bg",
+                }),
+            )],
+        );
+        let buttons: [(Rect, &str, Hit, bool, bool); 5] = [
+            (
+                layout.set_button,
+                &set_label,
+                Hit::SetButton,
+                editor.tileset == TileSet::Bg,
+                true,
+            ),
             (
                 layout.grid_button,
                 &ui_text::get("sprites-grid"),
@@ -413,14 +468,12 @@ impl Painter<'_> {
         let canvas = layout.canvas;
         self.outline(layout.canvas_frame, FRAME);
         self.checker(canvas, CANVAS_ZOOM / 2);
-        draw_obj_tile_scaled(
-            self.framebuffer,
-            source.obj,
+        self.tile(
+            editor,
+            source,
             editor.selected,
-            ObjPaletteChoice::TileDefault,
             (canvas.x, canvas.y),
             CANVAS_ZOOM,
-            source.preview.slots(),
         );
         if editor.grid {
             for k in 1..OBJ_TILE_WIDTH as i32 {
@@ -457,6 +510,39 @@ impl Painter<'_> {
         self.text(&caption, layout.caption.x, layout.caption.y, DIM);
     }
 
+    /// Draws `tile` of the editor's tile set at `at`, through its own
+    /// palette bank for object tiles and the chosen one for background
+    /// tiles.
+    fn tile(
+        &mut self,
+        editor: &SpriteEditor,
+        source: &SpriteSource<'_>,
+        tile: usize,
+        at: (i32, i32),
+        scale: i32,
+    ) {
+        match editor.tileset {
+            TileSet::Obj => draw_obj_tile_scaled(
+                self.framebuffer,
+                source.obj,
+                tile,
+                ObjPaletteChoice::TileDefault,
+                at,
+                scale,
+                source.preview.slots(),
+            ),
+            TileSet::Bg => draw_bg_tile_scaled(
+                self.framebuffer,
+                source.bg,
+                tile,
+                editor.bg_bank,
+                at,
+                scale,
+                source.preview.slots(),
+            ),
+        }
+    }
+
     fn sheet(&mut self, editor: &SpriteEditor, source: &SpriteSource<'_>, hover: Hit) {
         let layout = self.layout;
         let view = editor.sheet;
@@ -471,15 +557,7 @@ impl Painter<'_> {
                 };
                 let cell = layout.sheet_cell(column, row, zoom);
                 self.checker(cell, zoom.tile_size() / 2);
-                draw_obj_tile_scaled(
-                    self.framebuffer,
-                    source.obj,
-                    tile,
-                    ObjPaletteChoice::TileDefault,
-                    (cell.x, cell.y),
-                    zoom.scale(),
-                    source.preview.slots(),
-                );
+                self.tile(editor, source, tile, (cell.x, cell.y), zoom.scale());
             }
         }
 
@@ -539,13 +617,14 @@ impl Painter<'_> {
         let layout = self.layout;
         let panel = layout.palette;
         let cell_w = layout.metrics.cell_w;
+        let background = editor.tileset == TileSet::Bg;
         fill_rect(self.framebuffer, panel.x, panel.y, panel.width, 1, BAR);
-        let bank = source.obj.attributes().bank(editor.selected);
-        let master = |local: u8| source.obj.palettes().resolve(bank, local);
+        let bank = editor.palette_bank(source);
+        let master = |local: u8| resolve(source, bank, local);
         let color = editor.color();
 
         let swatch_label = if layout.advanced {
-            &advanced_labels()[1]
+            &advanced_labels(background)[1]
         } else {
             &ui_text::get("sprites-palette-2")
         };
@@ -586,9 +665,18 @@ impl Painter<'_> {
             return;
         }
 
-        self.text(&advanced_labels()[0], 4, layout.bank_y, DIM);
-        for (number, &rect) in layout.banks.iter().enumerate().take(OBJ_PALETTE_BANKS) {
-            let shown = ObjBank::new(number as u8).unwrap_or(ObjBank::ZERO);
+        self.text(&advanced_labels(background)[0], 4, layout.bank_y, DIM);
+        let banks = if background {
+            BG_PALETTE_BANKS
+        } else {
+            OBJ_PALETTE_BANKS
+        };
+        for (number, &rect) in layout.banks.iter().enumerate().take(banks) {
+            let shown = if background {
+                PaletteBank::Bg(BgBank::new(number as u8).unwrap_or(BgBank::ZERO))
+            } else {
+                PaletteBank::Obj(ObjBank::new(number as u8).unwrap_or(ObjBank::ZERO))
+            };
             let ink = if shown == bank {
                 self.fill(rect, PALE);
                 BACKGROUND
@@ -606,7 +694,7 @@ impl Painter<'_> {
         }
 
         // Master indices are the cartridge's, never the frame's slots.
-        self.text(&advanced_labels()[2], 4, layout.master_y, DIM);
+        self.text(&advanced_labels(background)[2], 4, layout.master_y, DIM);
         for (local, &rect) in layout.swatches.iter().enumerate() {
             let label = master_label(source, bank, local as u8);
             self.text(&label, rect.x, layout.master_y + 1, TEXT);
@@ -682,11 +770,15 @@ impl Painter<'_> {
     /// tile's palette.
     fn palette_button(&mut self, editor: &SpriteEditor, source: &SpriteSource<'_>, hover: Hit) {
         let rect = self.layout.palette_button;
-        let bank = source.obj.attributes().bank(editor.selected);
+        let bank = editor.palette_bank(source);
         let label = ui_text::get_with(
             "sprites-palette-button",
             &[
-                ("bank", Arg::Number(bank.get().into())),
+                (
+                    "kind",
+                    Arg::Text(if bank.is_background() { "bg" } else { "obj" }),
+                ),
+                ("bank", Arg::Number(bank.number().into())),
                 (
                     "advanced",
                     Arg::Text(if editor.advanced { "yes" } else { "no" }),
@@ -769,20 +861,25 @@ pub(super) fn checker(framebuffer: &mut Framebuffer, rect: Rect, square: i32) {
     }
 }
 
+/// The master index local color `local` of `bank` maps to, `None` for the
+/// transparent local 0.
+fn resolve(source: &SpriteSource<'_>, bank: PaletteBank, local: u8) -> Option<u8> {
+    match bank {
+        PaletteBank::Obj(bank) => source.obj.palettes().resolve(bank, local),
+        PaletteBank::Bg(bank) => source.bg.palettes().resolve(bank, local),
+    }
+}
+
 /// The master index local color `local` of `bank` maps to, as two hex
 /// digits, or `--` for the transparent local 0.
-fn master_label(source: &SpriteSource<'_>, bank: ObjBank, local: u8) -> String {
-    source
-        .obj
-        .palettes()
-        .resolve(bank, local)
-        .map_or_else(|| "--".to_owned(), |master| format!("{master:02X}"))
+fn master_label(source: &SpriteSource<'_>, bank: PaletteBank, local: u8) -> String {
+    resolve(source, bank, local).map_or_else(|| "--".to_owned(), |master| format!("{master:02X}"))
 }
 
 /// How local color `local` of `bank` resolves: its master index and that
 /// master entry's RGB value.
-fn selection_text(source: &SpriteSource<'_>, bank: ObjBank, local: u8) -> String {
-    match source.obj.palettes().resolve(bank, local) {
+fn selection_text(source: &SpriteSource<'_>, bank: PaletteBank, local: u8) -> String {
+    match resolve(source, bank, local) {
         Some(master) => {
             let Rgb { r, g, b } = source.master.get(master);
             ui_text::get_with(

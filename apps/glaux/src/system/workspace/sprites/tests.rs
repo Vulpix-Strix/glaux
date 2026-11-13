@@ -702,7 +702,7 @@ fn a_double_click_on_a_swatch_opens_edit_color_on_that_color() {
     assert_eq!(
         open.target(),
         ColorTarget {
-            bank: ObjBank::new(2).unwrap(),
+            bank: PaletteBank::Obj(ObjBank::new(2).unwrap()),
             local: 6
         }
     );
@@ -925,4 +925,188 @@ fn the_pointer_is_a_hand_over_controls_and_an_hourglass_while_a_file_is_awaited(
     assert_eq!(editor.cursor(centre_of(tool)), SystemCursor::Busy);
     editor.stop_awaiting_file();
     assert_eq!(editor.cursor(centre_of(tool)), SystemCursor::Hand);
+}
+
+// Background tiles.
+
+use crate::cartridge::VideoAsset;
+use crate::system::sprite_document::TileSet;
+use glaux_machine::tilemap::BgBank;
+
+fn bg_bank(n: u8) -> BgBank {
+    BgBank::new(n).unwrap()
+}
+
+#[test]
+fn the_set_button_and_b_switch_between_object_and_background_tiles() {
+    let mut editor = editor();
+    assert_eq!(editor.tileset(), TileSet::Obj);
+    let button = editor.layout().set_button;
+    click(&mut editor, button);
+    assert_eq!(editor.tileset(), TileSet::Bg);
+    editor.handle_input(InputEvent::Text('b'), None);
+    assert_eq!(editor.tileset(), TileSet::Obj);
+    editor.handle_input(InputEvent::Text('B'), None);
+    assert_eq!(editor.tileset(), TileSet::Bg);
+}
+
+#[test]
+fn switching_keeps_the_selected_tile_and_color() {
+    let mut editor = editor();
+    editor.selected = 77;
+    editor.color = 9;
+    editor.handle_input(InputEvent::Text('b'), None);
+    assert_eq!((editor.selected(), editor.color), (77, 9));
+}
+
+#[test]
+fn drawing_on_a_background_tile_leaves_object_tiles_alone() {
+    let mut editor = editor();
+    let mut doc = document();
+    editor.handle_input(InputEvent::Text('b'), None);
+    editor.select(1, None);
+    down(&mut editor, &mut doc, 2, 3);
+    up(&mut editor, &mut doc, 2, 3);
+    assert_eq!(doc.bg_pixel(1, 2, 3), Some(1));
+    assert_eq!(doc.pixel(1, 2, 3), Some(0));
+    assert!(doc.is_asset_modified(VideoAsset::BgTiles));
+    assert!(!doc.is_asset_modified(VideoAsset::ObjTiles));
+}
+
+#[test]
+fn a_background_drag_and_a_fill_are_one_edit_each() {
+    let mut editor = editor();
+    let mut doc = document();
+    editor.handle_input(InputEvent::Text('b'), None);
+    editor.select(1, None);
+    down(&mut editor, &mut doc, 0, 0);
+    drag(&mut editor, &mut doc, 7, 0);
+    up(&mut editor, &mut doc, 7, 0);
+    assert!(doc.undo());
+    assert!(!doc.is_modified());
+
+    editor.handle_input(InputEvent::Text('f'), None);
+    down(&mut editor, &mut doc, 4, 4);
+    assert_eq!(doc.bg_pixel(1, 7, 7), Some(1));
+    assert!(doc.undo());
+    assert_eq!(doc.bg_pixel(1, 7, 7), Some(0));
+}
+
+#[test]
+fn the_eyedropper_and_the_eraser_work_on_background_pixels() {
+    let mut editor = editor();
+    let mut doc = document();
+    doc.set_bg_pixel(2, 5, 5, 11);
+    editor.handle_input(InputEvent::Text('b'), None);
+    editor.select(2, None);
+    editor.handle_input(InputEvent::Text('i'), None);
+    down(&mut editor, &mut doc, 5, 5);
+    assert_eq!(editor.color, 11);
+    editor.handle_input(InputEvent::Text('e'), None);
+    down(&mut editor, &mut doc, 5, 5);
+    up(&mut editor, &mut doc, 5, 5);
+    assert_eq!(doc.bg_pixel(2, 5, 5), Some(0));
+}
+
+#[test]
+fn background_tile_zero_takes_no_pixels_but_can_still_be_sampled() {
+    let mut editor = editor();
+    let mut doc = document();
+    editor.handle_input(InputEvent::Text('b'), None);
+    assert_eq!(editor.selected(), 0);
+    let at = canvas_point(&editor, 1, 1);
+    let press = |editor: &mut SpriteEditor, doc: &mut SpriteDocument| {
+        editor.handle_input(
+            InputEvent::PointerDown {
+                button: PointerButton::Primary,
+                at,
+                select: false,
+            },
+            Some(doc),
+        )
+    };
+    for key in ['p', 'e', 'f'] {
+        editor.handle_input(InputEvent::Text(key), None);
+        assert_eq!(
+            press(&mut editor, &mut doc),
+            Some(SpriteRequest::Notice(
+                "Background tile 0 is always transparent".to_owned()
+            )),
+            "tool {key}"
+        );
+        assert!(editor.stroke.is_none());
+    }
+    assert!(!doc.is_modified() && !doc.can_undo());
+
+    editor.handle_input(InputEvent::Text('i'), None);
+    assert_eq!(press(&mut editor, &mut doc), None);
+
+    // Object tile 0 is not restricted.
+    editor.handle_input(InputEvent::Text('b'), None);
+    editor.handle_input(InputEvent::Text('p'), None);
+    // The eyedropper took the transparent color from the empty tile.
+    assert_eq!(editor.color, 0);
+    editor.color = 3;
+    assert_eq!(press(&mut editor, &mut doc), None);
+    assert_eq!(doc.pixel(0, 1, 1), Some(3));
+}
+
+#[test]
+fn the_palette_button_steps_through_the_four_background_banks() {
+    let mut editor = editor();
+    let mut doc = document();
+    editor.handle_input(InputEvent::Text('b'), None);
+    let button = centre_of(editor.layout().palette_button);
+    for expected in [1, 2, 3, 0] {
+        assert_eq!(tap(&mut editor, &mut doc, button), None);
+        assert!(!editor.has_dialog(), "background tiles have no picker");
+        assert_eq!(editor.bg_bank(), bg_bank(expected));
+    }
+    assert!(!doc.is_modified(), "choosing a bank to show edits nothing");
+}
+
+#[test]
+fn an_advanced_bgp_cell_chooses_the_bank_and_the_others_do_nothing() {
+    let mut editor = editor();
+    let mut doc = document();
+    editor.handle_input(InputEvent::Text('b'), None);
+    editor.handle_input(InputEvent::Text('a'), None);
+    let cell = |editor: &SpriteEditor, n: usize| centre_of(editor.layout().banks[n]);
+    let at = cell(&editor, 2);
+    tap(&mut editor, &mut doc, at);
+    assert_eq!(editor.bg_bank(), bg_bank(2));
+    let at = cell(&editor, 6);
+    tap(&mut editor, &mut doc, at);
+    assert_eq!(editor.bg_bank(), bg_bank(2), "there are only four banks");
+    assert!(!editor.has_dialog());
+}
+
+#[test]
+fn edit_color_in_background_mode_edits_the_chosen_background_palette() {
+    let mut editor = editor();
+    let mut doc = document();
+    editor.handle_input(InputEvent::Text('b'), None);
+    let at = centre_of(editor.layout().palette_button);
+    tap(&mut editor, &mut doc, at);
+    editor.color = 4;
+    assert_eq!(command(&mut editor, &mut doc, InputEvent::Text('c')), None);
+    assert_eq!(
+        editor.color_editor().unwrap().target(),
+        ColorTarget {
+            bank: PaletteBank::Bg(bg_bank(1)),
+            local: 4
+        }
+    );
+}
+
+#[test]
+fn leaving_a_stroke_open_across_a_set_switch_closes_it() {
+    let mut editor = editor();
+    let mut doc = document();
+    editor.select(1, None);
+    down(&mut editor, &mut doc, 0, 0);
+    editor.handle_input(InputEvent::Text('b'), Some(&mut doc));
+    assert!(editor.stroke.is_none());
+    assert_eq!(doc.pixel(1, 0, 0), Some(1));
+    assert!(doc.undo(), "the pencil edit was closed, so it undoes whole");
 }
