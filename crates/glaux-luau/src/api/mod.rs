@@ -5,5 +5,6 @@ pub(crate) mod audio;
 pub(crate) mod draw;
 pub(crate) mod input;
 pub(crate) mod log;
+pub(crate) mod map;
 pub(crate) mod memory;
 pub(crate) mod time;

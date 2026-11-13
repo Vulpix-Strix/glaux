@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell, RefMut};
 use std::fmt;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use glaux_audio::AudioState;
 use glaux_input::InputState;
@@ -14,6 +15,7 @@ use mlua::{Function, Lua, Value, VmState};
 
 use glaux_machine::font::BitmapFont;
 use glaux_machine::hardware::CartridgeHardware;
+use glaux_machine::map_store::MapStore;
 use glaux_script::{
     DrawBudget, HardwareSlot, Loan, LogEntry, LogSink, Phase, RuntimeError, ScriptError,
     StartFailure,
@@ -138,6 +140,8 @@ pub struct Runtime {
     source: Rc<dyn ModuleSource>,
     /// Holds the cartridge hardware while a phase runs.
     hardware: HardwareSlot,
+    /// The cartridge's authoring maps, read-only.
+    maps: Arc<MapStore>,
     /// The hardware that [`tick`](Self::tick) lends, for tests.
     #[cfg(test)]
     scratch: Option<Box<CartridgeHardware>>,
@@ -160,7 +164,8 @@ impl Runtime {
     ///
     /// `chunk_name` is shown verbatim in error locations, as in
     /// `main.luau:3: boom`. `source` must be Luau text, and bytecode is
-    /// rejected. `font` is what `print` draws text with.
+    /// rejected. `font` is what `print` draws text with. `maps` are the
+    /// cartridge's authoring maps, which the `map` functions read.
     ///
     /// The hardware in `home` is lent to the entry script and to `boot()`,
     /// so the script can set up memory before the first `tick()`. It is back
@@ -172,9 +177,10 @@ impl Runtime {
         modules: impl ModuleSource + 'static,
         budget: Budget,
         font: BitmapFont,
+        maps: Arc<MapStore>,
         home: &mut Option<Box<CartridgeHardware>>,
     ) -> Result<Self, StartFailure> {
-        Self::start_with(chunk_name, source, modules, budget, font, home, None)
+        Self::start_with(chunk_name, source, modules, budget, font, maps, home, None)
     }
 
     /// Like [`start`](Self::start), for a VM that stops at `breakpoints` and
@@ -195,20 +201,23 @@ impl Runtime {
         modules: impl ModuleSource + 'static,
         budget: Budget,
         font: BitmapFont,
+        maps: Arc<MapStore>,
         home: &mut Option<Box<CartridgeHardware>>,
         port: DebugPort,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<Self, StartFailure> {
         let debug = Some((port, breakpoints));
-        Self::start_with(chunk_name, source, modules, budget, font, home, debug)
+        Self::start_with(chunk_name, source, modules, budget, font, maps, home, debug)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_with(
         chunk_name: &str,
         source: &[u8],
         modules: impl ModuleSource + 'static,
         budget: Budget,
         font: BitmapFont,
+        maps: Arc<MapStore>,
         home: &mut Option<Box<CartridgeHardware>>,
         debug: Option<(DebugPort, Vec<Breakpoint>)>,
     ) -> Result<Self, StartFailure> {
@@ -264,6 +273,7 @@ impl Runtime {
             modules: Rc::default(),
             source: Rc::new(modules),
             hardware: HardwareSlot::new(),
+            maps,
             #[cfg(test)]
             scratch: None,
             debug,
@@ -373,8 +383,22 @@ impl Runtime {
         budget: Budget,
         font: BitmapFont,
     ) -> Result<Self, StartFailure> {
+        Self::start_on_scratch_with_maps(chunk_name, source, modules, budget, font, Arc::default())
+    }
+
+    /// Like [`start_on_scratch`](Self::start_on_scratch), with `maps` for the
+    /// `map` functions to read.
+    #[cfg(test)]
+    pub(crate) fn start_on_scratch_with_maps(
+        chunk_name: &str,
+        source: &[u8],
+        modules: impl ModuleSource + 'static,
+        budget: Budget,
+        font: BitmapFont,
+        maps: Arc<MapStore>,
+    ) -> Result<Self, StartFailure> {
         let mut home = Some(crate::tests::hardware());
-        let runtime = Self::start(chunk_name, source, modules, budget, font, &mut home)?;
+        let runtime = Self::start(chunk_name, source, modules, budget, font, maps, &mut home)?;
         Ok(runtime.with_scratch(home))
     }
 
@@ -477,6 +501,7 @@ impl Runtime {
         api::time::install(&self.lua, &self.ticks)?;
         api::audio::install(&self.lua, &self.audio)?;
         api::memory::install(&self.lua, &self.hardware, &self.meter)?;
+        api::map::install(&self.lua, &self.hardware, &self.meter, &self.maps)?;
         modules::install(&self.lua, &self.modules, &self.source, &self.meter)
     }
 
