@@ -3,7 +3,7 @@
 use super::workspace::open_workspace;
 use super::{Context, Documents};
 use crate::cartridge::source::SourcePath;
-use crate::cartridge::LoadedCartridge;
+use crate::cartridge::{Language, LoadedCartridge};
 use crate::system::editing::session::CodeSession;
 use crate::system::logs::{Category, LogStore, SourceLocation};
 use crate::system::maps::{MapOverrides, RunOverrides};
@@ -88,7 +88,12 @@ pub(super) fn launch(
         },
         RunOrigin::Code => Default::default(),
     };
-    let (graphics_edited, maps_edited) = (!overrides.video.is_empty(), !overrides.maps.is_empty());
+    // Only Luau reads maps, so edits to them change nothing in a Rhai run.
+    let reads_maps = cartridge.manifest().runtime.language == Language::Luau;
+    let (graphics_edited, maps_edited) = (
+        !overrides.video.is_empty(),
+        reads_maps && !overrides.maps.is_empty(),
+    );
     let edited = graphics_edited || maps_edited;
     ctx.logs.begin_run();
     let started = if debug {

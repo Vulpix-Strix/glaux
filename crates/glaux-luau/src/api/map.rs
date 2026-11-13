@@ -85,13 +85,7 @@ impl Maps {
         )?;
         self.hardware
             .with(|hardware| {
-                hardware.tilemaps[window.index()].transfer(
-                    map.layer(source),
-                    i64::from(x),
-                    i64::from(y),
-                    width,
-                    height,
-                );
+                hardware.tilemaps[window.index()].transfer(map.layer(source), x, y, width, height);
             })
             .ok_or_else(|| located(lua, format!("internal error: {}", LoanError::Unavailable)))
     }
