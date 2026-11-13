@@ -18,7 +18,7 @@ pub enum Topic {
 /// Finds what `topic` names. A page opens only when nothing else could be
 /// meant: `topic` is a page id, or the only page whose last id segment or
 /// search match it is. The best-ranked page is never picked over others,
-/// since a name shared by the Luau and Rhai pages has no better one.
+/// since a name shared by several pages has no better one.
 pub fn resolve(topic: &str, library: &Library, chain: &FallbackChain) -> Topic {
     let topic = topic.trim().trim_matches('/').to_lowercase();
     if topic.is_empty() {

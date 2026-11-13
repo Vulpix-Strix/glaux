@@ -541,7 +541,6 @@ impl Builder<'_> {
         let mut inks = vec![TEXT; source.len() + 1];
         let grammar = match lang.map(str::to_ascii_lowercase).as_deref() {
             Some("luau") => Grammar::Luau,
-            Some("rhai") => Grammar::Rhai,
             _ => return inks,
         };
         let highlighter = self

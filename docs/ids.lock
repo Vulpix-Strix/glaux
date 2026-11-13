@@ -36,7 +36,6 @@ api/memory/peek32
 api/memory/poke
 api/memory/poke16
 api/memory/poke32
-api/modules/import
 api/modules/require
 api/time/frame
 api/time/t

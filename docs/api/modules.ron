@@ -7,10 +7,4 @@
         params: [(name: "name", ty: Text)],
         returns: Any,
     ),
-    (
-        id: "api/modules/import",
-        kind: Keyword,
-        rhai: (name: "import"),
-        params: [(name: "name", ty: Text)],
-    ),
 ]

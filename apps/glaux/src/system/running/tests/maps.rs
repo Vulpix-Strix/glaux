@@ -3,7 +3,7 @@
 use glaux_machine::tilemap::{BgBank, BgLayer, TileEntry, TileLayer};
 use pretty_assertions::assert_eq;
 
-use super::debugging::{luau_cartridge, rhai_cartridge};
+use super::debugging::luau_cartridge;
 use super::*;
 use crate::cartridge::map::{MapFile, MapId, MapMeta};
 use crate::cartridge_fs::fixture::Fixture;
@@ -109,22 +109,6 @@ fn a_broken_map_stops_a_luau_cartridge_from_starting() {
         panic!("expected a map error, got {:?}", failed.error);
     };
     assert_eq!(id, town());
-}
-
-#[test]
-fn a_broken_map_does_not_stop_a_rhai_cartridge() {
-    let fixture = Fixture::new("running-maps-broken-rhai");
-    let cartridge = rhai_cartridge(&fixture, "fn tick() {}");
-    add_town(&cartridge, &numbered());
-    cartridge
-        .replace_map_file(
-            &town(),
-            MapFile::Layer(BgLayer::Bg0),
-            b"short",
-            Some(&numbered().to_bytes()),
-        )
-        .unwrap();
-    assert!(start(cartridge).is_ok());
 }
 
 #[test]

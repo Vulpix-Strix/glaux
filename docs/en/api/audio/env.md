@@ -20,12 +20,6 @@ Sets the volume envelope of a channel.
 audio.env(0, 5, 80, 8, 200)
 ```
 
-### Rhai
-
-```rhai
-audio::env(0, 5, 80, 8, 200);
-```
-
 ## See also
 
 - [tone](glaux://api/audio/tone)

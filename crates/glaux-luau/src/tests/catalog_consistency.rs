@@ -123,27 +123,6 @@ fn nothing_is_installed_without_being_documented() {
 }
 
 #[test]
-fn the_api_documented_for_luau_is_the_api_scripts_see() {
-    // A name documented for Rhai only must not leak into Luau.
-    let runtime = started("");
-    let library = Library::embedded();
-    for entry in library.api().entries() {
-        if entry.binding(LANGUAGE).is_some() {
-            continue;
-        }
-        if let Some(binding) = entry.binding(ScriptLanguage::Rhai) {
-            let found = walk(runtime.lua(), &binding.path).is_some_and(|table| {
-                !matches!(
-                    table.raw_get::<Value>(binding.name.as_str()),
-                    Ok(Value::Nil)
-                )
-            });
-            assert!(!found, "{} is Rhai only but Luau has it", entry.id());
-        }
-    }
-}
-
-#[test]
 fn callbacks_are_documented_but_never_installed() {
     let runtime = started("");
     let library = Library::embedded();

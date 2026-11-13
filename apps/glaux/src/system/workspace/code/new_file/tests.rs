@@ -11,10 +11,6 @@ fn the_manifest_language_decides_the_extension() {
         path("player", Language::Luau),
         Ok("code/player.luau".into())
     );
-    assert_eq!(
-        path("player", Language::Rhai),
-        Ok("code/player.rhai".into())
-    );
 }
 
 #[test]
@@ -33,11 +29,6 @@ fn a_typed_extension_is_refused_rather_than_doubled() {
         path("player.luau", Language::Luau)
             .unwrap_err()
             .contains("Leave out .luau")
-    );
-    assert!(
-        path("player.rhai", Language::Luau)
-            .unwrap_err()
-            .contains("This cartridge is luau")
     );
 }
 

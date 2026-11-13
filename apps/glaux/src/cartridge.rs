@@ -127,8 +127,6 @@ pub enum CartridgeError {
     InvalidEntryPath,
     #[error("cartridge.ron: runtime.entry must be a .luau file")]
     EntryNotLuau,
-    #[error("cartridge.ron: runtime.entry must be a .rhai file")]
-    EntryNotRhai,
     #[error("Entry not found: {0}")]
     EntryNotFound(String),
     #[error("Entry is not a file: {0}")]
@@ -200,18 +198,15 @@ pub struct Compatibility {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Language {
     Luau,
-    /// Experimental: its scripting API may change without notice.
-    Rhai,
 }
 
 impl Language {
-    pub const ALL: [Self; 2] = [Self::Luau, Self::Rhai];
+    pub const ALL: [Self; 1] = [Self::Luau];
 
     /// Extension of the language's script files, without the dot.
     pub fn extension(self) -> &'static str {
         match self {
             Self::Luau => "luau",
-            Self::Rhai => "rhai",
         }
     }
 
@@ -219,7 +214,6 @@ impl Language {
     pub fn name(self) -> &'static str {
         match self {
             Self::Luau => "luau",
-            Self::Rhai => "rhai",
         }
     }
 
@@ -228,12 +222,6 @@ impl Language {
         Self::ALL
             .into_iter()
             .find(|language| language.name().eq_ignore_ascii_case(name))
-    }
-
-    /// Whether the language's scripting API may still change without
-    /// notice.
-    pub fn is_experimental(self) -> bool {
-        matches!(self, Self::Rhai)
     }
 }
 
@@ -406,7 +394,6 @@ fn validate_entry(entry: &str, language: Language) -> Result<(), CartridgeError>
     } else {
         Err(match language {
             Language::Luau => CartridgeError::EntryNotLuau,
-            Language::Rhai => CartridgeError::EntryNotRhai,
         })
     }
 }

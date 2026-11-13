@@ -23,7 +23,3 @@ A module runs at most once, in the same VM and with the same globals as the entr
 ```luau
 local enemies = require("game.enemies")
 ```
-
-## See also
-
-- [import (Rhai)](glaux://api/modules/import)

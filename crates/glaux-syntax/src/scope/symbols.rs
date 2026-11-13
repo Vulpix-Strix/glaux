@@ -2,9 +2,7 @@ use std::ops::Range;
 
 use tree_sitter::Node;
 
-use super::{
-    child_of_kind, descendants_of_kind, fields, named, rhai_fn_name, statement_core, text,
-};
+use super::{descendants_of_kind, fields, named, text};
 use crate::grammar::Grammar;
 use crate::highlighter::Highlighter;
 
@@ -61,8 +59,7 @@ impl Highlighter {
     /// The declarations of the document in source order, for an outline.
     ///
     /// Parameters and loop variables are left out. Variables are listed only at the top
-    /// level. Luau also lists named functions nested in other code, while Rhai functions
-    /// can only be top-level.
+    /// level. Luau also lists named functions nested in other code.
     pub fn symbols(&self) -> Vec<Symbol> {
         let Some((root, source)) = self.parsed() else {
             return Vec::new();
@@ -70,25 +67,6 @@ impl Highlighter {
         let mut symbols = Vec::new();
         match self.grammar() {
             Grammar::Luau => luau_symbols(root, source, 0, true, &mut symbols),
-            Grammar::Rhai => {
-                for (child, _) in fields(root) {
-                    let core = statement_core(child);
-                    match core.kind() {
-                        "ExprFn" => {
-                            if let Some(name) = rhai_fn_name(core) {
-                                symbols.push(symbol(source, name, SymbolKind::Function, 0));
-                            }
-                        }
-                        "ExprDeclareVar" => {
-                            if let Some(name) = core.child_by_field_name("name") {
-                                let kind = rhai_variable_kind(core);
-                                symbols.push(symbol(source, name, kind, 0));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
         }
         symbols
     }
@@ -113,24 +91,6 @@ impl Highlighter {
                     }
                 }
             }
-            Grammar::Rhai => {
-                for (child, _) in fields(root) {
-                    let core = statement_core(child);
-                    if core.kind() == "ExprImport"
-                        && let Some(alias) = child_of_kind(core, "ident")
-                        && let Some((module, module_range)) = named(core)
-                            .find(|n| n.kind() == "Expr")
-                            .and_then(|expr| rhai_literal_string(expr, source))
-                    {
-                        imports.push(Import {
-                            alias: text(source, alias).to_owned(),
-                            alias_range: alias.byte_range(),
-                            module,
-                            module_range,
-                        });
-                    }
-                }
-            }
         }
         imports
     }
@@ -139,15 +99,13 @@ impl Highlighter {
     ///
     /// In Luau a module is whatever its chunk returns, so only the shapes that name their
     /// members are followed: a returned table literal, or a returned local table that is
-    /// filled in at the top level. In Rhai a module exports its top-level functions that
-    /// are not `private`, and the variables declared with `export`.
+    /// filled in at the top level.
     pub fn exports(&self) -> Exports {
         let Some((root, source)) = self.parsed() else {
             return Exports::Known(Vec::new());
         };
         match self.grammar() {
             Grammar::Luau => luau_exports(root, source),
-            Grammar::Rhai => Exports::Known(rhai_exports(root, source)),
         }
     }
 }
@@ -158,17 +116,6 @@ fn symbol(source: &str, name: Node, kind: SymbolKind, depth: usize) -> Symbol {
         kind,
         declared: name.byte_range(),
         depth,
-    }
-}
-
-fn rhai_variable_kind(declaration: Node) -> SymbolKind {
-    let is_const = (0..declaration.child_count())
-        .filter_map(|at| declaration.child(at as _))
-        .any(|child| child.kind() == "const");
-    if is_const {
-        SymbolKind::Constant
-    } else {
-        SymbolKind::Variable
     }
 }
 
@@ -220,14 +167,6 @@ fn luau_literal_string(string: Node, source: &str) -> Option<(String, Range<usiz
     let content = parts.next()?;
     (content.kind() == "string_content" && parts.next().is_none())
         .then(|| (text(source, content).to_owned(), string.byte_range()))
-}
-
-/// The text and range of a Rhai expression that is a plain string literal.
-fn rhai_literal_string(expr: Node, source: &str) -> Option<(String, Range<usize>)> {
-    let literal = descendants_of_kind(expr, "lit_str", 4).pop()?;
-    let raw = text(source, literal);
-    let inner = raw.strip_prefix('"')?.strip_suffix('"')?;
-    (!inner.contains('\\')).then(|| (inner.to_owned(), literal.byte_range()))
 }
 
 /// `local alias = require("literal")` with exactly one name and one value.
@@ -442,28 +381,6 @@ fn indexes(target: Node, source: &str, name: &str) -> bool {
     target
         .child_by_field_name("table")
         .is_some_and(|table| table.kind() == "identifier" && text(source, table) == name)
-}
-
-fn rhai_exports(root: Node, source: &str) -> Vec<Export> {
-    let mut exports = Vec::new();
-    for (child, _) in fields(root) {
-        let core = statement_core(child);
-        let first = core.child(0).map(|n| n.kind());
-        match core.kind() {
-            "ExprFn" if first != Some("private") => {
-                if let Some(name) = rhai_fn_name(core) {
-                    exports.push(export(source, name, SymbolKind::Function));
-                }
-            }
-            "ExprDeclareVar" if first == Some("export") => {
-                if let Some(name) = core.child_by_field_name("name") {
-                    exports.push(export(source, name, rhai_variable_kind(core)));
-                }
-            }
-            _ => {}
-        }
-    }
-    exports
 }
 
 #[cfg(test)]

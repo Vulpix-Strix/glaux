@@ -12,7 +12,7 @@ use crate::ScriptLanguage;
 /// A top-level block and the language it is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block {
-    /// [`Scope::Language`] inside a `Luau` or `Rhai` subsection and for a
+    /// [`Scope::Language`] inside a `Luau` subsection and for a
     /// fenced block tagged with a language name, [`Scope::Common`]
     /// otherwise.
     pub scope: Scope,

@@ -15,7 +15,7 @@ fn library() -> Library {
     let files: [(&str, &str); 7] = [
         (
             "api/graphics.ron",
-            "#![enable(implicit_some)]\n[\n (id: \"api/graphics/spr\", kind: Function, luau: (name: \"spr\"), rhai: (name: \"spr\")),\n (id: \"api/graphics/text\", kind: Function, luau: (name: \"print\"), rhai: (name: \"text\")),\n]",
+            "#![enable(implicit_some)]\n[\n (id: \"api/graphics/spr\", kind: Function, luau: (name: \"spr\")),\n (id: \"api/graphics/text\", kind: Function, luau: (name: \"print\")),\n]",
         ),
         (
             "en/guide/index.md",

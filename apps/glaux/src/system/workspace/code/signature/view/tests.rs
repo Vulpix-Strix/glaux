@@ -12,7 +12,6 @@ fn view_in(language: glaux_docs::ScriptLanguage, marked: &str) -> SignatureView 
     let text = marked.replacen(CARET, "", 1);
     let mut syntax = Highlighter::new(match language {
         glaux_docs::ScriptLanguage::Luau => Grammar::Luau,
-        glaux_docs::ScriptLanguage::Rhai => Grammar::Rhai,
     })
     .unwrap();
     syntax.update(&text);
@@ -40,10 +39,6 @@ fn view_in(language: glaux_docs::ScriptLanguage, marked: &str) -> SignatureView 
 
 fn luau(marked: &str) -> SignatureView {
     view_in(glaux_docs::ScriptLanguage::Luau, marked)
-}
-
-fn rhai(marked: &str) -> SignatureView {
-    view_in(glaux_docs::ScriptLanguage::Rhai, marked)
 }
 
 #[test]
@@ -80,9 +75,8 @@ fn the_return_type_is_named_when_the_function_has_one() {
 }
 
 #[test]
-fn a_namespaced_function_is_written_in_the_language_asked() {
+fn a_namespaced_function_is_written_with_its_namespace() {
     assert_eq!(luau("audio.tone(¦").name, "audio.tone");
-    assert_eq!(rhai("audio::tone(¦").name, "audio::tone");
 }
 
 #[test]
@@ -95,17 +89,10 @@ fn with_no_active_parameter_there_is_no_head_and_no_parameter_note() {
 
 #[test]
 fn a_script_function_says_where_it_is_declared() {
-    let view = rhai("fn f(a, b) {}\nf(1, ¦");
+    let view = luau("function f(a, b) end\nf(1, ¦");
     assert_eq!(view.params, ["a", "b"]);
     assert_eq!(view.head.as_ref().map(|h| h.name.as_str()), Some("b"));
     assert_eq!(view.head.as_ref().and_then(|h| h.ty), None);
-    // Declared at byte 3, which the test counts as line 1.
+    // Declared at byte 9, which the test counts as line 1.
     assert_eq!(view.note.as_deref(), Some("Declared on line 1."));
-}
-
-#[test]
-fn overloads_say_which_one_is_shown() {
-    let view = rhai("fn f(a) {}\nfn f(a, b) {}\nf(1, ¦");
-    assert_eq!(view.params, ["a", "b"]);
-    assert_eq!(view.overload, Some((2, 2)));
 }

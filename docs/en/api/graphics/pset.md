@@ -22,12 +22,6 @@ Drawing functions may only be called during `draw()`. Everything is clipped to t
 pset(160, 120, 7)
 ```
 
-### Rhai
-
-```rhai
-pset(160, 120, 7);
-```
-
 ## See also
 
 - [rectfill](glaux://api/graphics/rectfill)

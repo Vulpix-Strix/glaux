@@ -92,7 +92,6 @@ pub enum LanguageFilter {
     #[default]
     All,
     Luau,
-    Rhai,
 }
 
 impl LanguageFilter {
@@ -100,15 +99,13 @@ impl LanguageFilter {
         match self {
             Self::All => ui_text::get("docs-all"),
             Self::Luau => "Luau".to_owned(),
-            Self::Rhai => "Rhai".to_owned(),
         }
     }
 
     fn next(self) -> Self {
         match self {
             Self::All => Self::Luau,
-            Self::Luau => Self::Rhai,
-            Self::Rhai => Self::All,
+            Self::Luau => Self::All,
         }
     }
 
@@ -117,7 +114,6 @@ impl LanguageFilter {
         match (self, scope) {
             (_, PageScope::Common) | (Self::All, _) => true,
             (Self::Luau, PageScope::Language(language)) => language == ScriptLanguage::Luau,
-            (Self::Rhai, PageScope::Language(language)) => language == ScriptLanguage::Rhai,
         }
     }
 }

@@ -10,14 +10,14 @@ Glaux starts in a shell. Create a cartridge with `new` and give it an id, which 
 new my-game
 ```
 
-The new cartridge is loaded right away. It starts as a small demo with the Glaux owl, which you can move. To write Rhai instead of Luau, add `--lang rhai`. Rhai support is experimental.
+The new cartridge is loaded right away. It starts as a small demo with the Glaux owl, which you can move.
 
 A cartridge is a folder with these parts that matter here:
 
 | File                  | Purpose                                                  |
 |-----------------------|----------------------------------------------------------|
 | `cartridge.ron`       | The manifest: name, version, language and entry script.  |
-| `code/main.luau`      | The entry script. A Rhai cartridge has `code/main.rhai`. |
+| `code/main.luau`      | The entry script.                                        |
 | Other `code/` files   | Modules the entry script loads.                          |
 | `sprites.bin`, `objattr.bin`, `obp.bin` | The owl sprite and its palettes. |
 | `assets/` | Optional. Your own resources, of any file type. |
@@ -65,34 +65,6 @@ function draw()
 end
 ```
 
-### Rhai
-
-```rhai
-fn boot() {
-    this.x = 156;
-    this.y = 116;
-    this.presses = 0;
-}
-
-fn tick() {
-    if btn(Button::Left) { this.x -= 2; }
-    if btn(Button::Right) { this.x += 2; }
-    if btn(Button::Up) { this.y -= 2; }
-    if btn(Button::Down) { this.y += 2; }
-    if btnp(Button::A) { this.presses += 1; }
-}
-
-fn draw() {
-    cls(0);
-    rectfill(this.x, this.y, 8, 8, 7);
-    text(`Presses: ${this.presses}`, 8, 8, 15);
-}
-```
-
-Press F5 or the play button above the script to run it from the editor. The game fills the screen, and Escape pauses it. On the pause screen Escape resumes, R starts it over and Enter stops it and returns to the editor, with your tabs, cursor and undo history as you left them. By default every unsaved edit is saved before a run. The Save before running setting in the editor's settings turns that off, and the cartridge then runs the files as they are on disk.
-
-You can also save with Ctrl+S, press Escape to go back to the shell and type `run` again.
-
 ## Read the log
 
 While a cartridge runs, F12 shows the log panel over the lower half of the screen and hides it again. The game keeps running and does not receive your keys while the panel is open. It lists what your scripts logged with `log` and what Glaux itself reports. Up and Down move through the messages, End follows the newest one, L hides the less severe levels and S switches between your messages and Glaux's. Escape closes the panel.
@@ -107,6 +79,6 @@ The screen is 320 by 240 pixels with `(0, 0)` at the top left. Colors are palett
 
 ## Where to go next
 
-- [The game loop](glaux://guide/game-loop) explains the callbacks, state and the differences between Luau and Rhai.
+- [The game loop](glaux://guide/game-loop) explains the callbacks and state.
 - The [script API](glaux://api/index) lists every function.
 - Try [spr](glaux://api/graphics/spr) to draw sprites and [tone](glaux://api/audio/tone) to make sound.

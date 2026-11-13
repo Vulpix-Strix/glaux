@@ -94,7 +94,6 @@ pub(super) fn cartridge(error: &crate::cartridge::CartridgeError) -> String {
             &[("path", Arg::Text(value))],
         ),
         CartridgeError::EntryNotLuau => ui_text::get("error-cartridge-entry-not-luau"),
-        CartridgeError::EntryNotRhai => ui_text::get("error-cartridge-entry-not-rhai"),
         CartridgeError::EntryNotFound(value) => ui_text::get_with(
             "error-cartridge-entry-not-found",
             &[("path", Arg::Text(value))],

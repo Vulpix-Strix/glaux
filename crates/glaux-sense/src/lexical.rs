@@ -2,7 +2,7 @@
 //! string, and how many blocks are still open.
 //!
 //! The parse tree cannot answer this reliably. An unclosed block comment parses as
-//! code, and an unclosed Rhai string swallows the rest of the file. Scanning from the
+//! code, and an unclosed string swallows the rest of the file. Scanning from the
 //! start of the document does not have either problem.
 
 use glaux_docs::ScriptLanguage;
@@ -20,7 +20,7 @@ pub(crate) enum State {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Scan {
     pub state: State,
-    /// Open blocks: `function ... end` and similar in Luau, `{ ... }` in Rhai.
+    /// Open blocks: `function ... end` and similar in Luau.
     pub blocks: usize,
     /// Open parentheses and brackets, plus table braces in Luau.
     pub groups: usize,
@@ -76,19 +76,8 @@ impl Scanner<'_> {
                 b'-' if self.language == ScriptLanguage::Luau && self.peek(1) == Some(b'-') => {
                     self.luau_comment()
                 }
-                b'/' if self.language == ScriptLanguage::Rhai && self.peek(1) == Some(b'/') => {
-                    self.line_comment()
-                }
-                b'/' if self.language == ScriptLanguage::Rhai && self.peek(1) == Some(b'*') => {
-                    self.rhai_block_comment()
-                }
                 b'[' if self.language == ScriptLanguage::Luau && self.long_bracket().is_some() => {
                     self.luau_long_string()
-                }
-                b'#' if self.language == ScriptLanguage::Rhai
-                    && self.raw_string_hashes().is_some() =>
-                {
-                    self.rhai_raw_string()
                 }
                 _ => {
                     self.code(byte);
@@ -247,58 +236,6 @@ impl Scanner<'_> {
             self.at += 1;
         }
         inside
-    }
-
-    /// Rhai block comments can nest.
-    fn rhai_block_comment(&mut self) -> State {
-        self.at += 2;
-        let mut depth = 1;
-        while self.at < self.bytes.len() {
-            match (self.bytes[self.at], self.peek(1)) {
-                (b'/', Some(b'*')) => {
-                    depth += 1;
-                    self.at += 2;
-                }
-                (b'*', Some(b'/')) => {
-                    depth -= 1;
-                    self.at += 2;
-                    if depth == 0 {
-                        return State::Code;
-                    }
-                }
-                _ => self.at += 1,
-            }
-        }
-        State::Comment
-    }
-
-    /// The number of `#` that open a Rhai raw string such as `#"..."#`.
-    fn raw_string_hashes(&self) -> Option<usize> {
-        let mut hashes = 0;
-        while self.peek(hashes) == Some(b'#') {
-            hashes += 1;
-        }
-        (self.peek(hashes) == Some(b'"')).then_some(hashes)
-    }
-
-    fn rhai_raw_string(&mut self) -> State {
-        let hashes = self.raw_string_hashes().unwrap_or(0);
-        self.at += hashes + 1;
-        while self.at < self.bytes.len() {
-            if self.bytes[self.at] == b'"'
-                && self.bytes[self.at + 1..]
-                    .iter()
-                    .take_while(|&&byte| byte == b'#')
-                    .count()
-                    >= hashes
-            {
-                self.at += 1 + hashes;
-                self.previous = Token::Other;
-                return State::Code;
-            }
-            self.at += 1;
-        }
-        State::String
     }
 }
 

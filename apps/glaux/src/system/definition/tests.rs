@@ -129,27 +129,3 @@ fn a_missing_module_is_reported_with_its_name() {
         Definition::ModuleMissing("util".to_owned())
     );
 }
-
-#[test]
-fn rhai_follows_public_functions_and_refuses_private_and_overloaded_ones() {
-    let fixture = Fixture::new("def-rhai");
-    let main = "import \"lib\" as lib;\nlib::open();\nlib::secret();\nlib::twice(1);\n";
-    let lib = "fn open() {}\nprivate fn secret() {}\nfn twice(a) {}\nfn twice(a, b) {}\n";
-    let (cart, mut code, id) = setup(
-        &fixture,
-        &[("code/main.rhai", main), ("code/lib.rhai", lib)],
-    );
-    let at = |word: &str| offset_of(main, word) + 1;
-    assert_eq!(
-        found(locate(&mut code, &cart, id, at("open"))),
-        ("code/lib.rhai".to_owned(), offset_of(lib, "open"))
-    );
-    assert_eq!(
-        locate(&mut code, &cart, id, at("secret")),
-        Definition::Unresolved
-    );
-    assert_eq!(
-        locate(&mut code, &cart, id, at("twice")),
-        Definition::Ambiguous
-    );
-}

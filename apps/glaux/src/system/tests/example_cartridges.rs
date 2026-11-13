@@ -34,7 +34,7 @@ const SHEET_GAME: Sizes = [Some(8704), Some(272), Some(128), Some(768), None, No
 
 /// Every example, with the asset files it ships. None ships a background
 /// asset or a map.
-const EXAMPLES: [(&str, Sizes); 7] = [
+const EXAMPLES: [(&str, Sizes); 6] = [
     ("log-stress", [None; 6]),
     ("loot-rain", SHEET_GAME),
     (
@@ -42,7 +42,6 @@ const EXAMPLES: [(&str, Sizes); 7] = [
         [Some(1024), Some(32), Some(128), Some(768), None, None],
     ),
     ("signal-lost", SHEET_GAME),
-    ("signal-lost-rhai", SHEET_GAME),
     ("sprites", [Some(4096), None, None, None, None, None]),
     ("tile-viewer", [Some(4096), None, None, None, None, None]),
 ];
@@ -286,9 +285,8 @@ fn play_example(name: &str, label: &str) -> (Vec<u64>, usize) {
 }
 
 /// The cartridges played, and whether their frames change over time.
-const PLAYED: [(&str, bool); 4] = [
+const PLAYED: [(&str, bool); 3] = [
     ("signal-lost", true),
-    ("signal-lost-rhai", true),
     ("loot-rain", true),
     ("palettes", false),
 ];
@@ -320,21 +318,9 @@ fn the_played_frames_are_worth_comparing() {
 /// A change here is only legitimate when the visible behavior of the
 /// examples is meant to change. To record new values, run this test and
 /// copy the table it prints.
-///
-/// The Rhai port of Signal Lost draws exactly the frames of the Luau one,
-/// so both rows are equal.
 const REFERENCES: &[(&str, [u64; 4])] = &[
     (
         "signal-lost",
-        [
-            0xf22aae5f61d98b62,
-            0x3e448640e47656e8,
-            0xbb03e3be0b0f5ea5,
-            0xa82a8c7c3e848d02,
-        ],
-    ),
-    (
-        "signal-lost-rhai",
         [
             0xf22aae5f61d98b62,
             0x3e448640e47656e8,

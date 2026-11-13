@@ -20,12 +20,6 @@ One `draw()` may spend a fixed amount of draw cost. A clear, pixel or filled rec
 
 `draw` must be a global function. A `local function draw` is not found and is skipped without a warning. Drawing text uses `print`, which draws in Luau. Write to the log with `log.info`.
 
-### Rhai
-
-`draw` must be a public function without parameters. A `private fn draw` or `fn draw(x)` is an error on the first tick. Drawing text uses `text`, because Rhai's own `print` writes to the log.
-
-Helpers that read `this` are called as `this.draw_sky()`. A helper called as `draw_sky()` cannot see it, so pass it what it needs.
-
 ## Examples
 
 ### Luau
@@ -35,15 +29,6 @@ function draw()
   cls(0)
   print("Hello, Glaux", 8, 8, 7)
 end
-```
-
-### Rhai
-
-```rhai
-fn draw() {
-    cls(0);
-    text("Hello, Glaux", 8, 8, 7);
-}
 ```
 
 ## See also

@@ -411,29 +411,23 @@ fn table_cells_keep_their_inline_code_and_links() {
     assert_eq!(layout.links, ["glaux://api/graphics/spr"]);
 }
 
-const BOTH: &str = "# T\n\nCommon.\n\n### Luau\n\nLuau text.\n\n```luau\nlocal a = 1\n```\n\n### Rhai\n\nRhai text.\n\n```rhai\nlet a = 1;\n```\n\n## After\n\nBack.\n";
+const BOTH: &str =
+    "# T\n\nCommon.\n\n### Luau\n\nLuau text.\n\n```luau\nlocal a = 1\n```\n\n## After\n\nBack.\n";
 
 #[test]
-fn the_language_filter_shows_one_language_or_both() {
+fn the_language_filter_keeps_common_content() {
     let all = lines(&all(BOTH, 40));
     assert!(all.iter().any(|line| line == "Luau text."));
-    assert!(all.iter().any(|line| line == "Rhai text."));
 
     let luau = lines(&lay(BOTH, 40, LanguageFilter::Luau));
     assert!(luau.contains(&"Luau text.".to_owned()));
     assert!(luau.contains(&" local a = 1".to_owned()));
-    assert!(!luau.iter().any(|line| line.contains("Rhai")));
-    assert!(!luau.iter().any(|line| line.contains("let a")));
     assert!(luau.contains(&"Common.".to_owned()));
     assert!(luau.contains(&"Back.".to_owned()));
-
-    let rhai = lines(&lay(BOTH, 40, LanguageFilter::Rhai));
-    assert!(rhai.contains(&"Rhai text.".to_owned()));
-    assert!(!rhai.iter().any(|line| line.contains("Luau")));
 }
 
 #[test]
-fn the_filter_leaves_out_the_headings_of_hidden_parts() {
+fn the_filtered_headings_keep_their_anchors() {
     let luau = lay(BOTH, 40, LanguageFilter::Luau);
     let titles: Vec<_> = luau.headings.iter().map(|h| h.title.as_str()).collect();
     assert_eq!(titles, ["Luau", "After"]);
@@ -515,11 +509,7 @@ fn the_embedded_pages_all_lay_out_at_every_width() {
     for language in library.languages() {
         for page in library.pages(&language) {
             for cols in [8, 20, 37, 51, 80] {
-                for filter in [
-                    LanguageFilter::All,
-                    LanguageFilter::Luau,
-                    LanguageFilter::Rhai,
-                ] {
+                for filter in [LanguageFilter::All, LanguageFilter::Luau] {
                     let layout = build(&Params {
                         page,
                         tag: String::new(),

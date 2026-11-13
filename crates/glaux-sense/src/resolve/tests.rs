@@ -22,10 +22,9 @@ fn api_names_resolve_by_path_and_language() {
     };
     assert_eq!(tone.kind(), Kind::Function);
 
-    // Luau spells the text function `print`, Rhai spells it `text`.
+    // Luau spells the text function `print`.
     assert!(resolve(api, ScriptLanguage::Luau, &syntax, 0, &["print"]).is_some());
     assert!(resolve(api, ScriptLanguage::Luau, &syntax, 0, &["text"]).is_none());
-    assert!(resolve(api, ScriptLanguage::Rhai, &syntax, 0, &["text"]).is_some());
     assert!(resolve(api, ScriptLanguage::Luau, &syntax, 0, &["audio", "nope"]).is_none());
     assert!(resolve(api, ScriptLanguage::Luau, &syntax, 0, &[]).is_none());
 }

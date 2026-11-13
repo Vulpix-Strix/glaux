@@ -28,10 +28,8 @@ fn starter_in_code(fixture: &Fixture, args: &str) -> System {
 
 #[test]
 fn starter_scripts_are_edited_in_memory_only() {
-    for (args, dir, entry) in [
-        ("my-game", "my-game", "code/main.luau"),
-        ("owl --lang rhai", "owl", "code/main.rhai"),
-    ] {
+    let cases = [("my-game", "my-game", "code/main.luau")];
+    for (args, dir, entry) in cases {
         let fixture = Fixture::new(&format!("sys-code-edit-starter-{dir}"));
         let system = starter_in_code(&fixture, args);
         let on_disk = std::fs::read_to_string(fixture.root().join(dir).join(entry)).unwrap();
@@ -73,22 +71,14 @@ fn only_the_code_view_takes_typing_for_its_scripts() {
 
 #[test]
 fn suggestions_follow_unsaved_text_and_accepting_is_undoable() {
-    for (args, dir, entry, local, member) in [
-        (
-            "my-game",
-            "my-game",
-            "code/main.luau",
-            "local speed = 1\n",
-            "audio.",
-        ),
-        (
-            "owl --lang rhai",
-            "owl",
-            "code/main.rhai",
-            "let speed = 1;\n",
-            "audio::",
-        ),
-    ] {
+    let cases = [(
+        "my-game",
+        "my-game",
+        "code/main.luau",
+        "local speed = 1\n",
+        "audio.",
+    )];
+    for (args, dir, entry, local, member) in cases {
         let fixture = Fixture::new(&format!("sys-code-complete-{dir}"));
         let system = starter_in_code(&fixture, args);
         let on_disk = std::fs::read_to_string(fixture.root().join(dir).join(entry)).unwrap();

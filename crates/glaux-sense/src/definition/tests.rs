@@ -4,7 +4,6 @@ use pretty_assertions::assert_eq;
 use super::*;
 
 const LUAU: ScriptLanguage = ScriptLanguage::Luau;
-const RHAI: ScriptLanguage = ScriptLanguage::Rhai;
 
 /// Resolves the name at the `¦` in `marked`, with the declared range of a local result
 /// replaced by the text it covers.
@@ -13,7 +12,6 @@ fn resolve_at(language: ScriptLanguage, marked: &str) -> String {
     let text = marked.replace('¦', "");
     let grammar = match language {
         ScriptLanguage::Luau => Grammar::Luau,
-        ScriptLanguage::Rhai => Grammar::Rhai,
     };
     let mut syntax = Highlighter::new(grammar).expect("bundled query compiles");
     syntax.update(&text);
@@ -29,15 +27,12 @@ fn resolve_at(language: ScriptLanguage, marked: &str) -> String {
 #[test]
 fn a_use_leads_to_the_declaration_in_effect() {
     assert_eq!(resolve_at(LUAU, "local a = 1\nprint(¦a)"), "local a@6");
-    assert_eq!(resolve_at(RHAI, "let a = 1;\nprint(¦a);"), "local a@4");
 }
 
 #[test]
 fn an_inner_declaration_hides_the_outer_one() {
     let luau = "local a = 1\ndo local a = 2; print(¦a) end";
     assert_eq!(resolve_at(LUAU, luau), "local a@21");
-    let rhai = "let a = 1;\n{ let a = 2; print(¦a); }";
-    assert_eq!(resolve_at(RHAI, rhai), "local a@17");
 }
 
 #[test]
@@ -49,7 +44,6 @@ fn a_local_is_not_visible_in_its_own_initializer() {
 #[test]
 fn functions_are_found_wherever_they_are_written() {
     assert_eq!(resolve_at(LUAU, "¦go()\nfunction go() end"), "local go@14");
-    assert_eq!(resolve_at(RHAI, "¦go();\nfn go() {}"), "local go@9");
 }
 
 #[test]
@@ -59,15 +53,10 @@ fn implicit_self_has_no_declaration_to_jump_to_but_is_still_local() {
 }
 
 #[test]
-fn a_rhai_function_cannot_reach_the_locals_around_it() {
-    assert_eq!(resolve_at(RHAI, "let a = 1;\nfn f() { ¦a }"), "unresolved");
-}
-
-#[test]
 fn engine_api_and_unknown_names_are_not_definitions() {
     assert_eq!(resolve_at(LUAU, "¦spr(1)"), "unresolved");
     assert_eq!(resolve_at(LUAU, "audio.¦tone(1)"), "unresolved");
-    assert_eq!(resolve_at(RHAI, "¦nothing();"), "unresolved");
+    assert_eq!(resolve_at(LUAU, "¦nothing()"), "unresolved");
 }
 
 #[test]
@@ -81,10 +70,6 @@ fn functions_declared_twice_are_ambiguous() {
         resolve_at(LUAU, "function f() end\nfunction f() end\n¦f()"),
         "ambiguous"
     );
-    assert_eq!(
-        resolve_at(RHAI, "fn f(a) {}\nfn f(a, b) {}\n¦f(1);"),
-        "ambiguous"
-    );
 }
 
 #[test]
@@ -95,19 +80,12 @@ fn an_import_leads_from_its_string_and_from_its_alias() {
         resolve_at(LUAU, "local m = require(\"ga¦me.m\")"),
         "import game.m"
     );
-    assert_eq!(
-        resolve_at(RHAI, "import \"util\" as u;\nprint(¦u);"),
-        "import util"
-    );
-    assert_eq!(resolve_at(RHAI, "import \"ut¦il\" as u;"), "import util");
 }
 
 #[test]
 fn a_member_of_an_alias_names_the_module_and_the_member() {
     let luau = "local m = require(\"game.m\")\nm.¦clamp(1)";
     assert_eq!(resolve_at(LUAU, luau), "member game.m clamp");
-    let rhai = "import \"util\" as u;\nu::¦clamp(1);";
-    assert_eq!(resolve_at(RHAI, rhai), "member util clamp");
 }
 
 #[test]

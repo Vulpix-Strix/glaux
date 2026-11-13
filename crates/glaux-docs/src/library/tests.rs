@@ -118,16 +118,16 @@ fn graphics_library() -> Library {
             "api/graphics.ron",
             r#"#![enable(implicit_some)]
 [
-    (id: "api/graphics/spr", kind: Function, luau: (name: "spr"), rhai: (name: "spr")),
-    (id: "api/graphics/sspr", kind: Function, luau: (name: "sspr"), rhai: (name: "sspr")),
-    (id: "api/graphics/text", kind: Function, luau: (name: "print"), rhai: (name: "text")),
+    (id: "api/graphics/spr", kind: Function, luau: (name: "spr")),
+    (id: "api/graphics/sspr", kind: Function, luau: (name: "sspr")),
+    (id: "api/graphics/text", kind: Function, luau: (name: "print")),
 ]"#,
         ),
         (
             "api/audio.ron",
             r#"#![enable(implicit_some)]
 [
-    (id: "api/audio/tone", kind: Function, luau: (path: ["audio"], name: "tone"), rhai: (path: ["audio"], name: "tone")),
+    (id: "api/audio/tone", kind: Function, luau: (path: ["audio"], name: "tone")),
 ]"#,
         ),
         (
@@ -189,15 +189,11 @@ fn an_empty_query_finds_nothing() {
 }
 
 #[test]
-fn api_pages_answer_to_the_name_each_language_spells() {
+fn api_pages_answer_to_the_name_the_language_spells() {
     let library = graphics_library();
     assert_eq!(
         search(&library, "print"),
         [("api/graphics/text".to_owned(), Rank::Prefix)]
-    );
-    assert_eq!(
-        search(&library, "audio::tone"),
-        [("api/audio/tone".to_owned(), Rank::Prefix)]
     );
     assert_eq!(
         search(&library, "audio.t"),

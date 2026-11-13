@@ -37,7 +37,6 @@ pub struct Frame {
     /// 1-based.
     pub line: Option<u32>,
     /// Whether [`DebugRequest::Variables`] can answer for this frame.
-    /// Rhai only exposes the variables of the innermost frame.
     pub has_variables: bool,
 }
 
@@ -114,7 +113,7 @@ pub enum DebugReply {
         entries: Vec<LogEntry>,
         dropped: u32,
     },
-    /// The runtime cannot answer, for instance for an outer Rhai frame.
+    /// The runtime cannot answer.
     Unavailable,
 }
 

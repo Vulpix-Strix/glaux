@@ -8,7 +8,7 @@ New to Glaux? [Getting started](glaux://guide/getting-started) creates a cartrid
 
 Something not working? [Debugging a cartridge](glaux://guide/debugging) shows how to stop at a line and look at the variables.
 
-The script API is described in the [Glaux script API](glaux://api/index) reference. Each function has a page with its parameters and examples in both Luau and Rhai.
+The script API is described in the [Glaux script API](glaux://api/index) reference. Each function has a page with its parameters and examples.
 
 ## Writing a cartridge
 
@@ -21,9 +21,3 @@ function draw()
 end
 ```
 
-```rhai
-fn draw() {
-    cls(0);
-    text("Hello, Glaux", 8, 8, 7);
-}
-```

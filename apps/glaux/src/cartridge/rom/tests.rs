@@ -115,7 +115,7 @@ fn leaves_out_authoring_and_development_files() {
         "saves/slot1.sav",
         "notes.txt",
         "code/notes.md",
-        "code/other.rhai",
+        "code/other.lua",
         "maps/overworld/notes.md",
         "maps/Not A Map/map.ron",
         "maps/readme.txt",

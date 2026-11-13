@@ -88,7 +88,7 @@ pub(super) fn launch(
         },
         RunOrigin::Code => Default::default(),
     };
-    // Only Luau reads maps, so edits to them change nothing in a Rhai run.
+    // Only Luau reads maps.
     let reads_maps = cartridge.manifest().runtime.language == Language::Luau;
     let (graphics_edited, maps_edited) = (
         !overrides.video.is_empty(),
@@ -130,7 +130,6 @@ pub(super) fn launch(
                     &[("identity", Arg::Text(&identity.to_string()))],
                 ));
             }
-            shell.warn_if_experimental(running.cartridge().manifest().runtime.language);
             match stop {
                 Some(stop) => super::debugging::stopped(shell, running, stop, ctx),
                 None => {

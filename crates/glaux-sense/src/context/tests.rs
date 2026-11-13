@@ -1,4 +1,4 @@
-use ScriptLanguage::{Luau, Rhai};
+use ScriptLanguage::Luau;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -9,7 +9,6 @@ fn read(language: ScriptLanguage, marked: &str) -> Context {
     let text = marked.replacen('|', "", 1);
     let grammar = match language {
         ScriptLanguage::Luau => glaux_syntax::Grammar::Luau,
-        ScriptLanguage::Rhai => glaux_syntax::Grammar::Rhai,
     };
     let mut syntax = Highlighter::new(grammar).expect("bundled query compiles");
     syntax.update(&text);
@@ -53,14 +52,6 @@ fn members_follow_a_separator() {
         position(Luau, "audio.to|"),
         member(&["audio"], Separator::Dot)
     );
-    assert_eq!(
-        position(Rhai, "audio::|"),
-        member(&["audio"], Separator::Path)
-    );
-    assert_eq!(
-        position(Rhai, "f(Key::Sp|"),
-        member(&["Key"], Separator::Path)
-    );
 }
 
 #[test]
@@ -74,19 +65,11 @@ fn incomplete_code_after_the_separator_still_gives_a_member() {
         position(Luau, "if key(Key.|\nend"),
         member(&["Key"], Separator::Dot)
     );
-    assert_eq!(
-        position(Rhai, "if key(Key::|"),
-        member(&["Key"], Separator::Path)
-    );
 }
 
 #[test]
 fn receivers_can_be_chains() {
     assert_eq!(position(Luau, "a.b.|"), member(&["a", "b"], Separator::Dot));
-    assert_eq!(
-        position(Rhai, "a::b::|"),
-        member(&["a", "b"], Separator::Path)
-    );
 }
 
 #[test]
@@ -103,7 +86,7 @@ fn concatenation_and_numbers_are_not_member_access() {
     assert_eq!(position(Luau, "x = a..co|"), reference(false));
     assert_eq!(position(Luau, "x = 1.|"), Position::Suppressed);
     assert_eq!(position(Luau, "x = 12|"), Position::Suppressed);
-    assert_eq!(position(Rhai, "x = 1.5|"), Position::Suppressed);
+    assert_eq!(position(Luau, "x = 1.5|"), Position::Suppressed);
 }
 
 #[test]
@@ -111,11 +94,6 @@ fn luau_colons_start_types_and_methods() {
     assert_eq!(position(Luau, "local x: nu|"), Position::Suppressed);
     assert_eq!(position(Luau, "obj:me|"), Position::Suppressed);
     assert_eq!(position(Luau, "x = y :: nu|"), Position::Suppressed);
-}
-
-#[test]
-fn a_rhai_colon_separates_map_keys_from_values() {
-    assert_eq!(position(Rhai, "let m = #{ a: co|"), reference(false));
 }
 
 #[test]
@@ -127,11 +105,6 @@ fn comments_and_strings_suppress_everything() {
         (Luau, "x = \"co|"),
         (Luau, "x = [[ co|"),
         (Luau, "x = `co|"),
-        (Rhai, "x = 1; // co|"),
-        (Rhai, "/* co|"),
-        (Rhai, "/* a /* b */ co|"),
-        (Rhai, "x = \"co|"),
-        (Rhai, "x = `co|"),
     ] {
         assert_eq!(position(language, marked), Position::Suppressed, "{marked}");
     }
@@ -141,13 +114,11 @@ fn comments_and_strings_suppress_everything() {
 fn text_after_a_closed_comment_or_string_is_code() {
     assert_eq!(position(Luau, "--[[ a ]] x = co|"), reference(false));
     assert_eq!(position(Luau, "x = \"a\" .. co|"), reference(false));
-    assert_eq!(position(Rhai, "/* a */ x = co|"), reference(false));
 }
 
 #[test]
 fn interpolations_hold_code() {
     assert_eq!(position(Luau, "x = `a {co|} b`"), reference(false));
-    assert_eq!(position(Rhai, "x = `a ${co|} b`"), reference(false));
     assert_eq!(
         position(Luau, "x = `a {audio.|}`"),
         member(&["audio"], Separator::Dot)
@@ -161,10 +132,6 @@ fn declaration_names_follow_declaring_words() {
         (Luau, "local function co|"),
         (Luau, "for co|"),
         (Luau, "function f(a, co|) end"),
-        (Rhai, "let co|"),
-        (Rhai, "const co|"),
-        (Rhai, "fn f(a, co|) {}"),
-        (Rhai, "import \"m\" as co|"),
     ] {
         assert!(
             matches!(position(language, marked), Position::Declaration { .. }),
@@ -180,9 +147,6 @@ fn callbacks_are_declared_by_global_functions_at_the_top_level() {
     assert_eq!(position(Luau, "local x = 1\nfunction ti|"), site(true));
     assert_eq!(position(Luau, "local function ti|"), site(false));
     assert_eq!(position(Luau, "function f()\n  function ti|"), site(false));
-    assert_eq!(position(Rhai, "fn ti|"), site(true));
-    assert_eq!(position(Rhai, "private fn ti|"), site(false));
-    assert_eq!(position(Rhai, "fn f() {\n  fn ti|"), site(false));
     assert_eq!(position(Luau, "x = function ti|"), site(false));
 }
 
@@ -191,8 +155,6 @@ fn a_word_starting_a_top_level_statement_is_marked() {
     assert_eq!(position(Luau, "ti|"), reference(true));
     assert_eq!(position(Luau, "local a = 1\n\nti|"), reference(true));
     assert_eq!(position(Luau, "function f() end\nti|"), reference(true));
-    assert_eq!(position(Rhai, "let a = 1;\nti|"), reference(true));
-    assert_eq!(position(Rhai, "fn f() {}\nti|"), reference(true));
     assert_eq!(position(Luau, "  ti|"), reference(true));
 }
 
@@ -202,8 +164,6 @@ fn a_word_inside_a_block_does_not_start_a_top_level_statement() {
     assert_eq!(position(Luau, "function f()\n  ti|\nend"), reference(false));
     assert_eq!(position(Luau, "if a then\n  ti|"), reference(false));
     assert_eq!(position(Luau, "while a do\n  ti|"), reference(false));
-    assert_eq!(position(Rhai, "fn f() {\n  ti|"), reference(false));
-    assert_eq!(position(Rhai, "if a {\n  ti|\n}"), reference(false));
 }
 
 #[test]
@@ -212,7 +172,6 @@ fn a_word_inside_an_expression_does_not_start_a_statement() {
     assert_eq!(position(Luau, "f(a,\n  ti|"), reference(false));
     assert_eq!(position(Luau, "local t = {\n  ti|"), reference(false));
     assert_eq!(position(Luau, "x = 1 +\n  ti|"), reference(false));
-    assert_eq!(position(Rhai, "f(a,\n  ti|"), reference(false));
 }
 
 #[test]

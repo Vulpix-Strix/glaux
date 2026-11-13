@@ -18,13 +18,6 @@ audio.gate(0, true)
 audio.gate(0, false)
 ```
 
-### Rhai
-
-```rhai
-audio::gate(0, true);
-audio::gate(0, false);
-```
-
 ## See also
 
 - [tone](glaux://api/audio/tone)

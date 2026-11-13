@@ -1,4 +1,4 @@
-use ScriptLanguage::{Luau, Rhai};
+use ScriptLanguage::Luau;
 use glaux_docs::{DocId, Library};
 use glaux_syntax::Grammar;
 use pretty_assertions::assert_eq;
@@ -51,7 +51,7 @@ fn an_api_function_reports_its_parameters_and_active_one() {
 
 #[test]
 fn optional_parameters_and_types_come_from_the_catalog() {
-    let found = help(Rhai, "spr(1, 2, 3, ¦").expect("help");
+    let found = help(Luau, "spr(1, 2, 3, ¦").expect("help");
     let params = &found.signature().params;
     assert_eq!(
         params.iter().map(|p| p.optional).collect::<Vec<_>>(),
@@ -63,20 +63,15 @@ fn optional_parameters_and_types_come_from_the_catalog() {
 }
 
 #[test]
-fn the_return_type_comes_from_the_catalog_and_depends_on_the_language() {
+fn the_return_type_comes_from_the_catalog() {
     assert_eq!(
         help(Luau, "btnp(¦").expect("help").signature().returns,
         Some(ValueType::Bool)
     );
     assert_eq!(help(Luau, "spr(¦").expect("help").signature().returns, None);
-    // `frame` returns a number in Luau and an integer in Rhai.
     assert_eq!(
         help(Luau, "frame(¦").expect("help").signature().returns,
         Some(ValueType::Number)
-    );
-    assert_eq!(
-        help(Rhai, "frame(¦").expect("help").signature().returns,
-        Some(ValueType::Int)
     );
 }
 
@@ -85,9 +80,6 @@ fn namespaced_functions_are_spelled_as_the_language_writes_them() {
     let luau = help(Luau, "audio.tone(1, ¦").expect("help");
     assert_eq!(luau.signature().name, "audio.tone");
     assert_eq!(luau.active_param, Some(1));
-    let rhai = help(Rhai, "audio::tone(1, 2, ¦").expect("help");
-    assert_eq!(rhai.signature().name, "audio::tone");
-    assert_eq!(rhai.active_param, Some(2));
 }
 
 #[test]
@@ -96,9 +88,7 @@ fn functions_with_a_different_name_per_language_resolve_in_their_own() {
         help(Luau, "print(¦").expect("help").signature().name,
         "print"
     );
-    assert_eq!(help(Rhai, "text(¦").expect("help").signature().name, "text");
     assert_eq!(help(Luau, "text(¦"), None);
-    assert_eq!(help(Rhai, "print(¦"), None);
 }
 
 #[test]
@@ -138,10 +128,6 @@ fn a_script_function_lists_its_parameter_names() {
     );
     assert_eq!(found.active_param, Some(1));
     assert!(matches!(signature.doc, Doc::Local(ref d) if d.name == "f"));
-
-    let found = help(Rhai, "fn f(a, b) {}\nf(1, ¦").expect("help");
-    assert_eq!(names(found.signature()), ["a", "b"]);
-    assert_eq!(found.active_param, Some(1));
 }
 
 #[test]
@@ -160,29 +146,6 @@ fn varargs_take_every_remaining_argument() {
 }
 
 #[test]
-fn rhai_overloads_pick_the_signature_that_fits_the_arguments() {
-    let source = "fn f(a) {}\nfn f(a, b, c) {}\nfn f(a, b) {}\n";
-    let at = |call: &str| help(Rhai, &format!("{source}{call}")).expect("help");
-
-    let found = at("f(¦");
-    assert_eq!(found.signatures.len(), 3);
-    assert_eq!(found.active_signature, 0);
-    assert_eq!(found.active_param, Some(0));
-
-    let found = at("f(1, ¦");
-    assert_eq!(names(found.signature()), ["a", "b"]);
-    assert_eq!(found.active_param, Some(1));
-
-    let found = at("f(1, 2, ¦");
-    assert_eq!(names(found.signature()), ["a", "b", "c"]);
-    assert_eq!(found.active_param, Some(2));
-
-    let found = at("f(1, 2, 3, ¦");
-    assert_eq!(names(found.signature()), ["a", "b", "c"]);
-    assert_eq!(found.active_param, None);
-}
-
-#[test]
 fn luau_functions_with_one_name_are_not_overloads() {
     let found = help(Luau, "function f(a) end\nfunction f(a, b) end\nf(¦").expect("help");
     assert_eq!(found.signatures.len(), 1);
@@ -193,12 +156,10 @@ fn nothing_is_described_for_what_is_not_a_known_function() {
     for (language, marked) in [
         (Luau, "obj:method(1, ¦"),
         (Luau, "unknown(1, ¦"),
-        (Rhai, "unknown(1, ¦"),
         (Luau, "audio.nope(¦"),
         (Luau, "local audio = {}\naudio.tone(¦"),
         (Luau, "local f = 1\nf(¦"),
         (Luau, "function f(a, ¦"),
-        (Rhai, "fn f(a, ¦"),
         (Luau, "if (a ¦"),
         (Luau, "tick(¦"),
         (Luau, "spr(1) ¦"),
@@ -210,17 +171,13 @@ fn nothing_is_described_for_what_is_not_a_known_function() {
 #[test]
 fn a_string_argument_still_gets_help_but_a_comment_does_not() {
     assert!(help(Luau, "spr(\"ab¦").is_some());
-    assert!(help(Rhai, "spr(1, \"ab¦").is_some());
     assert_eq!(help(Luau, "-- spr(1, ¦"), None);
     assert_eq!(help(Luau, "--[[ spr(1, ¦"), None);
-    assert_eq!(help(Rhai, "// spr(1, ¦"), None);
-    assert_eq!(help(Rhai, "/* spr(1, ¦"), None);
 }
 
 #[test]
 fn a_caret_after_a_closed_block_comment_still_gets_help() {
     assert!(help(Luau, "spr(--[[ ( ]] 1, ¦").is_some());
-    assert!(help(Rhai, "spr(/* ( */ 1, ¦").is_some());
 }
 
 #[test]
@@ -238,10 +195,6 @@ fn text_the_tree_has_not_parsed_or_of_another_language_gets_none() {
     assert!(signature_help(&request(text, Luau), library.api(), &syntax).is_some());
     assert_eq!(
         signature_help(&request("spr(1, 2, ", Luau), library.api(), &syntax),
-        None
-    );
-    assert_eq!(
-        signature_help(&request(text, Rhai), library.api(), &syntax),
         None
     );
 }
@@ -291,9 +244,8 @@ proptest! {
     fn any_text_and_caret_give_consistent_help_without_panicking(
         text in "[a-zA-Z0-9_ .:,\n\t\"'`{}()\\[\\]#|/*é-]{0,80}",
         caret in 0usize..96,
-        luau in any::<bool>(),
     ) {
-        let language = if luau { Luau } else { Rhai };
+        let language = Luau;
         let mut caret = caret.min(text.len());
         while !text.is_char_boundary(caret) {
             caret -= 1;
@@ -313,15 +265,10 @@ proptest! {
 }
 
 #[test]
-fn luau_log_takes_any_number_of_values_and_rhai_exactly_one() {
+fn luau_log_takes_any_number_of_values() {
     let luau = help(ScriptLanguage::Luau, "log.info(1, 2, ¦").unwrap();
     let params = &luau.signature().params;
     assert_eq!(params.len(), 1);
     assert!(params[0].variadic && params[0].name == "...");
     assert_eq!(luau.active_param, Some(0));
-
-    let rhai = help(ScriptLanguage::Rhai, "log::info(¦").unwrap();
-    let params = &rhai.signature().params;
-    assert_eq!(params.len(), 1);
-    assert!(!params[0].variadic && params[0].name == "value");
 }

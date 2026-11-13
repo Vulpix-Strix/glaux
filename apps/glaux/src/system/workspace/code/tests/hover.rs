@@ -106,14 +106,6 @@ fn moving_restarts_the_wait() {
 }
 
 #[test]
-fn a_rhai_namespace_member_is_described_as_rhai_writes_it() {
-    let (mut editor, mut session) = editing("a.rhai", "audio::tone(1);\n");
-    rest_on(&mut editor, &mut session, 8);
-    let shown = signature_of(&editor).unwrap();
-    assert!(shown.starts_with("audio::tone("), "{shown}");
-}
-
-#[test]
 fn constant_members_show_their_group() {
     let (mut editor, mut session) = luau("local k = Key.A\n");
     rest_on(&mut editor, &mut session, 14);

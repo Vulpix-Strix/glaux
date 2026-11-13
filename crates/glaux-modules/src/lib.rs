@@ -18,7 +18,7 @@
 //! `..`, no drive or stream markers and no uppercase, so every name resolves
 //! below [`MODULE_ROOT`] and every module file has exactly one name, even on
 //! case-insensitive hosts. A name whose last segment is a source extension,
-//! such as `player.luau` or `player.rhai`, is rejected, since names never
+//! such as `player.luau` or `player.lua`, is rejected, since names never
 //! carry an extension.
 
 use std::fmt;
@@ -27,7 +27,7 @@ use std::fmt;
 pub const MODULE_ROOT: &str = "code";
 
 /// Final segments rejected because they read as a file extension.
-const SOURCE_EXTENSIONS: [&str; 3] = ["lua", "luau", "rhai"];
+const SOURCE_EXTENSIONS: [&str; 2] = ["lua", "luau"];
 
 /// A module name that follows the grammar in the [crate docs](crate).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -2,9 +2,7 @@
 //! stops, what the editor shows and allows meanwhile, and how it goes on.
 
 use super::code_run::in_code;
-use super::rhai::shell_with_cartridge_root;
 use super::*;
-use crate::cartridge::fixture::write_rhai_cartridge;
 use crate::system::editor_settings::EditorSettings;
 use pretty_assertions::assert_eq;
 
@@ -283,27 +281,6 @@ fn the_menu_offers_the_steps_and_nothing_that_edits() {
     assert!(stopped.run && stopped.stop && stopped.restart && stopped.find);
     assert!(!stopped.debug);
     assert!(!stopped.save && !stopped.undo && !stopped.cut && !stopped.paste);
-}
-
-#[test]
-fn a_stopped_rhai_cartridge_shows_its_state_and_goes_on() {
-    let fixture = Fixture::new("sys-debug-rhai");
-    write_rhai_cartridge(
-        &fixture.root().join("pong"),
-        "Pong",
-        "fn boot() {\n  this.hp = 3;\n}\nfn tick() {\n  let x = 41;\n  let y = x + 1;\n  log::info(y);\n}\n",
-    );
-    let system = press_break(enter(shell_with_cartridge_root(&fixture), "load pong"));
-    let system = debugged(with_breakpoints(system, &[6]));
-    assert!(is_debugging(&system));
-    assert_eq!(stopped_at(&system), ("code/main.rhai".to_owned(), 6));
-    let vars = variables(&system);
-    assert_eq!(vars[0], ("this".to_owned(), "{..}".to_owned()));
-    assert_eq!(vars[1], ("x".to_owned(), "41".to_owned()));
-
-    let system = system.update(&[InputEvent::Run]);
-    assert!(is_running(&system));
-    assert_eq!(transcript(&system).last().map(String::as_str), Some("42"));
 }
 
 #[test]

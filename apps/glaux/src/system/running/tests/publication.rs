@@ -4,7 +4,7 @@ use glaux_machine::palette::Rgb;
 use glaux_script::debug::Resume;
 use pretty_assertions::assert_eq;
 
-use super::debugging::{at, luau_cartridge, rhai_cartridge, start_debug, stopped};
+use super::debugging::{at, luau_cartridge, start_debug, stopped};
 use super::*;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::system::pause::PauseOverlay;
@@ -12,7 +12,7 @@ use crate::system::pause::PauseOverlay;
 type Cartridge = fn(&Fixture, &str) -> LoadedCartridge;
 
 /// A script of each language, and the path its breakpoints name.
-type Scripts = [(&'static str, Cartridge, &'static str, &'static str); 2];
+type Scripts = [(&'static str, Cartridge, &'static str, &'static str); 1];
 
 fn start_run(fixture: &Fixture, cartridge: Cartridge, script: &str) -> RunningCartridge {
     RunningCartridge::start(
@@ -38,24 +38,14 @@ fn is_blank(running: &RunningCartridge) -> bool {
 }
 
 /// Scripts that draw `cls(n)` with the number of the tick, and a pixel.
-const COUNTING: Scripts = [
-    (
-        "luau",
-        luau_cartridge,
-        "local n = 0
+const COUNTING: Scripts = [(
+    "luau",
+    luau_cartridge,
+    "local n = 0
 function tick() n += 1 end
 function draw() cls(n) pset(3, 4, 9) end",
-        "code/main.luau",
-    ),
-    (
-        "rhai",
-        rhai_cartridge,
-        "fn boot() { this.n = 0; }
-fn tick() { this.n += 1; }
-fn draw() { cls(this.n); pset(3, 4, 9); }",
-        "code/main.rhai",
-    ),
-];
+    "code/main.luau",
+)];
 
 #[test]
 fn a_run_shows_a_blank_frame_until_a_draw_finishes_and_then_that_frame_and_palette() {
@@ -95,14 +85,12 @@ fn a_palette_change_after_publication_does_not_recolor_the_published_frame() {
 
 #[test]
 fn every_frame_is_rebuilt_from_the_backdrop_color() {
-    for (name, cartridge, script) in [
-        (
-            "luau",
-            luau_cartridge as Cartridge,
-            "function draw() pset(1, 1, 3) end",
-        ),
-        ("rhai", rhai_cartridge, "fn draw() { pset(1, 1, 3); }"),
-    ] {
+    let cases = [(
+        "luau",
+        luau_cartridge as Cartridge,
+        "function draw() pset(1, 1, 3) end",
+    )];
+    for (name, cartridge, script) in cases {
         let fixture = Fixture::new(&format!("running-backdrop-{name}"));
         let mut running = start_run(&fixture, cartridge, script);
         running.hardware_mut().write(0x3C001, 12).unwrap();
@@ -118,10 +106,8 @@ fn every_frame_is_rebuilt_from_the_backdrop_color() {
 
 #[test]
 fn a_cartridge_without_draw_publishes_the_backdrop() {
-    for (name, cartridge, script) in [
-        ("luau", luau_cartridge as Cartridge, "function tick() end"),
-        ("rhai", rhai_cartridge, "fn tick() {}"),
-    ] {
+    let cases = [("luau", luau_cartridge as Cartridge, "function tick() end")];
+    for (name, cartridge, script) in cases {
         let fixture = Fixture::new(&format!("running-no-draw-{name}"));
         let mut running = start_run(&fixture, cartridge, script);
         running.hardware_mut().write(0x3C001, 12).unwrap();
@@ -142,22 +128,14 @@ fn a_cartridge_without_draw_publishes_the_backdrop() {
 
 #[test]
 fn a_failed_tick_keeps_the_published_frame_and_what_the_hardware_holds() {
-    for (name, cartridge, script) in [
-        (
-            "luau",
-            luau_cartridge as Cartridge,
-            "local n = 0
+    let cases = [(
+        "luau",
+        luau_cartridge as Cartridge,
+        "local n = 0
 function tick() n += 1 if n == 2 then error('tick') end end
 function draw() cls(n) end",
-        ),
-        (
-            "rhai",
-            rhai_cartridge,
-            "fn boot() { this.n = 0; }
-fn tick() { this.n += 1; if this.n == 2 { throw \"tick\"; } }
-fn draw() { cls(this.n); }",
-        ),
-    ] {
+    )];
+    for (name, cartridge, script) in cases {
         let fixture = Fixture::new(&format!("running-failed-tick-{name}"));
         let mut running = start_run(&fixture, cartridge, script);
         running.tick(&[]).unwrap();
@@ -183,22 +161,14 @@ fn draw() { cls(this.n); }",
 
 #[test]
 fn a_failed_draw_keeps_the_published_frame_and_the_hardware_it_changed() {
-    for (name, cartridge, script) in [
-        (
-            "luau",
-            luau_cartridge as Cartridge,
-            "local n = 0
+    let cases = [(
+        "luau",
+        luau_cartridge as Cartridge,
+        "local n = 0
 function tick() n += 1 end
 function draw() cls(n) if n == 2 then pset(1, 1, 9) error('draw') end end",
-        ),
-        (
-            "rhai",
-            rhai_cartridge,
-            "fn boot() { this.n = 0; }
-fn tick() { this.n += 1; }
-fn draw() { cls(this.n); if this.n == 2 { pset(1, 1, 9); throw \"draw\"; } }",
-        ),
-    ] {
+    )];
+    for (name, cartridge, script) in cases {
         let fixture = Fixture::new(&format!("running-failed-draw-{name}"));
         let mut running = start_run(&fixture, cartridge, script);
         running.tick(&[]).unwrap();
@@ -260,11 +230,10 @@ fn presenting_and_the_pause_overlay_never_write_to_the_run() {
 }
 
 /// Scripts that draw a frame, then a stop in `draw()` at line 6, then more.
-const STOPPING: Scripts = [
-    (
-        "luau",
-        luau_cartridge,
-        "local n = 0
+const STOPPING: Scripts = [(
+    "luau",
+    luau_cartridge,
+    "local n = 0
 function tick() n += 1 end
 function draw()
   log.info('draw ' .. n)
@@ -272,22 +241,8 @@ function draw()
   pset(1, 1, 9)
   pset(2, 2, 8)
 end",
-        "code/main.luau",
-    ),
-    (
-        "rhai",
-        rhai_cartridge,
-        "fn boot() { this.n = 0; }
-fn tick() { this.n += 1; }
-fn draw() {
-  log::info(`draw ${this.n}`);
-  cls(this.n);
-  pset(1, 1, 9);
-  pset(2, 2, 8);
-}",
-        "code/main.rhai",
-    ),
-];
+    "code/main.luau",
+)];
 
 /// Starts `STOPPING` without breakpoints, shows its first frame and then
 /// stops the second one in `draw()`, before its first `pset`.
@@ -356,28 +311,17 @@ fn cancelling_a_stopped_draw_publishes_nothing_and_returns_the_hardware() {
 
 #[test]
 fn a_draw_that_fails_after_a_stop_publishes_nothing() {
-    for (name, cartridge, script, path) in [
-        (
-            "luau",
-            luau_cartridge as Cartridge,
-            "function draw()
+    let cases = [(
+        "luau",
+        luau_cartridge as Cartridge,
+        "function draw()
   cls(1)
   pset(1, 1, 2)
   error('late')
 end",
-            "code/main.luau",
-        ),
-        (
-            "rhai",
-            rhai_cartridge,
-            "fn draw() {
-  cls(1);
-  pset(1, 1, 2);
-  throw \"late\";
-}",
-            "code/main.rhai",
-        ),
-    ] {
+        "code/main.luau",
+    )];
+    for (name, cartridge, script, path) in cases {
         let fixture = Fixture::new(&format!("running-stop-fail-{name}"));
         let (mut running, _) = start_debug(cartridge(&fixture, script), vec![at(path, 3)]);
         let blank = running.published.clone();
@@ -403,29 +347,17 @@ end",
 fn a_draw_stopped_and_resumed_spends_one_budget() {
     // Two texts of 2047 characters cost 65 504 of the 65 536 units, so 33
     // more pixels are one too many only if the first two were remembered.
-    for (name, cartridge, script, path) in [
-        (
-            "luau",
-            luau_cartridge as Cartridge,
-            "function draw()
+    let cases = [(
+        "luau",
+        luau_cartridge as Cartridge,
+        "function draw()
   print(string.rep('x', 2047), 0, 0, 1)
   print(string.rep('x', 2047), 0, 8, 1)
   for i = 1, 33 do pset(0, 20, 1) end
 end",
-            "code/main.luau",
-        ),
-        (
-            "rhai",
-            rhai_cartridge,
-            "fn draw() {
-  let s = \"\"; for i in 0..2047 { s += \"x\"; }
-  text(s, 0, 0, 1);
-  text(s, 0, 8, 1);
-  for i in 0..33 { pset(0, 20, 1); }
-}",
-            "code/main.rhai",
-        ),
-    ] {
+        "code/main.luau",
+    )];
+    for (name, cartridge, script, path) in cases {
         let line = if name == "luau" { 3 } else { 4 };
         let fixture = Fixture::new(&format!("running-stop-budget-{name}"));
         let (mut running, _) = start_debug(cartridge(&fixture, script), vec![at(path, line)]);
@@ -450,20 +382,13 @@ end",
 
 #[test]
 fn resuming_a_stop_while_starting_publishes_no_frame() {
-    for (name, cartridge, script, path) in [
-        (
-            "luau",
-            luau_cartridge as Cartridge,
-            super::debugging::LUAU,
-            "code/main.luau",
-        ),
-        (
-            "rhai",
-            rhai_cartridge,
-            super::debugging::RHAI,
-            "code/main.rhai",
-        ),
-    ] {
+    let cases = [(
+        "luau",
+        luau_cartridge as Cartridge,
+        super::debugging::LUAU,
+        "code/main.luau",
+    )];
+    for (name, cartridge, script, path) in cases {
         let fixture = Fixture::new(&format!("running-stop-boot-publish-{name}"));
         let (mut running, stop) = start_debug(cartridge(&fixture, script), vec![at(path, 2)]);
         assert!(stop.is_some(), "{name}: stopped in boot");

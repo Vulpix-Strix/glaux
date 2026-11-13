@@ -31,10 +31,6 @@ fn luau(text: &str) -> (CodeEditor, CodeSession) {
     editing("a.luau", text)
 }
 
-fn rhai(text: &str) -> (CodeEditor, CodeSession) {
-    editing("a.rhai", text)
-}
-
 fn type_str(editor: &mut CodeEditor, session: &mut CodeSession, typed: &str) {
     for ch in typed.chars() {
         feed(editor, session, &[InputEvent::Text(ch)]);
@@ -71,13 +67,6 @@ fn each_comma_moves_to_the_next_parameter() {
     assert_eq!(shown(&editor), Some(("spr".to_owned(), Some(1))));
     type_str(&mut editor, &mut session, ", ");
     assert_eq!(shown(&editor), Some(("spr".to_owned(), Some(2))));
-}
-
-#[test]
-fn the_same_works_in_rhai_with_a_namespaced_function() {
-    let (mut editor, mut session) = rhai("");
-    type_str(&mut editor, &mut session, "audio::tone(1, ");
-    assert_eq!(shown(&editor), Some(("audio::tone".to_owned(), Some(1))));
 }
 
 #[test]
@@ -126,9 +115,6 @@ fn comments_never_open_it() {
     type_str(&mut editor, &mut session, "spr(");
     assert!(!is_open(&editor));
     let (mut editor, mut session) = luau("--[[ ");
-    type_str(&mut editor, &mut session, "spr(");
-    assert!(!is_open(&editor));
-    let (mut editor, mut session) = rhai("// ");
     type_str(&mut editor, &mut session, "spr(");
     assert!(!is_open(&editor));
 }

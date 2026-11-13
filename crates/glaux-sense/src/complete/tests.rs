@@ -1,4 +1,4 @@
-use ScriptLanguage::{Luau, Rhai};
+use ScriptLanguage::Luau;
 use glaux_docs::Library;
 use pretty_assertions::assert_eq;
 
@@ -51,15 +51,11 @@ fn namespace_members_come_from_the_catalog() {
     assert_eq!(find(&luau, "tone").detail, "audio");
     assert_eq!(luau.revision, 7);
     assert_eq!(luau.anchor, 6..6);
-
-    let rhai = run(Rhai, "audio::|", Trigger::Member);
-    assert_eq!(labels(&rhai), ["env", "gate", "tone"]);
 }
 
 #[test]
 fn the_separator_must_belong_to_the_language() {
     assert_eq!(run(Luau, "audio::|", Trigger::Manual).items, []);
-    assert_eq!(run(Rhai, "audio.|", Trigger::Manual).items, []);
     assert_eq!(run(Luau, "nothing.|", Trigger::Manual).items, []);
     assert_eq!(run(Luau, "f().|", Trigger::Manual).items, []);
 }
@@ -71,7 +67,7 @@ fn constant_groups_list_their_members() {
     assert_eq!(find(&keys, "Space").kind, CandidateKind::Constant);
     assert_eq!(find(&keys, "Space").detail, "Key");
     assert_eq!(
-        labels(&run(Rhai, "Button::|", Trigger::Member)),
+        labels(&run(Luau, "Button.|", Trigger::Member)),
         ["A", "B", "Down", "Left", "Right", "Up"]
     );
 }
@@ -81,11 +77,6 @@ fn broken_code_after_the_separator_still_completes() {
     let luau = run(Luau, "audio.|\nend", Trigger::Member);
     assert_eq!(labels(&luau), ["env", "gate", "tone"]);
     assert!(labels(&run(Luau, "if key(Key.|\nend", Trigger::Member)).contains(&"Space"));
-    assert!(labels(&run(Rhai, "if key(Key::|", Trigger::Member)).contains(&"Space"));
-    assert_eq!(
-        labels(&run(Rhai, "audio::|", Trigger::Member)),
-        ["env", "gate", "tone"]
-    );
 }
 
 #[test]
@@ -131,23 +122,15 @@ fn api_names_follow_the_language() {
     let luau = run(Luau, "pri|", Trigger::Auto);
     assert!(labels(&luau).contains(&"print"));
     assert!(!labels(&run(Luau, "tex|", Trigger::Auto)).contains(&"text"));
-    assert!(labels(&run(Rhai, "tex|", Trigger::Auto)).contains(&"text"));
     assert!(labels(&run(Luau, "requ|", Trigger::Auto)).contains(&"require"));
-    assert!(!labels(&run(Rhai, "requ|", Trigger::Auto)).contains(&"require"));
-
-    let import = run(Rhai, "impo|", Trigger::Auto);
-    let import = find(&import, "import");
-    assert_eq!(import.origin, Origin::Api);
-    assert_eq!(import.kind, CandidateKind::Keyword);
 }
 
 #[test]
 fn keywords_and_literals_are_offered_by_language() {
     let luau = run(Luau, "ni|", Trigger::Auto);
     assert_eq!(find(&luau, "nil").kind, CandidateKind::Constant);
-    assert!(!labels(&run(Rhai, "ni|", Trigger::Auto)).contains(&"nil"));
-    let rhai = run(Rhai, "le|", Trigger::Auto);
-    assert_eq!(find(&rhai, "let").kind, CandidateKind::Keyword);
+    let local = run(Luau, "loc|", Trigger::Auto);
+    assert_eq!(find(&local, "local").kind, CandidateKind::Keyword);
     assert!(!labels(&run(Luau, "le|", Trigger::Auto)).contains(&"let"));
 }
 
@@ -168,9 +151,6 @@ fn locals_respect_scope_and_shadowing() {
         Trigger::Auto,
     );
     assert!(!labels(&outer).contains(&"inner"));
-
-    let rhai = run(Rhai, "let outer = 1;\nfn f() { ou| }", Trigger::Auto);
-    assert!(!labels(&rhai).contains(&"outer"));
 }
 
 #[test]
@@ -242,9 +222,6 @@ fn comments_strings_and_numbers_offer_nothing() {
         (Luau, "x = [[co|"),
         (Luau, "x = `co|"),
         (Luau, "x = 12|"),
-        (Rhai, "// co|"),
-        (Rhai, "/* audio::|"),
-        (Rhai, "x = \"co|"),
     ] {
         assert_eq!(run(language, marked, Trigger::Manual).items, [], "{marked}");
     }
@@ -253,7 +230,6 @@ fn comments_strings_and_numbers_offer_nothing() {
 #[test]
 fn interpolated_code_completes() {
     assert!(labels(&run(Luau, "x = `a {pri|} b`", Trigger::Auto)).contains(&"print"));
-    assert!(labels(&run(Rhai, "x = `a ${tex|} b`", Trigger::Auto)).contains(&"text"));
     assert_eq!(run(Luau, "x = `a pri|`", Trigger::Auto).items, []);
 }
 
@@ -263,8 +239,6 @@ fn declaration_names_offer_nothing() {
         (Luau, "local co|"),
         (Luau, "local function co|"),
         (Luau, "function f(a, co|) end"),
-        (Rhai, "let co|"),
-        (Rhai, "fn f(a, co|) {}"),
     ] {
         assert_eq!(run(language, marked, Trigger::Manual).items, [], "{marked}");
     }
@@ -285,17 +259,6 @@ fn callbacks_are_declared_whole_at_the_start_of_a_top_level_statement() {
     };
     assert_eq!(text, "function draw()\n  \nend");
     assert_eq!(&text[..*caret_in_text], "function draw()\n  ");
-
-    let found = run(Rhai, "dr|", Trigger::Auto);
-    let Insertion::Declaration {
-        text,
-        caret_in_text,
-    } = &find(&found, "draw").insertion
-    else {
-        panic!("a callback is declared");
-    };
-    assert_eq!(text, "fn draw() {\n  \n}");
-    assert_eq!(&text[..*caret_in_text], "fn draw() {\n  ");
 }
 
 #[test]
@@ -321,12 +284,6 @@ fn a_typed_function_keyword_is_not_repeated() {
         panic!("a callback is declared");
     };
     assert_eq!(text, "draw()\n  \nend");
-
-    let found = run(Rhai, "fn dr|", Trigger::Auto);
-    let Insertion::Declaration { text, .. } = &found.items[0].insertion else {
-        panic!("a callback is declared");
-    };
-    assert_eq!(text, "draw() {\n  \n}");
 
     // The body is indented from the line that has the keyword.
     let found = run(Luau, "  function dr|", Trigger::Auto);
@@ -354,7 +311,7 @@ fn only_the_missing_callbacks_are_offered() {
 }
 
 #[test]
-fn local_and_private_functions_do_not_count_as_callbacks() {
+fn local_functions_do_not_count_as_callbacks() {
     let declares_tick = |language, marked| {
         let found = run(language, marked, Trigger::Auto);
         found
@@ -363,9 +320,7 @@ fn local_and_private_functions_do_not_count_as_callbacks() {
             .any(|c| c.label == "tick" && c.kind == CandidateKind::Callback)
     };
     assert!(declares_tick(Luau, "local function tick() end\nti|"));
-    assert!(declares_tick(Rhai, "private fn tick() {}\nti|"));
     assert!(!declares_tick(Luau, "function tick() end\nti|"));
-    assert!(!declares_tick(Rhai, "fn tick() {}\nti|"));
 }
 
 #[test]
@@ -377,9 +332,6 @@ fn callbacks_are_not_offered_outside_the_top_level() {
         (Luau, "f(a,\n  dr|"),
         (Luau, "function f()\n  function dr|"),
         (Luau, "local function dr|"),
-        (Rhai, "fn f() {\n  dr|"),
-        (Rhai, "x = dr|"),
-        (Rhai, "private fn dr|"),
     ] {
         let found = run(language, marked, Trigger::Manual);
         assert!(
@@ -421,9 +373,6 @@ fn nothing_is_offered_for_a_stale_tree_or_a_bad_caret() {
     );
     assert_eq!(complete(&request("print(", 6), api, &syntax).items, []);
     assert_eq!(complete(&request("print", 99), api, &syntax).items, []);
-    let mut wrong_language = request("print", 5);
-    wrong_language.language = Rhai;
-    assert_eq!(complete(&wrong_language, api, &syntax).items, []);
 }
 
 #[test]
@@ -456,9 +405,8 @@ mod properties {
         fn any_caret_in_any_text_is_answered_without_panicking(
             text in "[a-zA-Z0-9_ .:\\n\\t\"'`{}()\\[\\]#/*-]{0,80}",
             at in 0usize..100,
-            rhai in any::<bool>(),
         ) {
-            let language = if rhai { Rhai } else { Luau };
+            let language = Luau;
             let caret = at.min(text.len());
             let mut syntax = Highlighter::new(grammar(language)).expect("bundled query compiles");
             syntax.update(&text);

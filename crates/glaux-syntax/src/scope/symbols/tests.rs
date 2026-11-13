@@ -57,20 +57,6 @@ fn luau_outline_lists_top_level_declarations_and_nested_functions_only() {
 }
 
 #[test]
-fn rhai_outline_distinguishes_constants_and_ignores_locals_in_functions() {
-    let text =
-        "const LIMIT = 3;\nlet score = 0;\nfn tick() { let inner = 1; }\nimport \"m\" as m;\n";
-    assert_eq!(
-        outline(Grammar::Rhai, text),
-        vec![
-            ("LIMIT".to_owned(), Constant, 0),
-            ("score".to_owned(), Variable, 0),
-            ("tick".to_owned(), Function, 0),
-        ]
-    );
-}
-
-#[test]
 fn symbol_range_points_at_the_declared_name() {
     let text = "local x = 1\nfunction go() end\n";
     let symbols = parse(Grammar::Luau, text).symbols();
@@ -89,18 +75,6 @@ fn luau_imports_need_a_plain_string_and_an_alias_that_is_never_reassigned() {
     assert_eq!(
         imports(Grammar::Luau, text),
         vec![("a".to_owned(), "game.a".to_owned())]
-    );
-}
-
-#[test]
-fn rhai_imports_read_the_module_and_alias() {
-    let text = "import \"util.math\" as math;\nlet x = 1;\nimport \"b\" as b;\n";
-    assert_eq!(
-        imports(Grammar::Rhai, text),
-        vec![
-            ("math".to_owned(), "util.math".to_owned()),
-            ("b".to_owned(), "b".to_owned()),
-        ]
     );
 }
 
@@ -165,27 +139,5 @@ fn luau_return_inside_a_function_does_not_make_the_module_unknown() {
     assert_eq!(
         exported(Grammar::Luau, text),
         Some(vec![pair("f", Function)])
-    );
-}
-
-#[test]
-fn rhai_exports_public_functions_and_exported_variables_only() {
-    let text = "fn open() {}\nprivate fn hidden() {}\nexport let shared = 1;\nexport const LIMIT = 2;\nlet local = 3;\nconst other = 4;\n";
-    assert_eq!(
-        exported(Grammar::Rhai, text),
-        Some(vec![
-            pair("open", Function),
-            pair("shared", Variable),
-            pair("LIMIT", Constant),
-        ])
-    );
-}
-
-#[test]
-fn rhai_overloads_are_exported_once_each() {
-    let text = "fn f(a) {}\nfn f(a, b) {}\n";
-    assert_eq!(
-        exported(Grammar::Rhai, text),
-        Some(vec![pair("f", Function), pair("f", Function)])
     );
 }

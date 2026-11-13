@@ -17,7 +17,7 @@ audio.gate(0, 1) -- error
 spr(1, 0) -- error
 spr(1, 0, 0, "w") -- error
 cls() -- error
-text("rhai only", 0, 0, 1) -- error
+text("not a Luau function", 0, 0, 1) -- error
 local e: string = frame() -- error
 tick() -- error
 

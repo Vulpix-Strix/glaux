@@ -22,12 +22,6 @@ Accepts any number of values.
 log.trace("started")
 ```
 
-### Rhai
-
-```rhai
-log::trace("started");
-```
-
 ## See also
 
 - [log](glaux://api/logging/index)

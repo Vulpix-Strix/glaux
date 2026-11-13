@@ -706,28 +706,21 @@ fn new_lang_chooses_the_language_and_luau_is_the_default() {
             "plain",
             Language::Luau,
             "code/main.luau",
-            "code/main.rhai",
+            "code/main.lua",
         ),
         (
             "new lua-game --lang luau",
             "lua-game",
             Language::Luau,
             "code/main.luau",
-            "code/main.rhai",
+            "code/main.lua",
         ),
         (
-            "new rhai-game --lang rhai",
-            "rhai-game",
-            Language::Rhai,
-            "code/main.rhai",
-            "code/main.luau",
-        ),
-        (
-            "new --lang RHAI loud",
+            "new --lang LUAU loud",
             "loud",
-            Language::Rhai,
-            "code/main.rhai",
+            Language::Luau,
             "code/main.luau",
+            "code/main.lua",
         ),
     ] {
         let (entries, created) = run_new(&fixture, line);
@@ -780,15 +773,15 @@ fn new_errors_create_nothing() {
         ("new games", error("/games already exists")),
         (
             "new a --lang python",
-            error("Unsupported language 'python': use luau or rhai"),
+            error("Unsupported language 'python': use luau"),
         ),
         ("new a --lang", error("Option --lang needs a value")),
         (
-            "new a --lang rhai --lang luau",
+            "new a --lang luau --lang luau",
             error("Option --lang given more than once"),
         ),
         (
-            "new a --language rhai",
+            "new a --language luau",
             hinted(
                 "Unknown option: --language",
                 "Options: --name, --version, --author, --lang, --discard",

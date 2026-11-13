@@ -174,7 +174,6 @@ mod tests {
 
     #[test]
     fn scripts_no_require_can_reach_have_no_name() {
-        assert_eq!(name("code/main.rhai"), None);
         assert_eq!(name("main.luau"), None);
         assert_eq!(name("lib/util.luau"), None);
         assert_eq!(name("code/Upper.luau"), None);

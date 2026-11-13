@@ -41,25 +41,6 @@ fn each_category_draws_in_its_color() {
 }
 
 #[test]
-fn the_files_language_picks_the_grammar() {
-    let fixture = Fixture::new("code-render-syntax-rhai");
-    let mut editor = editor();
-    hide_caret(&mut editor);
-    let (_, mut session) = session_with_text(&fixture, &["a.rhai"], "fn f() {}");
-    editor.refresh_metrics(&mut session);
-    let framebuffer = render(&editor, &session);
-    let geometry = geometry_of(&editor, &session);
-    assert_eq!(
-        kind_ink(&framebuffer, &geometry, 0, SyntaxKind::Keyword),
-        glyph('f')
-    );
-    assert_eq!(
-        kind_ink(&framebuffer, &geometry, 3, SyntaxKind::Function),
-        glyph('f')
-    );
-}
-
-#[test]
 fn scrolling_highlights_the_lines_it_reveals() {
     let fixture = Fixture::new("code-render-syntax-scroll");
     let mut editor = editor();

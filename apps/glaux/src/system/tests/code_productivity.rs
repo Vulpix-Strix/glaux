@@ -80,7 +80,8 @@ fn the_find_field_copies_and_pastes_without_touching_the_script() {
 
 #[test]
 fn new_file_creates_the_script_in_the_manifests_language_and_opens_it() {
-    for (args, extension) in [("game", "luau"), ("owl --lang rhai", "rhai")] {
+    let cases = [("game", "luau")];
+    for (args, extension) in cases {
         let fixture = Fixture::new(&format!("sys-new-file-{extension}"));
         let mut clipboard = MemoryClipboard::default();
         let dir = args.split(' ').next().unwrap();

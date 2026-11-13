@@ -291,7 +291,8 @@ pub(super) static COMMANDS: &[Command] = &[
     },
 ];
 
-const NEW_USAGE: &str = "new <id> [--name <name>] [--version <semver>] [--author <author>] [--lang luau|rhai] [--discard]";
+const NEW_USAGE: &str =
+    "new <id> [--name <name>] [--version <semver>] [--author <author>] [--lang luau] [--discard]";
 
 /// Flags of the commands that replace the loaded cartridge.
 const DISCARD_FLAGS: &[&str] = &["discard"];

@@ -70,12 +70,11 @@ fn signatures_follow_the_luau_side_of_the_catalog() {
         (id: "api/a/one", kind: Function, luau: (name: "one"),
          params: [(name: "p", ty: Int), (name: "q", ty: Text, optional: true)], returns: Bool),
         (id: "api/a/two", kind: Function, luau: (name: "two"),
-         rhai: (name: "other", returns: Int), returns: Number),
+         returns: Number),
         (id: "api/a/three", kind: Function, luau: (path: ["ns"], name: "three", params: [], varargs: Any),
-         rhai: (path: ["ns"], name: "three"), params: [(name: "value", ty: Any)]),
+         params: [(name: "value", ty: Any)]),
         (id: "api/a/four", kind: Function, luau: (path: ["ns"], name: "four", varargs: Any),
          params: [(name: "first", ty: Key)]),
-        (id: "api/a/rhai", kind: Function, rhai: (name: "rhai_only")),
         (id: "api/a/ns", kind: Namespace, luau: (name: "ns")),
         (id: "api/a/empty", kind: Namespace, luau: (name: "empty")),
         "#,
@@ -86,7 +85,6 @@ fn signatures_follow_the_luau_side_of_the_catalog() {
     assert!(text.contains("\tthree: (...any) -> (),\n"));
     assert!(text.contains("\tfour: (first: Key, ...any) -> (),\n"));
     assert!(text.contains("declare empty: {}\n"));
-    assert!(!text.contains("rhai_only") && !text.contains("other"));
 }
 
 #[test]

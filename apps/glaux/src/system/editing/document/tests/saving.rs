@@ -49,20 +49,12 @@ fn conflict(file: &str, disk: Option<&[u8]>) -> Result<CodeSaved, CodeSaveError>
 }
 
 #[test]
-fn saving_writes_luau_and_rhai_text_and_makes_it_the_baseline() {
+fn saving_writes_the_text_and_makes_it_the_baseline() {
     let fixture = Fixture::new("code-save-langs");
-    let (cart, dir) = cartridge(
-        &fixture,
-        &[
-            ("code/hud.rhai", b"let a = 1;\n"),
-            ("code/p.luau", b"x = 1\n"),
-        ],
-    );
+    let (cart, dir) = cartridge(&fixture, &[("code/p.luau", b"x = 1\n")]);
     let mut docs = CodeDocuments::default();
-    for (file, text) in [
-        ("code/hud.rhai", "let a = 2;\n"),
-        ("code/p.luau", "y = 2\n"),
-    ] {
+    let cases = [("code/p.luau", "y = 2\n")];
+    for (file, text) in cases {
         let id = open_edited(&mut docs, &cart, file, text);
 
         assert_eq!(docs.save(&cart, id), written(file, text.len()), "{file}");

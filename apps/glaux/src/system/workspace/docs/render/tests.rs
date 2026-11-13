@@ -10,8 +10,8 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::system::test_font::LAYOUT_FONT;
 use crate::system::workspace::HOVER_SHADE;
+use crate::system::workspace::docs::Metrics;
 use crate::system::workspace::docs::layout::Layout;
-use crate::system::workspace::docs::{LanguageFilter, Metrics};
 
 const METRICS: Metrics = Metrics {
     cell_w: 6,
@@ -45,7 +45,7 @@ impl Scene {
             ),
             (
                 "en/guide/both.md".to_owned(),
-                b"# Both\n\nCommon.\n\n### Luau\n\nOnly Luau.\n\n### Rhai\n\nOnly Rhai.\n".to_vec(),
+                b"# Both\n\nCommon.\n\n### Luau\n\nOnly Luau.\n".to_vec(),
             ),
             (
                 "en/guide/b.md".to_owned(),
@@ -396,15 +396,4 @@ fn many_tabs_stay_left_of_the_more_button_which_shows_a_chevron() {
     let lit = scene.frame_with(Some(over));
     assert_eq!(lit.pixel(chevron_x, top), Some(PALE));
     assert_eq!(lit.pixel(more.x + 1, more.y + 1), Some(BAR));
-}
-
-#[test]
-fn a_filtered_language_leaves_no_room_for_the_hidden_blocks() {
-    let mut scene = Scene::new();
-    scene.open("guide/both", false);
-    let all = scene.layout().rows.len();
-    scene.send(InputEvent::Text('l'));
-    assert_eq!(scene.browser.filter, LanguageFilter::Luau);
-    let luau = scene.layout().rows.len();
-    assert!(luau < all, "{luau} < {all}");
 }

@@ -22,14 +22,6 @@ if btnp(Button.A) then
 end
 ```
 
-### Rhai
-
-```rhai
-if btnp(Button::A) {
-    jump();
-}
-```
-
 ## See also
 
 - [btn](glaux://api/input/btn)

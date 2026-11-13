@@ -1,9 +1,9 @@
 //! Finding the call a caret is typing arguments for.
 //!
-//! A half-typed call is the common case while someone writes code, and neither grammar
-//! parses it into a call node. Rhai keeps an `ExprCall` whose `)` is missing. Luau leaves
-//! the loose tokens of the call, `name ( arg ,`, inside an `ERROR` node. Arguments that
-//! are already complete are single nodes in both, so their commas never show up.
+//! A half-typed call is the common case while someone writes code, and Luau does not
+//! parse it into a call node. It leaves the loose tokens of the call, `name ( arg ,`,
+//! inside an `ERROR` node. Arguments that are already complete are single nodes, so their
+//! commas never show up.
 
 use tree_sitter::Node;
 

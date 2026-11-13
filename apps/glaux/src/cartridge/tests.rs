@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::fixture::{manifest_ron, rhai_manifest_ron, write_cartridge, write_manifest};
+use super::fixture::{manifest_ron, write_cartridge, write_manifest};
 use super::*;
 use crate::cartridge_fs::fixture::Fixture;
 use pretty_assertions::assert_eq;
@@ -321,28 +321,14 @@ fn entry_must_be_a_luau_file() {
 }
 
 #[test]
-fn rhai_cartridges_need_a_rhai_entry() {
-    let rhai = |entry| CartridgeManifest::parse(rhai_manifest_ron("Pong", entry).as_bytes());
+fn rhai_cartridges_are_rejected_as_an_unsupported_language() {
     assert_eq!(
-        rhai("code/main.rhai").map(|m| (m.runtime.language, m.runtime.entry)),
-        Ok((Language::Rhai, "code/main.rhai".into()))
+        mochi_with("language: Luau", "language: Rhai"),
+        Err(CartridgeError::UnsupportedLanguage("Rhai".into()))
     );
-    for entry in [
-        "main.luau",
-        "main.RHAI",
-        ".rhai",
-        "code/.rhai",
-        "main.rhai.txt",
-        "main",
-    ] {
-        assert_eq!(rhai(entry), Err(CartridgeError::EntryNotRhai), "{entry:?}");
-    }
-    // Each language accepts only its own extension.
-    assert_eq!(with_entry("main.rhai"), Err(CartridgeError::EntryNotLuau));
-    assert_eq!(rhai("../main.rhai"), Err(CartridgeError::InvalidEntryPath));
     assert_eq!(
-        CartridgeError::EntryNotRhai.to_string(),
-        "cartridge.ron: runtime.entry must be a .rhai file"
+        CartridgeError::UnsupportedLanguage("Rhai".into()).to_string(),
+        "cartridge.ron: unsupported language Rhai"
     );
 }
 
@@ -394,6 +380,26 @@ fn a_cartridge_for_a_newer_glaux_does_not_load() {
         load(&fixture.storage(), "pong"),
         Err(CartridgeError::RequiresGlaux { required, .. }) if required == Version::new(99, 0, 0)
     ));
+}
+
+#[test]
+fn a_rhai_cartridge_does_not_load_and_is_left_untouched() {
+    let fixture = Fixture::new("load-rhai");
+    let dir = fixture.root().join("pong");
+    let old = manifest_ron("Pong", "code/main.rhai").replace("language: Luau", "language: Rhai");
+    write_manifest(&dir, &old);
+    fs::create_dir_all(dir.join("code")).unwrap();
+    fs::write(dir.join("code/main.rhai"), "fn tick() {}").unwrap();
+
+    assert_eq!(
+        load(&fixture.storage(), "pong"),
+        Err(CartridgeError::UnsupportedLanguage("Rhai".into()))
+    );
+    assert_eq!(fs::read_to_string(dir.join("cartridge.ron")).unwrap(), old);
+    assert_eq!(
+        fs::read_to_string(dir.join("code/main.rhai")).unwrap(),
+        "fn tick() {}"
+    );
 }
 
 #[test]
@@ -669,7 +675,6 @@ fn shipped_examples_load_with_their_assets() {
         ("sprites", "code/main.luau"),
         ("tile-viewer", "code/main.luau"),
         ("signal-lost", "code/main.luau"),
-        ("signal-lost-rhai", "code/main.rhai"),
         ("loot-rain", "code/main.luau"),
         ("palettes", "code/main.luau"),
     ] {

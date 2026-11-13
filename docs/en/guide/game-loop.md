@@ -1,6 +1,6 @@
 # The game loop
 
-A Glaux cartridge is a script that defines up to three callbacks, and Glaux calls them in a fixed order. This guide explains when each one runs, where state lives between calls, and where Luau and Rhai differ.
+A Glaux cartridge is a script that defines up to three callbacks, and Glaux calls them in a fixed order. This guide explains when each one runs and where state lives between calls.
 
 ## The order of events
 
@@ -49,34 +49,9 @@ end
 
 Callbacks must be global functions. `local function tick()` creates a function Glaux cannot see, and it is skipped silently. Glaux looks the callback up again on every call, so a script may replace it while running.
 
-### Rhai
-
-A Rhai function cannot see the variables of the top level that defines it, so `let score = 0;` at the top is not available inside `tick()`. State lives in `this`, an object map that starts empty and is shared by `boot()`, `tick()` and `draw()` for the whole run.
-
-```rhai
-fn boot() {
-    this.score = 0;
-}
-
-fn tick() {
-    if btnp(Button::A) { this.score += 1; }
-}
-
-fn draw() {
-    cls(0);
-    text(this.score, 8, 8, 7);
-}
-```
-
-Constants are the exception. A top-level `const` is read inside functions as `global::NAME`.
-
-`this` is bound in the callbacks and in functions they call as methods, such as `this.draw_sky()`. A plain call such as `draw_sky()` does not bind it, and neither does a function of an imported module, so pass those the state they need and store what they return.
-
-Callbacks must be public and take no parameters. Glaux finds them once, when the cartridge starts.
-
 ## Modules
 
-A module's top level runs once, the first time it is loaded, inside the call that loads it. See [require](glaux://api/modules/require) for Luau and [import](glaux://api/modules/import) for Rhai. Define the callbacks in the entry script. In Rhai, only the entry script's functions can be callbacks. In Luau a module shares the entry script's globals, so a global `tick` defined there would replace yours, which is best avoided.
+A module's top level runs once, the first time it is loaded, inside the call that loads it. See [require](glaux://api/modules/require). Define the callbacks in the entry script. A module shares the entry script's globals, so a global `tick` defined there would replace yours, which is best avoided.
 
 ## When something goes wrong
 
@@ -96,22 +71,12 @@ The limit counts loop iterations and function calls, about 5 million per call. S
 
 The heap is limited to 4 MiB, which includes the VM itself and the garbage the collector has not freed yet. The collector keeps garbage to about 30% of the live data, so a script can hold roughly 2 MiB of its own data under heavy allocation. A script whose heap passes 3.5 MiB stops with `Memory limit exceeded`, and a `pcall` or coroutine cannot resume it. A single allocation that does not fit, such as a huge `string.rep`, is an ordinary error that `pcall` can catch.
 
-### Rhai
-
-The limit counts operations, about 1.5 million per call. Every statement and expression costs at least one, so even code without loops adds up.
-
-`draw()` also has a draw cost limit. See [draw](glaux://api/lifecycle/draw). In Rhai, strings, arrays and object maps have size limits, and `this` is checked after every callback, so state kept in `this` cannot grow without bound.
-
-Rhai has no memory limit. A single call can still allocate tens of megabytes, so Rhai is experimental and should not run cartridges you do not trust. Luau enforces its heap limit.
-
 ## Common mistakes
 
 | Mistake                                     | What happens                                             |
 |---------------------------------------------|----------------------------------------------------------|
 | Drawing in `tick()` or `boot()`             | Error: `can only be called during draw()`                |
 | `local function draw()` in Luau             | The callback is never called                             |
-| Top-level `let` used inside a Rhai function | The variable is not found; use `this` or a `const`       |
-| `private fn tick()` or `fn tick(x)` in Rhai | An error when the callback is called                     |
 | Expecting `draw()` to keep the last frame   | It starts empty, so draw everything and begin with `cls` |
 
 ## See also

@@ -20,7 +20,7 @@
 
 - Keep the fictional machine independent of operating systems, rendering libraries, and scripting runtimes.
 - Keep host-specific behavior in host adapters, such as `glaux-host-raylib`.
-- Keep language-specific behavior in the corresponding runtime crates, such as `glaux-luau` and `glaux-rhai`.
+- Keep language-specific behavior in the corresponding runtime crates, such as `glaux-luau`.
 - Keep machine-level graphics semantics out of the host. The host receives indexed framebuffer data and its resolved palette.
 - Do not leak host filesystem paths or asset-loading concerns into machine-level crates.
 - Keep application entry points focused on wiring components together.

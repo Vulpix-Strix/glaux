@@ -167,7 +167,6 @@ pub(in crate::system::workspace::code) fn entry_signature(
         Kind::Callback => {
             let keyword = match language {
                 ScriptLanguage::Luau => "function ",
-                ScriptLanguage::Rhai => "fn ",
             };
             vec![
                 (keyword.to_owned(), SyntaxKind::Keyword),

@@ -28,7 +28,6 @@ glaux-i18n.workspace = true
 glaux-input.workspace = true
 glaux-luau.workspace = true
 glaux-script.workspace = true
-glaux-rhai.workspace = true
 glaux-syntax.workspace = true
 glaux-docs.workspace = true
 glaux-sense.workspace = true
@@ -39,8 +38,8 @@ rfd.workspace = true
 open.workspace = true
 
 [features]
-hotpath = ["hotpath/hotpath", "glaux-sense/hotpath", "glaux-syntax/hotpath", "glaux-luau/hotpath", "glaux-rhai/hotpath"]
-hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "glaux-sense/hotpath-alloc", "glaux-syntax/hotpath-alloc", "glaux-luau/hotpath-alloc", "glaux-rhai/hotpath-alloc"]
+hotpath = ["hotpath/hotpath", "glaux-sense/hotpath", "glaux-syntax/hotpath", "glaux-luau/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc", "glaux-sense/hotpath-alloc", "glaux-syntax/hotpath-alloc", "glaux-luau/hotpath-alloc"]
 hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 
 [target.'cfg(target_os = "linux")'.dependencies]

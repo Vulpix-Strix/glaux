@@ -8,7 +8,7 @@ use glaux_machine::registers::GraphicsRegisters;
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::cartridge::fixture::{write_cartridge, write_rhai_cartridge};
+use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::system::video::VideoOverrides;
 
@@ -58,46 +58,6 @@ fn a_cartridge_requires_its_own_modules() {
     running.tick(&[]).unwrap();
     running.tick(&[]).unwrap();
     assert_eq!(texts(running.take_output()), ["6", "6"]);
-}
-
-#[test]
-fn a_rhai_cartridge_imports_its_own_modules() {
-    let fixture = Fixture::new("running-rhai-modules");
-    let dir = fixture.root().join("owl");
-    write_rhai_cartridge(
-        &dir,
-        "Owl",
-        "import \"game.enemies\" as enemies;\nfn tick() { log::info(enemies::count() * 2); }",
-    );
-    fs::create_dir_all(dir.join("code/game")).unwrap();
-    fs::write(
-        dir.join("code/game/enemies.rhai"),
-        "log::info(\"enemies loaded\");\nfn count() { 3 }",
-    )
-    .unwrap();
-    // A file outside `code/` is not a module, whatever the name says.
-    fs::write(dir.join("secret.rhai"), "fn count() { 99 }").unwrap();
-    let cartridge = LoadedCartridge::load(&fixture.storage(), "owl").unwrap();
-
-    let mut running =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
-            .unwrap();
-    assert_eq!(texts(running.take_output()), ["enemies loaded"]);
-    running.tick(&[]).unwrap();
-    assert_eq!(texts(running.take_output()), ["6"]);
-
-    fs::write(dir.join("code/main.rhai"), "import \"secret\" as s;").unwrap();
-    let cartridge = running.stop();
-    let failed =
-        RunningCartridge::start(cartridge, &defaults(), VideoOverrides::default(), &font())
-            .unwrap_err();
-    let StartError::Script(failure) = failed.error else {
-        panic!("expected a script error");
-    };
-    assert_eq!(
-        failure.error.to_string(),
-        "Module not found: code/secret.rhai (code/main.rhai:1)"
-    );
 }
 
 #[test]
@@ -419,17 +379,13 @@ fn imported_examples_resolve_every_png_pixel_to_its_color() {
     }
 }
 
-/// Signal Lost, driven through the real loader, module source and
-/// object-tile validation, in both its Luau original
-/// (`examples/signal-lost`) and its Rhai port (`examples/signal-lost-rhai`).
-/// Behavior assertions look at drawn text and command counts rather than
-/// sprite tiles or coordinates. The lockstep test holds the port to every
-/// command, sound and log line of the original.
+/// Signal Lost (`examples/signal-lost`), driven through the real loader,
+/// module source and object-tile validation. Behavior assertions look at
+/// drawn text and command counts rather than sprite tiles or coordinates.
 mod signal_lost {
     use std::path::{Path, PathBuf};
 
     use glaux_input::Button;
-    use glaux_script::LogLevel;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -437,8 +393,7 @@ mod signal_lost {
     use glaux_video::draw::draw_text;
 
     const LUAU: &str = "signal-lost";
-    const RHAI: &str = "signal-lost-rhai";
-    const EXAMPLES: [&str; 2] = [LUAU, RHAI];
+    const EXAMPLES: [&str; 1] = [LUAU];
 
     /// Ticks after starting a run after which an idle knight must have
     /// fallen. That is about two minutes of play.
@@ -665,47 +620,6 @@ mod signal_lost {
         }
     }
 
-    /// The port reuses the original's graphics and palettes unchanged.
-    #[test]
-    fn the_rhai_port_ships_the_original_assets() {
-        let root = examples_dir();
-        for file in [
-            "sprites.png",
-            "sprites.bin",
-            "objattr.bin",
-            "obp.bin",
-            "palette.bin",
-            "sprites.import.ron",
-            "sprites.sprites.ron",
-        ] {
-            assert_eq!(
-                fs::read(root.join(RHAI).join(file)).unwrap(),
-                fs::read(root.join(LUAU).join(file)).unwrap(),
-                "{file}"
-            );
-        }
-    }
-
-    /// A log entry as the lockstep test compares it. Rhai's `debug` shows
-    /// strings quoted where Luau's `log.debug` does not. The quotes are the
-    /// only difference the port is allowed.
-    fn comparable(entries: Vec<LogEntry>, unquote_debug: bool) -> Vec<(LogLevel, String)> {
-        entries
-            .into_iter()
-            .map(|entry| {
-                let text = match entry.level {
-                    LogLevel::Debug if unquote_debug => entry
-                        .text
-                        .strip_prefix('"')
-                        .and_then(|text| text.strip_suffix('"'))
-                        .map_or(entry.text.clone(), str::to_owned),
-                    _ => entry.text,
-                };
-                (entry.level, text)
-            })
-            .collect()
-    }
-
     /// Buttons held on tick `n` of a scripted session that walks a new
     /// direction every 20 ticks, taps A every other tick so the aim follows
     /// the walk, and dashes every 97 ticks. Tuned on the original so the
@@ -742,51 +656,28 @@ mod signal_lost {
         released.chain(pressed).collect()
     }
 
-    /// The Rhai port draws, sounds and logs exactly what the original does,
-    /// tick by tick, through runs that reach the ogre waves, the game-over
-    /// screen and restarts.
+    /// A scripted session plays through the ogre waves, the game-over screen
+    /// and restarts without failing.
     #[test]
-    fn the_rhai_port_plays_in_lockstep_with_the_original() {
+    fn a_scripted_session_reaches_the_ogre_waves_and_restarts() {
         const TICKS: usize = 7_000;
-        let mut luau = start(LUAU);
-        let mut rhai = start(RHAI);
-        assert_eq!(
-            comparable(rhai.take_output(), true),
-            comparable(luau.take_output(), false)
-        );
+        let mut running = start(LUAU);
+        running.take_output();
 
         let mut ogres = 0;
         let mut runs = 0;
         for n in 0..TICKS {
-            let input = scripted_input(n);
-            luau.tick(&input).unwrap();
-            rhai.tick(&input).unwrap();
-            assert!(
-                luau.published == rhai.published,
-                "frames differ at tick {n}"
-            );
-            assert_eq!(
-                *rhai.runtime.audio_mut(),
-                *luau.runtime.audio_mut(),
-                "audio differs at tick {n}"
-            );
-            let lines = comparable(luau.take_output(), false);
-            assert_eq!(
-                comparable(rhai.take_output(), true),
-                lines,
-                "logs differ at tick {n}"
-            );
-
+            running.tick(&scripted_input(n)).unwrap();
+            let lines = texts(running.take_output());
             ogres += lines
                 .iter()
-                .filter(|(_, text)| text.starts_with("an ogre entered"))
+                .filter(|text| text.starts_with("an ogre entered"))
                 .count();
             runs += lines
                 .iter()
-                .filter(|(_, text)| text.starts_with("signal lost: score"))
+                .filter(|text| text.starts_with("signal lost: score"))
                 .count();
-            luau.runtime.audio_mut().commit();
-            rhai.runtime.audio_mut().commit();
+            running.runtime.audio_mut().commit();
         }
         assert!(ogres > 0, "no ogre appeared");
         assert!(runs > 1, "{runs} runs ended");

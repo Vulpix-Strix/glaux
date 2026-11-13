@@ -20,9 +20,6 @@ pub(super) enum Entry {
     Command(String),
     Output(String),
     Error(String),
-    /// A system notice the user should not miss, such as an experimental
-    /// feature being in use. Not cartridge output.
-    Warning(String),
     /// One line of a log record, at the level it was logged with. The line
     /// is a byte range of the record's message, so the text is shared with
     /// the log store rather than copied.

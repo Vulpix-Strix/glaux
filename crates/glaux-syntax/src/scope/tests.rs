@@ -162,126 +162,12 @@ fn luau_a_name_being_declared_is_not_offered() {
 }
 
 #[test]
-fn rhai_let_is_visible_after_its_statement() {
-    assert_eq!(names(Grammar::Rhai, "let x = x|;"), Vec::<String>::new());
-    assert_eq!(names(Grammar::Rhai, "let x = 1;\n|"), ["x"]);
-    assert_eq!(names(Grammar::Rhai, "const Y = 1;\n|"), ["Y"]);
-}
-
-#[test]
-fn rhai_functions_do_not_see_the_locals_around_them() {
-    let found = visible(
-        Grammar::Rhai,
-        "let outer = 1;\nfn f(a) {\n  let inner = 1;\n  |\n}",
-    );
-    assert_eq!(
-        found,
-        [
-            ("inner".to_owned(), Variable),
-            ("a".to_owned(), Parameter),
-            ("f".to_owned(), Function)
-        ]
-    );
-}
-
-#[test]
-fn rhai_closures_capture_the_locals_around_them() {
-    assert_eq!(
-        names(Grammar::Rhai, "let outer = 1;\nlet c = |p, q| { ¦ };"),
-        ["p", "q", "outer"]
-    );
-}
-
-#[test]
-fn rhai_functions_can_call_functions_defined_later() {
-    assert_eq!(names(Grammar::Rhai, "fn a() { | }\nfn b() {}"), ["b", "a"]);
-}
-
-#[test]
-fn rhai_function_parameters_are_recorded() {
-    let (highlighter, caret) = parse(Grammar::Rhai, "fn add(a, b) { a + b }\n|");
-    let found = highlighter.definitions_at(caret);
-    assert_eq!(found[0].params, ["a", "b"]);
-}
-
-#[test]
-fn rhai_for_and_catch_bindings() {
-    assert_eq!(names(Grammar::Rhai, "for i in 0..3 {\n  |\n}"), ["i"]);
-    assert_eq!(
-        names(Grammar::Rhai, "for (k, v) in m {\n  |\n}"),
-        ["k", "v"]
-    );
-    assert_eq!(names(Grammar::Rhai, "for i in | {}"), Vec::<String>::new());
-    assert_eq!(
-        names(Grammar::Rhai, "try { | } catch (e) { }"),
-        Vec::<String>::new()
-    );
-    assert_eq!(names(Grammar::Rhai, "try { } catch (e) { | }"), ["e"]);
-}
-
-#[test]
-fn rhai_import_alias_is_a_variable() {
-    assert_eq!(names(Grammar::Rhai, "import \"m\" as mm;\n|"), ["mm"]);
-}
-
-#[test]
-fn rhai_block_locals_end_with_the_block() {
-    assert_eq!(
-        names(Grammar::Rhai, "if true { let a = 1; }\n|"),
-        Vec::<String>::new()
-    );
-}
-
-#[test]
 fn luau_global_functions_exclude_local_ones() {
     let (h, _) = parse(
         Grammar::Luau,
         "function tick() end\nlocal function draw() end\nfunction M.x() end|",
     );
     assert_eq!(h.global_functions(), ["tick"]);
-}
-
-#[test]
-fn rhai_global_functions_exclude_private_ones() {
-    let (h, _) = parse(Grammar::Rhai, "fn tick() {}\nprivate fn draw() {}|");
-    assert_eq!(h.global_functions(), ["tick"]);
-}
-
-#[test]
-fn rhai_functions_with_one_name_are_overloads_in_source_order() {
-    let (h, _) = parse(
-        Grammar::Rhai,
-        "fn f(a) {}\nfn g() {}\nprivate fn f(a, b) {}\nfn f(a, b, c) {}|",
-    );
-    let params: Vec<_> = h.overloads("f").into_iter().map(|d| d.params).collect();
-    assert_eq!(params, [vec!["a"], vec!["a", "b"], vec!["a", "b", "c"]]);
-    assert!(h.overloads("f").iter().all(|d| d.kind == Function));
-    assert_eq!(h.overloads("g").len(), 1);
-    assert_eq!(h.overloads("missing"), []);
-}
-
-#[test]
-fn rhai_overloads_point_at_the_name_in_each_declaration() {
-    let text = "fn f(a) {}\nfn f(a, b) {}";
-    let (h, _) = parse(Grammar::Rhai, &format!("{text}|"));
-    let starts: Vec<_> = h.overloads("f").into_iter().map(|d| d.declared).collect();
-    assert_eq!(starts, [3..4, 14..15]);
-}
-
-#[test]
-fn rhai_overloads_ignore_nested_and_commented_functions() {
-    let (h, _) = parse(
-        Grammar::Rhai,
-        "// fn f(a) {}\nfn h() { let f = 1; }\nfn f(a, b) {}|",
-    );
-    let params: Vec<_> = h.overloads("f").into_iter().map(|d| d.params).collect();
-    assert_eq!(params, [vec!["a", "b"]]);
-}
-
-#[test]
-fn luau_has_no_overloads() {
-    let (h, _) = parse(Grammar::Luau, "function f(a) end\nfunction f(a, b) end|");
-    assert_eq!(h.overloads("f"), []);
 }
 
 #[test]
@@ -293,14 +179,6 @@ fn declaration_names_are_recognised() {
         (Grammar::Luau, "for co| = 1, 2 do end"),
         (Grammar::Luau, "for k, co| in pairs(t) do end"),
         (Grammar::Luau, "function co|() end"),
-        (Grammar::Rhai, "let co|;"),
-        (Grammar::Rhai, "const co| = 1;"),
-        (Grammar::Rhai, "fn f(a, co|) {}"),
-        (Grammar::Rhai, "let c = |p, co¦| p;"),
-        (Grammar::Rhai, "for co| in x {}"),
-        (Grammar::Rhai, "for (k, co|) in x {}"),
-        (Grammar::Rhai, "try {} catch (co|) {}"),
-        (Grammar::Rhai, "import \"m\" as co|;"),
     ] {
         assert!(site(grammar, marked).declares_name, "{grammar:?}: {marked}");
     }
@@ -312,8 +190,6 @@ fn references_are_not_declaration_names() {
         (Grammar::Luau, "local x = co|"),
         (Grammar::Luau, "x, co| = 1, 2"),
         (Grammar::Luau, "print(co|)"),
-        (Grammar::Rhai, "let x = co|;"),
-        (Grammar::Rhai, "print(co|);"),
     ] {
         assert!(
             !site(grammar, marked).declares_name,
@@ -326,8 +202,6 @@ fn references_are_not_declaration_names() {
 fn interpolation_holds_code() {
     assert!(site(Grammar::Luau, "x = `a {co|} b`").in_interpolation);
     assert!(!site(Grammar::Luau, "x = `a co| b`").in_interpolation);
-    assert!(site(Grammar::Rhai, "x = `a ${co|} b`").in_interpolation);
-    assert!(!site(Grammar::Rhai, "x = `a co| b`").in_interpolation);
 }
 
 #[test]

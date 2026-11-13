@@ -23,7 +23,7 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES_DIR = REPOSITORY_ROOT / "examples"
 ROOT_ASSETS = frozenset({"sprites.bin", "objattr.bin", "obp.bin", "palette.bin"})
-SCRIPT_SUFFIXES = frozenset({".luau", ".rhai"})
+SCRIPT_SUFFIXES = frozenset({".luau"})
 
 
 class SyncError(Exception):

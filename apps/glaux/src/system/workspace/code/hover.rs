@@ -117,7 +117,6 @@ impl CodeEditor {
         let document = session.document(id)?;
         let language = match document.language() {
             Language::Luau => ScriptLanguage::Luau,
-            Language::Rhai => ScriptLanguage::Rhai,
         };
         let summary = |id: &DocId| {
             let page = docs::library().page(id, docs::chain())?.page;

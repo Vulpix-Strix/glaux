@@ -162,7 +162,7 @@ fn raw_html_and_footnotes_are_dropped() {
 #[test]
 fn language_subsections_and_tagged_blocks_carry_their_scope() {
     let page = page(
-        "# T\n\nCommon.\n\n```rhai\nfn a() {}\n```\n\n## Examples\n\n### Luau\n\nLuau text.\n\n```luau\nx()\n```\n\n### Rhai\n\nRhai text.\n\n## After\n\nBack.\n",
+        "# T\n\nCommon.\n\n```luau\nfn a() {}\n```\n\n## Examples\n\n### Luau\n\nLuau text.\n\n```luau\nx()\n```\n\n### Other\n\nOther text.\n\n## After\n\nBack.\n",
     );
     let scopes: Vec<_> = page
         .blocks()
@@ -175,19 +175,18 @@ fn language_subsections_and_tagged_blocks_carry_their_scope() {
         })
         .collect();
     let luau = Scope::Language(ScriptLanguage::Luau);
-    let rhai = Scope::Language(ScriptLanguage::Rhai);
     assert_eq!(
         scopes,
         [
             ("T".to_owned(), Scope::Common),
             ("Common.".to_owned(), Scope::Common),
-            ("fn a() {}".to_owned(), rhai),
+            ("fn a() {}".to_owned(), luau),
             ("Examples".to_owned(), Scope::Common),
             ("Luau".to_owned(), luau),
             ("Luau text.".to_owned(), luau),
             ("x()".to_owned(), luau),
-            ("Rhai".to_owned(), rhai),
-            ("Rhai text.".to_owned(), rhai),
+            ("Other".to_owned(), Scope::Common),
+            ("Other text.".to_owned(), Scope::Common),
             ("After".to_owned(), Scope::Common),
             ("Back.".to_owned(), Scope::Common),
         ]

@@ -10,7 +10,7 @@ use glaux_script::debug::{Breakpoint, DebugReply, DebugRequest, Resume, Step};
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::cartridge::fixture::{write_cartridge, write_rhai_cartridge};
+use crate::cartridge::fixture::write_cartridge;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::cartridge_fs::{CartridgeFs, CartridgeStorage};
 
@@ -26,12 +26,6 @@ pub(super) fn luau_cartridge(fixture: &Fixture, script: &str) -> LoadedCartridge
     write_cartridge(&dir, "Pong");
     fs::write(dir.join("code/main.luau"), script).unwrap();
     LoadedCartridge::load(&fixture.storage(), "pong").unwrap()
-}
-
-pub(super) fn rhai_cartridge(fixture: &Fixture, script: &str) -> LoadedCartridge {
-    let dir = fixture.root().join("owl");
-    write_rhai_cartridge(&dir, "Owl", script);
-    LoadedCartridge::load(&fixture.storage(), "owl").unwrap()
 }
 
 pub(super) fn start_debug(
@@ -73,28 +67,9 @@ function draw()
   print(\"hi\", 2, 2, 7)
 end";
 
-pub(super) const RHAI: &str = "fn boot() {
-  log::info(\"boot\");
-}
-fn tick() {
-  let x = frame();
-  log::info(\"tick\");
-}
-fn draw() {
-  cls(1);
-  text(\"hi\", 2, 2, 7);
-}";
-
 #[test]
 fn a_debugged_run_without_stops_produces_what_a_normal_run_does() {
-    for (name, cartridge) in [
-        (
-            "luau",
-            luau_cartridge as fn(&Fixture, &str) -> LoadedCartridge,
-        ),
-        ("rhai", rhai_cartridge),
-    ] {
-        let script = if name == "luau" { LUAU } else { RHAI };
+    for (name, cartridge, script, _) in LANGUAGES {
         let normal_fixture = Fixture::new(&format!("running-debug-normal-{name}"));
         let debug_fixture = Fixture::new(&format!("running-debug-debugged-{name}"));
         let mut normal = RunningCartridge::start(
@@ -123,15 +98,7 @@ fn a_debugged_run_without_stops_produces_what_a_normal_run_does() {
 
 #[test]
 fn a_breakpoint_stops_the_tick_and_resuming_finishes_it() {
-    for (name, cartridge, script, path) in [
-        (
-            "luau",
-            luau_cartridge as fn(&Fixture, &str) -> LoadedCartridge,
-            LUAU,
-            "code/main.luau",
-        ),
-        ("rhai", rhai_cartridge, RHAI, "code/main.rhai"),
-    ] {
+    for (name, cartridge, script, path) in LANGUAGES {
         let fixture = Fixture::new(&format!("running-debug-stop-{name}"));
         let (mut running, stop) = start_debug(cartridge(&fixture, script), vec![at(path, 6)]);
         assert!(stop.is_none(), "{name}");
@@ -263,47 +230,43 @@ fn dropping_a_stopped_run_ends_its_thread() {
 fn the_examples_play_the_same_under_the_debugger() {
     let examples =
         fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")).unwrap();
-    for name in ["signal-lost", "signal-lost-rhai"] {
-        let load = || {
-            let storage = CartridgeStorage::Available(CartridgeFs::new(examples.clone()));
-            LoadedCartridge::load(&storage, name).unwrap()
-        };
-        let mut normal =
-            RunningCartridge::start(load(), &defaults(), VideoOverrides::default(), &font())
-                .unwrap();
-        let (mut debugged, _) = start_debug(load(), Vec::new());
-        let inputs = [
-            vec![],
-            vec![InputEvent::ButtonDown(Button::A)],
-            vec![InputEvent::ButtonUp(Button::A)],
-            vec![InputEvent::ButtonDown(Button::Right)],
-        ];
-        for step in 0..120 {
-            let input = &inputs[step % inputs.len()];
-            normal.tick(input).unwrap();
-            assert_eq!(
-                debugged.advance(input),
-                Ok(Tick::Done),
-                "{name} tick {step}"
-            );
-            assert!(debugged.published == normal.published, "{name} tick {step}");
-        }
+    let name = "signal-lost";
+    let load = || {
+        let storage = CartridgeStorage::Available(CartridgeFs::new(examples.clone()));
+        LoadedCartridge::load(&storage, name).unwrap()
+    };
+    let mut normal =
+        RunningCartridge::start(load(), &defaults(), VideoOverrides::default(), &font()).unwrap();
+    let (mut debugged, _) = start_debug(load(), Vec::new());
+    let inputs = [
+        vec![],
+        vec![InputEvent::ButtonDown(Button::A)],
+        vec![InputEvent::ButtonUp(Button::A)],
+        vec![InputEvent::ButtonDown(Button::Right)],
+    ];
+    for step in 0..120 {
+        let input = &inputs[step % inputs.len()];
+        normal.tick(input).unwrap();
         assert_eq!(
-            texts(debugged.take_output()),
-            texts(normal.take_output()),
-            "{name}"
+            debugged.advance(input),
+            Ok(Tick::Done),
+            "{name} tick {step}"
         );
+        assert!(debugged.published == normal.published, "{name} tick {step}");
     }
+    assert_eq!(
+        texts(debugged.take_output()),
+        texts(normal.take_output()),
+        "{name}"
+    );
 }
 
 type Cartridge = fn(&Fixture, &str) -> LoadedCartridge;
 
-/// Each language with its cartridge, the script of [`LUAU`] or [`RHAI`] and
-/// the path breakpoints name.
-const LANGUAGES: [(&str, Cartridge, &str, &str); 2] = [
-    ("luau", luau_cartridge, LUAU, "code/main.luau"),
-    ("rhai", rhai_cartridge, RHAI, "code/main.rhai"),
-];
+/// Each language with its cartridge, its script of [`LUAU`] and the path
+/// breakpoints name.
+const LANGUAGES: [(&str, Cartridge, &str, &str); 1] =
+    [("luau", luau_cartridge, LUAU, "code/main.luau")];
 
 /// Drops the debugged runtime of `running` on another thread and fails if
 /// that takes too long, so a join that never ends fails the test instead of
@@ -450,20 +413,12 @@ fn a_stop_while_starting_keeps_the_hardware_with_the_runtime_and_runs_no_draw() 
 }
 
 /// A `boot()` that stops at line 2 and then fails.
-const FAILING_BOOT: [(&str, Cartridge, &str, &str); 2] = [
-    (
-        "luau",
-        luau_cartridge,
-        "function boot()\n  log.info(\"boot\")\n  error(\"boom\")\nend",
-        "code/main.luau",
-    ),
-    (
-        "rhai",
-        rhai_cartridge,
-        "fn boot() {\n  log::info(\"boot\");\n  throw \"boom\";\n}",
-        "code/main.rhai",
-    ),
-];
+const FAILING_BOOT: [(&str, Cartridge, &str, &str); 1] = [(
+    "luau",
+    luau_cartridge,
+    "function boot()\n  log.info(\"boot\")\n  error(\"boom\")\nend",
+    "code/main.luau",
+)];
 
 #[test]
 fn a_boot_that_fails_after_a_stop_gives_the_hardware_back() {
@@ -494,30 +449,17 @@ fn cancelling_a_stopped_start_gives_the_hardware_back() {
 
 #[test]
 fn script_errors_in_either_phase_return_the_hardware() {
-    for (phase, luau, rhai) in [
-        (
-            Phase::Tick,
-            "function tick() error(\"boom\") end",
-            "fn tick() { throw \"boom\"; }",
-        ),
-        (
-            Phase::Draw,
-            "function draw() error(\"boom\") end",
-            "fn draw() { throw \"boom\"; }",
-        ),
+    for (phase, script) in [
+        (Phase::Tick, "function tick() error(\"boom\") end"),
+        (Phase::Draw, "function draw() error(\"boom\") end"),
     ] {
-        for (name, cartridge, script) in [
-            ("luau", luau_cartridge as Cartridge, luau),
-            ("rhai", rhai_cartridge, rhai),
-        ] {
-            let fixture = Fixture::new(&format!("running-debug-error-{phase:?}-{name}"));
-            let (mut running, _) = start_debug(cartridge(&fixture, script), Vec::new());
-            let before = hardware_address(&running);
+        let fixture = Fixture::new(&format!("running-debug-error-{phase:?}-luau"));
+        let (mut running, _) = start_debug(luau_cartridge(&fixture, script), Vec::new());
+        let before = hardware_address(&running);
 
-            let error = running.advance(&[]).unwrap_err();
-            assert_eq!(error.phase, phase, "{name}");
-            assert_eq!(hardware_address(&running), before, "{name} {phase:?}");
-        }
+        let error = running.advance(&[]).unwrap_err();
+        assert_eq!(error.phase, phase);
+        assert_eq!(hardware_address(&running), before, "{phase:?}");
     }
 }
 

@@ -10,10 +10,6 @@ Buttons are opaque constants. Pass them to [btn](glaux://api/input/btn) and [btn
 
 Write `Button.A`. `tostring(Button.A)` gives `Button.A` and `typeof(Button.A)` gives `Button`. The table is read-only.
 
-### Rhai
-
-Write `Button::A`. `to_string` gives `Button::A` and `type_of` gives `Button`.
-
 ## Examples
 
 ### Luau
@@ -22,14 +18,6 @@ Write `Button::A`. `to_string` gives `Button::A` and `type_of` gives `Button`.
 if btn(Button.Left) then
   x = x - 1
 end
-```
-
-### Rhai
-
-```rhai
-if btn(Button::Left) {
-    this.x -= 1;
-}
 ```
 
 ## See also

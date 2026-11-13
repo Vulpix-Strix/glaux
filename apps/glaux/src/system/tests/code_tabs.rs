@@ -77,7 +77,7 @@ fn tabs_survive_trips_to_sprites_and_the_shell() {
         &fixture,
         &[
             ("code/enemies/bat.luau", "-- bat\n"),
-            ("code/ui/hud.rhai", ""),
+            ("code/ui/hud.luau", ""),
         ],
     );
     let system = open_file(press_break(system), "bat");
@@ -86,7 +86,7 @@ fn tabs_survive_trips_to_sprites_and_the_shell() {
     let tabs = [
         "code/main.luau",
         "code/enemies/bat.luau",
-        "code/ui/hud.rhai",
+        "code/ui/hud.luau",
     ];
     assert_eq!(open_scripts(&system), tabs);
     assert_eq!(

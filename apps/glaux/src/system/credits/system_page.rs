@@ -57,7 +57,7 @@ const COMPONENTS: [Component; 3] = [
     },
     Component {
         label: "credits-system-scripting",
-        parts: &[("Luau", Category::Native), ("rhai", Category::Library)],
+        parts: &[("Luau", Category::Native)],
     },
 ];
 

@@ -7,9 +7,8 @@ use pretty_assertions::assert_eq;
 fn language_comes_from_the_extension() {
     for (path, language) in [
         ("code/main.luau", Language::Luau),
-        ("code/ui/hud.rhai", Language::Rhai),
         ("main.luau", Language::Luau),
-        ("code/v1.2.rhai", Language::Rhai),
+        ("code/v1.2.luau", Language::Luau),
     ] {
         let parsed = SourcePath::parse(path).unwrap();
         assert_eq!(parsed.language(), language, "{path}");
@@ -18,7 +17,7 @@ fn language_comes_from_the_extension() {
 }
 
 #[test]
-fn rejects_files_that_are_not_luau_or_rhai() {
+fn rejects_files_that_are_not_luau() {
     for path in [
         "code/main.lua",
         "code/notes.txt",
@@ -83,7 +82,7 @@ fn lists_every_script_in_any_directory_in_a_fixed_order() {
     let cart = cartridge_with(
         &fixture,
         &[
-            "code/ui/hud.rhai",
+            "code/ui/hud.luau",
             "code/Enemies/bat.luau",
             "code/enemies/Ant.luau",
             "lib.luau",
@@ -99,7 +98,7 @@ fn lists_every_script_in_any_directory_in_a_fixed_order() {
             "code/enemies/Ant.luau",
             "code/Enemies/bat.luau",
             "code/main.luau",
-            "code/ui/hud.rhai",
+            "code/ui/hud.luau",
             "lib.luau",
         ]
     );
@@ -109,7 +108,7 @@ fn lists_every_script_in_any_directory_in_a_fixed_order() {
 #[test]
 fn a_truncated_listing_says_so() {
     let fixture = Fixture::new("source-list-limit");
-    let cart = cartridge_with(&fixture, &["code/a.luau", "code/b.rhai"]);
+    let cart = cartridge_with(&fixture, &["code/a.luau", "code/b.luau"]);
     let limits = WalkLimits {
         max_depth: 16,
         max_files: 2,
@@ -122,8 +121,8 @@ fn a_truncated_listing_says_so() {
 #[test]
 fn file_names_are_the_last_component() {
     assert_eq!(
-        SourcePath::parse("code/ui/hud.rhai").unwrap().file_name(),
-        "hud.rhai"
+        SourcePath::parse("code/ui/hud.luau").unwrap().file_name(),
+        "hud.luau"
     );
     assert_eq!(
         SourcePath::parse("main.luau").unwrap().file_name(),
@@ -235,20 +234,10 @@ mod editing {
     }
 
     #[test]
-    fn a_script_keeps_its_language_when_moved() {
+    fn a_script_can_be_moved_into_another_folder() {
         let fixture = Fixture::new("source-language");
         let cart = with_entry(&fixture, "code/main.luau", &["code/a.luau"]);
         let from = path("code/a.luau");
-        let to = path("code/a.rhai");
-        assert_eq!(
-            cart.rename_source(&from, &to),
-            Err(SourceEditError::Language {
-                from: from.clone(),
-                to
-            })
-        );
-        assert!(exists(&fixture, "code/a.luau"));
-
         assert_eq!(cart.rename_source(&from, &path("code/sub/b.luau")), Ok(()));
         assert!(exists(&fixture, "code/sub/b.luau"));
         assert!(!exists(&fixture, "code/a.luau"));
@@ -258,7 +247,7 @@ mod editing {
 #[test]
 fn listing_order_ignores_case_and_then_breaks_ties_by_exact_name() {
     let mut paths: Vec<SourcePath> = [
-        "code/ui/hud.rhai",
+        "code/ui/hud.luau",
         "code/Enemies/bat.luau",
         "code/enemies/Ant.luau",
         "code/enemies/ant.luau",
@@ -274,7 +263,7 @@ fn listing_order_ignores_case_and_then_breaks_ties_by_exact_name() {
             "code/enemies/Ant.luau",
             "code/enemies/ant.luau",
             "code/Enemies/bat.luau",
-            "code/ui/hud.rhai",
+            "code/ui/hud.luau",
         ]
     );
 }

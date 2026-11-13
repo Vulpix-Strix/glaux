@@ -58,9 +58,7 @@ fn a_function_shows_its_call_and_the_type_of_each_parameter() {
 fn a_member_function_is_named_with_its_namespace_in_the_language_asked() {
     let candidate = api_candidate("api/audio/tone", "tone", CandidateKind::Function);
     let luau = panel(&candidate, ScriptLanguage::Luau).unwrap();
-    let rhai = panel(&candidate, ScriptLanguage::Rhai).unwrap();
     assert!(signature(&luau).starts_with("audio.tone("));
-    assert!(signature(&rhai).starts_with("audio::tone("));
 }
 
 #[test]
@@ -69,10 +67,6 @@ fn a_constant_names_its_group_and_a_group_names_itself() {
     assert_eq!(
         signature(&panel(&member, ScriptLanguage::Luau).unwrap()),
         "Key.Space"
-    );
-    assert_eq!(
-        signature(&panel(&member, ScriptLanguage::Rhai).unwrap()),
-        "Key::Space"
     );
     let group = api_candidate("api/input/keys", "Key", CandidateKind::Constant);
     assert_eq!(
@@ -85,9 +79,7 @@ fn a_constant_names_its_group_and_a_group_names_itself() {
 fn a_callback_previews_its_declaration_in_the_languages_syntax() {
     let candidate = api_candidate("api/lifecycle/tick", "tick", CandidateKind::Callback);
     let luau = panel(&candidate, ScriptLanguage::Luau).unwrap();
-    let rhai = panel(&candidate, ScriptLanguage::Rhai).unwrap();
     assert_eq!(signature(&luau), "function tick()");
-    assert_eq!(signature(&rhai), "fn tick()");
 }
 
 #[test]

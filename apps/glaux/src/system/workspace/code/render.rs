@@ -466,7 +466,6 @@ impl Painter<'_> {
         let y = self.bar_text_y(bar.y, bar.height - 1);
         let tag = match language {
             Language::Luau => "Luau",
-            Language::Rhai => "Rhai",
         };
         let tag_rect = Rect {
             x: 4,
@@ -491,7 +490,6 @@ impl Painter<'_> {
         };
         let position_x = controls_x - self.cell_w() - self.layout.cells(&position) * self.cell_w();
         let mut path_x = tag_rect.right() + self.cell_w();
-        // Rhai never goes through the analyzer, so only Luau shows its state.
         if let Some((label, color)) = analyzer_tag(language, analyzer) {
             self.text(&label, path_x, y, color);
             path_x += (self.layout.cells(&label) + 1) * self.cell_w();
@@ -1127,7 +1125,7 @@ impl Painter<'_> {
             Some(error) => {
                 ui_text::get_with("code-cannot-list-scripts", &[("error", Arg::Text(error))])
             }
-            None if total == 0 => ui_text::get("code-no-luau-or-rhai-files-in-this-cartridge"),
+            None if total == 0 => ui_text::get("code-no-luau-files-in-this-cartridge"),
             None if picker.match_count() == 0 => ui_text::get("code-no-file-matches"),
             None => ui_text::get_with(
                 "code-picker-file-count",

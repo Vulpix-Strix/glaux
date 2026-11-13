@@ -15,7 +15,7 @@ pub enum Resolution {
     Import { module: String },
     /// A member of an imported module, as in `math.clamp` or `math::clamp`.
     Member { module: String, member: String },
-    /// Several declarations fit, such as Rhai overloads or a function written twice.
+    /// Several declarations fit, such as a function written twice.
     Ambiguous,
     /// Nothing the script defines: engine API, values with unknown members, a name
     /// being declared, or text the analysis cannot follow.

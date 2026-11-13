@@ -1,4 +1,4 @@
-use ScriptLanguage::{Luau, Rhai};
+use ScriptLanguage::Luau;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -41,29 +41,6 @@ fn luau_markers_inside_strings_and_comments_are_inert() {
 }
 
 #[test]
-fn rhai_comments_and_strings() {
-    assert_eq!(state(Rhai, "x = 1; // co"), State::Comment);
-    assert_eq!(state(Rhai, "// note\nco"), State::Code);
-    assert_eq!(state(Rhai, "/* co"), State::Comment);
-    assert_eq!(state(Rhai, "/* a /* b */ co"), State::Comment);
-    assert_eq!(state(Rhai, "/* a /* b */ c */ co"), State::Code);
-    assert_eq!(state(Rhai, "x = \"co"), State::String);
-    // A Rhai string may span lines. A char literal may not.
-    assert_eq!(state(Rhai, "x = \"a\nco"), State::String);
-    assert_eq!(state(Rhai, "x = 'a\nco"), State::Code);
-    assert_eq!(state(Rhai, "x = `a ${co"), State::Template);
-    assert_eq!(state(Rhai, "x = `a` + co"), State::Code);
-    assert_eq!(state(Rhai, "x = #\"a \" co"), State::String);
-    assert_eq!(state(Rhai, "x = #\"a\"# + co"), State::Code);
-    assert_eq!(state(Rhai, "x = ##\"a\"# co"), State::String);
-}
-
-#[test]
-fn rhai_division_and_map_literals_are_code() {
-    assert_eq!(state(Rhai, "x = a / b; let m = #{ a: 1 }; co"), State::Code);
-}
-
-#[test]
 fn luau_blocks_open_and_close() {
     let blocks = |text| scan(Luau, text).blocks;
     assert_eq!(blocks(""), 0);
@@ -96,20 +73,8 @@ fn luau_keywords_inside_strings_comments_and_fields_do_not_count() {
 }
 
 #[test]
-fn rhai_blocks_are_braces() {
-    let blocks = |text| scan(Rhai, text).blocks;
-    assert_eq!(blocks("fn f() {\n"), 1);
-    assert_eq!(blocks("fn f() {\n  if x {\n  }\n"), 1);
-    assert_eq!(blocks("fn f() {}\n"), 0);
-    assert_eq!(blocks("let s = \"{\"; // {\n"), 0);
-}
-
-#[test]
 fn groups_count_open_brackets() {
     assert_eq!(scan(Luau, "f(a,\n").groups, 1);
     assert_eq!(scan(Luau, "local t = {\n  a = f(\n").groups, 2);
     assert_eq!(scan(Luau, "local t = { a = 1 }\n").groups, 0);
-    assert_eq!(scan(Rhai, "let a = [1,\n").groups, 1);
-    // Rhai braces are blocks, not groups.
-    assert_eq!(scan(Rhai, "fn f() {\n").groups, 0);
 }

@@ -145,11 +145,11 @@ mod tests {
         );
         let module = RuntimeError {
             phase: Phase::Entry,
-            error: ScriptError::ModuleLimitExceeded("code/loop.rhai".into()),
+            error: ScriptError::ModuleLimitExceeded("code/loop.luau".into()),
         };
         assert_eq!(
             runtime(&module),
-            "Execution limit exceeded in code/loop.rhai"
+            "Execution limit exceeded in code/loop.luau"
         );
     }
 }

@@ -12,10 +12,6 @@ The count, starting at 0. It advances only after a tick whose `tick()` and `draw
 
 The result is a number.
 
-### Rhai
-
-The result is an integer.
-
 ## Examples
 
 ### Luau
@@ -24,14 +20,6 @@ The result is an integer.
 function tick()
   if frame() % 30 == 0 then blink = not blink end
 end
-```
-
-### Rhai
-
-```rhai
-fn tick() {
-    if frame() % 30 == 0 { this.blink = !this.blink; }
-}
 ```
 
 ## See also

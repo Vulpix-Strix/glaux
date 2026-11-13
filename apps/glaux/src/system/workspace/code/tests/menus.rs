@@ -184,7 +184,7 @@ fn new_file_takes_every_key_until_created() {
         requests(&mut editor, &mut session, &[InputEvent::NewFile]),
         [CodeRequest::NewFile]
     );
-    editor.open_new_file(crate::cartridge::Language::Rhai);
+    editor.open_new_file(crate::cartridge::Language::Luau);
     assert!(editor.has_overlay());
     // Document commands are swallowed; Select All and Paste act on the
     // field.
@@ -203,12 +203,12 @@ fn new_file_takes_every_key_until_created() {
     );
     editor.paste(Some("ui/hud".into()), Some(&mut session));
     assert_eq!(session.active_document().unwrap().text(), "abc");
-    let path = SourcePath::parse("code/ui/hud.rhai").unwrap();
+    let path = SourcePath::parse("code/ui/hud.luau").unwrap();
     assert_eq!(
         requests(&mut editor, &mut session, &[InputEvent::Enter]),
         [CodeRequest::Create(path)]
     );
-    editor.script_created(Err("Already exists: /code/ui/hud.rhai".into()));
+    editor.script_created(Err("Already exists: /code/ui/hud.luau".into()));
     assert!(editor.new_file().is_some(), "stays open to fix the name");
     editor.script_created(Ok(()));
     assert!(editor.new_file().is_none());
@@ -369,7 +369,7 @@ fn rename_script_rejects_bad_paths_without_asking_and_closes_on_the_same_path() 
     tab_menu(&mut editor, &mut session, 0);
     choose(&mut editor, &mut session, "Rename script...");
 
-    for typed in ["", "x.luau", "x.rhai", "../x", "a//b", "a\\b"] {
+    for typed in ["", "x.luau", "../x", "a//b", "a\\b"] {
         feed(&mut editor, &mut session, &[InputEvent::SelectAll]);
         feed(&mut editor, &mut session, &typing(typed));
         if typed.is_empty() {

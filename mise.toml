@@ -31,7 +31,7 @@ run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
 description = "Validate documentation, API catalog, ids, links and UI catalogs, then run the checks that need a script runtime or the system font"
 run = [
   "cargo run --quiet -p glaux-docs --bin glaux-docs -- check",
-  "cargo nextest run --no-tests=warn -p glaux-luau -p glaux-rhai -p glaux -E 'test(/catalog_consistency|docs_glyphs|ui_glyphs/)'",
+  "cargo nextest run --no-tests=warn -p glaux-luau -p glaux -E 'test(/catalog_consistency|docs_glyphs|ui_glyphs/)'",
 ]
 
 [tasks.docs-update-ids]

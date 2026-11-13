@@ -28,7 +28,6 @@ pub enum Symbol {
 fn script_language(language: Language) -> ScriptLanguage {
     match language {
         Language::Luau => ScriptLanguage::Luau,
-        Language::Rhai => ScriptLanguage::Rhai,
     }
 }
 

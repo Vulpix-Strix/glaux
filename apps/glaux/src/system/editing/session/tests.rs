@@ -48,23 +48,23 @@ fn a_file_opened_twice_has_one_document_and_one_tab() {
 }
 
 #[test]
-fn nested_luau_and_rhai_files_open_side_by_side() {
+fn nested_files_open_side_by_side() {
     let fixture = Fixture::new("code-session-mixed");
     let cart = cartridge(
         &fixture,
         &[
             ("code/enemies/bat.luau", b"return 1"),
-            ("code/ui/hud.rhai", b"let a = 1;"),
+            ("code/ui/hud.luau", b"local a = 1"),
         ],
     );
     let mut session = CodeSession::default();
 
     session.open(&cart, &path("code/enemies/bat.luau")).unwrap();
-    session.open(&cart, &path("code/ui/hud.rhai")).unwrap();
+    session.open(&cart, &path("code/ui/hud.luau")).unwrap();
     let active = session.active_document().unwrap();
-    assert_eq!(active.path().as_str(), "code/ui/hud.rhai");
-    assert_eq!(active.language(), Language::Rhai);
-    assert_eq!(active.text(), "let a = 1;");
+    assert_eq!(active.path().as_str(), "code/ui/hud.luau");
+    assert_eq!(active.language(), Language::Luau);
+    assert_eq!(active.text(), "local a = 1");
     assert!(session.is_open(&path("code/enemies/bat.luau")));
     assert!(!session.is_open(&path("code/main.luau")));
 }
@@ -337,7 +337,7 @@ mod moving {
     }
 
     #[test]
-    fn the_entry_script_and_other_languages_are_refused_and_the_same_path_is_a_no_op() {
+    fn the_entry_script_is_refused_and_the_same_path_is_a_no_op() {
         let fixture = Fixture::new("code-session-move-refused");
         let (cart, mut session, id) = edited(&fixture, &[]);
         let main = session.open(&cart, &path("code/main.luau")).unwrap();
@@ -346,12 +346,6 @@ mod moving {
             session.move_script(&cart, main, &path("code/x.luau")),
             Err(MoveScriptError::File(SourceEditError::Entry(_)))
         ));
-        assert_eq!(
-            session.move_script(&cart, id, &path("code/a.rhai")),
-            Err(MoveScriptError::Document(CodeRenameError::Language(path(
-                "code/a.rhai"
-            ))))
-        );
         assert_eq!(session.move_script(&cart, id, &path("code/a.luau")), Ok(()));
         assert_eq!(session.document(id).unwrap().path().as_str(), "code/a.luau");
         assert!(host(&fixture, "code/main.luau").exists());
@@ -359,24 +353,15 @@ mod moving {
 }
 
 #[test]
-fn the_symbol_at_a_caret_is_a_page_a_local_or_unknown_in_both_languages() {
+fn the_symbol_at_a_caret_is_a_page_a_local_or_unknown() {
     let fixture = Fixture::new("code-session-symbol");
     let luau = "local function mine() end\nspr(1)\naudio.tone(1)\nnothing_here()\n-- spr\n";
-    let rhai = "fn mine() {}\nspr(1);\naudio::tone(1);\nnothing_here();\n";
-    let cart = cartridge(
-        &fixture,
-        &[
-            ("code/a.luau", luau.as_bytes()),
-            ("code/b.rhai", rhai.as_bytes()),
-        ],
-    );
+    let cart = cartridge(&fixture, &[("code/a.luau", luau.as_bytes())]);
     let api = glaux_docs::Library::embedded();
     let api = api.api();
     let mut session = CodeSession::default();
-    for (file, text, member) in [
-        ("code/a.luau", luau, "audio.tone"),
-        ("code/b.rhai", rhai, "audio::tone"),
-    ] {
+    let cases = [("code/a.luau", luau, "audio.tone")];
+    for (file, text, member) in cases {
         let id = session.open(&cart, &path(file)).unwrap();
         let at = |needle: &str, inside: usize| text.find(needle).unwrap() + inside;
         let mut symbol = |caret| session.symbol_at(id, caret, api);

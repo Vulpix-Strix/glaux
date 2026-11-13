@@ -10,10 +10,6 @@ Keys are opaque constants for [key](glaux://api/input/key) and [keyp](glaux://ap
 
 Write `Key.PageUp`. `tostring(Key.F2)` gives `Key.F2` and `typeof(Key.F2)` gives `Key`.
 
-### Rhai
-
-Write `Key::PageUp`. `to_string` gives `Key::F2` and `type_of` gives `Key`.
-
 ## Examples
 
 ### Luau
@@ -22,14 +18,6 @@ Write `Key::PageUp`. `to_string` gives `Key::F2` and `type_of` gives `Key`.
 if keyp(Key.F1) then
   show_help = not show_help
 end
-```
-
-### Rhai
-
-```rhai
-if keyp(Key::F1) {
-    this.show_help = !this.show_help;
-}
 ```
 
 ## See also

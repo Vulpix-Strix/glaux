@@ -39,7 +39,7 @@ No external game engine required.
 | Master palette    | 256 colors                                    |
 | Audio             | 4-channel PSG                                 |
 | Cartridges        | Script-based games with optional assets       |
-| Programming       | Luau, experimental Rhai                       |
+| Programming       | Luau                                          |
 | Development tools | Code, sprite, map, sound and music workspaces |
 
 ### Your first cartridge

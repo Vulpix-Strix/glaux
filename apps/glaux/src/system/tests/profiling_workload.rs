@@ -4,8 +4,8 @@
 //! prints the wall time of each frame per phase and, with a hotpath feature,
 //! the usual report. See the Profiling section of `AGENTS.md`.
 //!
-//! The scenario comes from `GLAUX_WORKLOAD`: `luau` (the default) and `rhai`
-//! play Signal Lost for a minute of game time, `bg` scrolls three full
+//! The scenario comes from `GLAUX_WORKLOAD`: `luau` (the default)
+//! plays Signal Lost for a minute of game time, `bg` scrolls three full
 //! background layers for the same time, `obj` moves 128 overlapping objects
 //! over them, `editor` edits its Luau
 //! scripts, `analyzer` does the same with `luau-lsp` running beside it (it
@@ -509,13 +509,12 @@ fn workload() {
         Ok("editor") => edit(false, false),
         Ok("paced") => edit(false, true),
         Ok("analyzer") => edit(true, true),
-        Ok("rhai") => play("signal-lost-rhai"),
         Ok("bg") => backgrounds(),
         Ok("obj") => objects(),
         Ok("luau") | Err(_) => play("signal-lost"),
         Ok(other) => {
             panic!(
-                "unknown GLAUX_WORKLOAD {other:?}, expected luau, rhai, bg, obj, editor, paced or analyzer"
+                "unknown GLAUX_WORKLOAD {other:?}, expected luau, bg, obj, editor, paced or analyzer"
             )
         }
     }

@@ -1,6 +1,6 @@
 # Debugging a cartridge
 
-The Code view can run a cartridge under the debugger. It stops at the lines you mark, shows the variables and the call stack there, and lets you go on one line at a time. It works for Luau and Rhai cartridges.
+The Code view can run a cartridge under the debugger. It stops at the lines you mark, shows the variables and the call stack there, and lets you go on one line at a time.
 
 ## Setting breakpoints
 
@@ -8,7 +8,7 @@ Press F9 to mark the line the caret is on, and again to clear it. Pressing a lin
 
 Breakpoints move with the text as you edit. Deleting a line deletes its breakpoint, and adding a line above one moves it down with its line. They stay when you close the script's tab.
 
-A breakpoint on a line with no code stops on the next line that has some. In Rhai, a line that holds no statement, such as a closing brace, never stops.
+A breakpoint on a line with no code stops on the next line that has some.
 
 ## Starting and stopping
 
@@ -42,12 +42,7 @@ Below it, the call stack lists the frames from the innermost. Press a frame to m
 
 Locals and the variables a function captures from the script around it are listed. Every frame has variables.
 
-### Rhai
-
-The state you keep in `this` is listed first, then the local variables. Only the innermost frame has variables.
-
 ## Limits
 
 - The stop is inside a tick. The game does not draw while stopped, and the time the game sees does not advance.
 - A script that loops without end is still stopped by its budget, and time spent stopped does not count against it.
-- A Rhai loop written on one line stops once each time it is entered, not at every pass.

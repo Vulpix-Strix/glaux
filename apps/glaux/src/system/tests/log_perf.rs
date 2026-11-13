@@ -21,9 +21,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::rhai::shell_with_cartridge_root;
 use super::*;
-use crate::cartridge::fixture::write_rhai_cartridge;
 
 const RATES: [usize; 5] = [0, 10, 100, 1_000, 10_000];
 const TICKS: usize = 120;
@@ -59,13 +57,6 @@ fn luau(rate: usize) -> String {
     )
 }
 
-fn rhai(rate: usize) -> String {
-    format!(
-        "fn tick() {{ for i in 0..{rate} {{ log::info(`message ${{i}}`); }} }}\n\
-         fn draw() {{ cls(1); }}\n"
-    )
-}
-
 /// Runs `system` for [`TICKS`] ticks, updating and rendering each, and
 /// returns the time each took with the system at the end.
 fn measure(mut system: System) -> (Samples, Samples, System) {
@@ -83,18 +74,9 @@ fn measure(mut system: System) -> (Samples, Samples, System) {
     (update, draw, system)
 }
 
-fn scenario(language: &str, rate: usize, panel: Panel) {
+fn scenario(rate: usize, panel: Panel) {
     let fixture = Fixture::new("sys-log-cost");
-    let mut system = match language {
-        "luau" => started(&fixture, &luau(rate)),
-        _ => {
-            write_rhai_cartridge(&fixture.root().join("pong"), "Pong", &rhai(rate));
-            enter(
-                enter(shell_with_cartridge_root(&fixture), "load pong"),
-                "run",
-            )
-        }
-    };
+    let mut system = started(&fixture, &luau(rate));
     assert!(is_running(&system));
     match panel {
         Panel::Closed => {}
@@ -106,7 +88,7 @@ fn scenario(language: &str, rate: usize, panel: Panel) {
     }
     let (update, draw, system) = measure(system);
     println!(
-        "{language:<5} {rate:>6}/tick {:<13} update p50 {:>9.1} p95 {:>9.1} max {:>9.1}   \
+        "luau  {rate:>6}/tick {:<13} update p50 {:>9.1} p95 {:>9.1} max {:>9.1}   \
          render p50 {:>8.1} p95 {:>8.1}   retained {:>9} bytes",
         format!("{panel:?}"),
         update.micros(0.5),
@@ -121,11 +103,9 @@ fn scenario(language: &str, rate: usize, panel: Panel) {
 #[test]
 #[ignore = "a measurement to read, not a check"]
 fn log_cost_by_rate_and_panel() {
-    for language in ["luau", "rhai"] {
-        for rate in RATES {
-            for panel in [Panel::Closed, Panel::Following, Panel::ScrolledBack] {
-                scenario(language, rate, panel);
-            }
+    for rate in RATES {
+        for panel in [Panel::Closed, Panel::Following, Panel::ScrolledBack] {
+            scenario(rate, panel);
         }
     }
 }

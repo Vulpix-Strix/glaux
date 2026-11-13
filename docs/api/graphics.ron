@@ -4,14 +4,12 @@
         id: "api/graphics/cls",
         kind: Function,
         luau: (name: "cls"),
-        rhai: (name: "cls"),
         params: [(name: "color", ty: Int)],
     ),
     (
         id: "api/graphics/pset",
         kind: Function,
         luau: (name: "pset"),
-        rhai: (name: "pset"),
         params: [
             (name: "x", ty: Number),
             (name: "y", ty: Number),
@@ -22,7 +20,6 @@
         id: "api/graphics/rectfill",
         kind: Function,
         luau: (name: "rectfill"),
-        rhai: (name: "rectfill"),
         params: [
             (name: "x", ty: Number),
             (name: "y", ty: Number),
@@ -35,7 +32,6 @@
         id: "api/graphics/text",
         kind: Function,
         luau: (name: "print"),
-        rhai: (name: "text"),
         params: [
             (name: "value", ty: Any),
             (name: "x", ty: Number),
@@ -47,7 +43,6 @@
         id: "api/graphics/spr",
         kind: Function,
         luau: (name: "spr"),
-        rhai: (name: "spr"),
         params: [
             (name: "tile", ty: Int),
             (name: "x", ty: Number),

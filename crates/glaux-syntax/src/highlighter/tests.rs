@@ -25,9 +25,7 @@ fn kind_of(tags: &[(&str, SyntaxKind)], token: &str) -> Option<SyntaxKind> {
 
 #[test]
 fn every_query_capture_has_a_kind() {
-    for grammar in [Grammar::Luau, Grammar::Rhai] {
-        Highlighter::new(grammar).expect("capture names map to kinds");
-    }
+    Highlighter::new(Grammar::Luau).expect("capture names map to kinds");
 }
 
 #[test]
@@ -116,73 +114,6 @@ fn luau_multibyte_text_keeps_byte_ranges() {
 }
 
 #[test]
-fn rhai_categories() {
-    let text = "const LIMIT = 3;\n\
-                fn area(r) {\n  let x = r * 2.5; // scaled\n  return x;\n}\n\
-                print(\"hi\");";
-    let tags = tagged(Grammar::Rhai, text);
-    assert_eq!(kind_of(&tags, "const"), Some(Keyword));
-    assert_eq!(kind_of(&tags, "fn"), Some(Keyword));
-    assert_eq!(kind_of(&tags, "let"), Some(Keyword));
-    assert_eq!(kind_of(&tags, "return"), Some(Keyword));
-    assert_eq!(kind_of(&tags, "LIMIT"), Some(Constant));
-    assert_eq!(kind_of(&tags, "3"), Some(Number));
-    assert_eq!(kind_of(&tags, "2.5"), Some(Number));
-    assert_eq!(kind_of(&tags, "area"), Some(Function));
-    assert_eq!(kind_of(&tags, "print"), Some(Function));
-    assert_eq!(kind_of(&tags, "r"), Some(Variable));
-    assert_eq!(kind_of(&tags, "\"hi\""), Some(String));
-    assert_eq!(kind_of(&tags, "// scaled"), Some(Comment));
-    assert_eq!(kind_of(&tags, "*"), Some(Operator));
-}
-
-#[test]
-fn rhai_multiline_comment_and_template_string() {
-    let text = "/* a\nb */ let s = `x ${1 + 2} y`;";
-    let tags = tagged(Grammar::Rhai, text);
-    assert_eq!(kind_of(&tags, "/* a\nb */"), Some(Comment));
-    assert_eq!(kind_of(&tags, "`x "), Some(String));
-    assert_eq!(kind_of(&tags, "1"), Some(Number));
-    assert_eq!(kind_of(&tags, " y`"), Some(String));
-}
-
-#[test]
-fn rhai_path_and_method_calls_name_the_function() {
-    let tags = tagged(Grammar::Rhai, "foo::bar(1); a.b(2);");
-    assert_eq!(kind_of(&tags, "bar"), Some(Function));
-    assert_eq!(kind_of(&tags, "foo"), Some(Variable));
-    assert_eq!(kind_of(&tags, "b"), Some(Function));
-    assert_eq!(kind_of(&tags, "a"), Some(Variable));
-}
-
-#[test]
-fn rhai_booleans_and_in_operator() {
-    let tags = tagged(Grammar::Rhai, "let ok = true; for i in 0..3 {}");
-    assert_eq!(kind_of(&tags, "true"), Some(Constant));
-    assert_eq!(kind_of(&tags, "in"), Some(Keyword));
-}
-
-#[test]
-fn rhai_incomplete_code_keeps_earlier_tokens() {
-    let tags = tagged(Grammar::Rhai, "let a = 1;\nfn broken( {\n  let s = \"open");
-    assert_eq!(kind_of(&tags, "let"), Some(Keyword));
-    assert_eq!(kind_of(&tags, "1"), Some(Number));
-}
-
-#[test]
-fn rhai_multibyte_text_keeps_byte_ranges() {
-    let text = "// héllo ✓\nlet ñ = \"日本語\"; 1";
-    let highlighter = highlighter(Grammar::Rhai, text);
-    for span in highlighter.spans(0..text.len()) {
-        assert!(text.is_char_boundary(span.range.start));
-        assert!(text.is_char_boundary(span.range.end));
-    }
-    let tags = tagged(Grammar::Rhai, text);
-    assert_eq!(kind_of(&tags, "// héllo ✓"), Some(Comment));
-    assert_eq!(kind_of(&tags, "\"日本語\""), Some(String));
-}
-
-#[test]
 fn window_limits_the_spans_without_changing_them() {
     let text = "local a = 1\nlocal b = 2\nlocal c = 3\n";
     let highlighter = highlighter(Grammar::Luau, text);
@@ -260,17 +191,6 @@ proptest! {
             prop_assert_eq!(incremental.spans(0..text.len()), fresh(Grammar::Luau, text));
         }
     }
-
-    #[test]
-    fn rhai_updates_match_a_fresh_parse(texts in source_strategy()) {
-        let mut incremental = Highlighter::new(Grammar::Rhai).unwrap();
-        let order: Vec<&std::string::String> =
-            texts.iter().chain(texts.iter().rev()).collect();
-        for text in order {
-            incremental.update(text);
-            prop_assert_eq!(incremental.spans(0..text.len()), fresh(Grammar::Rhai, text));
-        }
-    }
 }
 
 #[test]
@@ -278,9 +198,6 @@ fn keywords_inside_comments_and_strings_are_not_highlighted_as_keywords() {
     let tags = tagged(Grammar::Luau, "-- local if end\nx = \"local end\"");
     assert_eq!(kind_of(&tags, "-- local if end"), Some(Comment));
     assert_eq!(kind_of(&tags, "\"local end\""), Some(String));
-    let tags = tagged(Grammar::Rhai, "// let fn if\nlet s = \"let fn\";");
-    assert_eq!(kind_of(&tags, "// let fn if"), Some(Comment));
-    assert_eq!(kind_of(&tags, "\"let fn\""), Some(String));
 }
 
 fn large_document(grammar: Grammar, functions: usize) -> std::string::String {
@@ -288,9 +205,6 @@ fn large_document(grammar: Grammar, functions: usize) -> std::string::String {
         .map(|i| match grammar {
             Grammar::Luau => format!(
                 "local function f{i}(a: number, b: Vec2): number\n  -- step {i}\n  return a * {i} + b.x .. \"ü\"\nend\n"
-            ),
-            Grammar::Rhai => format!(
-                "fn f{i}(a, b) {{\n  // step {i}\n  let s = `v ${{a}}`;\n  return a * {i} + b.x;\n}}\n"
             ),
         })
         .collect()
@@ -306,26 +220,25 @@ fn comment_end(text: &str) -> usize {
 
 #[test]
 fn an_edit_in_a_large_document_reparses_only_a_small_region() {
-    for grammar in [Grammar::Luau, Grammar::Rhai] {
-        let text = large_document(grammar, 2_000);
-        let mut highlighter = highlighter(grammar, &text);
-        let mut before = highlighter.tree.clone().expect("parsed");
+    let grammar = Grammar::Luau;
+    let text = large_document(grammar, 2_000);
+    let mut highlighter = highlighter(grammar, &text);
+    let mut before = highlighter.tree.clone().expect("parsed");
 
-        let mut edited = text.clone();
-        edited.insert(comment_end(&text), '9');
-        before.edit(&edit::between(&text, &edited));
-        highlighter.update(&edited);
+    let mut edited = text.clone();
+    edited.insert(comment_end(&text), '9');
+    before.edit(&edit::between(&text, &edited));
+    highlighter.update(&edited);
 
-        let after = highlighter.tree.as_ref().expect("parsed");
-        let changed: usize = after
-            .changed_ranges(&before)
-            .map(|range| range.end_byte - range.start_byte)
-            .sum();
-        assert!(
-            changed < text.len() / 100,
-            "{grammar:?} changed {changed} bytes"
-        );
-    }
+    let after = highlighter.tree.as_ref().expect("parsed");
+    let changed: usize = after
+        .changed_ranges(&before)
+        .map(|range| range.end_byte - range.start_byte)
+        .sum();
+    assert!(
+        changed < text.len() / 100,
+        "{grammar:?} changed {changed} bytes"
+    );
 }
 
 /// Run with `cargo test -p glaux-syntax --release -- --ignored --nocapture timings`.
@@ -333,12 +246,7 @@ fn an_edit_in_a_large_document_reparses_only_a_small_region() {
 #[ignore = "measures time; run by hand"]
 fn timings() {
     use std::time::Instant;
-    for (grammar, functions) in [
-        (Grammar::Luau, 1_000),
-        (Grammar::Luau, 40_000),
-        (Grammar::Rhai, 1_000),
-        (Grammar::Rhai, 40_000),
-    ] {
+    for (grammar, functions) in [(Grammar::Luau, 1_000), (Grammar::Luau, 40_000)] {
         let text = large_document(grammar, functions);
         let mut highlighter = Highlighter::new(grammar).unwrap();
 

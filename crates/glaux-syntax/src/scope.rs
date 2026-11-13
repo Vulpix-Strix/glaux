@@ -53,7 +53,6 @@ impl Highlighter {
             grammar: self.grammar(),
             source,
             offset,
-            functions_only: false,
             seen: HashSet::new(),
             found: Vec::new(),
         };
@@ -88,8 +87,7 @@ impl Highlighter {
 
     /// The functions the host can call by name.
     ///
-    /// In Luau these are the global functions, so a `local function` does not count. In
-    /// Rhai they are the top-level functions that are not `private`.
+    /// In Luau these are the global functions, so a `local function` does not count.
     pub fn global_functions(&self) -> Vec<String> {
         let Some((root, source)) = self.parsed() else {
             return Vec::new();
@@ -106,48 +104,9 @@ impl Highlighter {
                         names.push(text(source, name).to_owned());
                     }
                 }
-                Grammar::Rhai => {
-                    let core = statement_core(child);
-                    if core.kind() == "ExprFn"
-                        && core.child(0).is_none_or(|first| first.kind() != "private")
-                        && let Some(name) = rhai_fn_name(core)
-                    {
-                        names.push(text(source, name).to_owned());
-                    }
-                }
             }
         }
         names
-    }
-}
-
-impl Highlighter {
-    /// Every top-level function called `name`, in source order.
-    ///
-    /// Rhai allows several functions with one name when their parameter counts differ,
-    /// and [`Highlighter::definitions_at`] keeps only one of them. Luau has no overloads,
-    /// so the result is always empty there.
-    pub fn overloads(&self, name: &str) -> Vec<Definition> {
-        let Some((root, source)) = self.parsed() else {
-            return Vec::new();
-        };
-        if self.grammar() != Grammar::Rhai {
-            return Vec::new();
-        }
-        fields(root)
-            .into_iter()
-            .filter_map(|(child, _)| {
-                let core = statement_core(child);
-                let declared = rhai_fn_name(core).filter(|_| core.kind() == "ExprFn")?;
-                (text(source, declared) == name).then(|| Definition {
-                    name: name.to_owned(),
-                    kind: DefinitionKind::Function,
-                    declared: declared.byte_range(),
-                    visible_from: 0,
-                    params: rhai_params_of(core, source),
-                })
-            })
-            .collect()
     }
 }
 
@@ -155,8 +114,6 @@ struct Scopes<'a> {
     grammar: Grammar,
     source: &'a str,
     offset: usize,
-    /// Set once the walk leaves a Rhai function, which cannot see the locals around it.
-    functions_only: bool,
     seen: HashSet<String>,
     found: Vec<Definition>,
 }
@@ -165,7 +122,6 @@ impl Scopes<'_> {
     fn visit(&mut self, node: Node) {
         match self.grammar {
             Grammar::Luau => self.visit_luau(node),
-            Grammar::Rhai => self.visit_rhai(node),
         }
     }
 
@@ -287,85 +243,6 @@ impl Scopes<'_> {
         self.extend_later_first(declared);
     }
 
-    fn visit_rhai(&mut self, node: Node) {
-        match node.kind() {
-            "Rhai" | "ExprBlock" | "ERROR" => self.rhai_block(node),
-            "ExprFn" => {
-                if let Some(list) = child_of_kind(node, "ParamList") {
-                    self.rhai_params(list);
-                }
-                self.functions_only = true;
-            }
-            "ExprClosure" => {
-                if let Some(list) = child_of_kind(node, "ClosureParamList") {
-                    self.rhai_params(list);
-                }
-            }
-            "ExprFor" => {
-                let after = child_of_kind(node, "ExprBlock").map_or(usize::MAX, |b| b.start_byte());
-                if let Some(pattern) = child_of_kind(node, "Pat") {
-                    for name in descendants_of_kind(pattern, "ident", usize::MAX) {
-                        self.push(name, DefinitionKind::Variable, after, Vec::new());
-                    }
-                }
-            }
-            "ExprTry" => {
-                if let Some(list) = child_of_kind(node, "ParamList") {
-                    self.rhai_params(list);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn rhai_params(&mut self, list: Node) {
-        for param in named(list).filter(|n| n.kind() == "Param") {
-            if let Some(name) = child_of_kind(param, "ident") {
-                self.push(name, DefinitionKind::Parameter, list.end_byte(), Vec::new());
-            }
-        }
-    }
-
-    fn rhai_block(&mut self, block: Node) {
-        let top = block.kind() == "Rhai";
-        let mut declared = Vec::new();
-        for (child, _) in fields(block) {
-            let core = statement_core(child);
-            match core.kind() {
-                "ExprDeclareVar" => {
-                    if let Some(name) = core.child_by_field_name("name") {
-                        declared.push(self.definition(
-                            name,
-                            DefinitionKind::Variable,
-                            initializer_end(self.source, core.end_byte()),
-                            Vec::new(),
-                        ));
-                    }
-                }
-                "ExprImport" => {
-                    if let Some(alias) = child_of_kind(core, "ident") {
-                        declared.push(self.definition(
-                            alias,
-                            DefinitionKind::Variable,
-                            core.end_byte(),
-                            Vec::new(),
-                        ));
-                    }
-                }
-                // Rhai functions exist only at the top level, and each can call the
-                // others whatever their order.
-                "ExprFn" if top => {
-                    if let Some(name) = rhai_fn_name(core) {
-                        let params = rhai_params_of(core, self.source);
-                        declared.push(self.definition(name, DefinitionKind::Function, 0, params));
-                    }
-                }
-                _ => {}
-            }
-        }
-        self.extend_later_first(declared);
-    }
-
     fn definition(
         &self,
         name: Node,
@@ -388,7 +265,7 @@ impl Scopes<'_> {
     }
 
     fn push_implicit(&mut self, name: &str, anchor: Node, kind: DefinitionKind) {
-        if !self.seen.contains(name) && anchor.end_byte() < self.offset && !self.functions_only {
+        if !self.seen.contains(name) && anchor.end_byte() < self.offset {
             self.seen.insert(name.to_owned());
             self.found.push(Definition {
                 name: name.to_owned(),
@@ -412,8 +289,7 @@ impl Scopes<'_> {
         let touches =
             definition.declared.start <= self.offset && self.offset <= definition.declared.end;
         let in_effect = definition.visible_from < self.offset;
-        let reachable = !self.functions_only || definition.kind == DefinitionKind::Function;
-        if touches || !in_effect || !reachable || self.seen.contains(&definition.name) {
+        if touches || !in_effect || self.seen.contains(&definition.name) {
             return;
         }
         self.seen.insert(definition.name.clone());
@@ -480,14 +356,12 @@ fn is_closed(node: Node) -> bool {
 fn is_template_code(grammar: Grammar, node: Node) -> bool {
     match grammar {
         Grammar::Luau => node.kind() == "interpolation",
-        Grammar::Rhai => node.kind() == "str_template_expr",
     }
 }
 
 fn declares_name(grammar: Grammar, node: Node, word: &Range<usize>) -> bool {
     let kind = match grammar {
         Grammar::Luau => "identifier",
-        Grammar::Rhai => "ident",
     };
     if node.kind() != kind || node.byte_range() != *word {
         return false;
@@ -510,35 +384,8 @@ fn declares_name(grammar: Grammar, node: Node, word: &Range<usize>) -> bool {
         (Grammar::Luau, "parameter") => parent.named_child(0) == Some(node),
         (Grammar::Luau, "for_numeric_clause") => named_as("name"),
         (Grammar::Luau, "function_declaration") => named_as("name"),
-        (Grammar::Rhai, "ExprDeclareVar") => named_as("name"),
-        (Grammar::Rhai, "FnDeclName" | "Param" | "PatIdent" | "PatTuple" | "ExprImport") => true,
         _ => false,
     }
-}
-
-/// Unwraps the `Stmt`, `Item` and `Expr` nodes Rhai puts around a statement.
-fn statement_core(mut node: Node) -> Node {
-    while matches!(node.kind(), "Stmt" | "Item" | "Expr")
-        && let Some(inner) = node.named_child(0)
-    {
-        node = inner;
-    }
-    node
-}
-
-fn rhai_fn_name(function: Node) -> Option<Node> {
-    child_of_kind(function, "FnDeclName").and_then(|name| child_of_kind(name, "ident"))
-}
-
-fn rhai_params_of(function: Node, source: &str) -> Vec<String> {
-    child_of_kind(function, "ParamList")
-        .map(|list| {
-            named(list)
-                .filter_map(|param| child_of_kind(param, "ident"))
-                .map(|name| text(source, name).to_owned())
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn luau_params(function: Node, source: &str) -> Vec<String> {
@@ -563,10 +410,6 @@ fn named(node: Node) -> impl Iterator<Item = Node> {
     node.named_children(&mut cursor)
         .collect::<Vec<_>>()
         .into_iter()
-}
-
-fn child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>> {
-    named(node).find(|child| child.kind() == kind)
 }
 
 /// The descendants of `kind` within `depth` levels below `node`.

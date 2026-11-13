@@ -25,10 +25,6 @@ The block may not run past the right or bottom edge of the grid. Flipping revers
 
 Leave optional arguments out or pass `nil` to take their defaults.
 
-### Rhai
-
-Leave optional arguments out or pass `()` to take their defaults. A call takes from 3 to 8 arguments.
-
 ## Examples
 
 ### Luau
@@ -36,13 +32,6 @@ Leave optional arguments out or pass `()` to take their defaults. A call takes f
 ```luau
 spr(1, 40, 40)
 spr(16, 80, 40, 2, 2, true)
-```
-
-### Rhai
-
-```rhai
-spr(1, 40, 40);
-spr(16, 80, 40, 2, 2, true);
 ```
 
 ## See also

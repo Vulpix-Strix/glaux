@@ -24,12 +24,6 @@ Drawing functions may only be called during `draw()`. Everything is clipped to t
 rectfill(10, 10, 100, 4, 3)
 ```
 
-### Rhai
-
-```rhai
-rectfill(10, 10, 100, 4, 3);
-```
-
 ## See also
 
 - [cls](glaux://api/graphics/cls)

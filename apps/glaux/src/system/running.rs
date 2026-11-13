@@ -61,9 +61,7 @@ pub enum RunOrigin {
 #[derive(Debug)]
 enum ScriptRuntime {
     Luau(glaux_luau::Runtime),
-    // Boxed: Rhai's engine is several times the size of a Luau handle.
-    Rhai(Box<glaux_rhai::Runtime>),
-    /// Either of them on a thread of its own, under the debugger.
+    /// A runtime on a thread of its own, under the debugger.
     Debugged(Box<DebugRuntime>),
 }
 
@@ -71,8 +69,6 @@ impl ScriptRuntime {
     /// Starts `source` with the default budget of `language`'s runtime.
     ///
     /// Luau lends the hardware in `home` to the entry script and `boot()`.
-    /// Rhai has no API that reaches the hardware, so it never takes it and
-    /// `home` still holds it when the start returns, as it does for Luau.
     fn start(
         language: Language,
         entry: &str,
@@ -93,14 +89,6 @@ impl ScriptRuntime {
                 home,
             )
             .map(Self::Luau),
-            Language::Rhai => glaux_rhai::Runtime::start(
-                entry,
-                source,
-                modules,
-                glaux_rhai::Budget::default(),
-                font,
-            )
-            .map(|runtime| Self::Rhai(Box::new(runtime))),
         }
     }
 
@@ -132,16 +120,6 @@ impl ScriptRuntime {
                 breakpoints,
             )
             .map(Self::Luau),
-            Language::Rhai => glaux_rhai::Runtime::start_debug(
-                entry,
-                source,
-                modules,
-                glaux_rhai::Budget::default(),
-                font,
-                port,
-                breakpoints,
-            )
-            .map(|runtime| Self::Rhai(Box::new(runtime))),
         }
     }
 
@@ -155,7 +133,6 @@ impl ScriptRuntime {
     ) -> Result<(), RuntimeError> {
         match self {
             Self::Luau(runtime) => runtime.run_tick(input, home),
-            Self::Rhai(runtime) => runtime.run_tick(input, home),
             Self::Debugged(_) => {
                 unreachable!("a debugged runtime runs its phases through `advance`")
             }
@@ -166,7 +143,6 @@ impl ScriptRuntime {
     fn run_draw(&mut self, home: &mut Option<Box<CartridgeHardware>>) -> Result<(), RuntimeError> {
         match self {
             Self::Luau(runtime) => runtime.run_draw(home),
-            Self::Rhai(runtime) => runtime.run_draw(home),
             Self::Debugged(_) => {
                 unreachable!("a debugged runtime runs its phases through `advance`")
             }
@@ -176,7 +152,6 @@ impl ScriptRuntime {
     fn take_output(&mut self) -> Vec<LogEntry> {
         match self {
             Self::Luau(runtime) => runtime.take_output(),
-            Self::Rhai(runtime) => runtime.take_output(),
             Self::Debugged(runtime) => runtime.take_output(),
         }
     }
@@ -184,7 +159,6 @@ impl ScriptRuntime {
     fn take_dropped(&mut self) -> u32 {
         match self {
             Self::Luau(runtime) => runtime.take_dropped(),
-            Self::Rhai(runtime) => runtime.take_dropped(),
             Self::Debugged(runtime) => runtime.take_dropped(),
         }
     }
@@ -192,7 +166,6 @@ impl ScriptRuntime {
     fn audio_mut(&mut self) -> RefMut<'_, AudioState> {
         match self {
             Self::Luau(runtime) => runtime.audio_mut(),
-            Self::Rhai(runtime) => runtime.audio_mut(),
             Self::Debugged(runtime) => runtime.audio_mut(),
         }
     }
@@ -229,7 +202,6 @@ impl RunningCartridge {
     /// `boot()`, with `defaults` standing in for video assets the cartridge
     /// does not supply. The assets in `overrides` replace what the
     /// cartridge's files hold, so a run can show edits not written back.
-    /// A Luau cartridge also reads its maps, and a Rhai one never does.
     /// `font` is the System ROM font that `print` draws with. On failure the
     /// cartridge is handed back, still loaded.
     pub fn start<'a>(
@@ -328,7 +300,7 @@ impl RunningCartridge {
     fn debugged(&mut self) -> Option<&mut DebugRuntime> {
         match &mut self.runtime {
             ScriptRuntime::Debugged(runtime) => Some(runtime),
-            ScriptRuntime::Luau(_) | ScriptRuntime::Rhai(_) => None,
+            ScriptRuntime::Luau(_) => None,
         }
     }
 
@@ -587,14 +559,11 @@ fn prepare(
             return Err(failed(cartridge, StartError::Video(err)));
         }
     };
-    // Rhai has no map functions, so its maps are never read and a broken one
-    // cannot stop the cartridge from starting.
     let maps = match cartridge.manifest().runtime.language {
         Language::Luau => match maps::load(&cartridge, overrides.maps) {
             Ok(maps) => maps,
             Err(error) => return Err(failed(cartridge, error)),
         },
-        Language::Rhai => Arc::default(),
     };
     Ok(Prepared {
         cartridge,

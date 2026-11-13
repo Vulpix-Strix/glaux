@@ -42,18 +42,6 @@ fn opens_the_file_text_exactly_as_stored() {
 }
 
 #[test]
-fn language_follows_each_file_not_the_manifest() {
-    let fixture = Fixture::new("code-doc-lang");
-    let (cart, _) = cartridge(&fixture, &[("code/hud.rhai", b"let a = 1;")]);
-    let mut docs = CodeDocuments::default();
-
-    let hud = docs.open(&cart, &path("code/hud.rhai")).unwrap();
-    let main = docs.open(&cart, &path("code/main.luau")).unwrap();
-    assert_eq!(docs.get(hud).unwrap().language(), Language::Rhai);
-    assert_eq!(docs.get(main).unwrap().language(), Language::Luau);
-}
-
-#[test]
 fn each_file_is_open_at_most_once() {
     let fixture = Fixture::new("code-doc-identity");
     let (cart, dir) = cartridge(&fixture, &[("code/a.luau", b"a"), ("code/b.luau", b"b")]);

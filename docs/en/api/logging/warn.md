@@ -22,12 +22,6 @@ Accepts any number of values.
 log.warn("started")
 ```
 
-### Rhai
-
-```rhai
-log::warn("started");
-```
-
 ## See also
 
 - [log](glaux://api/logging/index)

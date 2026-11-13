@@ -15,12 +15,6 @@ const ENTRY: &str = "code/main.luau";
 /// Code a new Luau cartridge starts with.
 pub const STARTER: &str = include_str!("../templates/starter/main.luau");
 
-/// Entry script of every new Rhai cartridge, from the cartridge root.
-const RHAI_ENTRY: &str = "code/main.rhai";
-
-/// Code a new Rhai cartridge starts with: the Luau starter's scene.
-pub const RHAI_STARTER: &str = include_str!("../templates/starter/main.rhai");
-
 /// The owl sprite every new cartridge starts with: native tiles, tile
 /// attributes and object palettes, imported from the Glaux logo. Its colors
 /// all come from the system palette, so no `palette.bin` is needed.
@@ -66,7 +60,7 @@ pub enum CreateError {
     InvalidVersion(String),
     #[error("The author must be 1-{MAX_TEXT_LEN} characters, without control characters")]
     InvalidAuthor,
-    #[error("Unsupported language '{0}': use luau or rhai")]
+    #[error("Unsupported language '{0}': use luau")]
     UnsupportedLanguage(String),
     /// Holds the virtual path that is already taken.
     #[error("{0} already exists")]
@@ -161,7 +155,6 @@ impl NewCartridge {
     fn entry(&self) -> (&'static str, &'static str) {
         match self.language {
             Language::Luau => (ENTRY, STARTER),
-            Language::Rhai => (RHAI_ENTRY, RHAI_STARTER),
         }
     }
 

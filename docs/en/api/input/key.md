@@ -22,14 +22,6 @@ if key(Key.A) then
 end
 ```
 
-### Rhai
-
-```rhai
-if key(Key::A) {
-    jump();
-}
-```
-
 ## See also
 
 - [keyp](glaux://api/input/keyp)

@@ -66,7 +66,6 @@ pub fn locate(
 fn member_target(path: SourcePath, text: &str, member: &str) -> Definition {
     let grammar = match path.language() {
         Language::Luau => Grammar::Luau,
-        Language::Rhai => Grammar::Rhai,
     };
     let Ok(mut syntax) = Highlighter::new(grammar) else {
         return Definition::Unresolved;

@@ -12,8 +12,6 @@ pub use blocks::{AlertKind, Block, BlockKind, Inline, plain_text};
 
 /// The heading text that opens a Luau-only subsection.
 const LUAU_HEADING: &str = "Luau";
-/// The heading text that opens a Rhai-only subsection.
-const RHAI_HEADING: &str = "Rhai";
 /// Language-specific headings must be at least this deep, so `# Luau` can
 /// still be an ordinary page title.
 const MIN_LANGUAGE_HEADING_LEVEL: u8 = 3;
@@ -31,7 +29,7 @@ pub enum Scope {
 
 /// A heading and the lines it covers.
 ///
-/// A subsection headed exactly `Luau` or `Rhai` at level 3 or deeper is
+/// A subsection headed exactly `Luau` at level 3 or deeper is
 /// specific to that language, and so is everything below it. Every other
 /// section is [`Scope::Common`]. A plain Markdown viewer shows all of it,
 /// so pages stay readable without any special support.
@@ -300,7 +298,6 @@ fn build_outline(headings: &[(u8, String, usize)], total_lines: usize) -> Vec<Se
         let own = if *level >= MIN_LANGUAGE_HEADING_LEVEL {
             match title.as_str() {
                 LUAU_HEADING => Some(Scope::Language(ScriptLanguage::Luau)),
-                RHAI_HEADING => Some(Scope::Language(ScriptLanguage::Rhai)),
                 _ => None,
             }
         } else {
@@ -379,7 +376,7 @@ mod tests {
     #[test]
     fn language_subsections_scope_everything_below_them() {
         let page = page(
-            "# T\n\nIntro.\n\n## Notes\n\nCommon.\n\n### Luau\n\nLuau only.\n\n#### Detail\n\n### Rhai\n\nRhai only.\n\n## After\n",
+            "# T\n\nIntro.\n\n## Notes\n\nCommon.\n\n### Luau\n\nLuau only.\n\n#### Detail\n\n### Other\n\nCommon again.\n\n## After\n",
         );
         let scopes: Vec<_> = page
             .outline()
@@ -393,7 +390,7 @@ mod tests {
                 ("Notes", Scope::Common),
                 ("Luau", Scope::Language(ScriptLanguage::Luau)),
                 ("Detail", Scope::Language(ScriptLanguage::Luau)),
-                ("Rhai", Scope::Language(ScriptLanguage::Rhai)),
+                ("Other", Scope::Common),
                 ("After", Scope::Common),
             ]
         );
@@ -401,7 +398,7 @@ mod tests {
 
     #[test]
     fn shallow_headings_named_after_a_language_stay_common() {
-        let page = page("# Luau\n\n## Rhai\n");
+        let page = page("# Luau\n\n## Luau\n");
         assert!(page.outline().iter().all(|s| s.scope == Scope::Common));
     }
 

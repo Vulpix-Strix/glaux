@@ -24,13 +24,6 @@ audio.tone(0, 440, 12, "square")
 audio.gate(0, true)
 ```
 
-### Rhai
-
-```rhai
-audio::tone(0, 440, 12, "square");
-audio::gate(0, true);
-```
-
 ## See also
 
 - [env](glaux://api/audio/env)

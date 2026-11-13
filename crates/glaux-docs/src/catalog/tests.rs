@@ -16,7 +16,6 @@ const GRAPHICS: &str = r#"#![enable(implicit_some)]
         id: "api/graphics/pset",
         kind: Function,
         luau: (name: "pset"),
-        rhai: (name: "pset"),
         params: [
             (name: "x", ty: Number),
             (name: "y", ty: Number),
@@ -27,7 +26,6 @@ const GRAPHICS: &str = r#"#![enable(implicit_some)]
         id: "api/graphics/text",
         kind: Function,
         luau: (name: "print"),
-        rhai: (name: "text"),
         params: [(name: "value", ty: Any), (name: "x", ty: Number, optional: true)],
     ),
 ]
@@ -35,12 +33,11 @@ const GRAPHICS: &str = r#"#![enable(implicit_some)]
 
 const AUDIO: &str = r#"#![enable(implicit_some)]
 [
-    (id: "api/audio/index", kind: Namespace, luau: (name: "audio"), rhai: (name: "audio")),
+    (id: "api/audio/index", kind: Namespace, luau: (name: "audio")),
     (
         id: "api/audio/tone",
         kind: Function,
         luau: (path: ["audio"], name: "tone"),
-        rhai: (path: ["audio"], name: "tone"),
     ),
 ]
 "#;
@@ -69,7 +66,7 @@ fn merging_does_not_depend_on_file_order() {
 }
 
 #[test]
-fn lookup_uses_each_languages_spelling() {
+fn lookup_finds_an_entry_by_its_binding() {
     let (catalog, _) = merge(&[("api/graphics.ron", GRAPHICS), ("api/audio.ron", AUDIO)]);
     let text = DocId::parse("api/graphics/text").unwrap();
     assert_eq!(
@@ -78,19 +75,13 @@ fn lookup_uses_each_languages_spelling() {
             .map(|e| e.id()),
         Some(&text)
     );
-    assert_eq!(
-        catalog
-            .lookup(ScriptLanguage::Rhai, &[], "text")
-            .map(|e| e.id()),
-        Some(&text)
-    );
-    assert_eq!(catalog.lookup(ScriptLanguage::Rhai, &[], "print"), None);
+    assert_eq!(catalog.lookup(ScriptLanguage::Luau, &[], "text"), None);
     assert!(
         catalog
-            .lookup(ScriptLanguage::Rhai, &["audio"], "tone")
+            .lookup(ScriptLanguage::Luau, &["audio"], "tone")
             .is_some()
     );
-    assert_eq!(catalog.lookup(ScriptLanguage::Rhai, &[], "tone"), None);
+    assert_eq!(catalog.lookup(ScriptLanguage::Luau, &[], "tone"), None);
 }
 
 #[test]
@@ -103,17 +94,6 @@ fn qualified_names_use_the_languages_separator() {
         varargs: None,
     };
     assert_eq!(ScriptLanguage::Luau.qualified_name(&binding), "audio.tone");
-    assert_eq!(ScriptLanguage::Rhai.qualified_name(&binding), "audio::tone");
-}
-
-#[test]
-fn entries_for_skips_entries_a_language_lacks() {
-    let source = r#"#![enable(implicit_some)]
-[(id: "api/logging/debug", kind: Function, luau: (path: ["log"], name: "debug"))]"#;
-    let (catalog, diagnostics) = merge(&[("api/logging.ron", source)]);
-    assert_eq!(diagnostics, []);
-    assert_eq!(catalog.entries_for(ScriptLanguage::Luau).count(), 1);
-    assert_eq!(catalog.entries_for(ScriptLanguage::Rhai).count(), 0);
 }
 
 #[test]
@@ -122,8 +102,7 @@ fn required_params_and_return_overrides() {
 [(
     id: "api/time/frame",
     kind: Function,
-    luau: (name: "frame"),
-    rhai: (name: "frame", returns: Int),
+    luau: (name: "frame", returns: Int),
     returns: Number,
     params: [(name: "a", ty: Int), (name: "b", ty: Int, optional: true)],
 )]"#;
@@ -131,8 +110,7 @@ fn required_params_and_return_overrides() {
     assert_eq!(diagnostics, []);
     let entry = &catalog.entries()[0];
     assert_eq!(entry.required_params(ScriptLanguage::Luau), 1);
-    assert_eq!(entry.returns(ScriptLanguage::Luau), Some(ValueType::Number));
-    assert_eq!(entry.returns(ScriptLanguage::Rhai), Some(ValueType::Int));
+    assert_eq!(entry.returns(ScriptLanguage::Luau), Some(ValueType::Int));
 }
 
 fn single(category: &str, entry: &str) -> Vec<&'static str> {
@@ -143,7 +121,7 @@ fn single(category: &str, entry: &str) -> Vec<&'static str> {
 #[test]
 fn rejects_duplicate_ids_across_files() {
     let a = "#![enable(implicit_some)]\n[(id: \"api/a/x\", kind: Function, luau: (name: \"x\"))]";
-    let b = "#![enable(implicit_some)]\n[(id: \"api/a/x\", kind: Function, rhai: (name: \"y\"))]";
+    let b = "#![enable(implicit_some)]\n[(id: \"api/a/x\", kind: Function, luau: (name: \"y\"))]";
     let (catalog, diagnostics) = merge(&[("api/a.ron", a), ("api/b.ron", b)]);
     // `b.ron` also has the wrong category for its id, which is reported first.
     assert_eq!(codes(&diagnostics), ["catalog-category"]);
@@ -174,7 +152,8 @@ fn rejects_ids_that_are_not_api_category_name() {
 
 #[test]
 fn rejects_a_binding_claimed_twice_even_across_files() {
-    let a = "#![enable(implicit_some)]\n[(id: \"api/a/one\", kind: Function, luau: (name: \"same\"), rhai: (name: \"one\"))]";
+    let a =
+        "#![enable(implicit_some)]\n[(id: \"api/a/one\", kind: Function, luau: (name: \"same\"))]";
     let b =
         "#![enable(implicit_some)]\n[(id: \"api/b/two\", kind: Function, luau: (name: \"same\"))]";
     let (catalog, diagnostics) = merge(&[("api/a.ron", a), ("api/b.ron", b)]);
@@ -204,13 +183,12 @@ fn rejects_invalid_definitions() {
 }
 
 #[test]
-fn a_binding_overrides_params_and_adds_varargs_for_its_language_only() {
+fn a_binding_overrides_params_and_adds_varargs() {
     let source = r#"#![enable(implicit_some)]
 [(
     id: "api/logging/info",
     kind: Function,
     luau: (path: ["log"], name: "info", params: [], varargs: Any),
-    rhai: (path: ["log"], name: "info"),
     params: [(name: "value", ty: Any)],
 )]"#;
     let (catalog, diagnostics) = merge(&[("api/logging.ron", source)]);
@@ -219,9 +197,14 @@ fn a_binding_overrides_params_and_adds_varargs_for_its_language_only() {
     assert_eq!(entry.params_for(ScriptLanguage::Luau), []);
     assert_eq!(entry.required_params(ScriptLanguage::Luau), 0);
     assert_eq!(entry.varargs(ScriptLanguage::Luau), Some(ValueType::Any));
-    assert_eq!(entry.params_for(ScriptLanguage::Rhai).len(), 1);
-    assert_eq!(entry.required_params(ScriptLanguage::Rhai), 1);
-    assert_eq!(entry.varargs(ScriptLanguage::Rhai), None);
+    assert_eq!(
+        entry.params(),
+        [Param {
+            name: "value".into(),
+            ty: ValueType::Any,
+            optional: false
+        }]
+    );
 }
 
 #[test]
@@ -239,14 +222,12 @@ fn varargs_follow_fixed_parameters_without_making_them_optional() {
 #[test]
 fn rejects_invalid_callbacks() {
     let cases = [
-        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"))"#,
-        r#"(id: "api/a/x", kind: Callback, rhai: (name: "x"))"#,
-        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "y"))"#,
-        r#"(id: "api/a/x", kind: Callback, luau: (path: ["a"], name: "x"), rhai: (name: "x"))"#,
-        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "x", returns: Int))"#,
-        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "x"), params: [(name: "p", ty: Int)])"#,
-        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "x"), returns: Int)"#,
-        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), rhai: (name: "x"), source: "glaux_input::Key")"#,
+        r#"(id: "api/a/x", kind: Callback)"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (path: ["a"], name: "x"))"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x", returns: Int))"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), params: [(name: "p", ty: Int)])"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), returns: Int)"#,
+        r#"(id: "api/a/x", kind: Callback, luau: (name: "x"), source: "glaux_input::Key")"#,
     ];
     for case in cases {
         assert_eq!(single("a", case), ["catalog-definition"], "{case}");
@@ -254,16 +235,15 @@ fn rejects_invalid_callbacks() {
 }
 
 #[test]
-fn a_callback_is_a_global_with_one_name_and_no_signature() {
+fn a_callback_is_a_global_with_no_signature() {
     let source = r#"#![enable(implicit_some)]
-[(id: "api/lifecycle/tick", kind: Callback, luau: (name: "tick"), rhai: (name: "tick"))]"#;
+[(id: "api/lifecycle/tick", kind: Callback, luau: (name: "tick"))]"#;
     let (catalog, diagnostics) = merge(&[("api/lifecycle.ron", source)]);
     assert_eq!(diagnostics, []);
-    let entry = catalog.lookup(ScriptLanguage::Rhai, &[], "tick").unwrap();
+    let entry = catalog.lookup(ScriptLanguage::Luau, &[], "tick").unwrap();
     assert_eq!(entry.kind(), Kind::Callback);
     assert_eq!(entry.params(), []);
     assert_eq!(entry.returns(ScriptLanguage::Luau), None);
-    assert!(catalog.lookup(ScriptLanguage::Luau, &[], "tick").is_some());
 }
 
 #[test]

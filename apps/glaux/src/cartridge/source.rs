@@ -26,8 +26,8 @@ pub enum SourcePathError {
     /// Not a portable path relative to the cartridge root.
     #[error("Invalid path: {0}")]
     Invalid(String),
-    /// Not a `.luau` or `.rhai` file.
-    #[error("Not a Luau or Rhai file: {0}")]
+    /// Not a `.luau` file.
+    #[error("Not a Luau file: {0}")]
     UnsupportedExtension(String),
 }
 
@@ -35,7 +35,7 @@ impl SourcePath {
     /// Validates `path` as relative to the cartridge root under the same
     /// rules as the manifest's entry: `/`-separated plain names, no
     /// absolute paths, `.`, `..`, `\` or `:`. The file name must be a
-    /// non-empty stem followed by `.luau` or `.rhai`, in lowercase.
+    /// non-empty stem followed by `.luau`, in lowercase.
     pub fn parse(path: &str) -> Result<Self, SourcePathError> {
         if !is_portable_path(path) {
             return Err(SourcePathError::Invalid(path.to_owned()));
@@ -230,7 +230,7 @@ impl LoadedCartridge {
         Ok(())
     }
 
-    /// Every `.luau` and `.rhai` file in the cartridge, in any directory.
+    /// Every `.luau` file in the cartridge, in any directory.
     ///
     /// Searched as [`CartridgeFs::walk_files`] searches, within depth and
     /// file limits. Whatever was not searched is reported in

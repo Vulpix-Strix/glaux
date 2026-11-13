@@ -142,7 +142,7 @@ fn labels_are_file_names_unless_two_tabs_share_one() {
         "code/main.luau",
         "code/enemies/util.luau",
         "code/ui/util.luau",
-        "hud.rhai",
+        "hud.luau",
     ]);
     let refs: Vec<&SourcePath> = paths.iter().collect();
     assert_eq!(
@@ -151,7 +151,7 @@ fn labels_are_file_names_unless_two_tabs_share_one() {
             "main.luau",
             "..mies/util.luau",
             "..e/ui/util.luau",
-            "hud.rhai"
+            "hud.luau"
         ]
     );
 }

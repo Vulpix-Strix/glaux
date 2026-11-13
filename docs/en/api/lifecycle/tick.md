@@ -16,12 +16,6 @@ If `tick()` fails, `draw()` is skipped for that tick and the cartridge stops. Ev
 
 `tick` must be a global function. A `local function tick` is not found and is skipped without a warning. Glaux looks the function up again on every tick, so a script may replace it while running.
 
-### Rhai
-
-`tick` must be a public function without parameters, and it is found once, when the cartridge starts. A `private fn tick` or `fn tick(x)` is an error on the first tick. A later `tick` cannot be added.
-
-`this` is the same object map that `boot()` and `draw()` see. Call helper functions as `this.helper()` when they need it. A plain `helper()` call does not bind `this`.
-
 ## Examples
 
 ### Luau
@@ -33,19 +27,6 @@ function tick()
   if btn(Button.Right) then x = x + 1 end
   if btnp(Button.A) then log.info("jump at frame", frame()) end
 end
-```
-
-### Rhai
-
-```rhai
-fn boot() {
-    this.x = 10;
-}
-
-fn tick() {
-    if btn(Button::Right) { this.x += 1; }
-    if btnp(Button::A) { log::info(`jump at frame ${frame()}`); }
-}
 ```
 
 ## See also

@@ -174,7 +174,6 @@ pub fn complete(request: &Request<'_>, api: &ApiCatalog, syntax: &Highlighter) -
 pub(crate) fn grammar(language: ScriptLanguage) -> Grammar {
     match language {
         ScriptLanguage::Luau => Grammar::Luau,
-        ScriptLanguage::Rhai => Grammar::Rhai,
     }
 }
 
@@ -283,7 +282,6 @@ fn declaration(
 ) -> (String, usize) {
     let (keyword, open, close) = match request.language {
         ScriptLanguage::Luau => ("function ", "()", "end"),
-        ScriptLanguage::Rhai => ("fn ", "() {", "}"),
     };
     let mut text = String::new();
     if whole {
@@ -312,7 +310,6 @@ fn member_candidates(
     let language = request.language;
     let expected = match language {
         ScriptLanguage::Luau => Separator::Dot,
-        ScriptLanguage::Rhai => Separator::Path,
     };
     if separator != expected || receiver.is_empty() {
         return;

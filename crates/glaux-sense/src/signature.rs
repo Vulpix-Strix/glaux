@@ -28,7 +28,7 @@ pub struct SignatureHelp {
     /// The offset of the call's opening parenthesis.
     pub open: usize,
     /// Never empty. Several signatures mean the script defines functions with the same
-    /// name and different parameter counts, which Rhai allows.
+    /// name and different parameter counts.
     pub signatures: Vec<Signature>,
     /// The signature that fits the arguments typed so far.
     pub active_signature: usize,
@@ -108,7 +108,7 @@ pub fn signature_help(
     let path: Vec<&str> = site.callee.iter().map(String::as_str).collect();
     let signatures = match resolve(api, request.language, syntax, site.open, &path)? {
         Resolved::Entry(entry) => vec![api_signature(entry, request.language)?],
-        Resolved::Local(definition) => local_signatures(&definition, syntax)?,
+        Resolved::Local(definition) => local_signatures(&definition)?,
     };
     let given = site.active.map_or(0, |active| active + 1);
     let active_signature = fitting(&signatures, given);
@@ -169,16 +169,12 @@ fn api_signature(entry: &ApiEntry, language: ScriptLanguage) -> Option<Signature
     })
 }
 
-/// The signatures of a function the script defines, one per overload.
-fn local_signatures(definition: &Definition, syntax: &Highlighter) -> Option<Vec<Signature>> {
+/// The signatures of a function the script defines.
+fn local_signatures(definition: &Definition) -> Option<Vec<Signature>> {
     if definition.kind != DefinitionKind::Function {
         return None;
     }
-    let mut overloads = syntax.overloads(&definition.name);
-    if overloads.is_empty() {
-        overloads.push(definition.clone());
-    }
-    Some(overloads.into_iter().map(local_signature).collect())
+    Some(vec![local_signature(definition.clone())])
 }
 
 fn local_signature(definition: Definition) -> Signature {

@@ -29,10 +29,6 @@ fn luau(text: &str) -> (CodeEditor, CodeSession) {
     editing("a.luau", text)
 }
 
-fn rhai(text: &str) -> (CodeEditor, CodeSession) {
-    editing("a.rhai", text)
-}
-
 fn type_str(editor: &mut CodeEditor, session: &mut CodeSession, typed: &str) {
     for ch in typed.chars() {
         feed(editor, session, &[InputEvent::Text(ch)]);
@@ -70,20 +66,15 @@ fn typing_a_separator_lists_the_members_of_the_receiver() {
     assert!(labels(&editor).contains(&"tone"));
     assert!(!labels(&editor).contains(&"rectfill"));
 
-    let (mut editor, mut session) = rhai("");
+    let (mut editor, mut session) = luau("");
     type_str(&mut editor, &mut session, "audio:");
-    assert!(!is_open(&editor), "one colon is not a separator");
-    type_str(&mut editor, &mut session, ":");
-    assert!(labels(&editor).contains(&"tone"));
+    assert!(!is_open(&editor), "a colon is not a separator");
 }
 
 #[test]
-fn constants_complete_their_members_in_both_languages() {
+fn constants_complete_their_members() {
     let (mut editor, mut session) = luau("");
     type_str(&mut editor, &mut session, "Key.");
-    assert!(labels(&editor).contains(&"A"));
-    let (mut editor, mut session) = rhai("");
-    type_str(&mut editor, &mut session, "Key::");
     assert!(labels(&editor).contains(&"A"));
 }
 
@@ -97,7 +88,7 @@ fn ctrl_space_lists_without_a_prefix() {
 
 #[test]
 fn ctrl_space_after_a_separator_lists_only_members() {
-    let (mut editor, mut session) = rhai("audio::");
+    let (mut editor, mut session) = luau("audio.");
     feed(&mut editor, &mut session, &[InputEvent::Complete]);
     assert!(labels(&editor).contains(&"tone"));
     assert!(!labels(&editor).contains(&"audio"));
@@ -112,9 +103,6 @@ fn comments_and_strings_never_list() {
         feed(&mut editor, &mut session, &[InputEvent::Complete]);
         assert!(!is_open(&editor), "{text}");
     }
-    let (mut editor, mut session) = rhai("// au");
-    type_str(&mut editor, &mut session, "d");
-    assert!(!is_open(&editor));
 }
 
 #[test]
@@ -128,7 +116,7 @@ fn locals_of_unsaved_text_are_offered() {
 
 #[test]
 fn locals_out_of_scope_are_not_offered() {
-    let (mut editor, mut session) = rhai("fn a() { let hidden = 1; }\nfn b() {\n  ");
+    let (mut editor, mut session) = luau("function a() local hidden = 1 end\nfunction b()\n  ");
     type_str(&mut editor, &mut session, "hi");
     assert!(!labels(&editor).contains(&"hidden"));
 }
@@ -146,21 +134,17 @@ fn a_callback_is_offered_once_at_the_top_level() {
     feed(&mut editor, &mut session, &[TAB]);
     assert_eq!(text(&session), "function tick()\nend\ntick");
 
-    for (file, text) in [
-        ("a.rhai", "fn a() {\n  \n}"),
-        ("a.luau", "function a()\n  \nend"),
-    ] {
-        let (mut editor, mut session) = editing(file, text);
-        let inside = text.find("\n  ").unwrap() + 3;
-        let id = session.tabs().active().unwrap();
-        let document = session.document(id).unwrap();
-        let at = crate::system::editing::selection::Selection::collapsed(
-            crate::system::editing::cursor::Caret::at(document, inside),
-        );
-        session.tabs_mut().set_selection(id, at);
-        type_str(&mut editor, &mut session, "tic");
-        assert!(!labels(&editor).contains(&"tick"), "inside {file}");
-    }
+    let text = "function a()\n  \nend";
+    let (mut editor, mut session) = luau(text);
+    let inside = text.find("\n  ").unwrap() + 3;
+    let id = session.tabs().active().unwrap();
+    let document = session.document(id).unwrap();
+    let at = crate::system::editing::selection::Selection::collapsed(
+        crate::system::editing::cursor::Caret::at(document, inside),
+    );
+    session.tabs_mut().set_selection(id, at);
+    type_str(&mut editor, &mut session, "tic");
+    assert!(!labels(&editor).contains(&"tick"), "inside a function");
 }
 
 #[test]
@@ -170,12 +154,6 @@ fn accepting_a_callback_keeps_indentation_and_puts_the_caret_in_the_body() {
     feed(&mut editor, &mut session, &[TAB]);
     assert_eq!(text(&session), "function tick()\n    \nend");
     assert_eq!(caret(&session), "function tick()\n    ".len());
-
-    let (mut editor, mut session) = rhai("");
-    type_str(&mut editor, &mut session, "dra");
-    feed(&mut editor, &mut session, &[TAB]);
-    assert_eq!(text(&session), "fn draw() {\n    \n}");
-    assert_eq!(caret(&session), "fn draw() {\n    ".len());
 }
 
 #[test]
@@ -401,10 +379,6 @@ fn incomplete_code_still_completes_members() {
     type_str(&mut editor, &mut session, "");
     feed(&mut editor, &mut session, &[InputEvent::Complete]);
     assert!(labels(&editor).contains(&"A"));
-
-    let (mut editor, mut session) = rhai("fn tick() {\n  if btn(Key::");
-    feed(&mut editor, &mut session, &[InputEvent::Complete]);
-    assert!(labels(&editor).contains(&"A"));
 }
 
 #[test]
@@ -412,9 +386,6 @@ fn constants_and_functions_come_from_the_api_of_the_language() {
     let (mut editor, mut session) = luau("");
     type_str(&mut editor, &mut session, "pr");
     assert!(labels(&editor).contains(&"print"));
-    let (mut editor, mut session) = rhai("");
-    type_str(&mut editor, &mut session, "pr");
-    assert!(!labels(&editor).contains(&"print"));
 }
 
 #[test]

@@ -37,9 +37,7 @@ use glaux_script::{LoanError, LogEntry, Phase, RuntimeError, ScriptError, StartF
 use super::ScriptRuntime;
 use crate::cartridge::{CartridgeModules, Language};
 
-/// Stack of the thread a debugged runtime runs on. Rhai recurses on the
-/// native stack up to its call limit and needs more than a spawned thread
-/// gets by default, and the debugger's hooks run on top of it.
+/// Stack of the thread a debugged runtime runs on.
 const STACK: usize = 8 * 1024 * 1024;
 
 /// How often a wait for the runtime looks again at a runtime that is gone.

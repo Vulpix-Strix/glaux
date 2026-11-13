@@ -5,9 +5,9 @@ use crate::{RequireError, RequireFailure, ScriptError};
 #[test]
 fn runtime_and_syntax_errors_give_their_leading_position() {
     let runtime = ScriptError::Runtime("code/main.luau:12: boom".into());
-    let syntax = ScriptError::Syntax("main.rhai:3: Unexpected token".into());
+    let syntax = ScriptError::Syntax("main.luau:3: Unexpected token".into());
     assert_eq!(runtime.location(), Some(("code/main.luau", 12)));
-    assert_eq!(syntax.location(), Some(("main.rhai", 3)));
+    assert_eq!(syntax.location(), Some(("main.luau", 3)));
 }
 
 #[test]

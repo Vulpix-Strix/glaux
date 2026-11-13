@@ -14,7 +14,7 @@ fn listing(paths: &[&str], gaps: Vec<WalkGap>) -> ScriptListing {
 const FILES: [&str; 5] = [
     "code/enemies/bat.luau",
     "code/main.luau",
-    "code/ui/hud.rhai",
+    "code/ui/hud.luau",
     "code/ui/menu.luau",
     "lib/enemy_ai.luau",
 ];
@@ -50,11 +50,11 @@ fn without_a_filter_every_file_shows_in_listing_order() {
 fn the_filter_matches_names_and_paths_ignoring_case() {
     let mut picker = picker();
     type_text(&mut picker, "UI/");
-    assert_eq!(shown(&picker), ["code/ui/hud.rhai", "code/ui/menu.luau"]);
+    assert_eq!(shown(&picker), ["code/ui/hud.luau", "code/ui/menu.luau"]);
 
     let mut picker = self::picker();
     type_text(&mut picker, "hud");
-    assert_eq!(shown(&picker), ["code/ui/hud.rhai"]);
+    assert_eq!(shown(&picker), ["code/ui/hud.luau"]);
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn enter_opens_the_highlighted_file() {
     assert_eq!(
         picker.handle_input(InputEvent::Enter, &layout()),
         Some(PickerAction::Open(
-            SourcePath::parse("code/ui/hud.rhai").unwrap()
+            SourcePath::parse("code/ui/hud.luau").unwrap()
         ))
     );
 

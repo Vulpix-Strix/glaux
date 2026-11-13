@@ -18,15 +18,6 @@ fn kind_at(syntax: &DocumentSyntax, byte: usize) -> Option<SyntaxKind> {
 }
 
 #[test]
-fn the_documents_extension_picks_the_grammar() {
-    let text = "fn area() { 1 }";
-    let rhai = CodeDocument::from_text("code/a.rhai", text);
-    let luau = CodeDocument::from_text("code/a.luau", text);
-    assert_eq!(kind_at(&syntax(&rhai), 0), Some(SyntaxKind::Keyword));
-    assert_ne!(kind_at(&syntax(&luau), 0), Some(SyntaxKind::Keyword));
-}
-
-#[test]
 fn spans_cover_only_the_window() {
     let document =
         CodeDocument::from_text("code/a.luau", "local a = 1\nlocal b = 2\nlocal c = 3\n");

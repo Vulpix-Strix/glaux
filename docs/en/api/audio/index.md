@@ -10,10 +10,6 @@ Write a tone with [tone](glaux://api/audio/tone), shape it with [env](glaux://ap
 
 The functions are fields of the `audio` table: `audio.tone(...)`.
 
-### Rhai
-
-The functions live in the `audio` module: `audio::tone(...)`.
-
 ## See also
 
 - [tone](glaux://api/audio/tone)

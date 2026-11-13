@@ -22,7 +22,7 @@ use super::SystemInfo;
 use super::line_editor::LineEditor;
 use super::logs::LogRecord;
 use super::screen::{ACCENT, BACKGROUND, DIM, ERROR, Line, TEXT, TRACE, WARN};
-use crate::cartridge::{CartridgeManifest, Language, LoadedCartridge};
+use crate::cartridge::{CartridgeManifest, LoadedCartridge};
 use crate::cartridge_fs::CartridgeStorage;
 use crate::system::workspace::DocsStart;
 use crate::ui_text;
@@ -65,11 +65,6 @@ fn banner() -> String {
 }
 const PROMPT: &str = "> ";
 
-/// Shown whenever a cartridge in an experimental language is created or
-/// run.
-pub(super) fn experimental_language_warning() -> String {
-    ui_text::get("shell-rhai-experimental")
-}
 /// Ticks a text cursor spends in each blink phase: 600 ms at 60 Hz.
 pub(super) const BLINK_TICKS: u32 = 36;
 
@@ -347,7 +342,6 @@ impl Shell {
                 ));
             }
             LoadOrigin::Created => {
-                self.warn_if_experimental(manifest.runtime.language);
                 for line in [
                     &ui_text::get("shell-your-new-cartridge-is-ready"),
                     manifest.cartridge.name.as_str(),
@@ -360,23 +354,6 @@ impl Shell {
                     self.report(line);
                 }
             }
-        }
-    }
-
-    /// Adds a system warning line to the scrollback.
-    pub(super) fn report_warning(&mut self, line: impl Into<String>) {
-        self.scrollback.push(Entry::Warning(line.into()));
-    }
-
-    /// Warns that cartridges in `language` use an API that may change, if
-    /// they do.
-    pub(super) fn warn_if_experimental(&mut self, language: Language) {
-        if language.is_experimental() {
-            tracing::warn!(
-                language = language.name(),
-                "experimental scripting language"
-            );
-            self.report_warning(experimental_language_warning());
         }
     }
 
@@ -396,9 +373,6 @@ impl Shell {
                 Entry::Log(_, record, lines) => expand_tabs(&record.message[lines.clone()]),
                 Entry::Command(text) => format!("{PROMPT}{text}"),
                 Entry::Error(text) => format!("! {text}"),
-                Entry::Warning(text) => {
-                    ui_text::get_with("shell-warn", &[("text", Arg::Text(&text.to_string()))])
-                }
             })
             .collect()
     }
@@ -582,7 +556,6 @@ impl EntryText {
             Entry::Command(text) => (text.into(), TEXT, true),
             Entry::Output(text) => (text.into(), TEXT, false),
             Entry::Error(text) => (text.into(), ERROR, false),
-            Entry::Warning(text) => (text.into(), WARN, false),
             Entry::Log(level, record, lines) => (
                 expand_tabs(&record.message[lines.clone()]).into(),
                 log_color(*level),

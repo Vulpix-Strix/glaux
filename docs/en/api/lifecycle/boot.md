@@ -16,12 +16,6 @@ An error in `boot()` means the cartridge never starts. Like the top level, it ru
 
 State can live in globals or in locals declared at the top level, which the callbacks can all see.
 
-### Rhai
-
-`boot` must be a public function without parameters. A `private fn boot` or `fn boot(x)` fails the start with an error.
-
-`this` starts as an empty object map, so `boot()` is where fields are first assigned. Variables declared with `let` at the top level are not visible inside functions, so keep state in `this`. Constants are read as `global::NAME`.
-
 ## Examples
 
 ### Luau
@@ -34,17 +28,6 @@ function boot()
     stars[i] = { x = (i * 73) % 320, y = (i * 37) % 120 }
   end
 end
-```
-
-### Rhai
-
-```rhai
-fn boot() {
-    this.stars = [];
-    for i in 1..=40 {
-        this.stars.push(#{ x: (i * 73) % 320, y: (i * 37) % 120 });
-    }
-}
 ```
 
 ## See also

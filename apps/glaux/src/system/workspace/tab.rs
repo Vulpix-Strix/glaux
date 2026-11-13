@@ -50,7 +50,7 @@ impl Tab {
     /// What the view will edit, shown while it has no editor.
     pub(super) fn purpose(self) -> String {
         match self {
-            Self::Code => ui_text::get("workspace-edit-the-cartridge-s-luau-and-rhai-scripts"),
+            Self::Code => ui_text::get("workspace-edit-the-cartridge-s-luau-scripts"),
             Self::Sprites => ui_text::get("workspace-draw-object-tiles-and-their-palettes"),
             Self::Map => ui_text::get("workspace-lay-out-tiles-into-maps"),
             Self::Sfx => ui_text::get("workspace-shape-sound-effects-for-the-psg"),

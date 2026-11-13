@@ -22,14 +22,6 @@ function draw()
 end
 ```
 
-### Rhai
-
-```rhai
-fn draw() {
-    cls(1);
-}
-```
-
 ## See also
 
 - [pset](glaux://api/graphics/pset)

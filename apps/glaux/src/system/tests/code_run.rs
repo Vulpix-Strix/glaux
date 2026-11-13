@@ -1,9 +1,7 @@
 //! Running the cartridge from the Code view: where a run returns to, what
 //! is saved before it, and how its failures reach the editor and the log.
 
-use super::rhai::shell_with_cartridge_root;
 use super::*;
-use crate::cartridge::fixture::write_rhai_cartridge;
 use crate::cartridge::source::SourcePath;
 use crate::system::editor_settings::EditorSettings;
 use crate::system::logs::{Category, Severity, SourceLocation};
@@ -120,24 +118,6 @@ fn an_error_without_a_position_is_not_given_one() {
     assert!(is_workspace(&system));
     assert_eq!(failure_location(&system), None);
     assert_eq!(caret_line(&system), 1, "the caret was not moved");
-}
-
-#[test]
-fn a_rhai_runtime_error_is_located_too() {
-    let fixture = Fixture::new("sys-run-error-rhai");
-    write_rhai_cartridge(
-        &fixture.root().join("pong"),
-        "Pong",
-        "let x = 1;\n\nfn tick() {\n    throw \"boom\";\n}\n",
-    );
-    let system = press_break(enter(shell_with_cartridge_root(&fixture), "load pong"));
-    let system = ticks(system.update(&[InputEvent::Run]), 1);
-
-    assert!(is_workspace(&system));
-    let location = failure_location(&system).unwrap();
-    assert_eq!(location.path.as_str(), "code/main.rhai");
-    assert_eq!(location.line, 4);
-    assert_eq!(caret_line(&system), 4);
 }
 
 #[test]

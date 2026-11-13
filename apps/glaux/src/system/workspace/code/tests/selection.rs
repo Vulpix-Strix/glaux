@@ -528,7 +528,8 @@ fn signal_lost_scripts_select_on_valid_positions() {
         crate::cartridge_fs::CartridgeFs::new(fs::canonicalize(examples).unwrap()),
     );
     let valid = |document: &CodeDocument, byte: usize| Caret::at(document, byte).byte() == byte;
-    for example in ["signal-lost", "signal-lost-rhai"] {
+    const EXAMPLES: [&str; 1] = ["signal-lost"];
+    for example in EXAMPLES {
         let cartridge = LoadedCartridge::load(&storage, example).unwrap();
         let scripts = cartridge.script_files().unwrap().paths;
         assert!(scripts.len() >= 10, "{example}: {scripts:?}");

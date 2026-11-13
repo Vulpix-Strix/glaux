@@ -1,6 +1,6 @@
 # text (Luau: print)
 
-Draws text with the system font. Luau calls this function `print`. Rhai calls it `text`, because `print` is reserved for logging there.
+Draws text with the system font. Luau calls this function `print`.
 
 ## Parameters
 
@@ -19,22 +19,12 @@ Drawing functions may only be called during `draw()`. Everything is clipped to t
 
 Use `log.info` to write to the log. `print` always draws.
 
-### Rhai
-
-Rhai's own `print(value)` writes to the log at info level and does not draw. See [log](glaux://api/logging/index).
-
 ## Examples
 
 ### Luau
 
 ```luau
 print("Hello", 8, 8, 7)
-```
-
-### Rhai
-
-```rhai
-text("Hello", 8, 8, 7);
 ```
 
 ## See also

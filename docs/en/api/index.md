@@ -1,10 +1,10 @@
 # Glaux script API
 
-Everything a cartridge script can call, in Luau and in Rhai. The two languages share the same functions with a few differences in spelling, which each page notes.
+Everything a cartridge script can call, in Luau.
 
 ## Lifecycle
 
-The callbacks a cartridge defines and Glaux calls: [boot](glaux://api/lifecycle/boot) once at the start, then [tick](glaux://api/lifecycle/tick) and [draw](glaux://api/lifecycle/draw) 60 times a second. They are not functions Glaux provides, so a script defines them as globals in Luau and as public functions in Rhai. See [The game loop](glaux://guide/game-loop).
+The callbacks a cartridge defines and Glaux calls: [boot](glaux://api/lifecycle/boot) once at the start, then [tick](glaux://api/lifecycle/tick) and [draw](glaux://api/lifecycle/draw) 60 times a second. They are not functions Glaux provides, so a script defines them as globals. See [The game loop](glaux://guide/game-loop).
 
 ## Drawing
 
@@ -24,17 +24,4 @@ Luau only: [peek](glaux://api/memory/peek), [poke](glaux://api/memory/poke), [pe
 
 ## Time, logging and modules
 
-[frame](glaux://api/time/frame) and [t](glaux://api/time/t) report logical time. [log](glaux://api/logging/index) records messages. [require](glaux://api/modules/require) and [import](glaux://api/modules/import) load cartridge modules.
-
-## Differences between the languages
-
-| Luau                                  | Rhai                                  |
-|---------------------------------------|---------------------------------------|
-| `print(text, x, y, color)` draws text | `text(value, x, y, color)` draws text |
-| `audio.tone(...)`                     | `audio::tone(...)`                    |
-| `Button.A`                            | `Button::A`                           |
-| `require("game.enemies")`             | `import "game.enemies" as enemies;`   |
-| `peek`, `poke`, `memcpy` and the rest | not available                         |
-| `log.debug(...)`                      | no `log::debug`; use `debug(value)`   |
-| scripts keep state in globals         | callbacks keep state in `this`        |
-| `local function tick()` is not found  | `private fn tick()` is an error       |
+[frame](glaux://api/time/frame) and [t](glaux://api/time/t) report logical time. [log](glaux://api/logging/index) records messages. [require](glaux://api/modules/require) loads cartridge modules.

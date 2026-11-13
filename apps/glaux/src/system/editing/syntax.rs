@@ -88,7 +88,6 @@ impl DocumentSyntax {
 fn grammar(language: Language) -> Grammar {
     match language {
         Language::Luau => Grammar::Luau,
-        Language::Rhai => Grammar::Rhai,
     }
 }
 

@@ -25,7 +25,7 @@ fn alpha() -> String {
     text
 }
 
-const BOTH: &str = "# Both\n\nCommon text.\n\n### Luau\n\nLuau only.\n\n### Rhai\n\nRhai only.\n";
+const BOTH: &str = "# Both\n\nCommon text.\n\n### Luau\n\nLuau only.\n";
 
 fn files(extra: usize) -> Vec<(String, Vec<u8>)> {
     let mut files = vec![
@@ -687,16 +687,10 @@ fn the_language_filter_changes_the_content_and_not_the_pages_language() {
             .collect()
     };
     assert!(texts(&case).contains(&"Luau only.".to_owned()));
-    assert!(texts(&case).contains(&"Rhai only.".to_owned()));
     case.send(InputEvent::Text('l'));
     assert_eq!(case.browser.filter(), LanguageFilter::Luau);
     assert!(texts(&case).contains(&"Luau only.".to_owned()));
-    assert!(!texts(&case).contains(&"Rhai only.".to_owned()));
     case.send(InputEvent::Text('L'));
-    assert_eq!(case.browser.filter(), LanguageFilter::Rhai);
-    assert!(!texts(&case).contains(&"Luau only.".to_owned()));
-    assert!(texts(&case).contains(&"Rhai only.".to_owned()));
-    case.send(InputEvent::Text('l'));
     assert_eq!(case.browser.filter(), LanguageFilter::All);
     // The page is the same one, in the same language.
     assert_eq!(

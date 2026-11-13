@@ -10,7 +10,6 @@ fn ask(language: ScriptLanguage, marked: &str) -> Option<(Range<usize>, String)>
     let text = marked.replace('¦', "");
     let grammar = match language {
         ScriptLanguage::Luau => Grammar::Luau,
-        ScriptLanguage::Rhai => Grammar::Rhai,
     };
     let mut syntax = Highlighter::new(grammar).expect("bundled query compiles");
     syntax.update(&text);
@@ -31,13 +30,11 @@ fn subject(language: ScriptLanguage, marked: &str) -> String {
 }
 
 const LUAU: ScriptLanguage = ScriptLanguage::Luau;
-const RHAI: ScriptLanguage = ScriptLanguage::Rhai;
 
 #[test]
 fn api_names_resolve_with_or_without_a_receiver() {
     assert_eq!(subject(LUAU, "sp¦r(1)"), "entry api/graphics/spr");
     assert_eq!(subject(LUAU, "audio.to¦ne(1)"), "entry api/audio/tone");
-    assert_eq!(subject(RHAI, "audio::to¦ne(1);"), "entry api/audio/tone");
 }
 
 #[test]
@@ -66,7 +63,7 @@ fn locals_hide_the_api_and_report_what_they_are() {
 fn a_name_being_declared_is_the_scripts_own() {
     assert_eq!(subject(LUAU, "local sc¦ore = 1"), "declared score");
     assert_eq!(subject(LUAU, "local function fo¦o() end"), "declared foo");
-    assert_eq!(subject(RHAI, "fn f(pa¦ram) {}"), "declared param");
+    assert_eq!(subject(LUAU, "function f(pa¦ram) end"), "declared param");
 }
 
 #[test]
@@ -75,11 +72,6 @@ fn constant_members_stand_for_their_group() {
     assert!(
         luau.starts_with("constant ") && luau.ends_with(" A"),
         "{luau}"
-    );
-    let rhai = subject(RHAI, "Key::¦A");
-    assert!(
-        rhai.starts_with("constant ") && rhai.ends_with(" A"),
-        "{rhai}"
     );
     assert_eq!(subject(LUAU, "Key.¦Nope"), "unknown");
 }

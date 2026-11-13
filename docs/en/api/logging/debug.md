@@ -12,7 +12,7 @@ Records a message at debug level.
 
 ### Luau
 
-Accepts any number of values. Rhai has no equivalent, because `debug` is a keyword there; use Rhai's built-in `debug(value)`.
+Accepts any number of values.
 
 ## Examples
 

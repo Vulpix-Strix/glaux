@@ -17,8 +17,6 @@ use crate::lexical::{self, State};
 pub enum Separator {
     /// A dot, as in `audio.tone`.
     Dot,
-    /// A double colon, as in `audio::tone`.
-    Path,
 }
 
 /// How the name at the caret is used.
@@ -133,9 +131,7 @@ fn member_before(language: ScriptLanguage, text: &str, start: usize) -> Option<P
         // In Luau a colon starts a method call or a type, and `::` is a type cast.
         return Some(Position::Suppressed);
     }
-    let (separator, separator_start) = if before.ends_with("::") {
-        (Separator::Path, start - 2)
-    } else if before.ends_with('.') {
+    let (separator, separator_start) = if before.ends_with('.') {
         // `..` and `...` are operators, not member access.
         if before.ends_with("..") {
             return None;
@@ -158,9 +154,7 @@ fn member_before(language: ScriptLanguage, text: &str, start: usize) -> Option<P
         }
         receiver.push(text[word.clone()].to_owned());
         let earlier = &text[..word.start];
-        if earlier.ends_with("::") && language == ScriptLanguage::Rhai {
-            end = word.start - 2;
-        } else if earlier.ends_with('.') && !earlier.ends_with("..") {
+        if earlier.ends_with('.') && !earlier.ends_with("..") {
             end = word.start - 1;
         } else {
             receiver.reverse();
@@ -182,8 +176,7 @@ fn declaration_before(
 ) -> Option<Position> {
     let keyword = previous_word(text, start).map(|w| &text[w]);
     let declares = match (language, keyword) {
-        (ScriptLanguage::Luau, Some("local" | "function" | "for"))
-        | (ScriptLanguage::Rhai, Some("let" | "const" | "fn" | "for" | "as")) => true,
+        (ScriptLanguage::Luau, Some("local" | "function" | "for")) => true,
         _ => site.declares_name,
     };
     if !declares {
@@ -191,14 +184,13 @@ fn declaration_before(
     }
     let function_keyword = match language {
         ScriptLanguage::Luau => "function",
-        ScriptLanguage::Rhai => "fn",
     };
     let callback_site = keyword == Some(function_keyword) && {
         let word = previous_word(text, start)?;
-        // The host never calls a `local function` or a `private fn`.
+        // The host never calls a `local function`.
         let hidden = previous_word(text, word.start)
             .map(|w| &text[w])
-            .is_some_and(|w| matches!(w, "local" | "private"));
+            .is_some_and(|w| w == "local");
         !hidden && starts_top_level_statement(language, text, word.start)
     };
     Some(Position::Declaration { callback_site })

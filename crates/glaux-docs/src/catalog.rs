@@ -12,12 +12,11 @@
 //!
 //! # What is checked
 //!
-//! The runtime crates (`glaux-luau`, `glaux-rhai`) test that every entry's
-//! names exist, that nothing is installed which the catalog does not list,
-//! and, for Rhai, that every arity exists. **Parameter names, parameter
-//! types and return types are maintained by hand and nothing verifies
-//! them.** Neither does Luau arity. Review them against the runtime when
-//! changing an API.
+//! The runtime crates (`glaux-luau`) test that every entry's names exist and
+//! that nothing is installed which the catalog does not list. **Parameter
+//! names, parameter types and return types are maintained by hand and
+//! nothing verifies them.** Neither does arity. Review them against the
+//! runtime when changing an API.
 //!
 //! Callbacks are the exception to "names exist in the runtime". The script
 //! defines them, so the runtime tests instead check that they are not
@@ -30,7 +29,7 @@
 //! alone. A function or callback is declared as `name(params)` with the
 //! parameters of [`ApiEntry::params`], spelled as [`ApiEntry::binding`] says
 //! for the language being edited. A callback's declaration is
-//! `function name() end` in Luau and `fn name() {}` in Rhai.
+//! `function name() end` in Luau.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -43,24 +42,21 @@ use crate::{Diagnostic, DocId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ScriptLanguage {
     Luau,
-    Rhai,
 }
 
 impl ScriptLanguage {
-    pub const ALL: [Self; 2] = [Self::Luau, Self::Rhai];
+    pub const ALL: [Self; 1] = [Self::Luau];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::Luau => "Luau",
-            Self::Rhai => "Rhai",
         }
     }
 
-    /// What separates a namespace from a member: `.` in Luau, `::` in Rhai.
+    /// What separates a namespace from a member: `.` in Luau.
     pub fn path_separator(self) -> &'static str {
         match self {
             Self::Luau => ".",
-            Self::Rhai => "::",
         }
     }
 
@@ -86,15 +82,14 @@ pub enum Kind {
     /// A table of constants whose members are defined elsewhere, such as
     /// `Key`. The entry's `source` names where.
     ConstantGroup,
-    /// Syntax rather than a registered function, such as Rhai's `import`.
+    /// Syntax rather than a registered function.
     /// Not looked up in the runtime.
     Keyword,
     /// A function the script defines and Glaux calls, such as `tick`. The
     /// runtimes never register it, so it is not looked up there either.
     ///
-    /// A callback is a global of both languages that takes no parameters and
-    /// returns nothing. Its entry therefore has no `path`, no `params` and no
-    /// `returns`, and it names the same function in Luau and in Rhai.
+    /// A callback is a global that takes no parameters and returns nothing.
+    /// Its entry therefore has no `path`, no `params` and no `returns`.
     Callback,
 }
 
@@ -127,8 +122,7 @@ pub struct Binding {
     #[serde(default)]
     pub returns: Option<ValueType>,
     /// The parameters in this language, when they differ from the entry's.
-    /// Needed when one language takes a value the other does not, such as
-    /// Luau's `log.info(...)` against Rhai's `log::info(value)`.
+    /// Needed when one language takes a value the others do not.
     #[serde(default)]
     pub params: Option<Vec<Param>>,
     /// The type of the extra arguments this language accepts after its
@@ -154,7 +148,6 @@ pub struct ApiEntry {
     category: String,
     kind: Kind,
     luau: Option<Binding>,
-    rhai: Option<Binding>,
     params: Vec<Param>,
     returns: Option<ValueType>,
     source: Option<String>,
@@ -180,7 +173,6 @@ impl ApiEntry {
     pub fn binding(&self, language: ScriptLanguage) -> Option<&Binding> {
         match language {
             ScriptLanguage::Luau => self.luau.as_ref(),
-            ScriptLanguage::Rhai => self.rhai.as_ref(),
         }
     }
 
@@ -358,8 +350,6 @@ struct RawEntry {
     #[serde(default)]
     luau: Option<Binding>,
     #[serde(default)]
-    rhai: Option<Binding>,
-    #[serde(default)]
     params: Vec<Param>,
     #[serde(default)]
     returns: Option<ValueType>,
@@ -412,7 +402,6 @@ impl RawEntry {
             category: category.to_owned(),
             kind: self.kind,
             luau: self.luau,
-            rhai: self.rhai,
             params: self.params,
             returns: self.returns,
             source: self.source,
@@ -421,17 +410,14 @@ impl RawEntry {
 
     fn check_definition(&self) -> Result<(), Problem> {
         let definition = |message: String| Problem::new("catalog-definition", message);
-        if self.luau.is_none() && self.rhai.is_none() {
-            return Err(definition(
-                "entry has neither a luau nor a rhai binding".into(),
-            ));
+        if self.luau.is_none() {
+            return Err(definition("entry has no luau binding".into()));
         }
-        for (language, binding) in [("luau", &self.luau), ("rhai", &self.rhai)] {
-            let Some(binding) = binding else { continue };
+        if let Some(binding) = &self.luau {
             for segment in binding.path.iter().chain([&binding.name]) {
                 if !is_identifier(segment) {
                     return Err(definition(format!(
-                        "{language} name {segment:?} is not an identifier"
+                        "luau name {segment:?} is not an identifier"
                     )));
                 }
             }
@@ -440,9 +426,9 @@ impl RawEntry {
             self.check_callback()?;
         }
         let callable = matches!(self.kind, Kind::Function | Kind::Keyword);
-        let overrides = [&self.luau, &self.rhai]
-            .into_iter()
-            .flatten()
+        let overrides = self
+            .luau
+            .iter()
             .any(|binding| binding.params.is_some() || binding.varargs.is_some());
         if !callable && (!self.params.is_empty() || self.returns.is_some() || overrides) {
             return Err(definition(
@@ -459,10 +445,10 @@ impl RawEntry {
             _ => {}
         }
         check_params(&self.params)?;
-        for binding in [&self.luau, &self.rhai].into_iter().flatten() {
-            if let Some(params) = &binding.params {
-                check_params(params)?;
-            }
+        if let Some(binding) = &self.luau
+            && let Some(params) = &binding.params
+        {
+            check_params(params)?;
         }
         Ok(())
     }
@@ -497,23 +483,16 @@ fn check_params(params: &[Param]) -> Result<(), Problem> {
 }
 
 impl RawEntry {
-    /// A callback is a plain global that both languages call by one name.
+    /// A callback is a plain global.
     fn check_callback(&self) -> Result<(), Problem> {
         let definition = |message: &str| Problem::new("catalog-definition", message);
-        let (Some(luau), Some(rhai)) = (&self.luau, &self.rhai) else {
-            return Err(definition(
-                "a callback needs both a luau and a rhai binding",
-            ));
+        let Some(luau) = &self.luau else {
+            return Err(definition("a callback needs a luau binding"));
         };
-        if luau.name != rhai.name {
-            return Err(definition(
-                "a callback has the same name in luau and in rhai",
-            ));
-        }
-        if !luau.path.is_empty() || !rhai.path.is_empty() {
+        if !luau.path.is_empty() {
             return Err(definition("a callback is a global and has no path"));
         }
-        if luau.returns.is_some() || rhai.returns.is_some() {
+        if luau.returns.is_some() {
             return Err(definition("a callback returns nothing"));
         }
         Ok(())

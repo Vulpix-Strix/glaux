@@ -349,7 +349,6 @@ impl CodeEditor {
         };
         let language = match document.language() {
             Language::Luau => ScriptLanguage::Luau,
-            Language::Rhai => ScriptLanguage::Rhai,
         };
         let summary = |id: &glaux_docs::DocId| {
             let page = docs::library().page(id, docs::chain())?.page;
