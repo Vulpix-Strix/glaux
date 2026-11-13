@@ -47,6 +47,7 @@ use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::hardware::CartridgeHardware;
 use glaux_machine::oam::{OAM_ENTRIES, Oam};
 use glaux_machine::obj_palette::ObjBank;
+use glaux_machine::registers::{DISPLAY_BG0, DISPLAY_BG1, DISPLAY_BG2, DISPLAY_OBJ};
 use glaux_machine::sprite::{ObjVram, obj_grid_tile};
 use glaux_machine::tile_window::TileWindow;
 use glaux_machine::tilemap::{BG_LAYERS, BgLayer, TILE_WINDOW_SIDE};
@@ -68,10 +69,10 @@ pub const OBJECT_RANK: u8 = 3;
 const BEHIND_ALL: u8 = u8::MAX;
 
 /// Bits of `DISPLAY_ENABLE` that switch BG0, BG1 and BG2 on.
-const BACKGROUND_BITS: u8 = 0b0111;
+const BACKGROUND_BITS: u8 = DISPLAY_BG0 | DISPLAY_BG1 | DISPLAY_BG2;
 
 /// The bit of `DISPLAY_ENABLE` that switches objects on.
-const OBJECT_BIT: u8 = 0b1000;
+const OBJECT_BIT: u8 = DISPLAY_OBJ;
 
 /// The depth of a pixel of `layer` whose tile has the given `boost` bit,
 /// where `priority` is the layer's priority register (0 in front, 3 behind).
