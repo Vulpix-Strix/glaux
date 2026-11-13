@@ -92,6 +92,35 @@ fn size_code_seven_is_stored_as_given() {
 }
 
 #[test]
+fn size_codes_select_the_approved_dimensions() {
+    let tiles: Vec<_> = (0..=8)
+        .map(|size| {
+            OamEntry {
+                size,
+                ..OamEntry::default()
+            }
+            .tiles()
+        })
+        .collect();
+    // 8x8, 16x16, 32x32, 8x16, 16x8, 16x32 and 32x16 pixels, then the
+    // reserved code 7 and a value that does not fit the field.
+    assert_eq!(
+        tiles,
+        [
+            Some((1, 1)),
+            Some((2, 2)),
+            Some((4, 4)),
+            Some((1, 2)),
+            Some((2, 1)),
+            Some((2, 4)),
+            Some((4, 2)),
+            None,
+            None,
+        ]
+    );
+}
+
+#[test]
 fn raw_bytes_lose_the_reserved_bits_of_their_position() {
     let mut oam = Oam::new();
     for index in [0, OAM_ENTRIES - 1] {

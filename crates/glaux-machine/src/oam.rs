@@ -52,6 +52,22 @@ pub struct OamEntry {
 }
 
 impl OamEntry {
+    /// The size of the object as `(columns, rows)` of 8x8 tiles, or `None`
+    /// when the size code makes the object invisible. Code 7 is reserved, and
+    /// so is any value that does not fit in the 3 bits of the field.
+    pub const fn tiles(&self) -> Option<(usize, usize)> {
+        match self.size {
+            0 => Some((1, 1)),
+            1 => Some((2, 2)),
+            2 => Some((4, 4)),
+            3 => Some((1, 2)),
+            4 => Some((2, 1)),
+            5 => Some((2, 4)),
+            6 => Some((4, 2)),
+            _ => None,
+        }
+    }
+
     fn to_bytes(self) -> [u8; OAM_ENTRY_BYTES] {
         let [x0, x1] = self.x.to_le_bytes();
         let [y0, y1] = self.y.to_le_bytes();
