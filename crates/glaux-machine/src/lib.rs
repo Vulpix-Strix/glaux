@@ -10,6 +10,7 @@ pub mod machine;
 pub mod map_store;
 pub mod memory_map;
 pub mod oam;
+pub mod oam_diagnosis;
 pub mod obj_palette;
 pub mod palette;
 pub mod psg;
