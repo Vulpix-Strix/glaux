@@ -1060,3 +1060,57 @@ proptest! {
         assert_frame(&hardware, &reference(&hardware));
     }
 }
+
+mod diagnosis {
+    use super::*;
+    use glaux_machine::oam_diagnosis::Diagnosis;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// The tiles an object draws are the ones its diagnosis does not
+        /// fault, and a reserved size draws nothing.
+        #[test]
+        fn the_diagnosis_names_the_tiles_the_compositor_skips(
+            tile in 0u16..1024,
+            size in 0u8..8,
+            flip_x in any::<bool>(),
+            flip_y in any::<bool>(),
+        ) {
+            let mut hardware = hardware();
+            fill_object_tiles(&mut hardware, 1);
+            let mut object = object_at(16, 16, tile, size);
+            object.flip_x = flip_x;
+            object.flip_y = flip_y;
+            set_object(&mut hardware, 0, object);
+            enable(&mut hardware, 0b1000);
+            compose(&mut hardware);
+
+            let diagnosis = hardware.oam.diagnose(0).unwrap();
+            let Some((columns, rows)) = object.tiles() else {
+                prop_assert_eq!(diagnosis, Diagnosis::ReservedSize);
+                prop_assert_eq!(drawn(&hardware), 0);
+                return Ok(());
+            };
+            let faults = match diagnosis {
+                Diagnosis::Valid => Vec::new(),
+                Diagnosis::PartiallyInvalid(faults) => faults,
+                other => return Err(TestCaseError::fail(format!("unexpected {other:?}"))),
+            };
+            for row in 0..rows {
+                for column in 0..columns {
+                    // The tile shown here is the one mirrored across the object.
+                    let source = (
+                        if flip_x { columns - 1 - column } else { column },
+                        if flip_y { rows - 1 - row } else { row },
+                    );
+                    let faulted = faults
+                        .iter()
+                        .any(|fault| (fault.column, fault.row) == source);
+                    let shown = pixel_at(&hardware, 16 + column * 8, 16 + row * 8) != BACKDROP;
+                    prop_assert_eq!(shown, !faulted, "tile at column {}, row {}", column, row);
+                }
+            }
+        }
+    }
+}
