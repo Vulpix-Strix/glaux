@@ -284,3 +284,73 @@ fn attribute_byte_writes_keep_only_the_bank_bits() {
     assert_eq!(attributes.bank(3), ObjBank::new(7).unwrap());
     assert!(!attributes.set_byte(OBJ_TILE_ATTRIBUTES_BYTES, 1));
 }
+
+mod grid_rule {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    /// The rule written from the sheet geometry alone: a position is
+    /// addressable when it stays inside its 16-column row and inside the 1024
+    /// tiles, and the column is the fault reported first.
+    fn expected(first: usize, column: usize, row: usize) -> Result<usize, GridFault> {
+        let index = first + column + 16 * row;
+        if first % 16 + column >= 16 {
+            Err(GridFault::CrossesGridEdge)
+        } else if index >= 1024 {
+            Err(GridFault::ExceedsBank)
+        } else {
+            Ok(index)
+        }
+    }
+
+    #[test]
+    fn both_functions_follow_the_sheet_geometry() {
+        for first in 0..1024 {
+            for column in 0..4 {
+                for row in 0..4 {
+                    let want = expected(first, column, row);
+                    assert_eq!(
+                        obj_grid_tile_checked(first, column, row),
+                        want,
+                        "checked {first} {column} {row}"
+                    );
+                    assert_eq!(
+                        obj_grid_tile(first, column, row),
+                        want.ok(),
+                        "plain {first} {column} {row}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_faults_are_told_apart_by_hand_written_cases() {
+        assert_eq!(obj_grid_tile_checked(20, 1, 1), Ok(37));
+        assert_eq!(
+            obj_grid_tile_checked(15, 1, 0),
+            Err(GridFault::CrossesGridEdge)
+        );
+        assert_eq!(
+            obj_grid_tile_checked(1008, 0, 1),
+            Err(GridFault::ExceedsBank)
+        );
+        // Past the edge and below the last row: the column is reported.
+        assert_eq!(
+            obj_grid_tile_checked(1023, 1, 1),
+            Err(GridFault::CrossesGridEdge)
+        );
+        assert_eq!(
+            obj_grid_tile_checked(1024, 0, 0),
+            Err(GridFault::ExceedsBank)
+        );
+        assert_eq!(
+            obj_grid_tile_checked(0, usize::MAX, 0),
+            Err(GridFault::CrossesGridEdge)
+        );
+        assert_eq!(
+            obj_grid_tile_checked(0, 0, usize::MAX),
+            Err(GridFault::ExceedsBank)
+        );
+    }
+}

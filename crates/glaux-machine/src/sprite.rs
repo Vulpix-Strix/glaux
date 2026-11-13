@@ -21,16 +21,40 @@ pub const OBJ_GRID_COLUMNS: usize = 16;
 /// Rows of the logical G1 object-tile grid.
 pub const OBJ_GRID_ROWS: usize = OBJ_TILE_CAPACITY / OBJ_GRID_COLUMNS;
 
+/// Why a tile of a multi-tile object cannot be addressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridFault {
+    /// The column falls past the right edge of the grid row. When a position
+    /// is past the edge and below the last row, this is the fault reported.
+    CrossesGridEdge,
+    /// The row falls below the last grid row, so the tile index would be
+    /// beyond the 1024 tiles of the bank.
+    ExceedsBank,
+}
+
+/// Returns the tile `column` tiles right of and `row` tiles below `first`
+/// on the object-tile grid, or the reason there is none.
+///
+/// Compositions never wrap across rows.
+pub fn obj_grid_tile_checked(first: usize, column: usize, row: usize) -> Result<usize, GridFault> {
+    let grid_column = (first % OBJ_GRID_COLUMNS)
+        .checked_add(column)
+        .filter(|&grid_column| grid_column < OBJ_GRID_COLUMNS)
+        .ok_or(GridFault::CrossesGridEdge)?;
+    let grid_row = (first / OBJ_GRID_COLUMNS)
+        .checked_add(row)
+        .filter(|&grid_row| grid_row < OBJ_GRID_ROWS)
+        .ok_or(GridFault::ExceedsBank)?;
+    Ok(grid_row * OBJ_GRID_COLUMNS + grid_column)
+}
+
 /// Returns the tile `column` tiles right of and `row` tiles below `first`
 /// on the object-tile grid.
 ///
 /// `None` means the position falls past the right edge of `first`'s grid
 /// row or below the last grid row. Compositions never wrap across rows.
 pub fn obj_grid_tile(first: usize, column: usize, row: usize) -> Option<usize> {
-    let grid_column = (first % OBJ_GRID_COLUMNS).checked_add(column)?;
-    let grid_row = (first / OBJ_GRID_COLUMNS).checked_add(row)?;
-    (grid_column < OBJ_GRID_COLUMNS && grid_row < OBJ_GRID_ROWS)
-        .then(|| grid_row * OBJ_GRID_COLUMNS + grid_column)
+    obj_grid_tile_checked(first, column, row).ok()
 }
 
 /// A failure to construct an object-tile bank from native G1 bytes.
