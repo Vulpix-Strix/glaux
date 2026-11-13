@@ -11,6 +11,7 @@ use super::*;
 use crate::cartridge::fixture::{write_cartridge, write_rhai_cartridge};
 use crate::cartridge_fs::fixture::Fixture;
 
+mod composition;
 mod debugging;
 mod memory;
 mod publication;
