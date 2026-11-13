@@ -5,7 +5,8 @@
 //! the usual report. See the Profiling section of `AGENTS.md`.
 //!
 //! The scenario comes from `GLAUX_WORKLOAD`: `luau` (the default) and `rhai`
-//! play Signal Lost for a minute of game time, `editor` edits its Luau
+//! play Signal Lost for a minute of game time, `bg` scrolls three full
+//! background layers for the same time, `editor` edits its Luau
 //! scripts, `analyzer` does the same with `luau-lsp` running beside it (it
 //! needs `LUAU_LSP`), and `paced` is `editor` with the same short wait after
 //! each frame but no analyzer, to tell what the analyzer costs from what the
@@ -264,7 +265,43 @@ pub(super) fn copy_dir(from: &Path, to: &Path) {
 /// buttons: walk right and left in turn, attack and jump at fixed intervals.
 fn play(name: &str) {
     let fixture = Fixture::new("workload-play");
-    let mut session = Session::new(&fixture, name);
+    let session = Session::new(&fixture, name);
+    run(session, name);
+}
+
+/// A cartridge with three full, opaque background layers that scroll every
+/// tick, so the compositor visits and writes every pixel of every layer.
+const BACKGROUNDS: &str = "local n = 0
+function boot()
+  for tile = 1, 15 do memset(0x24000 + tile * 32, tile * 0x11, 32) end
+  for layer = 0, 2 do
+    for cell = 0, 4095 do
+      poke16(0x34000 + layer * 0x2000 + cell * 2, (cell + layer) % 15 + 1)
+    end
+  end
+  poke(0x3C000, 7)
+end
+function tick()
+  n += 1
+  for layer = 0, 2 do
+    poke16(0x3C010 + layer * 16, n * (layer + 1))
+    poke16(0x3C012 + layer * 16, n)
+  end
+end
+function draw() end";
+
+/// Plays [`BACKGROUNDS`] for a minute of game time.
+fn backgrounds() {
+    let fixture = Fixture::new("workload-backgrounds");
+    let session = Session::new(&fixture, "signal-lost");
+    let root = fixture.root().join("backgrounds");
+    crate::cartridge::fixture::write_cartridge(&root, "backgrounds");
+    fs::write(root.join("code/main.luau"), BACKGROUNDS).unwrap();
+    run(session, "backgrounds");
+}
+
+/// Loads the cartridge `name` and plays it for a minute of game time.
+fn run(mut session: Session, name: &str) {
     session.load(name);
     let system = session.system.take().unwrap();
     session.system = Some(enter(system, "run"));
@@ -425,10 +462,11 @@ fn workload() {
         Ok("paced") => edit(false, true),
         Ok("analyzer") => edit(true, true),
         Ok("rhai") => play("signal-lost-rhai"),
+        Ok("bg") => backgrounds(),
         Ok("luau") | Err(_) => play("signal-lost"),
         Ok(other) => {
             panic!(
-                "unknown GLAUX_WORKLOAD {other:?}, expected luau, rhai, editor, paced or analyzer"
+                "unknown GLAUX_WORKLOAD {other:?}, expected luau, rhai, bg, editor, paced or analyzer"
             )
         }
     }

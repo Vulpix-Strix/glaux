@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "target" / "profiling"
-SCENARIOS = ("luau", "rhai", "editor", "paced", "analyzer")
+SCENARIOS = ("luau", "rhai", "bg", "editor", "paced", "analyzer")
 UNITS = {"ns": 1e-9, "µs": 1e-6, "ms": 1e-3, "s": 1.0, "B": 1.0, "KB": 1e3, "MB": 1e6, "GB": 1e9}
 
 
