@@ -68,10 +68,7 @@ impl TileWindow {
     /// Cells outside `source` are written as empty entries and the map itself
     /// never repeats. A side longer than the window is cut to 64 cells, because
     /// the rest would overwrite the cells just written.
-    pub fn transfer(&mut self, source: &TileLayer, x: i32, y: i32, width: usize, height: usize) {
-        // Widened so that adding a column or row to an extreme origin cannot
-        // overflow.
-        let (x, y) = (i64::from(x), i64::from(y));
+    pub fn transfer(&mut self, source: &TileLayer, x: i64, y: i64, width: usize, height: usize) {
         let side = TILE_WINDOW_SIDE as i64;
         for row in 0..height.min(TILE_WINDOW_SIDE) {
             let world_y = y + row as i64;

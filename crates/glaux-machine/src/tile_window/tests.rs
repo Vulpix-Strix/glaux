@@ -169,8 +169,8 @@ mod transfer {
     fn extreme_coordinates_do_not_overflow() {
         let map = numbered(4, 4);
         let mut window = TileWindow::new();
-        window.transfer(&map, i32::MAX, i32::MIN, 64, 64);
-        window.transfer(&map, i32::MIN, i32::MAX, 64, 64);
+        window.transfer(&map, i64::from(i32::MAX), i64::from(i32::MIN), 64, 64);
+        window.transfer(&map, i64::from(i32::MIN), i64::from(i32::MAX), 64, 64);
         // Both far corners are outside the 4 x 4 map, so every cell is empty.
         assert!(window.as_bytes().iter().all(|&byte| byte == 0));
     }
@@ -192,15 +192,14 @@ mod transfer {
         fn a_transfer_matches_a_per_cell_reference(
             width in 1usize..80,
             height in 1usize..80,
-            x in -300i32..300,
-            y in -300i32..300,
+            x in -300i64..300,
+            y in -300i64..300,
             w in 1usize..=64,
             h in 1usize..=64,
         ) {
             let map = numbered(width, height);
             let mut window = TileWindow::new();
             window.transfer(&map, x, y, w, h);
-            let (x, y) = (i64::from(x), i64::from(y));
 
             let mut expected = [[TileEntry::EMPTY; 64]; 64];
             for row in 0..h as i64 {
