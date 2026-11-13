@@ -6,7 +6,8 @@
 //!
 //! The scenario comes from `GLAUX_WORKLOAD`: `luau` (the default) and `rhai`
 //! play Signal Lost for a minute of game time, `bg` scrolls three full
-//! background layers for the same time, `editor` edits its Luau
+//! background layers for the same time, `obj` moves 128 overlapping objects
+//! over them, `editor` edits its Luau
 //! scripts, `analyzer` does the same with `luau-lsp` running beside it (it
 //! needs `LUAU_LSP`), and `paced` is `editor` with the same short wait after
 //! each frame but no analyzer, to tell what the analyzer costs from what the
@@ -290,6 +291,53 @@ function tick()
 end
 function draw() end";
 
+/// A cartridge with all 128 objects enabled over three background layers.
+/// The objects are 32 by 32 pixels on a lattice spaced 20 by 30 pixels, so
+/// neighbours overlap, with the priority taken from the index, and the lattice
+/// moves every tick so objects keep crossing the edges of the screen.
+const OBJECTS: &str = "local n = 0
+function boot()
+  for row = 0, 3 do
+    for col = 0, 3 do
+      local tile = row * 16 + col
+      memset(0x2C000 + tile * 32, (tile % 15 + 1) * 0x11, 32)
+    end
+  end
+  for tile = 1, 15 do memset(0x24000 + tile * 32, tile * 0x11, 32) end
+  for layer = 0, 2 do
+    for cell = 0, 4095 do
+      poke16(0x34000 + layer * 0x2000 + cell * 2, (cell + layer) % 15 + 1)
+    end
+  end
+  for i = 0, 127 do
+    local entry = 0x3B000 + i * 8
+    poke(entry + 6, i % 8 + (i % 4) * 32)
+    poke(entry + 7, 0x0A)
+  end
+  poke(0x3C000, 15)
+end
+function tick()
+  n += 1
+  for i = 0, 127 do
+    local entry = 0x3B000 + i * 8
+    local x = (i % 16 * 20 + n * 3) % 350 - 30
+    local y = (i // 16 * 30 + n * 2) % 270 - 30
+    poke16(entry, bit32.band(x, 0xFFFF))
+    poke16(entry + 2, bit32.band(y, 0xFFFF))
+  end
+end
+function draw() end";
+
+/// Plays [`OBJECTS`] for a minute of game time.
+fn objects() {
+    let fixture = Fixture::new("workload-objects");
+    let session = Session::new(&fixture, "signal-lost");
+    let root = fixture.root().join("objects");
+    crate::cartridge::fixture::write_cartridge(&root, "objects");
+    fs::write(root.join("code/main.luau"), OBJECTS).unwrap();
+    run(session, "objects");
+}
+
 /// Plays [`BACKGROUNDS`] for a minute of game time.
 fn backgrounds() {
     let fixture = Fixture::new("workload-backgrounds");
@@ -463,10 +511,11 @@ fn workload() {
         Ok("analyzer") => edit(true, true),
         Ok("rhai") => play("signal-lost-rhai"),
         Ok("bg") => backgrounds(),
+        Ok("obj") => objects(),
         Ok("luau") | Err(_) => play("signal-lost"),
         Ok(other) => {
             panic!(
-                "unknown GLAUX_WORKLOAD {other:?}, expected luau, rhai, bg, editor, paced or analyzer"
+                "unknown GLAUX_WORKLOAD {other:?}, expected luau, rhai, bg, obj, editor, paced or analyzer"
             )
         }
     }
