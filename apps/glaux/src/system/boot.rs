@@ -8,6 +8,7 @@ use glaux_i18n::Arg;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, HEIGHT, WIDTH};
 use glaux_machine::machine::{GENERATION, NAME};
+use glaux_machine::oam::OAM_ENTRIES;
 use glaux_machine::system_rom::{SystemRom, SystemSfx};
 use glaux_video::draw::{clear, draw_text_scaled, fill_rect};
 use semver::Version;
@@ -63,7 +64,10 @@ const LOGO_TOP: i32 = 70;
 const IDENTITY_ROW_GAP: i32 = 6;
 
 fn obj_detail() -> String {
-    ui_text::get("boot-128-entries")
+    ui_text::get_with(
+        "boot-obj-entries",
+        &[("count", Arg::Text(&OAM_ENTRIES.to_string()))],
+    )
 }
 const AUDIO_DETAIL: &str = "4CH PSG";
 

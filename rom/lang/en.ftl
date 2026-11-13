@@ -15,9 +15,9 @@ tab-sprites = Sprites
 
 ## System and boot
 
-boot-128-entries = 128 ENTRIES
 boot-audio = AUDIO
 boot-display-description = { $width }x{ $height } INDEXED
+boot-obj-entries = { $count } ENTRIES
 boot-ok = OK
 boot-ok-2 = { " " }OK
 boot-ready = READY.
