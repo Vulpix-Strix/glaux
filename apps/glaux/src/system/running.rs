@@ -14,6 +14,7 @@ use glaux_machine::psg::Psg;
 use glaux_machine::published::PublishedFrame;
 use glaux_script::debug::{Breakpoint, DebugReply, DebugRequest, Resume, Stop};
 use glaux_script::{LogEntry, Phase, RuntimeError, ScriptError, StartFailure};
+use glaux_video::compose::compose_backgrounds;
 
 use self::debug::DebugRuntime;
 pub use self::debug::Tick;
@@ -356,13 +357,18 @@ impl RunningCartridge {
     }
 
     /// Starts the frame of a tick that finished its `tick()`: the work
-    /// framebuffer is cleared to the backdrop color, and then `draw()` draws
-    /// on it. Whatever `tick()` left in the framebuffer is gone.
+    /// framebuffer is cleared to the backdrop color, the background layers are
+    /// composed over it, and then `draw()` draws on top. Whatever `tick()` left
+    /// in the framebuffer is gone.
+    ///
+    /// A `draw()` that resumes from a breakpoint does not come through here,
+    /// so the frame is composed once per tick.
     fn run_draw(&mut self) -> Result<Tick, RuntimeError> {
         if let Some(hardware) = self.hardware.as_deref_mut() {
             hardware
                 .framebuffer
                 .clear(hardware.registers.backdrop_color());
+            compose_frame(hardware);
         }
         let tick = match &mut self.runtime {
             ScriptRuntime::Debugged(runtime) => runtime.run_draw(&mut self.hardware)?,
@@ -523,6 +529,11 @@ impl RunningCartridge {
 }
 
 /// Reads the entry script and the video assets a run needs.
+#[hotpath::measure(label = "running::compose")]
+fn compose_frame(hardware: &mut CartridgeHardware) {
+    compose_backgrounds(hardware);
+}
+
 fn prepare(
     cartridge: LoadedCartridge,
     defaults: &CartridgeVideoDefaults,
