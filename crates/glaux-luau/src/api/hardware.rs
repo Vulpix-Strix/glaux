@@ -1,5 +1,4 @@
-//! The read-only `hardware` table: the addresses, sizes and bit layouts that
-//! scripts need to use the memory functions without magic numbers.
+//! The read-only `hardware` table
 //!
 //! Every value comes from a constant in `glaux-machine`, so the table cannot
 //! drift from the machine. It lives in the VM and not in memory, so nothing
