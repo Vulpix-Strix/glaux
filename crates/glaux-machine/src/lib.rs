@@ -7,6 +7,7 @@ pub mod framebuffer;
 pub mod hardware;
 pub mod ink_image;
 pub mod machine;
+pub mod map_store;
 pub mod memory_map;
 pub mod oam;
 pub mod obj_palette;

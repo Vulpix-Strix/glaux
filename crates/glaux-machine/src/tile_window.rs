@@ -1,6 +1,6 @@
 //! A background tilemap window in VRAM.
 
-use crate::tilemap::{TILE_ENTRY_BYTES, TILE_WINDOW_SIDE, TileEntry};
+use crate::tilemap::{TILE_ENTRY_BYTES, TILE_WINDOW_SIDE, TileEntry, TileLayer};
 
 /// Size of one window in bytes.
 pub const TILE_WINDOW_BYTES: usize = TILE_WINDOW_SIDE * TILE_WINDOW_SIDE * TILE_ENTRY_BYTES;
@@ -58,6 +58,35 @@ impl TileWindow {
             value
         };
         true
+    }
+
+    /// Copies a `width` x `height` region of `source` into the window.
+    ///
+    /// The region starts at world cell `(x, y)` of the map. Each world cell
+    /// lands on the physical cell `(x mod 64, y mod 64)`, with a Euclidean
+    /// modulo so negative coordinates wrap the same way as positive ones.
+    /// Cells outside `source` are written as empty entries and the map itself
+    /// never repeats. A side longer than the window is cut to 64 cells, because
+    /// the rest would overwrite the cells just written.
+    pub fn transfer(&mut self, source: &TileLayer, x: i32, y: i32, width: usize, height: usize) {
+        // Widened so that adding a column or row to an extreme origin cannot
+        // overflow.
+        let (x, y) = (i64::from(x), i64::from(y));
+        let side = TILE_WINDOW_SIDE as i64;
+        for row in 0..height.min(TILE_WINDOW_SIDE) {
+            let world_y = y + row as i64;
+            for column in 0..width.min(TILE_WINDOW_SIDE) {
+                let world_x = x + column as i64;
+                let entry = usize::try_from(world_x)
+                    .ok()
+                    .zip(usize::try_from(world_y).ok())
+                    .and_then(|(map_x, map_y)| source.get(map_x, map_y))
+                    .unwrap_or_default();
+                let window_x = world_x.rem_euclid(side) as usize;
+                let window_y = world_y.rem_euclid(side) as usize;
+                self.set_entry(window_x, window_y, entry);
+            }
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8; TILE_WINDOW_BYTES] {
