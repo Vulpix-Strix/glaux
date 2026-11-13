@@ -1,13 +1,35 @@
-//! 128 entries of 8 bytes.
+//! Object Attribute Memory (OAM).
 //!
-//! | Offset  | Field                                                       |
-//! |---------|-------------------------------------------------------------|
-//! | +0..+1  | X, signed 16 bits                                           |
-//! | +2..+3  | Y, signed 16 bits                                           |
-//! | +4..+5  | first tile in bits 0-9, bits 10-15 reserved                 |
-//! | +6      | bits 0-2 OBP bank, 3 flip X, 4 flip Y, 5-6 priority, 7 reserved |
-//! | +7      | bits 0-2 size code, 3 enabled, 4-7 reserved                 |
-
+//! 128 objects, 8 bytes per entry.
+//!
+//! ```text
+//! Byte   +0    +1    +2    +3    +4    +5    +6    +7
+//!       +-----------+-----------+-----------+-----+-----+
+//!       |     X     |     Y     | Base tile | Attr| Size|
+//!       +-----------+-----------+-----------+-----+-----+
+//!         i16 LE      i16 LE      u16 LE
+//!
+//! Base tile (+4..+5)
+//!  15          10 9                   0
+//! +--------------+---------------------+
+//! |   Reserved   |      Tile index     |
+//! +--------------+---------------------+
+//!
+//! Attributes (+6)
+//!   7    6    5    4    3    2    1    0
+//! +----+---------+----+----+--------------+
+//! | R  | Priority| FY | FX |   OBP bank   |
+//! +----+---------+----+----+--------------+
+//!
+//! Size and control (+7)
+//!   7    6    5    4    3    2    1    0
+//! +-------------------+----+--------------+
+//! |     Reserved      | EN |  Size code   |
+//! +-------------------+----+--------------+
+//!
+//! FX = Flip X    FY = Flip Y
+//! EN = Enabled   R  = Reserved
+//! ```
 use crate::obj_palette::ObjBank;
 use crate::sprite::OBJ_TILE_CAPACITY;
 
