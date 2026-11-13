@@ -1,5 +1,6 @@
 //! Video subsystem for Glaux.
 
+pub mod compose;
 pub mod draw;
 pub mod preview;
 pub mod shade;
