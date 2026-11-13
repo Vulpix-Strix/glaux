@@ -232,3 +232,57 @@ end";
     assert_eq!(running.advance(&[]), Ok(Tick::Done));
     assert_eq!(shown(&running, 5, 6), Some(0), "the next tick composes it");
 }
+
+/// A run whose script only fills BG0 with tile 5 and enables the layer, so
+/// everything on screen comes from the background tiles and palettes the
+/// run starts with.
+const TILE_5_ONLY: &str = "
+function boot()
+  for i = 0, 4095 do poke16(0x34000 + 2 * i, 5) end
+  poke(0x3C000, 1)
+end
+function draw() end";
+
+#[test]
+fn unsaved_background_edits_are_what_a_run_draws_and_the_files_stay() {
+    use crate::cartridge::VideoAsset;
+    use crate::system::sprite_document::{SpriteDocument, TileSet};
+    use crate::system::video::VideoFiles;
+
+    let fixture = Fixture::new("running-compose-unsaved-bg");
+    let cartridge = luau_cartridge(&fixture, TILE_5_ONLY);
+
+    // Tile 5 is solid local 2, and BGP0 maps local 2 to master 7, but only
+    // in the editor's memory.
+    let mut document = SpriteDocument::from_files(&VideoFiles::default(), &defaults()).unwrap();
+    document.fill_in(TileSet::Bg, 5, 0, 0, 2);
+    document.set_bg_color(BgBank::ZERO, 2, 7);
+    assert_eq!(
+        document.modified_assets().collect::<Vec<_>>(),
+        [VideoAsset::BgTiles, VideoAsset::BgPalettes]
+    );
+
+    let mut running =
+        RunningCartridge::start(cartridge, &defaults(), document.unsaved(), &font()).unwrap();
+    running.tick(&[]).unwrap();
+    assert_eq!(shown(&running, 0, 0), Some(7));
+    assert_eq!(shown(&running, 319, 239), Some(7));
+
+    let dir = fixture.root().join("pong");
+    assert!(!dir.join("bgtiles.bin").exists());
+    assert!(!dir.join("bgp.bin").exists());
+}
+
+#[test]
+fn without_unsaved_edits_the_same_run_shows_the_backdrop() {
+    let fixture = Fixture::new("running-compose-saved-bg");
+    let mut running = RunningCartridge::start(
+        luau_cartridge(&fixture, TILE_5_ONLY),
+        &defaults(),
+        VideoOverrides::default(),
+        &font(),
+    )
+    .unwrap();
+    running.tick(&[]).unwrap();
+    assert_eq!(shown(&running, 0, 0), Some(0), "tile 5 is empty");
+}
