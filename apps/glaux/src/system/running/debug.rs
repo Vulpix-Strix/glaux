@@ -19,6 +19,7 @@
 //! would.
 
 use std::cell::{RefCell, RefMut};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -27,6 +28,7 @@ use glaux_audio::AudioState;
 use glaux_input::InputState;
 use glaux_machine::font::BitmapFont;
 use glaux_machine::hardware::CartridgeHardware;
+use glaux_machine::map_store::MapStore;
 use glaux_script::debug::{
     Breakpoint, DebugEvent, DebugLink, DebugReply, DebugRequest, Resume, Stop, session,
 };
@@ -111,12 +113,14 @@ impl DebugRuntime {
     /// `boot()`. It is back in `home` when the start finishes, whether it
     /// succeeded or not. If the start stops, the runtime still holds it and
     /// `home` stays empty until the run is resumed and the start finishes.
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         language: Language,
         entry: &str,
         source: Vec<u8>,
         modules: CartridgeModules,
         font: BitmapFont,
+        maps: Arc<MapStore>,
         breakpoints: Vec<Breakpoint>,
         home: &mut Option<Box<CartridgeHardware>>,
     ) -> Result<(Self, Option<Stop>), StartFailure> {
@@ -143,6 +147,7 @@ impl DebugRuntime {
                     &source,
                     modules,
                     font,
+                    maps,
                     &mut start_home,
                     port,
                     breakpoints,

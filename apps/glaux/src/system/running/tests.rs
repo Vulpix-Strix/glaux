@@ -10,9 +10,11 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::cartridge::fixture::{write_cartridge, write_rhai_cartridge};
 use crate::cartridge_fs::fixture::Fixture;
+use crate::system::video::VideoOverrides;
 
 mod composition;
 mod debugging;
+mod maps;
 mod memory;
 mod publication;
 

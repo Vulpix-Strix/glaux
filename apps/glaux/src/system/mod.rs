@@ -18,6 +18,7 @@ mod line_editor;
 mod logs;
 #[cfg_attr(not(test), allow(dead_code))]
 mod map_document;
+mod maps;
 mod menu_state;
 mod pause;
 mod render;

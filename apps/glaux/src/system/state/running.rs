@@ -2,10 +2,11 @@
 
 use super::workspace::open_workspace;
 use super::{Context, Documents};
-use crate::cartridge::LoadedCartridge;
 use crate::cartridge::source::SourcePath;
+use crate::cartridge::{Language, LoadedCartridge};
 use crate::system::editing::session::CodeSession;
 use crate::system::logs::{Category, LogStore, SourceLocation};
+use crate::system::maps::{MapOverrides, RunOverrides};
 use crate::system::pause::PauseOverlay;
 use crate::system::running::{FailedStart, RunOrigin, RunningCartridge, StartError, Tick};
 use crate::system::shell::{Shell, cartridge_identity};
@@ -77,14 +78,23 @@ pub(super) fn launch(
 ) -> SystemState {
     let identity = cartridge_identity(cartridge.manifest());
     let overrides = match origin {
-        RunOrigin::Shell => ctx
-            .sprites
-            .as_ref()
-            .map(SpriteDocument::unsaved)
-            .unwrap_or_default(),
+        RunOrigin::Shell => RunOverrides {
+            video: ctx
+                .sprites
+                .as_ref()
+                .map(SpriteDocument::unsaved)
+                .unwrap_or_default(),
+            maps: ctx.maps.as_ref().map(MapOverrides::new).unwrap_or_default(),
+        },
         RunOrigin::Code => Default::default(),
     };
-    let edited = !overrides.is_empty();
+    // Only Luau reads maps, so edits to them change nothing in a Rhai run.
+    let reads_maps = cartridge.manifest().runtime.language == Language::Luau;
+    let (graphics_edited, maps_edited) = (
+        !overrides.video.is_empty(),
+        reads_maps && !overrides.maps.is_empty(),
+    );
+    let edited = graphics_edited || maps_edited;
     ctx.logs.begin_run();
     let started = if debug {
         let breakpoints = ctx.code.as_ref().map(CodeSession::breakpoints);
@@ -105,8 +115,13 @@ pub(super) fn launch(
             let debugged = debug;
             tracing::info!(cartridge = %identity, edited, debugged, ?origin, "cartridge started");
             if edited {
+                let key = match (graphics_edited, maps_edited) {
+                    (true, true) => "system-running-with-unsaved-graphics-and-map-changes",
+                    (true, false) => "system-running-with-unsaved-graphics-changes",
+                    (false, _) => "system-running-with-unsaved-map-changes",
+                };
                 shell.report(ui_text::get_with(
-                    "system-running-with-unsaved-graphics-changes",
+                    key,
                     &[("identity", Arg::Text(&identity.to_string()))],
                 ));
             } else {
@@ -134,6 +149,20 @@ pub(super) fn launch(
                 ),
                 StartError::Video(err) => (
                     crate::system::ui_errors::video::video_asset(&err),
+                    Category::Load,
+                    None,
+                ),
+                StartError::Maps { id, error } => (
+                    ui_text::get_with(
+                        "system-start-map-failed",
+                        &[
+                            ("id", Arg::Text(&id.to_string())),
+                            (
+                                "reason",
+                                Arg::Text(&crate::system::ui_errors::map::map(&error)),
+                            ),
+                        ],
+                    ),
                     Category::Load,
                     None,
                 ),
