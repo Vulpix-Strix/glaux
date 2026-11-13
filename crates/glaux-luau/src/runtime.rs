@@ -27,10 +27,11 @@ use crate::modules::{self, Modules};
 
 /// Interrupt checks one call may pass with [`Budget::default`].
 ///
-/// Measured in a debug build, `while true do end` passes about 15 million
-/// checks per second, so a runaway call stops in roughly a third of a second.
-/// Checks are not time, so this is not a real-time guarantee: the collector
-/// and the builtins a script calls run between checks and are not counted.
+/// An empty loop passes around a hundred million checks per second in a
+/// release build, so a runaway call stops within tens of milliseconds there.
+/// That is an order of magnitude, not a guarantee. Checks are not time, and
+/// the collector and the builtins a script calls run between checks without
+/// being counted.
 pub const DEFAULT_INTERRUPT_BUDGET: u64 = 5_000_000;
 
 /// Bytes of heap a script may use, counting garbage the collector has not
