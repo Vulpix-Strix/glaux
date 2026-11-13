@@ -994,6 +994,7 @@ dependencies = [
  "glaux-machine",
  "glaux-modules",
  "glaux-script",
+ "glaux-video",
  "hotpath",
  "mlua",
  "pretty_assertions",

@@ -345,8 +345,8 @@ impl Runtime {
 
     /// A whole tick on a hardware of the runtime's own, for tests of the
     /// scripting layer. The hardware persists across calls, and like the
-    /// system it clears the framebuffer to the backdrop color between
-    /// `tick()` and `draw()`.
+    /// system it clears the framebuffer to the backdrop color and composes the
+    /// background layers between `tick()` and `draw()`.
     #[cfg(test)]
     pub fn tick(&mut self, input: InputState) -> Result<(), RuntimeError> {
         let mut home = self.scratch.take();
@@ -355,6 +355,7 @@ impl Runtime {
                 hardware
                     .framebuffer
                     .clear(hardware.registers.backdrop_color());
+                glaux_video::compose::compose_backgrounds(hardware);
             }
             self.run_draw(&mut home)
         });
