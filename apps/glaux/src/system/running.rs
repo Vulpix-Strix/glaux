@@ -528,12 +528,14 @@ impl RunningCartridge {
     }
 }
 
-/// Reads the entry script and the video assets a run needs.
+/// Composes the layers over the cleared framebuffer. It is a function of its
+/// own so that hotpath can time it apart from `draw()`.
 #[hotpath::measure(label = "running::compose")]
 fn compose_frame(hardware: &mut CartridgeHardware) {
     compose_backgrounds(hardware);
 }
 
+/// Reads the entry script and the video assets a run needs.
 fn prepare(
     cartridge: LoadedCartridge,
     defaults: &CartridgeVideoDefaults,
