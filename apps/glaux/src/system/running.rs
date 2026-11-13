@@ -14,7 +14,7 @@ use glaux_machine::psg::Psg;
 use glaux_machine::published::PublishedFrame;
 use glaux_script::debug::{Breakpoint, DebugReply, DebugRequest, Resume, Stop};
 use glaux_script::{LogEntry, Phase, RuntimeError, ScriptError, StartFailure};
-use glaux_video::compose::compose_backgrounds;
+use glaux_video::compose::compose_layers;
 
 use self::debug::DebugRuntime;
 pub use self::debug::Tick;
@@ -532,7 +532,7 @@ impl RunningCartridge {
 /// own so that hotpath can time it apart from `draw()`.
 #[hotpath::measure(label = "running::compose")]
 fn compose_frame(hardware: &mut CartridgeHardware) {
-    compose_backgrounds(hardware);
+    compose_layers(hardware);
 }
 
 /// Reads the entry script and the video assets a run needs.
