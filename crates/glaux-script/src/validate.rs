@@ -76,6 +76,20 @@ pub fn tile_span(
     Ok(n as u8)
 }
 
+/// A cell of a map in world coordinates: any integer that fits an `i32`.
+/// Cells beyond the map are legal, they are just empty.
+pub fn world_cell(n: f64) -> Result<i32, String> {
+    if whole_in(n, f64::from(i32::MIN), f64::from(i32::MAX)) {
+        Ok(n as i32)
+    } else {
+        Err(format!(
+            "integer from {} to {} expected, got {n}",
+            i32::MIN,
+            i32::MAX
+        ))
+    }
+}
+
 /// An integer in `0..=max`. `what` names the value in the error.
 pub fn bounded(n: f64, what: &str, max: u32) -> Result<u32, String> {
     if whole_in(n, 0.0, f64::from(max)) {
