@@ -144,3 +144,91 @@ function draw() pset(1, 1, 9) end";
     // BG0 is scrolled three pixels, which the frame reflects.
     assert_eq!(shown(&running, 0, 0), Some(1));
 }
+
+/// `boot()` gives tile 0 of the object bank local index 2 and tile 1 local
+/// index 4, which the default palette bank maps to master indexes 2 and 4. It
+/// then enables object 0, an 8 by 8 object at (5, 6), and nothing else.
+const OBJECT_SETUP: &str = "
+function boot()
+  memset(0x2C000, 0x22, 32)
+  memset(0x2C000 + 32, 0x44, 32)
+  poke16(0x3B000, 5)
+  poke16(0x3B002, 6)
+  poke(0x3B007, 0x08)
+  poke(0x3C000, 8)
+end";
+
+fn start_objects(fixture: &Fixture, script: &str) -> RunningCartridge {
+    RunningCartridge::start(
+        luau_cartridge(fixture, &format!("{script}{OBJECT_SETUP}")),
+        &defaults(),
+        VideoOverrides::default(),
+        &font(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn objects_set_up_in_boot_are_published_under_what_draw_paints() {
+    let fixture = Fixture::new("running-compose-objects");
+    let mut running = start_objects(
+        &fixture,
+        "function draw()
+  pset(6, 7, 9)
+  spr(1, 8, 9)
+end",
+    );
+    assert_eq!(shown(&running, 5, 6), Some(0), "nothing before a draw");
+
+    running.tick(&[]).unwrap();
+    assert_eq!(shown(&running, 5, 6), Some(2));
+    assert_eq!(shown(&running, 5, 13), Some(2));
+    assert_eq!(shown(&running, 13, 6), Some(0), "outside the object");
+    // Immediate drawing goes over the objects and does not use the table.
+    assert_eq!(shown(&running, 6, 7), Some(9));
+    assert_eq!(shown(&running, 9, 10), Some(4), "spr over the object");
+    assert_eq!(shown(&running, 14, 15), Some(4));
+}
+
+#[test]
+fn an_object_table_write_during_draw_waits_for_the_next_frame() {
+    let fixture = Fixture::new("running-compose-oam-in-draw");
+    let mut running = start_objects(&fixture, "function draw() poke(0x3B007, 0) end");
+
+    running.tick(&[]).unwrap();
+    assert_eq!(shown(&running, 5, 6), Some(2), "composed before draw() ran");
+
+    running.tick(&[]).unwrap();
+    assert_eq!(shown(&running, 5, 6), Some(0), "composed after the change");
+}
+
+#[test]
+fn resuming_a_stopped_draw_does_not_compose_the_objects_again() {
+    // From its second tick on, draw() disables the object before the line the
+    // test stops at.
+    let script = "local n = 0
+function tick() n += 1 end
+function draw()
+  if n >= 2 then poke(0x3B007, 0) end
+  pset(20, 20, 9)
+  pset(21, 21, 8)
+end";
+    let fixture = Fixture::new("running-compose-resume-objects");
+    let (mut running, _) = start_debug(
+        luau_cartridge(&fixture, &format!("{script}{OBJECT_SETUP}")),
+        Vec::new(),
+    );
+    assert_eq!(running.advance(&[]), Ok(Tick::Done));
+    assert_eq!(shown(&running, 5, 6), Some(2));
+
+    running.set_breakpoints(vec![at(MAIN, STOP_IN_DRAW)]);
+    stopped(running.advance(&[]));
+    assert_eq!(running.resume(Resume::Continue), Ok(Tick::Done));
+    assert_eq!(shown(&running, 5, 6), Some(2), "prepared before draw()");
+    assert_eq!(shown(&running, 21, 21), Some(8));
+    assert!(!running.hardware().oam.entry(0).unwrap().enabled);
+
+    running.set_breakpoints(Vec::new());
+    assert_eq!(running.advance(&[]), Ok(Tick::Done));
+    assert_eq!(shown(&running, 5, 6), Some(0), "the next tick composes it");
+}
