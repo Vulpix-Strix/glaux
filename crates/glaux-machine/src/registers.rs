@@ -6,10 +6,15 @@ use crate::memory_map::{
 };
 use crate::tilemap::{BG_LAYERS, BgLayer};
 
-/// Bits 0-3 enable BG0, BG1, BG2 and OBJ. Bits 4-7 are reserved.
-const DISPLAY_ENABLE_MASK: u8 = 0x0F;
+/// Bits of `DISPLAY_ENABLE` that switch on BG0, BG1, BG2 and the objects.
+pub const DISPLAY_BG0: u8 = 1 << 0;
+pub const DISPLAY_BG1: u8 = 1 << 1;
+pub const DISPLAY_BG2: u8 = 1 << 2;
+pub const DISPLAY_OBJ: u8 = 1 << 3;
+/// The writable bits of `DISPLAY_ENABLE`. Bits 4-7 are reserved.
+pub const DISPLAY_ENABLE_MASK: u8 = DISPLAY_BG0 | DISPLAY_BG1 | DISPLAY_BG2 | DISPLAY_OBJ;
 /// Only bits 0-1 of a BG priority mean anything.
-const PRIORITY_MASK: u8 = 0b11;
+pub const BG_PRIORITY_MASK: u8 = 0b11;
 /// Priorities at power-on: BG2 in front of BG1 in front of BG0.
 const INITIAL_PRIORITIES: [u8; BG_LAYERS] = [3, 2, 1];
 
@@ -35,7 +40,7 @@ fn writable_mask(register: usize) -> Option<u8> {
         let field = register.checked_sub(bg_offset(layer, 0))?;
         match field {
             0..BG_PRIORITY_FIELD => Some(0xFF),
-            BG_PRIORITY_FIELD => Some(PRIORITY_MASK),
+            BG_PRIORITY_FIELD => Some(BG_PRIORITY_MASK),
             _ => None,
         }
     })

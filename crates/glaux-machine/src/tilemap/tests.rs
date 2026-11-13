@@ -156,3 +156,59 @@ proptest! {
         prop_assert_eq!(TileEntry::from_raw(entry.raw()), Ok(entry));
     }
 }
+
+mod constants {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn the_constants_keep_the_approved_layout() {
+        assert_eq!(ENTRY_INDEX_MASK, 0x03FF);
+        assert_eq!(
+            [ENTRY_FLIP_X, ENTRY_FLIP_Y, ENTRY_PRIORITY],
+            [0x0400, 0x0800, 0x1000]
+        );
+        assert_eq!((ENTRY_BANK_SHIFT, ENTRY_BANK_MASK), (13, 0b11));
+        assert_eq!(TileEntry::VALID_BITS, 0x7FFF);
+    }
+
+    #[test]
+    fn an_entry_built_from_the_constants_equals_the_constructor_and_reads_back() {
+        for tile in [0, 1, 511, 1023] {
+            for flags in 0..8u8 {
+                for b in 0..4 {
+                    let mut raw = tile | (u16::from(b) << ENTRY_BANK_SHIFT);
+                    for (bit, flag) in [(0, ENTRY_FLIP_X), (1, ENTRY_FLIP_Y), (2, ENTRY_PRIORITY)] {
+                        if flags & (1 << bit) != 0 {
+                            raw |= flag;
+                        }
+                    }
+                    let built = TileEntry::new(
+                        tile,
+                        flags & 1 != 0,
+                        flags & 2 != 0,
+                        flags & 4 != 0,
+                        bank(b),
+                    )
+                    .unwrap();
+                    assert_eq!(built.raw(), raw);
+                    let read = TileEntry::from_raw(raw).unwrap();
+                    assert_eq!(read, built);
+                    assert_eq!(read.raw() & ENTRY_INDEX_MASK, tile);
+                    assert_eq!(read.bank(), bank(b));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_reserved_bit_stays_outside_every_field_constant() {
+        let fields = ENTRY_INDEX_MASK
+            | ENTRY_FLIP_X
+            | ENTRY_FLIP_Y
+            | ENTRY_PRIORITY
+            | (ENTRY_BANK_MASK << ENTRY_BANK_SHIFT);
+        assert_eq!(fields, TileEntry::VALID_BITS);
+        assert!(TileEntry::from_raw(1 << 15).is_err());
+    }
+}

@@ -160,3 +160,111 @@ fn entries_past_the_table_are_refused_without_touching_it() {
 
     assert_eq!(oam.entry(OAM_ENTRIES - 1), Some(entry));
 }
+
+mod constants {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use proptest::prelude::*;
+
+    /// The eight bytes of an entry, built only from the field constants.
+    fn packed(entry: OamEntry) -> [u8; OAM_ENTRY_BYTES] {
+        let mut bytes = [0u8; OAM_ENTRY_BYTES];
+        bytes[FIELD_X..][..2].copy_from_slice(&entry.x.to_le_bytes());
+        bytes[FIELD_Y..][..2].copy_from_slice(&entry.y.to_le_bytes());
+        bytes[FIELD_TILE..][..2].copy_from_slice(&entry.tile.to_le_bytes());
+        let mut attributes = entry.bank.get() | entry.priority << ATTR_PRIORITY_SHIFT;
+        if entry.flip_x {
+            attributes |= ATTR_FLIP_X;
+        }
+        if entry.flip_y {
+            attributes |= ATTR_FLIP_Y;
+        }
+        bytes[FIELD_ATTRIBUTES] = attributes;
+        bytes[FIELD_SIZE] = entry.size | if entry.enabled { ENABLED } else { 0 };
+        bytes
+    }
+
+    #[test]
+    fn the_constants_keep_the_approved_layout() {
+        assert_eq!(
+            [FIELD_X, FIELD_Y, FIELD_TILE, FIELD_ATTRIBUTES, FIELD_SIZE],
+            [0, 2, 4, 6, 7]
+        );
+        assert_eq!(TILE_MASK, 0x03FF);
+        assert_eq!(ATTR_BANK_MASK, 0b111);
+        assert_eq!(
+            [
+                ATTR_FLIP_X,
+                ATTR_FLIP_Y,
+                ATTR_PRIORITY_SHIFT,
+                ATTR_PRIORITY_MASK
+            ],
+            [0x08, 0x10, 5, 0b11]
+        );
+        assert_eq!([SIZE_MASK, ENABLED], [0b111, 0x08]);
+    }
+
+    #[test]
+    fn the_size_codes_name_the_approved_dimensions() {
+        let tiles = |size| {
+            OamEntry {
+                size,
+                ..OamEntry::default()
+            }
+            .tiles()
+        };
+        assert_eq!(tiles(SIZE_8X8), Some((1, 1)));
+        assert_eq!(tiles(SIZE_16X16), Some((2, 2)));
+        assert_eq!(tiles(SIZE_32X32), Some((4, 4)));
+        assert_eq!(tiles(SIZE_8X16), Some((1, 2)));
+        assert_eq!(tiles(SIZE_16X8), Some((2, 1)));
+        assert_eq!(tiles(SIZE_16X32), Some((2, 4)));
+        assert_eq!(tiles(SIZE_32X16), Some((4, 2)));
+        assert_eq!(tiles(SIZE_RESERVED), None);
+    }
+
+    fn entries() -> impl Strategy<Value = OamEntry> {
+        (
+            any::<i16>(),
+            any::<i16>(),
+            0..=TILE_MASK,
+            0..=ATTR_BANK_MASK,
+            any::<bool>(),
+            any::<bool>(),
+            0..=ATTR_PRIORITY_MASK,
+            0..=SIZE_MASK,
+            any::<bool>(),
+        )
+            .prop_map(|(x, y, tile, b, flip_x, flip_y, priority, size, enabled)| {
+                OamEntry {
+                    x,
+                    y,
+                    tile,
+                    bank: bank(b),
+                    flip_x,
+                    flip_y,
+                    priority,
+                    size,
+                    enabled,
+                }
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn an_entry_built_from_the_constants_decodes_to_its_fields(entry in entries()) {
+            let mut oam = Oam::new();
+            for (offset, byte) in packed(entry).into_iter().enumerate() {
+                prop_assert!(oam.set_byte(OAM_ENTRY_BYTES + offset, byte));
+            }
+            prop_assert_eq!(oam.entry(1), Some(entry));
+        }
+
+        #[test]
+        fn an_encoded_entry_is_the_one_built_from_the_constants(entry in entries()) {
+            let mut oam = Oam::new();
+            prop_assert!(oam.set_entry(2, entry));
+            prop_assert_eq!(&oam.as_bytes()[2 * 8..3 * 8], &packed(entry));
+        }
+    }
+}

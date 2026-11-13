@@ -27,12 +27,15 @@ pub const TILE_ENTRY_BYTES: usize = 2;
 /// Entries along each side of a VRAM tilemap window.
 pub const TILE_WINDOW_SIDE: usize = 64;
 
-const TILE_MASK: u16 = 0x03FF;
-const FLIP_X: u16 = 1 << 10;
-const FLIP_Y: u16 = 1 << 11;
-const PRIORITY: u16 = 1 << 12;
-const BANK_SHIFT: u16 = 13;
-const BANK_MASK: u16 = 0b11;
+/// Mask of the tile index in an entry.
+pub const ENTRY_INDEX_MASK: u16 = 0x03FF;
+pub const ENTRY_FLIP_X: u16 = 1 << 10;
+pub const ENTRY_FLIP_Y: u16 = 1 << 11;
+pub const ENTRY_PRIORITY: u16 = 1 << 12;
+/// Position of the palette bank in an entry.
+pub const ENTRY_BANK_SHIFT: u16 = 13;
+/// Mask of the palette bank once shifted down by [`ENTRY_BANK_SHIFT`].
+pub const ENTRY_BANK_MASK: u16 = (BG_PALETTE_BANKS - 1) as u16;
 const RESERVED: u16 = 1 << 15;
 
 /// One of the three fixed background layers.
@@ -121,15 +124,15 @@ impl TileEntry {
         if tile as usize >= BG_TILE_CAPACITY {
             return None;
         }
-        let mut raw = tile | ((bank.get() as u16) << BANK_SHIFT);
+        let mut raw = tile | ((bank.get() as u16) << ENTRY_BANK_SHIFT);
         if flip_x {
-            raw |= FLIP_X;
+            raw |= ENTRY_FLIP_X;
         }
         if flip_y {
-            raw |= FLIP_Y;
+            raw |= ENTRY_FLIP_Y;
         }
         if priority {
-            raw |= PRIORITY;
+            raw |= ENTRY_PRIORITY;
         }
         Some(Self(raw))
     }
@@ -153,23 +156,23 @@ impl TileEntry {
     }
 
     pub const fn tile(self) -> u16 {
-        self.0 & TILE_MASK
+        self.0 & ENTRY_INDEX_MASK
     }
 
     pub const fn flip_x(self) -> bool {
-        self.0 & FLIP_X != 0
+        self.0 & ENTRY_FLIP_X != 0
     }
 
     pub const fn flip_y(self) -> bool {
-        self.0 & FLIP_Y != 0
+        self.0 & ENTRY_FLIP_Y != 0
     }
 
     pub const fn priority(self) -> bool {
-        self.0 & PRIORITY != 0
+        self.0 & ENTRY_PRIORITY != 0
     }
 
     pub const fn bank(self) -> BgBank {
-        BgBank(((self.0 >> BANK_SHIFT) & BANK_MASK) as u8)
+        BgBank(((self.0 >> ENTRY_BANK_SHIFT) & ENTRY_BANK_MASK) as u8)
     }
 }
 

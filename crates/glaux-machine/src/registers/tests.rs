@@ -74,3 +74,15 @@ fn scrolls_keep_their_full_sixteen_bit_value() {
     assert_eq!(registers.bg_scroll_x(BgLayer::Bg1), 600);
     assert_eq!(registers.bg_scroll_y(BgLayer::Bg1), 0xFFFF);
 }
+
+#[test]
+fn the_display_bits_select_the_layers_and_objects() {
+    assert_eq!(
+        [DISPLAY_BG0, DISPLAY_BG1, DISPLAY_BG2, DISPLAY_OBJ],
+        [0b0001, 0b0010, 0b0100, 0b1000]
+    );
+    assert_eq!(DISPLAY_ENABLE_MASK, 0x0F);
+    let mut registers = GraphicsRegisters::new();
+    registers.set_byte(0, 0xFF);
+    assert_eq!(registers.display_enable(), DISPLAY_ENABLE_MASK);
+}

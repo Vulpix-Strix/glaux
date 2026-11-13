@@ -30,7 +30,7 @@
 //! FX = Flip X    FY = Flip Y
 //! EN = Enabled   R  = Reserved
 //! ```
-use crate::obj_palette::ObjBank;
+use crate::obj_palette::{OBJ_PALETTE_BANKS, ObjBank};
 use crate::sprite::OBJ_TILE_CAPACITY;
 
 /// Number of objects.
@@ -43,13 +43,37 @@ pub const OAM_BYTES: usize = OAM_ENTRIES * OAM_ENTRY_BYTES;
 /// The bits each byte of an entry can hold.
 const BYTE_MASKS: [u8; OAM_ENTRY_BYTES] = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x03, 0x7F, 0x0F];
 
-const TILE_MASK: u16 = (OBJ_TILE_CAPACITY - 1) as u16;
-const PRIORITY_MASK: u8 = 0b11;
-const SIZE_MASK: u8 = 0b111;
-const FLIP_X: u8 = 1 << 3;
-const FLIP_Y: u8 = 1 << 4;
-const PRIORITY_SHIFT: u8 = 5;
-const ENABLED: u8 = 1 << 3;
+/// Offsets of the fields within an entry.
+pub const FIELD_X: usize = 0;
+pub const FIELD_Y: usize = 2;
+pub const FIELD_TILE: usize = 4;
+pub const FIELD_ATTRIBUTES: usize = 6;
+pub const FIELD_SIZE: usize = 7;
+
+/// Mask of the tile index in the base tile field.
+pub const TILE_MASK: u16 = (OBJ_TILE_CAPACITY - 1) as u16;
+/// Mask of the palette bank in the attributes byte.
+pub const ATTR_BANK_MASK: u8 = (OBJ_PALETTE_BANKS - 1) as u8;
+pub const ATTR_FLIP_X: u8 = 1 << 3;
+pub const ATTR_FLIP_Y: u8 = 1 << 4;
+pub const ATTR_PRIORITY_SHIFT: u8 = 5;
+/// Mask of the priority once shifted down by [`ATTR_PRIORITY_SHIFT`].
+pub const ATTR_PRIORITY_MASK: u8 = 0b11;
+/// Mask of the size code in the size byte.
+pub const SIZE_MASK: u8 = 0b111;
+/// Set in the size byte for an object that takes part in drawing.
+pub const ENABLED: u8 = 1 << 3;
+
+/// Size codes, named by the pixel size of the object.
+pub const SIZE_8X8: u8 = 0;
+pub const SIZE_16X16: u8 = 1;
+pub const SIZE_32X32: u8 = 2;
+pub const SIZE_8X16: u8 = 3;
+pub const SIZE_16X8: u8 = 4;
+pub const SIZE_16X32: u8 = 5;
+pub const SIZE_32X16: u8 = 6;
+/// Reserved code. An object with it is invisible even when enabled.
+pub const SIZE_RESERVED: u8 = 7;
 
 const _: () = assert!(OBJ_TILE_CAPACITY.is_power_of_two());
 
@@ -79,45 +103,51 @@ impl OamEntry {
     /// so is any value that does not fit in the 3 bits of the field.
     pub const fn tiles(&self) -> Option<(usize, usize)> {
         match self.size {
-            0 => Some((1, 1)),
-            1 => Some((2, 2)),
-            2 => Some((4, 4)),
-            3 => Some((1, 2)),
-            4 => Some((2, 1)),
-            5 => Some((2, 4)),
-            6 => Some((4, 2)),
+            SIZE_8X8 => Some((1, 1)),
+            SIZE_16X16 => Some((2, 2)),
+            SIZE_32X32 => Some((4, 4)),
+            SIZE_8X16 => Some((1, 2)),
+            SIZE_16X8 => Some((2, 1)),
+            SIZE_16X32 => Some((2, 4)),
+            SIZE_32X16 => Some((4, 2)),
             _ => None,
         }
     }
 
     fn to_bytes(self) -> [u8; OAM_ENTRY_BYTES] {
-        let [x0, x1] = self.x.to_le_bytes();
-        let [y0, y1] = self.y.to_le_bytes();
-        let [tile0, tile1] = (self.tile & TILE_MASK).to_le_bytes();
-        let mut attributes = self.bank.get() | (self.priority & PRIORITY_MASK) << PRIORITY_SHIFT;
+        let mut bytes = [0; OAM_ENTRY_BYTES];
+        bytes[FIELD_X..FIELD_X + 2].copy_from_slice(&self.x.to_le_bytes());
+        bytes[FIELD_Y..FIELD_Y + 2].copy_from_slice(&self.y.to_le_bytes());
+        bytes[FIELD_TILE..FIELD_TILE + 2].copy_from_slice(&(self.tile & TILE_MASK).to_le_bytes());
+        let mut attributes =
+            self.bank.get() | (self.priority & ATTR_PRIORITY_MASK) << ATTR_PRIORITY_SHIFT;
         if self.flip_x {
-            attributes |= FLIP_X;
+            attributes |= ATTR_FLIP_X;
         }
         if self.flip_y {
-            attributes |= FLIP_Y;
+            attributes |= ATTR_FLIP_Y;
         }
+        bytes[FIELD_ATTRIBUTES] = attributes;
         let mut size = self.size & SIZE_MASK;
         if self.enabled {
             size |= ENABLED;
         }
-        [x0, x1, y0, y1, tile0, tile1, attributes, size]
+        bytes[FIELD_SIZE] = size;
+        bytes
     }
 
     fn from_bytes(bytes: [u8; OAM_ENTRY_BYTES]) -> Self {
-        let [x0, x1, y0, y1, tile0, tile1, attributes, size] = bytes;
+        let word = |field: usize| [bytes[field], bytes[field + 1]];
+        let attributes = bytes[FIELD_ATTRIBUTES];
+        let size = bytes[FIELD_SIZE];
         Self {
-            x: i16::from_le_bytes([x0, x1]),
-            y: i16::from_le_bytes([y0, y1]),
-            tile: u16::from_le_bytes([tile0, tile1]),
-            bank: ObjBank::new(attributes & 0b111).unwrap_or(ObjBank::ZERO),
-            flip_x: attributes & FLIP_X != 0,
-            flip_y: attributes & FLIP_Y != 0,
-            priority: (attributes >> PRIORITY_SHIFT) & PRIORITY_MASK,
+            x: i16::from_le_bytes(word(FIELD_X)),
+            y: i16::from_le_bytes(word(FIELD_Y)),
+            tile: u16::from_le_bytes(word(FIELD_TILE)),
+            bank: ObjBank::new(attributes & ATTR_BANK_MASK).unwrap_or(ObjBank::ZERO),
+            flip_x: attributes & ATTR_FLIP_X != 0,
+            flip_y: attributes & ATTR_FLIP_Y != 0,
+            priority: (attributes >> ATTR_PRIORITY_SHIFT) & ATTR_PRIORITY_MASK,
             size: size & SIZE_MASK,
             enabled: size & ENABLED != 0,
         }
