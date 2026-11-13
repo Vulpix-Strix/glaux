@@ -76,9 +76,9 @@
 
 ## Profiling
 
-- `mise run profile -- <label>` runs every workload with timing and then with allocations, and writes JSON reports and per-phase frame times to `target/profiling/<label>/`, which is not tracked. `mise run profile-compare -- <before> <after>` lists the functions whose p95 time or allocated bytes moved by more than 25 % (`--threshold` changes it) and exits with 1 when any got worse.
-- The workloads are scenarios of the ignored test `apps/glaux/src/system/tests/profiling_workload.rs`, selected with `GLAUX_WORKLOAD`: `luau` (default) and `rhai` play Signal Lost for 3600 ticks, `bg` scrolls three full opaque background layers for the same time, `editor` exercises the Code view, `analyzer` adds `luau-lsp` (needs `LUAU_LSP`, skipped without it) and `paced` is `editor` without the analyzer. They drive the real `System` without a window and assert nothing about time.
-- Use the workloads to compare commits. Profile the real application (`cargo run -p glaux --profile profiling --features hotpath-alloc`) only for what they cannot see: presentation, vsync and the host. Its report is printed on exit, and `HOTPATH_SHUTDOWN_MS` and `HOTPATH_OUTPUT_PATH` give it a fixed length and a file.
-- For comparable numbers, use `--profile profiling` (release with symbols), never dev, and repeat a run before trusting a change. Allocation figures are exact between runs, while times vary by around 10 % at p95. Times nest, so never add them up, and `app::present` is mostly waiting for the display.
-- The features `hotpath`, `hotpath-alloc` and `hotpath-cpu` are off by default, and no hotpath macro does anything without one. Never add them to `default`. `hotpath-cpu` needs `samply` and `hotpath-samply`, and must run the test binary directly, not under nextest.
-- Past measurements live only in the Git history of the former `PROFILING.md`. Do not keep a log of results in the repository.
+- Use `mise run profile -- <label>` to collect profiling data and `mise run profile-compare -- <before> <after>` to compare results.
+- Use the existing workloads in `apps/glaux/src/system/tests/profiling_workload.rs`. Consult `scripts/profile.py` for available scenarios.
+- Profile using release builds with symbols. Repeat measurements before drawing conclusions.
+- Use hotpath through opt-in Cargo features. Never enable profiling features by default.
+- Profile the real application when investigating host behavior, presentation or vsync.
+- Keep profiling results out of version control.
