@@ -6,7 +6,8 @@
 //! row-major, exactly `width * height * 2` bytes. A layer without a file is
 //! entirely empty.
 
-use glaux_machine::tilemap::{BG_LAYERS, BgLayer, TileLayerError};
+use glaux_machine::map_store::MapData;
+use glaux_machine::tilemap::{BG_LAYERS, BgLayer, TileLayer, TileLayerError};
 use serde::{Deserialize, Serialize};
 
 use super::LoadedCartridge;
@@ -270,6 +271,28 @@ pub struct MapFiles {
     pub meta: Vec<u8>,
     /// `None` is a layer without a file, which is entirely empty.
     pub layers: [Option<Vec<u8>>; BG_LAYERS],
+}
+
+impl MapFiles {
+    /// Decodes the files into a map a script can read.
+    pub fn decode(&self) -> Result<MapData, MapError> {
+        let meta = MapMeta::parse(&self.meta)?;
+        let mut decoded = Vec::with_capacity(BG_LAYERS);
+        for layer in BgLayer::ALL {
+            let parsed = match &self.layers[layer.index()] {
+                Some(bytes) => TileLayer::from_bytes(meta.width, meta.height, bytes),
+                None => TileLayer::empty(meta.width, meta.height).ok_or(TileLayerError::TooLarge {
+                    width: meta.width,
+                    height: meta.height,
+                }),
+            };
+            decoded.push(parsed.map_err(|source| MapError::Layer { layer, source })?);
+        }
+        let layers: [TileLayer; BG_LAYERS] = decoded
+            .try_into()
+            .expect("one layer was decoded for each background layer");
+        Ok(MapData::new(layers).expect("the layers were decoded at the map's size"))
+    }
 }
 
 /// A failed write to a map file.

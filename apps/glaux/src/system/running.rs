@@ -3,12 +3,14 @@
 mod debug;
 
 use std::cell::RefMut;
+use std::sync::Arc;
 
 use glaux_audio::AudioState;
 use glaux_input::{InputEvent, InputLatch, InputState};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::hardware::CartridgeHardware;
+use glaux_machine::map_store::MapStore;
 use glaux_machine::palette::Palette;
 use glaux_machine::psg::Psg;
 use glaux_machine::published::PublishedFrame;
@@ -19,9 +21,9 @@ use glaux_video::compose::compose_layers;
 use self::debug::DebugRuntime;
 pub use self::debug::Tick;
 use super::audio;
-use super::video::{
-    CartridgeVideo, CartridgeVideoDefaults, VideoAssetError, VideoLoadError, VideoOverrides,
-};
+use super::maps::{self, RunOverrides};
+use super::video::{CartridgeVideo, CartridgeVideoDefaults, VideoAssetError, VideoLoadError};
+use crate::cartridge::map::{MapError, MapId};
 use crate::cartridge::{CartridgeError, CartridgeModules, Language, LoadedCartridge};
 
 /// Why a cartridge could not start.
@@ -31,6 +33,8 @@ pub enum StartError {
     Cartridge(CartridgeError),
     /// A video asset was not valid native data.
     Video(VideoAssetError),
+    /// A map of a Luau cartridge could not be read.
+    Maps { id: MapId, error: MapError },
     /// The entry chunk or `boot()` failed.
     Script(StartFailure),
 }
@@ -75,6 +79,7 @@ impl ScriptRuntime {
         source: &[u8],
         modules: CartridgeModules,
         font: BitmapFont,
+        maps: Arc<MapStore>,
         home: &mut Option<Box<CartridgeHardware>>,
     ) -> Result<Self, StartFailure> {
         match language {
@@ -84,6 +89,7 @@ impl ScriptRuntime {
                 modules,
                 glaux_luau::Budget::default(),
                 font,
+                maps,
                 home,
             )
             .map(Self::Luau),
@@ -108,6 +114,7 @@ impl ScriptRuntime {
         source: &[u8],
         modules: CartridgeModules,
         font: BitmapFont,
+        maps: Arc<MapStore>,
         home: &mut Option<Box<CartridgeHardware>>,
         port: glaux_script::debug::DebugPort,
         breakpoints: Vec<Breakpoint>,
@@ -119,6 +126,7 @@ impl ScriptRuntime {
                 modules,
                 glaux_luau::Budget::default(),
                 font,
+                maps,
                 home,
                 port,
                 breakpoints,
@@ -221,15 +229,21 @@ impl RunningCartridge {
     /// `boot()`, with `defaults` standing in for video assets the cartridge
     /// does not supply. The assets in `overrides` replace what the
     /// cartridge's files hold, so a run can show edits not written back.
+    /// A Luau cartridge also reads its maps, and a Rhai one never does.
     /// `font` is the System ROM font that `print` draws with. On failure the
     /// cartridge is handed back, still loaded.
-    pub fn start(
+    pub fn start<'a>(
         cartridge: LoadedCartridge,
         defaults: &CartridgeVideoDefaults,
-        overrides: VideoOverrides<'_>,
+        overrides: impl Into<RunOverrides<'a>>,
         font: &BitmapFont,
     ) -> Result<Self, Box<FailedStart>> {
-        let (cartridge, source, hardware) = prepare(cartridge, defaults, overrides)?;
+        let Prepared {
+            cartridge,
+            source,
+            hardware,
+            maps,
+        } = prepare(cartridge, defaults, overrides.into())?;
         // Taken before any script runs, so the first frame shown is the same
         // whether or not the start stopped in the debugger.
         let published = PublishedFrame::new(&hardware);
@@ -241,6 +255,7 @@ impl RunningCartridge {
             &source,
             cartridge.modules(),
             font.clone(),
+            maps,
             &mut home,
         );
         match started {
@@ -254,14 +269,19 @@ impl RunningCartridge {
     /// itself can stop, at a breakpoint in the entry script or in `boot()`,
     /// and then the stop comes with the cartridge and the run goes on with
     /// [`resume`](Self::resume).
-    pub fn start_debug(
+    pub fn start_debug<'a>(
         cartridge: LoadedCartridge,
         defaults: &CartridgeVideoDefaults,
-        overrides: VideoOverrides<'_>,
+        overrides: impl Into<RunOverrides<'a>>,
         font: &BitmapFont,
         breakpoints: Vec<Breakpoint>,
     ) -> Result<(Self, Option<Stop>), Box<FailedStart>> {
-        let (cartridge, source, hardware) = prepare(cartridge, defaults, overrides)?;
+        let Prepared {
+            cartridge,
+            source,
+            hardware,
+            maps,
+        } = prepare(cartridge, defaults, overrides.into())?;
         let published = PublishedFrame::new(&hardware);
         let mut home = Some(hardware);
         let spec = &cartridge.manifest().runtime;
@@ -271,6 +291,7 @@ impl RunningCartridge {
             source,
             cartridge.modules(),
             font.clone(),
+            maps,
             breakpoints,
             &mut home,
         ) {
@@ -535,19 +556,28 @@ fn compose_frame(hardware: &mut CartridgeHardware) {
     compose_layers(hardware);
 }
 
-/// Reads the entry script and the video assets a run needs.
+/// What a run needs, read from its cartridge.
+struct Prepared {
+    cartridge: LoadedCartridge,
+    source: Vec<u8>,
+    hardware: Box<CartridgeHardware>,
+    maps: Arc<MapStore>,
+}
+
+/// Reads the entry script, the video assets and, for Luau, the maps a run
+/// needs.
 fn prepare(
     cartridge: LoadedCartridge,
     defaults: &CartridgeVideoDefaults,
-    overrides: VideoOverrides<'_>,
-) -> Result<(LoadedCartridge, Vec<u8>, Box<CartridgeHardware>), Box<FailedStart>> {
+    overrides: RunOverrides<'_>,
+) -> Result<Prepared, Box<FailedStart>> {
     let source = match cartridge.entry_source() {
         Ok(source) => source,
         Err(err) => return Err(failed(cartridge, StartError::Cartridge(err))),
     };
     let hardware = match CartridgeVideo::load(&cartridge, defaults) {
         Ok(mut video) => {
-            overrides.apply(&mut video);
+            overrides.video.apply(&mut video);
             Box::new(video.into_hardware())
         }
         Err(VideoLoadError::Cartridge(err)) => {
@@ -557,7 +587,21 @@ fn prepare(
             return Err(failed(cartridge, StartError::Video(err)));
         }
     };
-    Ok((cartridge, source, hardware))
+    // Rhai has no map functions, so its maps are never read and a broken one
+    // cannot stop the cartridge from starting.
+    let maps = match cartridge.manifest().runtime.language {
+        Language::Luau => match maps::load(&cartridge, overrides.maps) {
+            Ok(maps) => maps,
+            Err(error) => return Err(failed(cartridge, error)),
+        },
+        Language::Rhai => Arc::default(),
+    };
+    Ok(Prepared {
+        cartridge,
+        source,
+        hardware,
+        maps,
+    })
 }
 
 fn failed(cartridge: LoadedCartridge, error: StartError) -> Box<FailedStart> {
