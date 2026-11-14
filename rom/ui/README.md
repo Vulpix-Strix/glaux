@@ -56,6 +56,7 @@ copied unmodified and renamed. Each is 16×16 with a black outline
 | `icons/collapse.png`   | `Software_Window_Minimize_Button.png`                                        |
 | `icons/undo.png`       | `Arrows_Reload_Refresh_Rotate_Counterclockwise.png`                          |
 | `icons/redo.png`       | `Arrows_Reload_Refresh_Rotate_Clockwise.png`                                 |
+| `icons/check.png`      | `Software_Signs_Checkmark_Checkbox_Ticked_Todo.png`                          |
 
 The sprite editor's pencil tool reuses `icons/sprites.png`, and the Map
 editor's pencil, eraser, fill and eyedropper tools reuse the sprite editor's. The settings
@@ -73,7 +74,7 @@ strictly required." Thanks, Nikoichu :D!
 the credits title card. The credits view draws it as large as fits a 32 pixel
 square, so a replacement of that size needs no other change.
 
-Unlike the icons it keeps its colors: every opaque pixel must be exactly one
+Unlike the icons it keeps its colors. Every opaque pixel must be exactly one
 of the first 32 colors of the system palette (`../palette/system.hex`), and
 transparent pixels are left alone. Loading fails with the offending color
 otherwise.

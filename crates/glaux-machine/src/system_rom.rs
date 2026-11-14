@@ -102,11 +102,12 @@ pub enum SystemIcon {
     Collapse,
     Undo,
     Redo,
+    Check,
 }
 
 impl SystemIcon {
     /// Number of icons, the length of [`SystemUi::new`]'s `icons`.
-    pub const COUNT: usize = 18;
+    pub const COUNT: usize = 19;
 }
 
 /// The images the system UI draws with. The default has every image
