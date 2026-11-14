@@ -8,7 +8,7 @@ use glaux_machine::system_rom::SystemIcon;
 use glaux_machine::tilemap::BgLayer;
 use glaux_video::draw::{draw_ink_image, draw_text, fill_rect};
 
-use super::MapEditor;
+use super::{MapEditor, Overlay};
 use super::compose::{Cell, Composer};
 use super::editing::map_size;
 use super::frame::{Frame, Hit};
@@ -19,10 +19,12 @@ use crate::system::map_document::MapDocument;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::system::workspace::dialog::text_cells;
 use crate::system::workspace::sprites::{SpriteSource, checker, outline};
-use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, RenderContext, wrap};
+use crate::system::workspace::{
+    BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, RenderContext, take_cells, wrap,
+};
 use crate::ui_text;
 
-const GRID_LINE: u8 = BACKGROUND;
+const GRID_DOT: u8 = IDLE_SHADE;
 const FRAME: u8 = DIM;
 const ACTIVE_TOOL_INKS: [u8; 3] = [OUTLINE, ACCENT, TEXT];
 const HOVER_TOOL_INKS: [u8; 3] = [OUTLINE, HOVER_SHADE, PALE];
@@ -113,11 +115,10 @@ impl MapEditor {
         source: Result<SpriteSource<'_>, &str>,
         document: &MapDocument,
         pointer: Option<Point>,
+        hover: Hit,
     ) {
         let frame = self.frame();
-        let hover = pointer.map_or(Hit::Nothing, |at| frame.hit(at, self.edit.strip_top));
-        self.options_bar(ctx, &frame, document, hover);
-        self.toolbar(ctx, &frame, hover);
+        self.toolbar(ctx, &frame, document, hover);
         match source {
             Ok(source) => {
                 self.canvas(ctx.framebuffer, &frame, document, &source, pointer, hover);
@@ -129,53 +130,81 @@ impl MapEditor {
     }
 
     pub(super) fn text_y(&self, y: i32, height: i32) -> i32 {
-        y + (height - self.metrics.cell_h) / 2 + 1
+        y + (height - self.metrics.cell_h) / 2
     }
 
     pub(super) fn cells(&self, text: &str) -> i32 {
         text_cells(text) * self.metrics.cell_w
     }
 
-    fn options_bar(
+    /// The bar above the canvas: the map selector, what is being drawn with
+    /// and on, and the toggles. Without a map to edit it holds the selector only.
+    pub(super) fn options_bar(
         &self,
         ctx: &mut RenderContext<'_>,
         frame: &Frame,
-        document: &MapDocument,
+        document: Option<&MapDocument>,
+        editing: bool,
         hover: Hit,
     ) {
         let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let bar = frame.options;
-        let cell_w = self.metrics.cell_w;
         fill_rect(framebuffer, bar.x, bar.bottom() - 1, bar.width, 1, BAR);
-        let y = self.text_y(bar.y, bar.height - 1);
+        let y = bar.y;
 
-        let tool = ui_text::get(self.edit.tool.message_id());
-        let tag = Rect {
-            x: bar.x,
-            y: bar.y + 1,
-            width: self.cells(&tool) + 4,
-            height: bar.height - 3,
-        };
-        fill_rect(framebuffer, tag.x, tag.y, tag.width, tag.height, BAR);
-        draw_text(framebuffer, font, &tool, tag.x + 2, y, PALE);
-
-        let layer = self.edit.layer;
-        let named = match &document.meta().layer_names[layer.index()] {
-            Some(name) => format!("{layer} {name}"),
-            None => layer.to_string(),
-        };
-        let locked = self.edit.locked[layer.index()];
-        let mut x = tag.right() + cell_w;
-        let room = ((frame.grid_button.x - x) / cell_w).max(0) as usize;
-        let shown = crate::system::workspace::take_cells(font, &named, room.saturating_sub(7));
-        draw_text(framebuffer, font, shown, x, y, ACCENT);
-        x += self.cells(shown) + cell_w;
-        if locked {
-            draw_text(framebuffer, font, &ui_text::get("maps-locked"), x, y, ERROR);
+        let selector = frame.selector;
+        let lit = hover == Hit::Selector || matches!(self.overlay, Some(Overlay::Maps(_)));
+        if lit {
+            fill_rect(
+                framebuffer,
+                selector.x - 2,
+                selector.y,
+                selector.width + 4,
+                selector.height,
+                BAR,
+            );
+        }
+        let columns = usize::try_from(selector.width / self.metrics.cell_w).unwrap_or(0);
+        match document {
+            Some(document) => {
+                let modified = document.is_modified();
+                let name = take_cells(
+                    font,
+                    &document.meta().name,
+                    columns.saturating_sub(usize::from(modified)),
+                );
+                draw_text(framebuffer, font, name, selector.x, y, TEXT);
+                if modified {
+                    let x = selector.x + self.cells(name);
+                    draw_text(framebuffer, font, "*", x, y, ACCENT);
+                }
+            }
+            None => {
+                let label = ui_text::get("maps-select");
+                draw_text(
+                    framebuffer,
+                    font,
+                    take_cells(font, &label, columns),
+                    selector.x,
+                    y,
+                    DIM,
+                );
+            }
+        }
+        if !editing {
+            return;
         }
 
-        let view = self.viewport(frame, document);
-        let zoom = view.zoom();
+        let tool = ui_text::get(self.edit.tool.message_id());
+        for (rect, text, ink) in [
+            (frame.tool_tag, tool, PALE),
+            (frame.layer_tag, self.edit.layer.to_string(), ACCENT),
+        ] {
+            fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, BAR);
+            draw_text(framebuffer, font, &text, rect.x + 2, y, ink);
+        }
+
+        let zoom = self.edit.view.zoom();
         let buttons: [(Rect, String, Hit, bool, bool); 4] = [
             (
                 frame.grid_button,
@@ -208,7 +237,7 @@ impl MapEditor {
         ];
         for (rect, label, which, on, enabled) in buttons {
             let hovered = hover == which && enabled;
-            if hovered {
+            if hovered || on {
                 fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, BAR);
             }
             let ink = match (enabled, on, hovered) {
@@ -220,10 +249,17 @@ impl MapEditor {
             let x = rect.x + (rect.width - self.cells(&label)) / 2;
             draw_text(framebuffer, font, &label, x, y, ink);
         }
-        draw_text(framebuffer, font, zoom.label(), frame.zoom_label.x, y, TEXT);
+        let label_x = frame.zoom_label.x + (frame.zoom_label.width - self.cells(zoom.label())) / 2;
+        draw_text(framebuffer, font, zoom.label(), label_x, y, TEXT);
     }
 
-    fn toolbar(&self, ctx: &mut RenderContext<'_>, frame: &Frame, hover: Hit) {
+    fn toolbar(
+        &self,
+        ctx: &mut RenderContext<'_>,
+        frame: &Frame,
+        document: &MapDocument,
+        hover: Hit,
+    ) {
         let (framebuffer, ui) = (&mut *ctx.framebuffer, ctx.ui);
         for (tool, rect) in frame.tools {
             let inks = if tool == self.edit.tool {
@@ -255,6 +291,25 @@ impl MapEditor {
                 Tool::Hand => SystemIcon::Hand,
             };
             draw_ink_image(framebuffer, ui.icon(icon), at.0, at.1, &inks);
+        }
+        for (rect, icon, which, enabled) in [
+            (frame.undo, SystemIcon::Undo, Hit::Undo, document.can_undo()),
+            (frame.redo, SystemIcon::Redo, Hit::Redo, document.can_redo()),
+        ] {
+            fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, BAR);
+            let inks = match (enabled, hover == which) {
+                (false, _) => [OUTLINE, IDLE_SHADE, IDLE_SHADE],
+                (true, true) => HOVER_TOOL_INKS,
+                (true, false) => IDLE_TOOL_INKS,
+            };
+            let pad = (rect.width - ICON_SIZE as i32) / 2;
+            draw_ink_image(
+                framebuffer,
+                ui.icon(icon),
+                rect.x + pad,
+                rect.y + pad,
+                &inks,
+            );
         }
     }
 
@@ -339,7 +394,18 @@ impl MapEditor {
             let cell = view.cell_at(canvas, (i32::from(at.x), i32::from(at.y)));
             if in_map(cell, size) {
                 let rect = view.cell_rect(canvas, cell);
-                outline_clipped(framebuffer, rect, canvas, PALE);
+                if self.edit.tool == Tool::Pencil && !self.edit.locked[self.edit.layer.index()] {
+                    draw_cell(
+                        framebuffer,
+                        source.bg,
+                        &Cell::single(self.edit.brush),
+                        (rect.x, rect.y),
+                        scale,
+                        source.preview.slots(),
+                        canvas,
+                    );
+                }
+                outline_clipped(framebuffer, rect.inset(-1), canvas, ACCENT);
             }
         }
         self.scroll_indicators(framebuffer, frame, view, size);
@@ -362,25 +428,24 @@ impl MapEditor {
             width: size.0 as i32 * tile,
             height: size.1 as i32 * tile,
         };
+        let last_x = (map_rect.right()).min(canvas.right());
+        let last_y = (map_rect.bottom()).min(canvas.bottom());
+        let (top, left) = (map_rect.y.max(canvas.y), map_rect.x.max(canvas.x));
         for column in first.0..=first.0 + count.0 {
             let x = map_rect.x + column as i32 * tile;
-            let line = Rect {
-                x,
-                y: map_rect.y,
-                width: 1,
-                height: map_rect.height,
-            };
-            fill_clipped(framebuffer, line, canvas, GRID_LINE);
+            if (canvas.x..canvas.right()).contains(&x) {
+                for y in (top..last_y).step_by(2) {
+                    fill_rect(framebuffer, x, y, 1, 1, GRID_DOT);
+                }
+            }
         }
         for row in first.1..=first.1 + count.1 {
             let y = map_rect.y + row as i32 * tile;
-            let line = Rect {
-                x: map_rect.x,
-                y,
-                width: map_rect.width,
-                height: 1,
-            };
-            fill_clipped(framebuffer, line, canvas, GRID_LINE);
+            if (canvas.y..canvas.bottom()).contains(&y) {
+                for x in (left..last_x).step_by(2) {
+                    fill_rect(framebuffer, x, y, 1, 1, GRID_DOT);
+                }
+            }
         }
     }
 

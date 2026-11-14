@@ -101,10 +101,10 @@ const ICON_PNGS: [(&str, &[u8]); SystemIcon::COUNT] = [
     embed!("ui/icons/visible.png"),
     embed!("ui/icons/hidden.png"),
     embed!("ui/icons/locked.png"),
-    embed!("ui/icons/unlocked.png"),
     embed!("ui/icons/expand.png"),
-    embed!("ui/icons/resize.png"),
     embed!("ui/icons/collapse.png"),
+    embed!("ui/icons/undo.png"),
+    embed!("ui/icons/redo.png"),
 ];
 
 /// Side of a view icon, in pixels.

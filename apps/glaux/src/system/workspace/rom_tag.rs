@@ -37,7 +37,28 @@ fn kib_whole(bytes: u64) -> String {
 /// settled `ROM >=123.4 KiB / 1 MiB !`, which is told apart from a complete
 /// total by the `>=` and the `!`. Shorter forms drop words, then digits.
 pub(super) fn rom_tag(usage: Option<&RomUsage>, font: &BitmapFont, free: usize) -> Option<RomTag> {
-    let usage = usage?;
+    let (candidates, color) = forms(usage?);
+    candidates
+        .into_iter()
+        .find(|text| font.text_cells(text) <= free)
+        .map(|text| RomTag { text, color })
+}
+
+/// Cells of the shortest form of the indicator, which a status bar keeps
+/// free so that the indicator never disappears.
+pub(super) fn rom_tag_min_cells(usage: Option<&RomUsage>, font: &BitmapFont) -> usize {
+    usage.map_or(0, |usage| {
+        forms(usage)
+            .0
+            .iter()
+            .map(|text| font.text_cells(text))
+            .min()
+            .unwrap_or(0)
+    })
+}
+
+/// The forms of the indicator from the longest to the shortest, and its color.
+fn forms(usage: &RomUsage) -> (Vec<String>, u8) {
     let text = |id: &str, args: &[(&str, Arg<'_>)]| ui_text::get_with(id, args);
     let used = kib(usage.used);
     let used_whole = kib_whole(usage.used);
@@ -82,10 +103,7 @@ pub(super) fn rom_tag(usage: Option<&RomUsage>, font: &BitmapFont, free: usize) 
     } else {
         PALE
     };
-    candidates
-        .into_iter()
-        .find(|text| font.text_cells(text) <= free)
-        .map(|text| RomTag { text, color })
+    (candidates, color)
 }
 
 #[cfg(test)]

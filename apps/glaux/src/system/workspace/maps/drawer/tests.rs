@@ -171,11 +171,7 @@ fn the_collapsed_bar_shows_the_layers_with_the_edited_one_in_the_accent() {
     for layer in BgLayer::ALL {
         let chip = frame.chips[layer.index()];
         let face = fb.pixel(chip.x, chip.y);
-        let expected = if layer == BgLayer::Bg2 {
-            ACCENT
-        } else {
-            BACKGROUND
-        };
+        let expected = if layer == BgLayer::Bg2 { ACCENT } else { BAR };
         assert_eq!(face, Some(expected), "{layer}");
     }
 }
@@ -220,9 +216,9 @@ fn the_size_button_shows_how_much_of_the_drawer_is_open() {
         let fb = render(&editor, &fixture, &document);
         faces.push(pixels(&fb, editor.frame().size_button));
     }
-    assert_ne!(faces[0], faces[1]);
+    // The icon shows what the next click does: open more, or close.
+    assert_eq!(faces[0], faces[1]);
     assert_ne!(faces[1], faces[2]);
-    assert_ne!(faces[0], faces[2]);
 }
 
 #[test]

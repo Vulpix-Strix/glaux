@@ -12,6 +12,7 @@ use glaux_video::preview::ObjPreviewPalette;
 use pretty_assertions::assert_eq;
 
 use super::MapEditor;
+use super::frame::Hit;
 use crate::cartridge::map::{MapFiles, MapId, MapMeta};
 use crate::system::map_document::MapDocument;
 use crate::system::workspace::RenderContext;
@@ -105,11 +106,10 @@ pub(super) fn render_with(
 ) -> Framebuffer {
     let mut fb = Framebuffer::new();
     let rom = crate::rom::load().unwrap();
-    editor.render_editor(
-        &mut RenderContext::new(&mut fb, rom.font(), rom.ui()),
-        source,
-        document,
-        pointer,
-    );
+    let mut ctx = RenderContext::new(&mut fb, rom.font(), rom.ui());
+    let frame = editor.frame();
+    let hover = pointer.map_or(Hit::Nothing, |at| frame.hit(at, editor.edit.strip_top));
+    editor.options_bar(&mut ctx, &frame, Some(document), true, hover);
+    editor.render_editor(&mut ctx, source, document, pointer, hover);
     fb
 }

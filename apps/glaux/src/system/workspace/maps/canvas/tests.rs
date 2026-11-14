@@ -281,9 +281,13 @@ fn nothing_is_drawn_outside_the_canvas_whatever_the_zoom_and_scroll() {
             let b = render(&editor, &fixture, &busy);
             for y in 0..240 {
                 for x in 0..320 {
-                    if frame.canvas.contains_xy(x, y) {
+                    if [frame.canvas, frame.options, frame.undo, frame.redo]
+                        .iter()
+                        .any(|part| part.contains_xy(x, y))
+                    {
                         continue;
                     }
+                    // The marker of unsaved edits and the undo plates show what was edited.
                     // The thumbs of the scroll bars depend on the map's
                     // size only, which is the same.
                     assert_eq!(
@@ -322,7 +326,7 @@ fn the_grid_only_draws_lines_inside_the_map() {
             if on.pixel(x, y) != off.pixel(x, y) {
                 changed += 1;
                 assert!(map.contains_xy(x, y), "({x}, {y})");
-                assert_eq!(on.pixel(x, y), Some(GRID_LINE));
+                assert_eq!(on.pixel(x, y), Some(GRID_DOT));
                 assert!((x - frame.canvas.x) % 16 == 0 || (y - frame.canvas.y) % 16 == 0);
             }
         }
@@ -400,15 +404,16 @@ fn the_cell_under_the_pointer_is_ringed_unless_the_hand_is_in_use() {
     let cell = view.cell_rect(frame.canvas, (3, 2));
     let pointer = Point::new((cell.x + 8) as u16, (cell.y + 8) as u16);
     let ringed = render_with(&editor, Ok(fixture.source()), &document, Some(pointer));
-    assert_eq!(ringed.pixel(cell.x, cell.y), Some(PALE));
+    assert_eq!(ringed.pixel(cell.x - 1, cell.y - 1), Some(ACCENT));
+    assert_eq!(ringed.pixel(cell.x + 16, cell.y + 16), Some(ACCENT));
     editor.edit.tool = Tool::Hand;
     let hand = render_with(&editor, Ok(fixture.source()), &document, Some(pointer));
-    assert_ne!(hand.pixel(cell.x, cell.y), Some(PALE));
+    assert_ne!(hand.pixel(cell.x - 1, cell.y - 1), Some(ACCENT));
     editor.edit.tool = Tool::Pencil;
     let outside = view.cell_rect(frame.canvas, (5, 5));
     let at = Point::new((outside.x + 8) as u16, (outside.y + 8) as u16);
     let fb = render_with(&editor, Ok(fixture.source()), &small, Some(at));
-    assert_ne!(fb.pixel(outside.x, outside.y), Some(PALE));
+    assert_ne!(fb.pixel(outside.x - 1, outside.y - 1), Some(ACCENT));
 }
 
 #[test]

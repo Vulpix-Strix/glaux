@@ -93,15 +93,15 @@ pub enum SystemIcon {
     Select,
     Hand,
     Visible,
+    /// A closed eye.
     Hidden,
     Locked,
-    Unlocked,
     /// A chevron pointing up.
     Expand,
-    /// Arrows pointing up and down.
-    Resize,
     /// A chevron pointing down.
     Collapse,
+    Undo,
+    Redo,
 }
 
 impl SystemIcon {

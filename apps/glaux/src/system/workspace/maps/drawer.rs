@@ -8,7 +8,7 @@ use glaux_video::draw::{draw_ink_image_centered, draw_text, fill_rect};
 use super::MapEditor;
 use super::canvas::draw_cell;
 use super::compose::Cell;
-use super::frame::{DrawerSize, Frame, Hit, STRIP_COLUMNS};
+use super::frame::{DrawerSize, EYE_WIDTH, Frame, Hit, LOCK_WIDTH, STRIP_COLUMNS};
 use crate::system::map_document::MapDocument;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::system::workspace::sprites::{SpriteSource, checker, outline};
@@ -31,13 +31,14 @@ fn flags(entry: TileEntry) -> String {
     out
 }
 
-pub(super) fn brush_text(entry: TileEntry) -> String {
+/// The bank and the flags the brush carries, as `BGP1 XY`.
+pub(super) fn brush_bank_text(entry: TileEntry) -> String {
     let flags = flags(entry);
     let bank = entry.bank().get();
     if flags.is_empty() {
-        format!("{:04}  BGP{bank}", entry.tile())
+        format!("BGP{bank}")
     } else {
-        format!("{:04}  BGP{bank} {flags}", entry.tile())
+        format!("BGP{bank} {flags}")
     }
 }
 
@@ -54,8 +55,7 @@ impl MapEditor {
         fill_rect(ctx.framebuffer, bar.x, bar.y, bar.width, bar.height, BAR);
 
         let icon = match frame.size {
-            DrawerSize::Collapsed => SystemIcon::Expand,
-            DrawerSize::Compact => SystemIcon::Resize,
+            DrawerSize::Collapsed | DrawerSize::Compact => SystemIcon::Expand,
             DrawerSize::Expanded => SystemIcon::Collapse,
         };
         let ink = if hover == Hit::DrawerSize { TEXT } else { PALE };
@@ -65,6 +65,14 @@ impl MapEditor {
             ctx.ui.icon(icon),
             (button.x, button.y, button.width, button.height),
             &[ink, ink, BAR],
+        );
+        draw_text(
+            ctx.framebuffer,
+            ctx.font,
+            &ui_text::get("maps-tiles"),
+            frame.tiles_label.0,
+            frame.tiles_label.1,
+            DIM,
         );
 
         let brush = self.edit.brush;
@@ -79,60 +87,97 @@ impl MapEditor {
             frame.brush,
         );
         outline(ctx.framebuffer, frame.brush.inset(-1), DIM);
-        let text = brush_text(brush);
-        let columns = if frame.size == DrawerSize::Collapsed {
-            (frame.chips[0].x - frame.brush_text.0) / self.metrics.cell_w
-        } else {
-            (bar.right() - frame.brush_text.0) / self.metrics.cell_w
-        };
         draw_text(
             ctx.framebuffer,
             ctx.font,
-            take_cells(ctx.font, &text, usize::try_from(columns).unwrap_or(0)),
-            frame.brush_text.0,
-            frame.brush_text.1,
+            &format!("{:04}", brush.tile()),
+            frame.brush_number.0,
+            frame.brush_number.1,
             TEXT,
         );
+        draw_text(
+            ctx.framebuffer,
+            ctx.font,
+            &brush_bank_text(brush),
+            frame.bank_text.0,
+            frame.bank_text.1,
+            PALE,
+        );
+        for separator in [frame.first_separator, frame.second_separator] {
+            fill_rect(
+                ctx.framebuffer,
+                separator.x,
+                separator.y + 2,
+                1,
+                separator.height - 4,
+                IDLE_SHADE,
+            );
+        }
 
         if frame.size == DrawerSize::Collapsed {
             self.chips(ctx, frame, hover);
         } else {
+            draw_text(
+                ctx.framebuffer,
+                ctx.font,
+                &ui_text::get("maps-layers"),
+                frame.layers_label.0,
+                frame.layers_label.1,
+                DIM,
+            );
             self.strip(ctx.framebuffer, frame, source, hover);
             self.layer_list(ctx, frame, document, hover);
         }
     }
 
     fn chips(&self, ctx: &mut RenderContext<'_>, frame: &Frame, hover: Hit) {
-        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
+        let (framebuffer, font, ui) = (&mut *ctx.framebuffer, ctx.font, ctx.ui);
         for layer in BgLayer::ALL {
             let rect = frame.chips[layer.index()];
+            let index = layer.index();
             let editing = layer == self.edit.layer;
-            let hovered = hover == Hit::Chip(layer);
+            let shown = self.edit.visible[index];
             let (face, ink) = if editing {
                 (ACCENT, BACKGROUND)
-            } else if hovered {
+            } else if hover == Hit::Chip(layer) {
                 (HOVER_SHADE, TEXT)
             } else {
-                (
-                    BACKGROUND,
-                    if self.edit.visible[layer.index()] {
-                        PALE
-                    } else {
-                        IDLE_SHADE
-                    },
-                )
+                (BAR, if shown { PALE } else { IDLE_SHADE })
             };
             fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, face);
-            let label = layer.to_string();
-            let x = rect.x + (rect.width - self.cells(&label)) / 2;
+            let eye = if shown {
+                SystemIcon::Visible
+            } else {
+                SystemIcon::Hidden
+            };
+            draw_ink_image_centered(
+                framebuffer,
+                ui.icon(eye),
+                (rect.x, rect.y, EYE_WIDTH, rect.height),
+                &[ink, ink, face],
+            );
             draw_text(
                 framebuffer,
                 font,
-                &label,
-                x,
-                self.text_y(rect.y, rect.height),
+                &layer.to_string(),
+                rect.x + EYE_WIDTH,
+                rect.y,
                 ink,
             );
+            let name_end = rect.x + EYE_WIDTH + self.cells("BG0");
+            if rect.right() - name_end >= LOCK_WIDTH {
+                let lock_ink = if self.edit.locked[index] {
+                    ink
+                } else {
+                    IDLE_SHADE
+                };
+                draw_ink_image_centered(
+                    framebuffer,
+                    ui.icon(SystemIcon::Locked),
+                    (name_end, rect.y, LOCK_WIDTH, rect.height),
+                    &[lock_ink, lock_ink, face],
+                );
+            }
         }
     }
 
@@ -264,16 +309,11 @@ impl MapEditor {
             let area = (row.eye.x, row.eye.y, row.eye.width, row.eye.height);
             draw_ink_image_centered(framebuffer, ui.icon(eye), area, &[eye_ink, eye_ink, face]);
             let locked = self.edit.locked[index];
-            let lock = if locked {
-                SystemIcon::Locked
-            } else {
-                SystemIcon::Unlocked
-            };
             let lock_ink = if locked { ink } else { dim };
             let area = (row.lock.x, row.lock.y, row.lock.width, row.lock.height);
             draw_ink_image_centered(
                 framebuffer,
-                ui.icon(lock),
+                ui.icon(SystemIcon::Locked),
                 area,
                 &[lock_ink, lock_ink, face],
             );
@@ -301,6 +341,16 @@ impl MapEditor {
                 let x = row.name.right() - (tag_cells + 1) * cell_w;
                 draw_text(framebuffer, font, &tag, x, y, BACKGROUND);
             }
+        }
+        if let Some((x, y)) = frame.layer_note {
+            draw_text(
+                framebuffer,
+                font,
+                &ui_text::get("maps-layer-note"),
+                x,
+                y,
+                DIM,
+            );
         }
     }
 }

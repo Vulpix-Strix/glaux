@@ -1031,14 +1031,184 @@ fn saving_and_undoing_still_reach_the_document() {
 }
 
 #[test]
-fn the_brush_text_names_the_tile_bank_and_flags() {
-    use super::super::drawer::brush_text;
-    assert_eq!(brush_text(entry(36)), "0036  BGP0");
-    assert_eq!(brush_text(full(36, true, false, false, 1)), "0036  BGP1 X");
-    assert_eq!(brush_text(full(7, true, true, true, 3)), "0007  BGP3 XYP");
+fn the_brush_bank_text_names_the_bank_and_flags() {
+    use super::super::drawer::brush_bank_text;
+    assert_eq!(brush_bank_text(entry(36)), "BGP0");
+    assert_eq!(brush_bank_text(full(36, true, false, false, 1)), "BGP1 X");
+    assert_eq!(brush_bank_text(full(7, true, true, true, 3)), "BGP3 XYP");
+    assert_eq!(brush_bank_text(full(1023, false, false, true, 0)), "BGP0 P");
+    assert_eq!(brush_bank_text(EMPTY), "BGP0");
+}
+
+/// How many painted cells of `layer` lie in each row below `first_row`.
+fn painted_from_row(document: &MapDocument, layer: BgLayer, first_row: usize) -> usize {
+    let (width, height) = map_size(document);
+    (first_row..height)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .filter(|&(x, y)| !cell(document, layer, x, y).is_empty())
+        .count()
+}
+
+#[test]
+fn a_drag_that_leaves_the_canvas_paints_nothing_under_the_controls_around_it() {
+    let mut editor = editor();
+    let mut document = document(64, 64);
+    editor.edit.brush = entry(4);
+    let frame = editor.frame();
+    let shown_rows = {
+        let view = editor.viewport(&frame, &document);
+        let (first, count) =
+            view.visible_cells((64, 64), (frame.canvas.width, frame.canvas.height));
+        first.1 + count.1
+    };
+    let start = cell_point(&editor, &document, (3, 0));
+    press(&mut editor, &mut document, start);
+    // Down over the drawer, ten tiles below the canvas.
+    let below = at(frame.canvas.x + 50, frame.canvas.bottom() + 10 * 16);
+    moved(&mut editor, &mut document, below);
+    release(&mut editor, &mut document, below);
     assert_eq!(
-        brush_text(full(1023, false, false, true, 0)),
-        "1023  BGP0 P"
+        painted_from_row(&document, BgLayer::Bg1, shown_rows),
+        0,
+        "rows past the canvas"
     );
-    assert_eq!(brush_text(EMPTY), "0000  BGP0");
+    assert!(
+        filled(&document, BgLayer::Bg1) > 1,
+        "the visible part was painted"
+    );
+
+    // To the right, over the tools.
+    let mut document = crate::system::workspace::maps::fixture::document(64, 64);
+    let mut editor = self::editor();
+    editor.edit.brush = entry(4);
+    let frame = editor.frame();
+    let shown_columns = {
+        let view = editor.viewport(&frame, &document);
+        let (first, count) =
+            view.visible_cells((64, 64), (frame.canvas.width, frame.canvas.height));
+        first.0 + count.0
+    };
+    let start = cell_point(&editor, &document, (0, 2));
+    press(&mut editor, &mut document, start);
+    let beside = at(frame.canvas.right() + 80, frame.canvas.y + 40);
+    moved(&mut editor, &mut document, beside);
+    release(&mut editor, &mut document, beside);
+    let past: usize = (0..64)
+        .flat_map(|y| (shown_columns..64).map(move |x| (x, y)))
+        .filter(|&(x, y)| !cell(&document, BgLayer::Bg1, x, y).is_empty())
+        .count();
+    assert_eq!(past, 0, "columns past the canvas");
+}
+
+#[test]
+fn a_stroke_that_comes_back_into_the_canvas_joins_the_cells_it_crossed() {
+    let mut editor = editor();
+    let mut document = document(64, 64);
+    editor.edit.brush = entry(4);
+    let frame = editor.frame();
+    let start = cell_point(&editor, &document, (2, 2));
+    press(&mut editor, &mut document, start);
+    moved(
+        &mut editor,
+        &mut document,
+        at(frame.canvas.x + 60, frame.canvas.bottom() + 30),
+    );
+    let back = cell_point(&editor, &document, (8, 2));
+    moved(&mut editor, &mut document, back);
+    release(&mut editor, &mut document, back);
+    assert!(!cell(&document, BgLayer::Bg1, 8, 2).is_empty());
+    assert!(!cell(&document, BgLayer::Bg1, 2, 2).is_empty());
+}
+
+#[test]
+fn changing_the_layer_during_a_stroke_ends_it_and_the_next_moves_write_nothing() {
+    for key_ in ['0', '2'] {
+        let mut editor = editor();
+        let mut document = document(30, 20);
+        editor.edit.brush = entry(4);
+        let from = cell_point(&editor, &document, (1, 1));
+        press(&mut editor, &mut document, from);
+        let next = cell_point(&editor, &document, (3, 1));
+        moved(&mut editor, &mut document, next);
+        self::key(&mut editor, &mut document, key_);
+        assert!(editor.edit.stroke.is_none(), "key {key_}");
+        let later = cell_point(&editor, &document, (6, 1));
+        moved(&mut editor, &mut document, later);
+        release(&mut editor, &mut document, later);
+
+        assert_eq!(
+            filled(&document, BgLayer::Bg1),
+            3,
+            "the stroke kept its cells"
+        );
+        for layer in [BgLayer::Bg0, BgLayer::Bg2] {
+            assert_eq!(filled(&document, layer), 0, "{layer}, key {key_}");
+        }
+        assert!(document.undo(), "the stroke is one step");
+        assert!(!document.can_undo());
+        assert_eq!(filled(&document, BgLayer::Bg1), 0);
+    }
+}
+
+#[test]
+fn zooming_scrolling_or_changing_the_geometry_ends_a_stroke_as_one_edit() {
+    let events = [
+        InputEvent::Text('+'),
+        InputEvent::Text('-'),
+        InputEvent::Text('x'),
+        InputEvent::Tab { reverse: false },
+        InputEvent::Wheel { delta: -1 },
+        InputEvent::WheelHorizontal { delta: 1 },
+        InputEvent::Down { select: false },
+        InputEvent::Right { select: false },
+        InputEvent::PageDown { select: false },
+        InputEvent::Function(2),
+    ];
+    for event in events {
+        let mut editor = editor();
+        let mut document = document(64, 64);
+        editor.edit.brush = entry(4);
+        let from = cell_point(&editor, &document, (1, 1));
+        press(&mut editor, &mut document, from);
+        let next = cell_point(&editor, &document, (4, 1));
+        moved(&mut editor, &mut document, next);
+        let painted = filled(&document, BgLayer::Bg1);
+        input(&mut editor, &mut document, event);
+        assert!(editor.edit.stroke.is_none(), "{event:?}");
+
+        // The pointer moves on, with the button still down, over cells the
+        // view now shows differently.
+        for dx in [0, 40, 90] {
+            moved(
+                &mut editor,
+                &mut document,
+                at(from.x as i32 + dx, from.y as i32 + 30),
+            );
+        }
+        release(&mut editor, &mut document, from);
+        assert_eq!(filled(&document, BgLayer::Bg1), painted, "{event:?}");
+        assert!(document.undo(), "{event:?}");
+        assert!(!document.can_undo(), "one step: {event:?}");
+    }
+}
+
+#[test]
+fn a_select_drag_also_ends_when_the_view_changes() {
+    let mut editor = editor();
+    let mut document = document(64, 64);
+    key(&mut editor, &mut document, 's');
+    let from = cell_point(&editor, &document, (2, 2));
+    press(&mut editor, &mut document, from);
+    key(&mut editor, &mut document, '+');
+    assert!(editor.edit.stroke.is_none());
+    let before = editor.edit.selection;
+    moved(
+        &mut editor,
+        &mut document,
+        at(from.x as i32 + 50, from.y as i32 + 40),
+    );
+    assert_eq!(
+        editor.edit.selection, before,
+        "the selection stopped following"
+    );
 }

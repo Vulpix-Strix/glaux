@@ -50,12 +50,12 @@ copied unmodified and renamed. Each is 16×16 with a black outline
 | `icons/select.png`     | `Tools_Crafting_Graphic_Design_Selection_Rectangle.png`                      |
 | `icons/hand.png`       | `Emoji_Hand_Wave_Cursor_Pan_Open.png`                                        |
 | `icons/visible.png`    | `Media_Eyeball_Vision_Shown.png`                                             |
-| `icons/hidden.png`     | `Media_Eyeball_Vision_Hidden_Disabled_Off.png`                               |
-| `icons/locked.png`     | `Tools_Crafting_Padlock_Locked.png`                                          |
-| `icons/unlocked.png`   | `Tools_Crafting_Padlock_Unlocked_2.png`                                      |
+| `icons/hidden.png`     | `Media_Eyeball_Vision_Closed_Sleeping.png`                                   |
+| `icons/locked.png`     | `Tools_Crafting_Padlock.png`                                                 |
 | `icons/expand.png`     | `Software_Window_Maximize_Button_1.png`                                       |
-| `icons/resize.png`     | `Arrows_Double_Vertical_Up_Down.png`                                         |
 | `icons/collapse.png`   | `Software_Window_Minimize_Button.png`                                        |
+| `icons/undo.png`       | `Arrows_Reload_Refresh_Rotate_Counterclockwise.png`                          |
+| `icons/redo.png`       | `Arrows_Reload_Refresh_Rotate_Clockwise.png`                                 |
 
 The sprite editor's pencil tool reuses `icons/sprites.png`, and the Map
 editor's pencil, eraser, fill and eyedropper tools reuse the sprite editor's. The settings

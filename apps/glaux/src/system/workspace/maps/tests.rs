@@ -147,31 +147,55 @@ fn choosing_a_map_asks_first_when_the_open_one_has_unsaved_edits() {
         Some(MapOut::ConfirmSwitch(id("b")))
     );
     // A map that cannot be opened says why and changes nothing.
-    editor.list_open = true;
+    editor.open_list(Some(&open));
     let out = editor.choose(2, Some(&open));
     assert!(matches!(out, Some(MapOut::Notice(_))), "{out:?}");
-    assert!(editor.list_open);
+    assert!(editor.list_is_open(), "a broken map keeps the menu open");
 }
 
 #[test]
 fn saving_a_clean_map_only_says_there_is_nothing_to_save() {
-    let mut editor = editor();
+    let editor = editor();
     let mut open = document("a");
     assert_eq!(
-        editor.act(Action::Save, Some(&open)),
+        editor.save(Some(&open)),
         Some(MapOut::Notice("Nothing to save.".into()))
     );
     open.set_name("Edited");
     assert_eq!(
-        editor.act(Action::Save, Some(&open)),
+        editor.save(Some(&open)),
         Some(MapOut::Request(MapRequest::Save))
     );
-    assert_eq!(editor.act(Action::Save, None), None);
+    assert_eq!(editor.save(None), None);
+}
+
+#[test]
+fn delete_needs_an_open_map_and_asks_to_confirm_it() {
+    let mut editor = editor();
+    let open = document("a");
     assert_eq!(editor.act(Action::Delete, None), None);
     assert_eq!(
         editor.act(Action::Delete, Some(&open)),
         Some(MapOut::Request(MapRequest::PrepareDelete(id("a"))))
     );
+}
+
+#[test]
+fn the_list_ends_with_the_operations_and_only_new_works_without_a_map() {
+    let mut editor = editor();
+    editor.listed(Ok(vec![summary("a", "A"), summary("b", "B")]));
+    let open = document("a");
+
+    assert_eq!(editor.choose(3, None), None, "RENAME needs a map");
+    assert_eq!(editor.choose(4, None), None, "DELETE needs a map");
+    assert!(!editor.has_overlay());
+    assert_eq!(
+        editor.choose(4, Some(&open)),
+        Some(MapOut::Request(MapRequest::PrepareDelete(id("a"))))
+    );
+    assert_eq!(editor.choose(2, None), None);
+    assert!(editor.has_overlay(), "NEW opens its window");
+    assert_eq!(editor.choose(5, Some(&open)), None, "past the last row");
 }
 
 #[test]
@@ -207,34 +231,56 @@ fn inside(inner: Rect, outer: Rect) -> bool {
 }
 
 #[test]
-fn the_controls_fit_the_screen_without_overlapping_at_the_system_font() {
-    let editor = editor();
-    let layout = editor.layout();
-    let screen = Rect {
-        x: 0,
-        y: 0,
-        width: 320,
-        height: 240,
+fn the_menu_hangs_from_the_selector_and_stays_above_the_status_bar() {
+    let mut editor = editor();
+    let maps: Vec<_> = (0..40).map(|n| summary(&format!("m{n}"), "Map")).collect();
+    editor.listed(Ok(maps));
+    editor.open_list(Some(&document("m3")));
+    let Some(Overlay::Maps(menu)) = &editor.overlay else {
+        panic!("the menu is open");
     };
+    let (cell_w, cell_h) = (editor.metrics.cell_w, editor.metrics.cell_h);
+    let layout = menu.layout(&editor.font, editor.metrics.area(), cell_w, cell_h);
+    let frame = editor.frame();
 
-    let selector = layout.selector();
-    assert!(selector.width >= 20 * 6, "room for a name and an id");
-    let buttons: Vec<Rect> = Action::ALL.into_iter().map(|a| layout.button(a)).collect();
-    for (i, a) in buttons.iter().enumerate() {
-        assert!(inside(*a, layout.header()), "{a:?}");
-        assert!(!a.overlaps(selector), "{a:?}");
-        for b in &buttons[i + 1..] {
-            assert!(!a.overlaps(*b), "{a:?} {b:?}");
-        }
-    }
+    assert_eq!(layout.window.y, frame.options.bottom());
+    assert!(layout.window.x <= frame.selector.x);
+    assert!(layout.window.bottom() <= frame.status.y);
+    assert!(layout.rows.len() < 40 + 4, "a long list scrolls");
+    assert!(layout.first <= 3 && 3 < layout.first + layout.rows.len(), "the open map shows");
+}
 
-    let rows = layout.visible_rows();
-    assert!(rows >= 8, "{rows} rows");
-    assert!(inside(layout.row(rows - 1), screen));
-    assert!(layout.row(0).y >= selector.bottom());
+#[test]
+fn the_operations_follow_the_maps_after_a_divider() {
+    let mut editor = editor();
+    editor.listed(Ok(vec![summary("a", "A"), summary("b", "B")]));
+    editor.open_list(Some(&document("a")));
+    let Some(Overlay::Maps(menu)) = &editor.overlay else {
+        panic!("the menu is open");
+    };
+    let entries = menu.entries();
+    assert_eq!(entries.len(), 2 + 1 + Action::ALL.len());
+    assert!(matches!(entries[2], MenuEntry::Separator));
+}
 
-    let create = layout.create_map(text_cells(&ui_text::get("maps-create-map")));
-    assert!(inside(create, layout.body()));
+#[test]
+fn the_open_map_is_marked_and_shows_unsaved_edits() {
+    let mut open = document("a");
+    let (label, style) = row_label(&summary("a", "A"), true, Some(&open));
+    assert_eq!((label.as_str(), style), ("A  a  4x3", ItemStyle::Current));
+    open.set_name("Edited");
+    let (label, _) = row_label(&summary("a", "A"), true, Some(&open));
+    assert!(label.starts_with("A*"), "{label}");
+    let (label, style) = row_label(&broken("c"), false, Some(&open));
+    assert!(label.starts_with("c  ("), "{label}");
+    assert_eq!(style, ItemStyle::Broken);
+}
+
+#[test]
+fn the_selector_sits_in_the_options_bar_and_leaves_room_for_a_name() {
+    let frame = editor().frame();
+    assert!(inside(frame.selector, frame.options));
+    assert!(frame.selector.width >= 10 * 6, "room for a name");
 }
 
 #[test]
@@ -261,8 +307,6 @@ fn the_status_bar_has_its_own_room_below_the_view() {
     let status = layout.status();
 
     assert!(layout.body().bottom() <= status.y);
-    let rows = layout.visible_rows();
-    assert!(layout.row(rows - 1).bottom() <= status.y);
 }
 
 #[test]

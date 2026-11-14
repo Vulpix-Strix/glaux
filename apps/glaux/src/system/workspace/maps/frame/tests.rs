@@ -7,14 +7,21 @@ fn metrics() -> Metrics {
     super::super::super::tab::Layout::new(FontMetrics::SYSTEM).map_metrics()
 }
 
-fn header() -> Layout {
-    let metrics = metrics();
-    let widths = ["NEW", "RENAME", "DELETE", "SAVE"].map(|label| (label.len() as i32 + 2) * 6);
-    Layout::new(metrics, widths)
+fn frame_with(size: DrawerSize, rulers: bool, tile: i32) -> Frame {
+    Frame::new(
+        metrics(),
+        Shape {
+            drawer: size,
+            rulers,
+            tile,
+            tool_cells: 6,
+            locked: [false; 3],
+        },
+    )
 }
 
 fn frame_for(size: DrawerSize, rulers: bool) -> Frame {
-    Frame::new(metrics(), &header(), size, rulers, 2)
+    frame_with(size, rulers, 16)
 }
 
 const SIZES: [DrawerSize; 3] = [
@@ -66,7 +73,7 @@ fn the_drawer_cycles_through_its_three_sizes_in_both_directions() {
 
 #[test]
 fn every_part_fits_the_screen_and_the_body_at_the_system_font() {
-    let body = header().body();
+    let body = metrics().area();
     let screen = Rect {
         x: 0,
         y: 0,
@@ -83,11 +90,18 @@ fn every_part_fits_the_screen_and_the_body_at_the_system_font() {
                 ("scroll v", frame.scroll_v),
                 ("scroll h", frame.scroll_h),
                 ("drawer", frame.drawer),
+                ("status", frame.status),
             ] {
                 assert!(inside(rect, body), "{name}: {rect:?}, {what}");
             }
             for (tool, rect) in frame.tools {
                 assert!(inside(rect, screen), "{tool:?}: {rect:?}, {what}");
+            }
+            for rect in [frame.undo, frame.redo] {
+                assert!(
+                    inside(rect, screen) && rect.bottom() <= frame.status.y,
+                    "{what}"
+                );
             }
             assert!(
                 frame.canvas.width >= 160 && frame.canvas.height >= 40,
@@ -108,6 +122,9 @@ fn the_parts_do_not_overlap() {
                 ("scroll v", frame.scroll_v),
                 ("scroll h", frame.scroll_h),
                 ("drawer", frame.drawer),
+                ("status", frame.status),
+                ("undo", frame.undo),
+                ("redo", frame.redo),
             ];
             if rulers {
                 parts.push(("ruler top", frame.ruler_top));
@@ -126,22 +143,49 @@ fn the_parts_do_not_overlap() {
 }
 
 #[test]
-fn the_options_buttons_sit_in_the_bar_without_overlapping() {
-    let frame = frame_for(DrawerSize::Compact, false);
-    let buttons = [
-        frame.grid_button,
-        frame.rulers_button,
-        frame.zoom_out,
-        frame.zoom_label,
-        frame.zoom_in,
-    ];
-    for (i, a) in buttons.iter().enumerate() {
-        assert!(inside(*a, frame.options), "{a:?}");
-        for b in &buttons[i + 1..] {
-            assert!(!a.overlaps(*b), "{a:?} {b:?}");
+fn the_options_bar_holds_every_part_without_overlapping() {
+    for tool_cells in [3, 6, 10] {
+        let frame = Frame::new(
+            metrics(),
+            Shape {
+                drawer: DrawerSize::Compact,
+                rulers: false,
+                tile: 16,
+                tool_cells,
+                locked: [false; 3],
+            },
+        );
+        let parts = [
+            frame.selector,
+            frame.tool_tag,
+            frame.layer_tag,
+            frame.grid_button,
+            frame.rulers_button,
+            frame.attr_button,
+            frame.overview_button,
+            frame.zoom_out,
+            frame.zoom_label,
+            frame.zoom_in,
+        ];
+        for (i, a) in parts.iter().enumerate() {
+            assert!(inside(*a, frame.options), "{a:?}");
+            for b in &parts[i + 1..] {
+                assert!(!a.overlaps(*b), "{a:?} {b:?}, {tool_cells} cells");
+            }
+        }
+        assert!(frame.selector.width >= 4 * 6, "room for a name");
+    }
+}
+
+#[test]
+fn the_canvas_shows_whole_tiles_at_every_zoom() {
+    for tile in [8, 16, 32] {
+        for size in SIZES {
+            let frame = frame_with(size, false, tile);
+            assert_eq!(frame.canvas.width % tile, 0, "{tile}, {size:?}");
+            assert_eq!(frame.canvas.height % tile, 0, "{tile}, {size:?}");
         }
     }
-    assert!(frame.grid_button.x >= 4 + 30 * 6 / 2);
 }
 
 #[test]
@@ -151,8 +195,8 @@ fn the_rulers_take_room_from_the_canvas_only_while_they_are_on() {
     assert_eq!(off.ruler_top.height * off.ruler_left.width, 0);
     assert_eq!(on.ruler_top.height, 12);
     assert_eq!(on.ruler_left.width, 18);
-    assert_eq!(on.canvas.width, off.canvas.width - 18);
-    assert_eq!(on.canvas.height, off.canvas.height - 12);
+    assert!(on.canvas.width < off.canvas.width);
+    assert!(on.canvas.height < off.canvas.height);
     assert_eq!(on.ruler_top.x, on.canvas.x);
     assert_eq!(on.ruler_left.y, on.canvas.y);
 }
@@ -184,7 +228,7 @@ fn the_strip_holds_sixteen_tiles_a_row_and_the_layers_sit_beside_it() {
             assert!(!row.eye.overlaps(row.lock) && !row.lock.overlaps(row.name));
             assert!(inside(row.eye, row.row) && inside(row.name, row.row));
             if slot > 0 {
-                assert_eq!(row.row.y, rows[slot - 1].row.bottom(), "rows touch");
+                assert_eq!(row.row.y, rows[slot - 1].row.bottom() + 1, "a pixel apart");
             }
         }
         assert_eq!(Frame::layer_in_slot(0), BgLayer::Bg2, "BG2 first");
@@ -196,21 +240,50 @@ fn the_strip_holds_sixteen_tiles_a_row_and_the_layers_sit_beside_it() {
 }
 
 #[test]
-fn the_collapsed_bar_has_room_for_the_brush_and_three_chips() {
-    let frame = frame_for(DrawerSize::Collapsed, false);
-    for (i, chip) in frame.chips.iter().enumerate() {
-        assert!(inside(*chip, frame.drawer_bar), "{chip:?}");
-        if i > 0 {
-            assert!(frame.chips[i - 1].right() <= chip.x, "BG0 left of BG1");
+fn the_drawer_bar_has_room_for_the_brush_the_chips_and_the_picker() {
+    for size in SIZES {
+        let frame = frame_for(size, false);
+        let bar = frame.drawer_bar;
+        assert!(inside(frame.size_button, bar));
+        assert!(frame.size_button.right() <= frame.tiles_label.0 + 1);
+        assert!(frame.tiles_label.0 + 5 * 6 <= frame.brush.x, "Tiles fits");
+        assert!(frame.brush.right() <= frame.brush_number.0);
+        assert!(frame.brush_number.0 + 4 * 6 <= frame.first_separator.x);
+        assert!(frame.first_separator.right() <= frame.bank_text.0);
+        assert!(
+            frame.bank_text.0 + 8 * 6 <= frame.second_separator.x,
+            "BGP3 XYP fits"
+        );
+        assert!(inside(frame.picker_button, bar));
+        for (i, chip) in frame.chips.iter().enumerate() {
+            assert!(inside(*chip, bar), "{chip:?}");
+            assert!(chip.x > frame.second_separator.x);
+            assert!(chip.right() <= frame.picker_button.x, "{chip:?}");
+            if i > 0 {
+                assert!(chip.x < frame.chips[i - 1].x, "BG2 first, then BG1, BG0");
+            }
         }
     }
-    assert_eq!(frame.chips[2].right(), frame.drawer_bar.right());
-    assert!(
-        frame.brush_text.0 + 4 * 6 + 9 * 6 <= frame.chips[0].x,
-        "text fits"
+}
+
+#[test]
+fn a_locked_layer_shows_its_padlock_in_its_chip_only_where_it_fits() {
+    let plain = frame_for(DrawerSize::Collapsed, false);
+    let locked = Frame::new(
+        metrics(),
+        Shape {
+            drawer: DrawerSize::Collapsed,
+            rulers: false,
+            tile: 16,
+            tool_cells: 6,
+            locked: [true; 3],
+        },
     );
-    assert!(inside(frame.size_button, frame.drawer_bar));
-    assert!(frame.size_button.right() <= frame.brush.x);
+    for index in 0..3 {
+        assert!(locked.chips[index].width >= plain.chips[index].width);
+        assert!(inside(locked.chips[index], locked.drawer_bar));
+        assert!(locked.chips[index].right() <= locked.picker_button.x);
+    }
 }
 
 #[test]
@@ -220,6 +293,9 @@ fn a_point_resolves_to_the_part_under_it() {
     for (tool, rect) in frame.tools {
         assert_eq!(frame.hit(middle(rect), 0), Hit::Tool(tool));
     }
+    assert_eq!(frame.hit(middle(frame.undo), 0), Hit::Undo);
+    assert_eq!(frame.hit(middle(frame.redo), 0), Hit::Redo);
+    assert_eq!(frame.hit(middle(frame.selector), 0), Hit::Selector);
     assert_eq!(frame.hit(middle(frame.grid_button), 0), Hit::Grid);
     assert_eq!(frame.hit(middle(frame.rulers_button), 0), Hit::Rulers);
     assert_eq!(frame.hit(middle(frame.zoom_out), 0), Hit::ZoomOut);

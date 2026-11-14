@@ -3,8 +3,8 @@
 //!
 //! The view keeps UI state only. The system lends it the open
 //! [`MapDocument`] and answers its [`MapRequest`]s, as for the other
-//! editors. The header holds a selector that lists the cartridge's maps and
-//! the buttons for the map operations.
+//! editors. The selector in the options bar opens a menu that lists the
+//! cartridge's maps and ends with the map operations.
 
 mod canvas;
 mod compose;
@@ -21,16 +21,16 @@ mod tests;
 mod tools;
 mod view;
 
-use glaux_input::{InputEvent, PointerButton};
+use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::tilemap::BgLayer;
 
 use self::editing::{Edit, LayerAction};
 use self::form::{CreateForm, FormInput};
-use self::layout::{Action, Hit, Layout, first_visible};
+use self::layout::{Action, Hit, Layout};
 use super::Rect;
 use super::code::prompt::{Prompt, PromptInput};
-use super::context_menu::{ContextMenu, MenuOutcome};
+use super::context_menu::{ContextMenu, ItemStyle, MenuEntry, MenuOutcome};
 use super::dialog::text_cells;
 use super::request::MapRequest;
 use super::text_field::TextField;
@@ -66,17 +66,18 @@ impl Metrics {
 
 #[cfg(test)]
 impl MapEditor {
-    /// Where the header's button labelled `label` is drawn.
+    /// Where the open menu draws the row of the operation labelled `label`.
     pub(in crate::system::workspace) fn button_rect(&self, label: &str) -> Rect {
-        let action = Action::ALL
+        let position = Action::ALL
             .into_iter()
-            .find(|action| ui_text::get(action.message_id()) == label)
-            .expect("a header button has this label");
-        self.layout().button(action)
+            .position(|action| ui_text::get(action.message_id()) == label)
+            .expect("an operation has this label");
+        self.row_rect(self.maps().len() + 1 + position)
     }
 
+    /// Where the options bar's map selector is drawn.
     pub(in crate::system::workspace) fn selector_rect(&self) -> Rect {
-        self.layout().selector()
+        self.frame().selector
     }
 
     pub(in crate::system::workspace) fn canvas_rect(&self) -> Rect {
@@ -87,9 +88,13 @@ impl MapEditor {
         self.frame().drawer
     }
 
-    /// Where the list draws the row `slot` places below its top.
+    /// Where the open menu draws its entry `slot`, separator included.
     pub(in crate::system::workspace) fn row_rect(&self, slot: usize) -> Rect {
-        self.layout().row(slot)
+        let Some(Overlay::Maps(menu)) = &self.overlay else {
+            panic!("the map menu is open");
+        };
+        let layout = menu.layout(&self.font, self.metrics.area(), self.metrics.cell_w, self.metrics.cell_h);
+        layout.rows[slot - layout.first]
     }
 
     /// Where the CREATE MAP button of the empty state is drawn.
@@ -107,7 +112,7 @@ impl MapEditor {
     }
 
     pub(in crate::system::workspace) fn list_is_open(&self) -> bool {
-        self.list_open
+        matches!(self.overlay, Some(Overlay::Maps(_)))
     }
 }
 
@@ -130,22 +135,21 @@ enum Overlay {
     Rename(Prompt),
     RenameLayer(BgLayer, Prompt),
     LayerMenu(BgLayer, ContextMenu<LayerAction>),
+    /// The map selector's menu. Its actions index the maps, then the
+    /// operations that follow them.
+    Maps(ContextMenu<usize>),
 }
 
 /// The Map view's UI state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct MapEditor {
     metrics: Metrics,
-    /// Width of each header button, which fits its label.
-    button_w: [i32; 4],
     /// The cartridge's maps as last listed, or why they could not be.
     summaries: Option<Result<Vec<MapSummary>, String>>,
     /// Whether the maps should be listed again the next time the view shows.
     stale: bool,
     /// The map the user last had open, which opens again when none is.
     remembered: Option<MapId>,
-    list_open: bool,
-    highlighted: usize,
     overlay: Option<Overlay>,
     font: BitmapFont,
     edit: Edit,
@@ -153,16 +157,11 @@ pub(super) struct MapEditor {
 
 impl MapEditor {
     pub(super) fn new(metrics: Metrics, font: BitmapFont) -> Self {
-        let button_w = Action::ALL
-            .map(|action| (text_cells(&ui_text::get(action.message_id())) + 2) * metrics.cell_w);
         Self {
             metrics,
-            button_w,
             summaries: None,
             stale: true,
             remembered: None,
-            list_open: false,
-            highlighted: 0,
             overlay: None,
             font,
             edit: Edit::default(),
@@ -170,7 +169,7 @@ impl MapEditor {
     }
 
     fn layout(&self) -> Layout {
-        Layout::new(self.metrics, self.button_w)
+        Layout::new(self.metrics)
     }
 
     fn maps(&self) -> &[MapSummary] {
@@ -192,7 +191,6 @@ impl MapEditor {
 
     pub(super) fn listed(&mut self, listing: Result<Vec<MapSummary>, String>) {
         self.summaries = Some(listing);
-        self.highlighted = self.highlighted.min(self.maps().len().saturating_sub(1));
     }
 
     /// Picks the map to open when none is open. This is the remembered map if
@@ -213,7 +211,7 @@ impl MapEditor {
             self.edit.reset_for_new_map();
         }
         self.remembered = Some(id.clone());
-        self.list_open = false;
+        self.close_list();
     }
 
     /// Forgets that `id` was the map the user last had open.
@@ -228,19 +226,22 @@ impl MapEditor {
         *self = Self::new(self.metrics, self.font.clone());
     }
 
+    /// Whether a window is over the view. The selector's menu is not one, so
+    /// the tab bar and the shortcuts keep working while it is open.
     pub(super) fn has_overlay(&self) -> bool {
-        self.overlay.is_some()
+        self.overlay
+            .as_ref()
+            .is_some_and(|overlay| !matches!(overlay, Overlay::Maps(_)))
     }
 
     /// Whether Escape closes something in the view.
     pub(super) fn claims_break(&self) -> bool {
-        self.overlay.is_some() || self.list_open || self.has_selection()
+        self.overlay.is_some() || self.has_selection()
     }
 
     /// Closes the windows and the list, as when the view is left.
     pub(super) fn close_overlays(&mut self) {
         self.overlay = None;
-        self.list_open = false;
         // A drag must not outlive the visit it started in. Its edit, if
         // open, closes with the next undo, redo or save.
         self.edit.stroke = None;
@@ -263,7 +264,7 @@ impl MapEditor {
         match &mut self.overlay {
             Some(Overlay::Create(form)) => form.paste(text),
             Some(Overlay::Rename(prompt) | Overlay::RenameLayer(_, prompt)) => prompt.paste(text),
-            Some(Overlay::LayerMenu(..)) | None => {}
+            Some(Overlay::LayerMenu(..) | Overlay::Maps(_)) | None => {}
         }
     }
 
@@ -273,7 +274,6 @@ impl MapEditor {
             .iter()
             .map(|summary| summary.id.clone())
             .collect();
-        self.list_open = false;
         self.overlay = Some(Overlay::Create(CreateForm::new(existing)));
     }
 
@@ -284,7 +284,6 @@ impl MapEditor {
         );
         let mut field = TextField::any(MAX_NAME);
         field.set_text(&document.meta().name);
-        self.list_open = false;
         self.overlay = Some(Overlay::Rename(Prompt::new(
             &ui_text::get("maps-rename-title"),
             label,
@@ -303,9 +302,6 @@ impl MapEditor {
             return self.overlay_input(event, document);
         }
         let layout = self.layout();
-        if self.list_open {
-            return self.list_input(event, &layout, document.as_deref());
-        }
         if let Some(document) = document.as_deref_mut()
             && let Some(out) = self.editor_input(event, document)
         {
@@ -317,15 +313,16 @@ impl MapEditor {
                 button: PointerButton::Primary,
                 at,
                 ..
-            } => match layout.hit(at, None, create_cells) {
-                Hit::Selector => self.open_list(document.as_deref()),
-                Hit::Action(action) => return self.act(action, document.as_deref()),
-                Hit::CreateMap => self.open_create(),
-                Hit::Row(_) | Hit::Nothing => {}
-            },
+            } => {
+                if self.frame().selector.contains(at) {
+                    self.open_list(document.as_deref());
+                } else if layout.hit(at, create_cells) == Hit::CreateMap {
+                    self.open_create();
+                }
+            }
             InputEvent::Enter | InputEvent::Down { .. } => self.open_list(document.as_deref()),
             InputEvent::NewFile => self.open_create(),
-            InputEvent::Save => return self.act(Action::Save, document.as_deref()),
+            InputEvent::Save => return self.save(document.as_deref()),
             InputEvent::Undo => {
                 if let Some(document) = document {
                     document.undo();
@@ -347,14 +344,47 @@ impl MapEditor {
             .then(|| text_cells(&ui_text::get("maps-create-map")))
     }
 
-    fn open_list(&mut self, document: Option<&MapDocument>) {
-        if self.maps().is_empty() {
-            return;
+    fn close_list(&mut self) {
+        if matches!(self.overlay, Some(Overlay::Maps(_))) {
+            self.overlay = None;
         }
-        self.highlighted = document
-            .and_then(|document| self.maps().iter().position(|m| &m.id == document.id()))
+    }
+
+    /// Opens the menu under the selector, with the open map highlighted.
+    fn open_list(&mut self, document: Option<&MapDocument>) {
+        let frame = self.frame();
+        let anchor = Point::new(
+            (frame.selector.x - 2).max(0) as u16,
+            frame.options.bottom() as u16,
+        );
+        let open = document.map(MapDocument::id);
+        let maps = self.maps();
+        let mut entries: Vec<_> = maps
+            .iter()
+            .enumerate()
+            .map(|(index, summary)| {
+                let current = open == Some(&summary.id);
+                let (label, style) = row_label(summary, current, document);
+                MenuEntry::item(&label, None, index).styled(style)
+            })
+            .collect();
+        if !maps.is_empty() {
+            entries.push(MenuEntry::Separator);
+        }
+        for (position, action) in Action::ALL.into_iter().enumerate() {
+            let enabled = action == Action::New || document.is_some();
+            let label = ui_text::get(action.message_id());
+            entries.push(MenuEntry::when(enabled, &label, None, maps.len() + position));
+        }
+        let current = open
+            .and_then(|id| maps.iter().position(|summary| &summary.id == id))
             .unwrap_or(0);
-        self.list_open = true;
+        let room = frame.status.y - i32::from(anchor.y);
+        self.overlay = Some(Overlay::Maps(
+            ContextMenu::new(entries, anchor)
+                .limited_to(room)
+                .focused_on(current),
+        ));
     }
 
     fn act(&mut self, action: Action, document: Option<&MapDocument>) -> Option<MapOut> {
@@ -370,56 +400,35 @@ impl MapEditor {
             Action::Delete => Some(MapOut::Request(MapRequest::PrepareDelete(
                 document?.id().clone(),
             ))),
-            Action::Save => {
-                let document = document?;
-                Some(if document.is_modified() {
-                    MapOut::Request(MapRequest::Save)
-                } else {
-                    MapOut::Notice(ui_text::get("maps-nothing-to-save"))
-                })
-            }
         }
     }
 
-    fn list_input(
-        &mut self,
-        event: InputEvent,
-        layout: &Layout,
-        document: Option<&MapDocument>,
-    ) -> Option<MapOut> {
-        let count = self.maps().len();
-        match event {
-            InputEvent::Break => self.list_open = false,
-            InputEvent::Up { .. } => self.highlighted = self.highlighted.saturating_sub(1),
-            InputEvent::Down { .. } => {
-                self.highlighted = (self.highlighted + 1).min(count.saturating_sub(1));
-            }
-            InputEvent::Enter => return self.choose(self.highlighted, document),
-            InputEvent::PointerDown {
-                button: PointerButton::Primary,
-                at,
-                ..
-            } => {
-                let first = first_visible(self.highlighted, layout.visible_rows());
-                match layout.hit(at, Some((count, first)), None) {
-                    Hit::Row(index) => return self.choose(index, document),
-                    _ => self.list_open = false,
-                }
-            }
-            _ => {}
-        }
-        None
+    fn save(&self, document: Option<&MapDocument>) -> Option<MapOut> {
+        let document = document?;
+        Some(if document.is_modified() {
+            MapOut::Request(MapRequest::Save)
+        } else {
+            MapOut::Notice(ui_text::get("maps-nothing-to-save"))
+        })
     }
 
-    /// Opens the map at `index` of the list, if it can be.
+    /// Runs the row at `index` of the list: opens a map, if it can be, or
+    /// starts an operation.
     fn choose(&mut self, index: usize, document: Option<&MapDocument>) -> Option<MapOut> {
-        let summary = self.maps().get(index)?;
+        let Some(summary) = self.maps().get(index) else {
+            let action = *Action::ALL.get(index - self.maps().len())?;
+            if action != Action::New && document.is_none() {
+                return None;
+            }
+            self.close_list();
+            return self.act(action, document);
+        };
         let id = summary.id.clone();
         match &summary.meta {
             // A map that cannot be opened says why and keeps the list open.
             Err(err) => Some(MapOut::Notice(crate::system::ui_errors::map::map(err))),
             Ok(_) => {
-                self.list_open = false;
+                self.close_list();
                 match document {
                     Some(open) if open.id() == &id => None,
                     Some(open) if open.is_modified() => Some(MapOut::ConfirmSwitch(id)),
@@ -437,6 +446,21 @@ impl MapEditor {
         let area = self.metrics.area();
         let (cell_w, cell_h) = (self.metrics.cell_w, self.metrics.cell_h);
         match self.overlay.as_mut()? {
+            Overlay::Maps(menu) => {
+                let layout = menu.layout(&self.font, area, cell_w, cell_h);
+                if event == InputEvent::Save {
+                    self.overlay = None;
+                    return self.save(document.as_deref());
+                }
+                match menu.handle_input(event, &layout) {
+                    MenuOutcome::Stay => None,
+                    MenuOutcome::Close | MenuOutcome::Outside => {
+                        self.overlay = None;
+                        None
+                    }
+                    MenuOutcome::Run(index) => self.choose(index, document.as_deref()),
+                }
+            }
             Overlay::LayerMenu(layer, menu) => {
                 let layer = *layer;
                 let layout = menu.layout(&self.font, area, cell_w, cell_h);
@@ -507,5 +531,32 @@ impl MapEditor {
                 }
             }
         }
+    }
+}
+
+/// The label of a map's menu entry and how it is inked. A map that cannot be
+/// opened shows its id and says so.
+fn row_label(
+    summary: &MapSummary,
+    current: bool,
+    document: Option<&MapDocument>,
+) -> (String, ItemStyle) {
+    match &summary.meta {
+        Ok(meta) => {
+            let unsaved = current && document.is_some_and(MapDocument::is_modified);
+            let label = format!(
+                "{}{}  {}  {}x{}",
+                meta.name,
+                if unsaved { "*" } else { "" },
+                summary.id,
+                meta.width,
+                meta.height
+            );
+            (label, if current { ItemStyle::Current } else { ItemStyle::Plain })
+        }
+        Err(_) => (
+            format!("{}  ({})", summary.id, ui_text::get("maps-broken")),
+            ItemStyle::Broken,
+        ),
     }
 }

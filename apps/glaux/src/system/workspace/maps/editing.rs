@@ -7,17 +7,17 @@ use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::tilemap::{BG_LAYERS, BgBank, BgLayer, TileEntry};
 
-use super::frame::{DrawerSize, Frame, Hit};
+use super::frame::{DrawerSize, Frame, Hit, Shape};
 use super::tools::{Selection, Tool, connected, line, would_change};
 use super::view::Viewport;
 use super::{MapEditor, MapOut, Overlay};
 use crate::system::map_document::MapDocument;
 use crate::system::workspace::context_menu::{ContextMenu, MenuEntry};
+use crate::system::workspace::dialog::text_cells;
 use crate::ui_text;
 
 const STRIP_ROWS_TOTAL: usize = 64;
 const WHEEL_TILES: i32 = 2;
-pub(super) const ZOOM_LABEL_CELLS: i32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LayerAction {
@@ -84,6 +84,26 @@ impl Edit {
     }
 }
 
+/// Whether `event` changes the layer, the zoom or what part of the map the
+/// canvas shows. A stroke in progress ends first: it would otherwise go on
+/// writing on another layer, or join cells the pointer never crossed.
+fn changes_what_a_stroke_draws_on(event: &InputEvent) -> bool {
+    match event {
+        InputEvent::Wheel { .. }
+        | InputEvent::WheelHorizontal { .. }
+        | InputEvent::Left { .. }
+        | InputEvent::Right { .. }
+        | InputEvent::Up { .. }
+        | InputEvent::Down { .. }
+        | InputEvent::PageUp { .. }
+        | InputEvent::PageDown { .. }
+        | InputEvent::Tab { .. }
+        | InputEvent::Function(2) => true,
+        InputEvent::Text(key) => matches!(key, 'x' | 'X' | '+' | '=' | '-' | '_' | '0'..='2'),
+        _ => false,
+    }
+}
+
 pub(super) fn map_size(document: &MapDocument) -> (usize, usize) {
     let meta = document.meta();
     (meta.width, meta.height)
@@ -93,10 +113,13 @@ impl MapEditor {
     pub(super) fn frame(&self) -> Frame {
         Frame::new(
             self.metrics,
-            &self.layout(),
-            self.edit.drawer,
-            self.edit.rulers,
-            ZOOM_LABEL_CELLS,
+            Shape {
+                drawer: self.edit.drawer,
+                rulers: self.edit.rulers,
+                tile: self.edit.view.zoom().tile_px(),
+                tool_cells: text_cells(&ui_text::get(self.edit.tool.message_id())),
+                locked: self.edit.locked,
+            },
         )
     }
 
@@ -154,6 +177,9 @@ impl MapEditor {
         document: &mut MapDocument,
     ) -> Option<Option<MapOut>> {
         self.fit(document);
+        if changes_what_a_stroke_draws_on(&event) {
+            self.end_stroke(Some(&mut *document));
+        }
         let frame = self.frame();
         let out = match event {
             InputEvent::PointerMove(at) => {
@@ -301,6 +327,15 @@ impl MapEditor {
                 *locked = !*locked;
             }
             Hit::Tile(tile) => return self.pick_tile(tile),
+            Hit::Selector => self.open_list(Some(&*document)),
+            Hit::Undo => {
+                self.end_stroke(Some(&mut *document));
+                document.undo();
+            }
+            Hit::Redo => {
+                self.end_stroke(Some(&mut *document));
+                document.redo();
+            }
             Hit::Brush | Hit::Nothing => {}
         }
         None
@@ -406,9 +441,18 @@ impl MapEditor {
             Stroke::Paint { last } => {
                 let cell = self.cell_at(frame, document, at);
                 let entry = self.tool_entry();
+                let view = self.viewport(frame, document);
+                let (first, shown) =
+                    view.visible_cells(size, (frame.canvas.width, frame.canvas.height));
+                let is_shown = |step: &(i32, i32)| {
+                    (first.0 as i32..(first.0 + shown.0) as i32).contains(&step.0)
+                        && (first.1 as i32..(first.1 + shown.1) as i32).contains(&step.1)
+                };
                 // Joining the cells between the moves leaves no gaps when
-                // the pointer jumps.
-                for step in line(last, cell).skip(1) {
+                // the pointer jumps. A pointer that leaves the canvas keeps
+                // the stroke, but the cells under the controls around it
+                // are not on screen and stay as they are.
+                for step in line(last, cell).skip(1).filter(is_shown) {
                     self.write(document, step, entry);
                 }
                 self.edit.stroke = Some(Stroke::Paint { last: cell });
@@ -504,7 +548,6 @@ impl MapEditor {
         if let Some(name) = &document.meta().layer_names[layer.index()] {
             field.set_text(name);
         }
-        self.list_open = false;
         self.overlay = Some(Overlay::RenameLayer(
             layer,
             super::Prompt::new(&ui_text::get("maps-layer-rename-title"), label, "", field),
@@ -546,7 +589,6 @@ impl MapEditor {
                 LayerAction::ToggleLock,
             ),
         ];
-        self.list_open = false;
         self.overlay = Some(Overlay::LayerMenu(layer, ContextMenu::new(entries, at)));
     }
 

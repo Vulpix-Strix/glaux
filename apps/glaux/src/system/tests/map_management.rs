@@ -37,7 +37,13 @@ fn press(system: System, rect: Rect) -> System {
     system.update(&click(centre(rect)))
 }
 
+/// Runs the operation `label` the way the view offers it: SAVE with
+/// Ctrl+S and the others from the list's last rows.
 fn press_button(system: System, label: &str) -> System {
+    if label == "SAVE" {
+        return system.update(&[InputEvent::Save]);
+    }
+    let system = press_selector(system);
     let rect = workspace::tests_support::map_button(&system.workspace, label);
     press(system, rect)
 }
@@ -553,7 +559,6 @@ fn each_state_of_the_view_is_drawn() {
     write_map(&fixture, "alpha", "Alpha");
     let system = open_maps(loaded_with(&fixture, &[]));
     let selector = workspace::tests_support::map_selector(&system.workspace);
-    let row = workspace::tests_support::map_row(&system.workspace, 0);
     let canvas = workspace::tests_support::map_canvas(&system.workspace);
     let drawer = workspace::tests_support::map_drawer(&system.workspace);
 
@@ -562,9 +567,12 @@ fn each_state_of_the_view_is_drawn() {
     assert!(inked(&closed, canvas) > 0, "the open map");
     assert!(inked(&closed, drawer) > 0, "the drawer");
 
-    let listed = render(&press_selector(system));
-    assert!(inked(&listed, row) > 0, "the list shows its rows");
-    assert_eq!(inked(&listed, drawer), 0, "no drawer under the list");
+    let system = press_selector(system);
+    let row = workspace::tests_support::map_row(&system.workspace, 0);
+    let listed = render(&system);
+    assert!(inked(&listed, row) > 0, "the menu shows its rows");
+    assert!(inked(&listed, canvas) > 0, "the canvas stays behind the menu");
+    assert!(inked(&listed, drawer) > 0, "so does the drawer");
 }
 
 #[test]
@@ -600,11 +608,10 @@ fn the_pointer_is_a_hand_over_controls_only() {
     let system = open_maps(loaded_with(&fixture, &[]));
     let hover = |at: Point| system.workspace.cursor(at, None, system.maps.as_ref()).0;
     let selector = workspace::tests_support::map_selector(&system.workspace);
-    let delete = workspace::tests_support::map_button(&system.workspace, "DELETE");
     assert_eq!(hover(centre(selector)), SystemCursor::Hand);
-    assert_eq!(hover(centre(delete)), SystemCursor::Hand);
     let canvas = workspace::tests_support::map_canvas(&system.workspace);
     assert_eq!(hover(centre(canvas)), SystemCursor::Arrow, "the canvas");
+
     let drawer = workspace::tests_support::map_drawer(&system.workspace);
     let button = Point::new((drawer.x + 6) as u16, (drawer.y + 6) as u16);
     assert_eq!(
@@ -612,4 +619,10 @@ fn the_pointer_is_a_hand_over_controls_only() {
         SystemCursor::Hand,
         "the drawer's size button"
     );
+    let listed = press_selector(system);
+    let delete = workspace::tests_support::map_button(&listed.workspace, "DELETE");
+    let over_row = listed
+        .workspace
+        .cursor(centre(delete), None, listed.maps.as_ref());
+    assert_eq!(over_row.0, SystemCursor::Hand, "a row of the list");
 }
