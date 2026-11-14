@@ -8,6 +8,7 @@ use glaux_video::draw::{draw_text, fill_rect};
 use super::editing::map_size;
 use super::frame::{Frame, Hit as EditorHit};
 use super::layout::{Hit, Layout};
+use super::pattern::uses;
 use super::{MapEditor, Overlay};
 use crate::cartridge::rom::RomUsage;
 use crate::system::map_document::MapDocument;
@@ -49,14 +50,8 @@ impl MapEditor {
         } else {
             self.body(ctx, &layout, hover);
         }
-        let left = document.map(|document| self.status_text(document, pointer));
-        let hint = if matches!(self.overlay, Some(Overlay::Maps(_))) {
-            menu_hint()
-        } else if document.is_some() {
-            ui_text::get("maps-hint-drawer")
-        } else {
-            String::new()
-        };
+        let left = document.map(|document| self.status_line(document, pointer));
+        let hint = self.status_hint(document.is_some());
         self.status_bar(
             ctx,
             &frame,
@@ -110,6 +105,51 @@ impl MapEditor {
         } else {
             SystemCursor::Arrow
         }
+    }
+
+    fn status_line(&self, document: &MapDocument, pointer: Option<Point>) -> String {
+        match (&self.overlay, &self.edit.picker, &self.edit.attrs) {
+            (Some(Overlay::TileMenu(tile, _)), ..) => {
+                let layer = self.edit.layer;
+                ui_text::get_with(
+                    "maps-status-tile-used",
+                    &[
+                        ("tile", Arg::Text(&format!("{tile:04}"))),
+                        ("count", Arg::Number(uses(document.layer(layer), *tile) as f64)),
+                        ("layer", Arg::Text(&layer.to_string())),
+                    ],
+                )
+            }
+            (Some(Overlay::LayerMenu(layer, _)), ..) => {
+                let name = document.meta().layer_names[layer.index()].as_deref();
+                ui_text::get_with(
+                    "maps-status-layer",
+                    &[
+                        ("layer", Arg::Text(&layer.to_string())),
+                        ("name", Arg::Text(name.unwrap_or(""))),
+                    ],
+                )
+                .trim_end()
+                .to_owned()
+            }
+            (None, Some(picker), _) => self.picker_status(picker),
+            (None, None, Some(_)) => self
+                .attr_status()
+                .unwrap_or_else(|| self.status_text(document, pointer)),
+            _ => self.status_text(document, pointer),
+        }
+    }
+
+    fn status_hint(&self, editing: bool) -> String {
+        let id = match (&self.overlay, &self.edit.picker, &self.edit.attrs) {
+            (Some(Overlay::Maps(_)), ..) => return menu_hint(),
+            (Some(Overlay::LayerMenu(..)), ..) => "maps-hint-layer-menu",
+            (None, Some(_), _) => "maps-hint-picker",
+            (None, None, Some(_)) => "maps-hint-attr",
+            _ if editing => "maps-hint-drawer",
+            _ => return String::new(),
+        };
+        ui_text::get(id)
     }
 
     pub(super) fn status_text(&self, document: &MapDocument, pointer: Option<Point>) -> String {
@@ -248,6 +288,14 @@ impl MapEditor {
             Some(Overlay::LayerMenu(_, menu)) => {
                 let layout = menu.layout(ctx.font, area, cell_w, cell_h);
                 menu.render(ctx, &layout);
+            }
+            Some(Overlay::TileMenu(_, menu)) => {
+                let layout = menu.layout(ctx.font, area, cell_w, cell_h);
+                menu.render(ctx, &layout);
+            }
+            Some(Overlay::Confirm(_, dialog)) => {
+                let layout = dialog.layout(ctx.font, area, cell_w, cell_h);
+                dialog.render(ctx, &layout);
             }
             Some(Overlay::Maps(menu)) => {
                 let layout = menu.layout(ctx.font, area, cell_w, cell_h);

@@ -41,6 +41,7 @@ const PICKER_X: i32 = 256;
 /// Rows of the strip when the drawer is compact and when it is expanded.
 const COMPACT_ROWS: usize = 6;
 const EXPANDED_ROWS: usize = 10;
+const EDIT_BUTTON_WIDTH: i32 = 100;
 
 /// How much of the screen the drawer takes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -94,11 +95,14 @@ pub(super) enum Hit {
     Selector,
     Grid,
     Rulers,
+    Attr,
     ZoomOut,
     ZoomIn,
     DrawerSize,
     /// The brush in the drawer's bar.
     Brush,
+    Picker,
+    EditTile,
     /// A layer's chip in the collapsed drawer's bar.
     Chip(BgLayer),
     /// A tile of the strip, by index.
@@ -132,7 +136,6 @@ pub(super) struct Frame {
     pub(super) layer_tag: Rect,
     pub(super) grid_button: Rect,
     pub(super) rulers_button: Rect,
-    /// Where the Attr and Overview toggles go once they exist.
     pub(super) attr_button: Rect,
     pub(super) overview_button: Rect,
     pub(super) zoom_out: Rect,
@@ -157,7 +160,6 @@ pub(super) struct Frame {
     pub(super) bank_text: (i32, i32),
     pub(super) first_separator: Rect,
     pub(super) second_separator: Rect,
-    /// Where the Picker button goes once it exists.
     pub(super) picker_button: Rect,
     /// The word before the layers in the open drawer.
     pub(super) layers_label: (i32, i32),
@@ -170,6 +172,9 @@ pub(super) struct Frame {
     /// The rule between the strip and the layers.
     pub(super) divider: Option<Rect>,
     pub(super) layer_rows: Option<[LayerRow; 3]>,
+    pub(super) tile_rule: Option<Rect>,
+    pub(super) tile_info: Option<(i32, i32)>,
+    pub(super) edit_button: Option<Rect>,
     /// Where the note about the eyes and locks goes.
     pub(super) layer_note: Option<(i32, i32)>,
     pub(super) status: Rect,
@@ -378,7 +383,7 @@ impl Frame {
         }
 
         let content_top = drawer_bar.bottom() + 1;
-        let (strip, strip_scroll, divider, layer_rows, layer_note) = if rows > 0 {
+        let (strip, strip_scroll, divider, layer_rows, layer_note, tile_parts) = if rows > 0 {
             let strip = Rect {
                 x: MARGIN + 1,
                 y: content_top + 1,
@@ -423,16 +428,35 @@ impl Frame {
                     },
                 }
             });
-            let note = (LAYERS_X, layer_rows[2].row.bottom() + 1);
+            let expanded = size == DrawerSize::Expanded;
+            let below = layer_rows[2].row.bottom();
+            let tile_parts = expanded.then(|| {
+                let rule = Rect {
+                    x: LAYERS_X,
+                    y: below + 2,
+                    width: row_w,
+                    height: 1,
+                };
+                let info = (LAYERS_X, rule.bottom() + 2);
+                let button = Rect {
+                    x: LAYERS_X,
+                    y: info.1 + BAR,
+                    width: EDIT_BUTTON_WIDTH,
+                    height: BAR,
+                };
+                (rule, info, button)
+            });
+            let note_y = tile_parts.map_or(below + 1, |(.., button)| button.bottom() + 2);
             (
                 Some(strip),
                 Some(scroll),
                 Some(divider),
                 Some(layer_rows),
-                Some(note),
+                Some((LAYERS_X, note_y)),
+                tile_parts,
             )
         } else {
-            (None, None, None, None, None)
+            (None, None, None, None, None, None)
         };
 
         Self {
@@ -473,6 +497,9 @@ impl Frame {
             strip_scroll,
             divider,
             layer_rows,
+            tile_rule: tile_parts.map(|parts| parts.0),
+            tile_info: tile_parts.map(|parts| parts.1),
+            edit_button: tile_parts.map(|parts| parts.2),
             layer_note,
             status,
             size,
@@ -516,6 +543,12 @@ impl Frame {
         if self.brush.contains(at) {
             return Hit::Brush;
         }
+        if self.picker_button.contains(at) {
+            return Hit::Picker;
+        }
+        if self.edit_button.is_some_and(|button| button.contains(at)) {
+            return Hit::EditTile;
+        }
         if let Some(tile) = self.tile_at(at, top_row) {
             return Hit::Tile(tile);
         }
@@ -542,6 +575,7 @@ impl Frame {
             (self.selector, Hit::Selector),
             (self.grid_button, Hit::Grid),
             (self.rulers_button, Hit::Rulers),
+            (self.attr_button, Hit::Attr),
             (self.zoom_out, Hit::ZoomOut),
             (self.zoom_in, Hit::ZoomIn),
         ] {

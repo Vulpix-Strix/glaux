@@ -142,7 +142,7 @@ impl Workspace {
             return self.sprite_input(event, sprites);
         }
         if route == Route::MapOverlay {
-            return self.map_input(event, maps);
+            return self.map_input(event, maps, sprites);
         }
         if route == Route::CodeOverlay {
             return self.code_input(event, code);
@@ -184,7 +184,7 @@ impl Workspace {
             _ if route == Route::Docs => return self.docs_input(event),
             _ if route == Route::Sprites => return self.sprite_input(event, sprites),
             _ if route == Route::Code => return self.code_input(event, code),
-            _ if route == Route::Maps => return self.map_input(event, maps),
+            _ if route == Route::Maps => return self.map_input(event, maps, sprites),
             _ => {}
         }
         None
@@ -343,6 +343,7 @@ impl Workspace {
         &mut self,
         event: InputEvent,
         maps: Option<&mut MapDocument>,
+        sprites: Option<&mut SpriteDocument>,
     ) -> Option<WorkspaceRequest> {
         let open = maps.as_deref().map(|document| document.id().clone());
         match self.maps.handle_input(event, maps)? {
@@ -359,6 +360,11 @@ impl Workspace {
             }
             MapOut::Copy(text) => Some(WorkspaceRequest::Host(HostWork::Copy(text))),
             MapOut::Paste => Some(WorkspaceRequest::Host(HostWork::Paste)),
+            MapOut::EditTile { tile, bank } => {
+                self.switch_to(Tab::Sprites, sprites);
+                self.sprites.show_bg_tile(usize::from(tile), bank);
+                None
+            }
         }
     }
 

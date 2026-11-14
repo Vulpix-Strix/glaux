@@ -626,3 +626,21 @@ fn the_pointer_is_a_hand_over_controls_only() {
         .cursor(centre(delete), None, listed.maps.as_ref());
     assert_eq!(over_row.0, SystemCursor::Hand, "a row of the list");
 }
+
+#[test]
+fn edit_in_sprites_opens_the_brushs_tile_in_the_background_sprite_editor() {
+    use crate::system::sprite_document::TileSet;
+    use glaux_input::InputEvent;
+
+    let fixture = Fixture::new("sys-maps-edit-tile");
+    write_map(&fixture, "alpha", "Alpha");
+    let system = open_maps(loaded_with(&fixture, &[]));
+    let system = system.update(&[InputEvent::Tab { reverse: false }]);
+    let button = workspace::tests_support::map_edit_button(&system.workspace);
+    let system = press(system, button);
+
+    assert_eq!(workspace_tab(&system), Tab::Sprites);
+    let sprites = system.workspace.sprites();
+    assert_eq!(sprites.tileset(), TileSet::Bg);
+    assert_eq!(sprites.selected(), 1, "the brush starts on tile 1");
+}

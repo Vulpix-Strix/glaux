@@ -733,6 +733,13 @@ impl SpriteEditor {
         self.selected = tile;
     }
 
+    pub fn show_bg_tile(&mut self, tile: usize, bank: BgBank) {
+        self.tileset = TileSet::Bg;
+        self.bg_bank = bank;
+        self.select(tile, None);
+        self.sheet.reveal(self.selected, self.layout().visible);
+    }
+
     /// Moves the selection by whole grid cells, stopping at the grid's
     /// edges, and scrolls just enough to keep it on screen.
     fn step(&mut self, columns: i32, rows: i32, document: Option<&mut SpriteDocument>) {

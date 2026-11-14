@@ -124,6 +124,12 @@ impl MapEditor {
                 self.canvas(ctx.framebuffer, &frame, document, &source, pointer, hover);
                 self.rulers(ctx, &frame, document, pointer);
                 self.drawer(ctx, &frame, document, &source, hover);
+                if let Some(picker) = self.edit.picker {
+                    self.render_picker(ctx, &frame, &source, &picker);
+                }
+                if let Some(panel) = self.edit.attrs {
+                    self.render_attr(ctx, &frame, document, pointer, panel);
+                }
             }
             Err(message) => self.unavailable(ctx, &frame, message),
         }
@@ -205,7 +211,14 @@ impl MapEditor {
         }
 
         let zoom = self.edit.view.zoom();
-        let buttons: [(Rect, String, Hit, bool, bool); 4] = [
+        let buttons: [(Rect, String, Hit, bool, bool); 5] = [
+            (
+                frame.attr_button,
+                ui_text::get("maps-attr"),
+                Hit::Attr,
+                self.edit.attrs.is_some(),
+                true,
+            ),
             (
                 frame.grid_button,
                 ui_text::get("maps-grid"),

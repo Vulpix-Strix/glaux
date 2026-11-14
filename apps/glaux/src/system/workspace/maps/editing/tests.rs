@@ -915,16 +915,18 @@ fn the_layer_menu_locks_edits_and_renames_the_layer_it_was_opened_on() {
     assert_eq!(editor.edit.layer, BgLayer::Bg1, "locking does not edit");
 
     press_secondary(&mut editor, &mut document, middle(rows[2].eye));
-    input(
-        &mut editor,
-        &mut document,
-        InputEvent::Down { select: false },
-    );
+    for _ in 0..2 {
+        input(
+            &mut editor,
+            &mut document,
+            InputEvent::Down { select: false },
+        );
+    }
     input(&mut editor, &mut document, InputEvent::Enter);
     assert_eq!(editor.edit.layer, BgLayer::Bg0);
 
     press_secondary(&mut editor, &mut document, middle(rows[0].name));
-    for _ in 0..2 {
+    for _ in 0..1 {
         input(
             &mut editor,
             &mut document,
@@ -1211,4 +1213,55 @@ fn a_select_drag_also_ends_when_the_view_changes() {
         editor.edit.selection, before,
         "the selection stopped following"
     );
+}
+
+#[test]
+fn a_pattern_brush_stamps_the_sheets_rectangle_cut_at_the_maps_edge_as_one_edit() {
+    let mut editor = editor();
+    let mut document = document(8, 6);
+    editor.edit.brush = entry(20);
+    editor.edit.pattern = (3, 2);
+    click_cell(&mut editor, &mut document, (6, 5));
+    assert_eq!(cell(&document, BgLayer::Bg1, 6, 5), entry(20));
+    assert_eq!(cell(&document, BgLayer::Bg1, 7, 5), entry(21));
+    assert_eq!(filled(&document, BgLayer::Bg1), 2);
+    document.undo();
+    assert_eq!(filled(&document, BgLayer::Bg1), 0);
+
+    click_cell(&mut editor, &mut document, (2, 3));
+    for (dx, dy, tile) in [(0, 0, 20), (1, 0, 21), (2, 0, 22), (0, 1, 36), (1, 1, 37), (2, 1, 38)] {
+        assert_eq!(cell(&document, BgLayer::Bg1, 2 + dx, 3 + dy), entry(tile));
+    }
+}
+
+#[test]
+fn a_pattern_brush_does_not_touch_a_locked_layer_and_the_eraser_clears_single_cells() {
+    let mut editor = editor();
+    let mut document = document(10, 10);
+    editor.edit.brush = entry(20);
+    editor.edit.pattern = (2, 2);
+    click_cell(&mut editor, &mut document, (1, 1));
+    editor.edit.tool = Tool::Eraser;
+    click_cell(&mut editor, &mut document, (1, 1));
+    assert_eq!(filled(&document, BgLayer::Bg1), 3, "the eraser takes one cell");
+
+    editor.edit.tool = Tool::Pencil;
+    editor.edit.locked[1] = true;
+    click_cell(&mut editor, &mut document, (5, 5));
+    assert_eq!(filled(&document, BgLayer::Bg1), 3);
+}
+
+#[test]
+fn the_eyedropper_and_the_strip_bring_the_brush_back_to_one_tile() {
+    let mut editor = editor();
+    let mut document = document(10, 10);
+    document.set_cell(BgLayer::Bg1, 4, 4, entry(9));
+    editor.edit.pattern = (3, 2);
+    editor.edit.tool = Tool::Eyedropper;
+    click_cell(&mut editor, &mut document, (4, 4));
+    assert_eq!((editor.edit.brush.tile(), editor.edit.pattern), (9, (1, 1)));
+
+    editor.edit.pattern = (2, 2);
+    editor.pick_tile(30);
+    assert_eq!(editor.edit.pattern, (1, 1));
 }

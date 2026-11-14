@@ -63,6 +63,10 @@ pub fn map_drawer(workspace: &Workspace) -> Rect {
     workspace.maps.drawer_rect()
 }
 
+pub fn map_edit_button(workspace: &Workspace) -> Rect {
+    workspace.maps.edit_button_rect()
+}
+
 /// Where the Map view's selector is drawn.
 pub fn map_selector(workspace: &Workspace) -> Rect {
     workspace.maps.selector_rect()

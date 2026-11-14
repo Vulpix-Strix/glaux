@@ -347,12 +347,33 @@ logs-up-down-scroll-tab-back = Up/Down: scroll  Tab: back
 
 ## Map view
 
+maps-attr = Attr
+maps-attr-applies = Applies now
+maps-attr-brush = Brush tile { $tile }
+maps-attr-brush-tab = Brush
+maps-attr-cells = { $count ->
+    [one] 1 cell on { $layer }
+   *[other] { $count } cells on { $layer }
+    }
+maps-attr-cells-tab = Cells { $width }x{ $height }
+maps-attr-flip = Flip
+maps-attr-high = High
+maps-attr-low = Low
+maps-attr-mixed = Mixed
+maps-attr-palette = Palette
+maps-attr-priority = Priority
+maps-attr-undo = Ctrl+Z undo
 maps-broken = cannot be opened
 maps-can-t-show-the-tiles = Can't show this cartridge's background tiles
 maps-cancel = CANCEL
+maps-clear-confirm = CLEAR
+maps-clear-message = Clear { $layer }? Every tile on it is removed. Undo brings them back.
+maps-clear-title = Clear layer
+maps-copied = Copied { $width }x{ $height } cells
 maps-create = CREATE
 maps-create-map = CREATE MAP
 maps-created = Created map { $id }
+maps-cut = Cut { $width }x{ $height } cells
 maps-delete = DELETE
 maps-delete-confirm = Delete map { $id } from the cartridge?
 maps-delete-modified = Its unsaved edits will be lost.
@@ -364,20 +385,48 @@ maps-field-id = Id
 maps-field-name = Name
 maps-field-width = Width
 maps-grid = Grid
-maps-hint-drawer = Tab: drawer
+maps-hint-attr = A: attributes  Esc: close
+maps-hint-drawer = Tab: drawer  T: picker
+maps-hint-layer-menu = V, L: editor only
+maps-hint-picker = Esc: cancel  T: close
 maps-id-hint = The id names the map's folder and never changes.
 maps-info-size = { $width } x { $height } tiles
 maps-layer-edit = Edit
+maps-layer-menu-clear = Clear layer...
+maps-layer-menu-locked = Locked
+maps-layer-menu-only = Show only { $layer }
+maps-layer-menu-select-all = Select all cells
+maps-layer-menu-visible = Visible
 maps-layer-note = Eye, lock: editor only
 maps-layers = Layers
+maps-nothing-to-paste = Nothing to paste
+maps-picker = Picker
+maps-picker-close = T close
+maps-picker-drag = Drag pattern
+maps-picker-page = Page { $page }/{ $pages }
+maps-picker-title = Tile picker
+maps-picker-wheel = Wheel page
+maps-replace-confirm = REPLACE
+maps-replace-message = Replace tile { $from } with { $to } on { $layer }? { $count ->
+    [one] 1 cell changes.
+   *[other] { $count } cells change.
+    } Their flips, priority and palette stay.
+maps-replace-title = Replace tile
+maps-status-layer = Layer { $layer }  { $name }
+maps-status-pattern = Pattern { $width }x{ $height }  { $first }-{ $last }
+maps-status-tile = Tile { $tile }
+maps-status-tile-used = Tile { $tile }  Used { $count }x on { $layer }
+maps-tile-info = Tile { $tile }
+maps-tile-menu-brush = Use as brush
+maps-tile-menu-edit = Edit in Sprites
+maps-tile-menu-replace = Replace on map...
+maps-tile-menu-select = Select on { $layer }
+maps-tile-menu-title = Tile { $tile }
+maps-tile-used = Used { $count }x on map
 maps-tiles = Tiles
 maps-layer-locked = { $layer } is locked
 maps-layer-menu-edit = Edit this layer
-maps-layer-menu-hide = Hide layer
-maps-layer-menu-lock = Lock layer
 maps-layer-menu-rename = Rename...
-maps-layer-menu-show = Show layer
-maps-layer-menu-unlock = Unlock layer
 maps-layer-rename-label = New name for { $layer }, empty removes it:
 maps-layer-rename-title = RENAME LAYER
 maps-locked = LOCKED

@@ -6,6 +6,8 @@
 //! editors. The selector in the options bar opens a menu that lists the
 //! cartridge's maps and ends with the map operations.
 
+mod actions;
+mod attributes;
 mod canvas;
 mod compose;
 mod drawer;
@@ -15,6 +17,8 @@ mod fixture;
 mod form;
 mod frame;
 mod layout;
+mod pattern;
+mod picker;
 mod render;
 #[cfg(test)]
 mod tests;
@@ -23,15 +27,15 @@ mod view;
 
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
-use glaux_machine::tilemap::BgLayer;
+use glaux_machine::tilemap::{BgBank, BgLayer};
 
-use self::editing::{Edit, LayerAction};
+use self::editing::{Edit, LayerAction, TileAction};
 use self::form::{CreateForm, FormInput};
 use self::layout::{Action, Hit, Layout};
 use super::Rect;
 use super::code::prompt::{Prompt, PromptInput};
 use super::context_menu::{ContextMenu, ItemStyle, MenuEntry, MenuOutcome};
-use super::dialog::text_cells;
+use super::dialog::{Dialog, text_cells};
 use super::request::MapRequest;
 use super::text_field::TextField;
 use crate::cartridge::map::{MapId, MapSummary};
@@ -66,7 +70,6 @@ impl Metrics {
 
 #[cfg(test)]
 impl MapEditor {
-    /// Where the open menu draws the row of the operation labelled `label`.
     pub(in crate::system::workspace) fn button_rect(&self, label: &str) -> Rect {
         let position = Action::ALL
             .into_iter()
@@ -75,7 +78,6 @@ impl MapEditor {
         self.row_rect(self.maps().len() + 1 + position)
     }
 
-    /// Where the options bar's map selector is drawn.
     pub(in crate::system::workspace) fn selector_rect(&self) -> Rect {
         self.frame().selector
     }
@@ -84,11 +86,14 @@ impl MapEditor {
         self.frame().canvas
     }
 
+    pub(in crate::system::workspace) fn edit_button_rect(&self) -> Rect {
+        self.frame().edit_button.expect("the drawer is expanded")
+    }
+
     pub(in crate::system::workspace) fn drawer_rect(&self) -> Rect {
         self.frame().drawer
     }
 
-    /// Where the open menu draws its entry `slot`, separator included.
     pub(in crate::system::workspace) fn row_rect(&self, slot: usize) -> Rect {
         let Some(Overlay::Maps(menu)) = &self.overlay else {
             panic!("the map menu is open");
@@ -126,6 +131,16 @@ pub(super) enum MapOut {
     Notice(String),
     Copy(String),
     Paste,
+    EditTile {
+        tile: u16,
+        bank: BgBank,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Confirm {
+    Replace { from: u16, to: u16 },
+    Clear(BgLayer),
 }
 
 /// A window over the view.
@@ -138,6 +153,8 @@ enum Overlay {
     /// The map selector's menu. Its actions index the maps, then the
     /// operations that follow them.
     Maps(ContextMenu<usize>),
+    TileMenu(u16, ContextMenu<TileAction>),
+    Confirm(Confirm, Dialog<bool>),
 }
 
 /// The Map view's UI state.
@@ -236,12 +253,17 @@ impl MapEditor {
 
     /// Whether Escape closes something in the view.
     pub(super) fn claims_break(&self) -> bool {
-        self.overlay.is_some() || self.has_selection()
+        self.overlay.is_some()
+            || self.edit.picker.is_some()
+            || self.edit.attrs.is_some()
+            || self.has_selection()
     }
 
     /// Closes the windows and the list, as when the view is left.
     pub(super) fn close_overlays(&mut self) {
         self.overlay = None;
+        self.close_picker();
+        self.edit.attrs = None;
         // A drag must not outlive the visit it started in. Its edit, if
         // open, closes with the next undo, redo or save.
         self.edit.stroke = None;
@@ -264,7 +286,13 @@ impl MapEditor {
         match &mut self.overlay {
             Some(Overlay::Create(form)) => form.paste(text),
             Some(Overlay::Rename(prompt) | Overlay::RenameLayer(_, prompt)) => prompt.paste(text),
-            Some(Overlay::LayerMenu(..) | Overlay::Maps(_)) | None => {}
+            Some(
+                Overlay::LayerMenu(..)
+                | Overlay::Maps(_)
+                | Overlay::TileMenu(..)
+                | Overlay::Confirm(..),
+            )
+            | None => {}
         }
     }
 
@@ -350,7 +378,6 @@ impl MapEditor {
         }
     }
 
-    /// Opens the menu under the selector, with the open map highlighted.
     fn open_list(&mut self, document: Option<&MapDocument>) {
         let frame = self.frame();
         let anchor = Point::new(
@@ -412,8 +439,6 @@ impl MapEditor {
         })
     }
 
-    /// Runs the row at `index` of the list: opens a map, if it can be, or
-    /// starts an operation.
     fn choose(&mut self, index: usize, document: Option<&MapDocument>) -> Option<MapOut> {
         let Some(summary) = self.maps().get(index) else {
             let action = *Action::ALL.get(index - self.maps().len())?;
@@ -459,6 +484,35 @@ impl MapEditor {
                         None
                     }
                     MenuOutcome::Run(index) => self.choose(index, document.as_deref()),
+                }
+            }
+            Overlay::TileMenu(tile, menu) => {
+                let tile = *tile;
+                let layout = menu.layout(&self.font, area, cell_w, cell_h);
+                match menu.handle_input(event, &layout) {
+                    MenuOutcome::Stay => None,
+                    MenuOutcome::Close | MenuOutcome::Outside => {
+                        self.overlay = None;
+                        None
+                    }
+                    MenuOutcome::Run(action) => {
+                        self.overlay = None;
+                        self.run_tile_action(tile, action, document.as_deref())
+                    }
+                }
+            }
+            Overlay::Confirm(confirm, dialog) => {
+                let confirm = *confirm;
+                let layout = dialog.layout(&self.font, area, cell_w, cell_h);
+                match dialog.handle_input(event, &layout) {
+                    None => None,
+                    Some(answer) => {
+                        self.overlay = None;
+                        match (answer, document) {
+                            (true, Some(document)) => self.run_confirm(confirm, document),
+                            _ => None,
+                        }
+                    }
                 }
             }
             Overlay::LayerMenu(layer, menu) => {
@@ -534,8 +588,6 @@ impl MapEditor {
     }
 }
 
-/// The label of a map's menu entry and how it is inked. A map that cannot be
-/// opened shows its id and says so.
 fn row_label(
     summary: &MapSummary,
     current: bool,
@@ -556,7 +608,7 @@ fn row_label(
         }
         Err(_) => (
             format!("{}  ({})", summary.id, ui_text::get("maps-broken")),
-            ItemStyle::Broken,
+            ItemStyle::Danger,
         ),
     }
 }

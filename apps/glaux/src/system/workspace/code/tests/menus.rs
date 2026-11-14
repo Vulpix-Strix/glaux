@@ -14,7 +14,7 @@ fn items(editor: &CodeEditor) -> Vec<(&str, bool)> {
         .iter()
         .filter_map(|entry| match entry {
             MenuEntry::Item { label, enabled, .. } => Some((label.as_str(), *enabled)),
-            MenuEntry::Separator => None,
+            MenuEntry::Separator | MenuEntry::Header(_) => None,
         })
         .collect()
 }

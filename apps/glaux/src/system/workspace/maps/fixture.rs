@@ -113,3 +113,55 @@ pub(super) fn render_with(
     editor.render_editor(&mut ctx, source, document, pointer, hover);
     fb
 }
+
+pub(super) fn at(x: i32, y: i32) -> Point {
+    Point::new(x as u16, y as u16)
+}
+
+pub(super) fn middle(rect: crate::system::workspace::Rect) -> Point {
+    at(rect.x + rect.width / 2, rect.y + rect.height / 2)
+}
+
+pub(super) fn input(
+    editor: &mut MapEditor,
+    document: &mut MapDocument,
+    event: glaux_input::InputEvent,
+) -> Option<super::MapOut> {
+    editor.handle_input(event, Some(document))
+}
+
+pub(super) fn pointer(
+    editor: &mut MapEditor,
+    document: &mut MapDocument,
+    button: glaux_input::PointerButton,
+    at: Point,
+) -> Option<super::MapOut> {
+    input(
+        editor,
+        document,
+        glaux_input::InputEvent::PointerDown {
+            button,
+            at,
+            select: false,
+        },
+    )
+}
+
+pub(super) fn press(editor: &mut MapEditor, document: &mut MapDocument, at: Point) {
+    pointer(editor, document, glaux_input::PointerButton::Primary, at);
+}
+
+pub(super) fn release(editor: &mut MapEditor, document: &mut MapDocument, at: Point) -> Option<super::MapOut> {
+    input(
+        editor,
+        document,
+        glaux_input::InputEvent::PointerUp {
+            button: glaux_input::PointerButton::Primary,
+            at,
+        },
+    )
+}
+
+pub(super) fn key(editor: &mut MapEditor, document: &mut MapDocument, key: char) {
+    input(editor, document, glaux_input::InputEvent::Text(key));
+}

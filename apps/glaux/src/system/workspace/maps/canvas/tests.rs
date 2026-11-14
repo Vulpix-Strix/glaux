@@ -277,12 +277,19 @@ fn nothing_is_drawn_outside_the_canvas_whatever_the_zoom_and_scroll() {
                 }
             }
             let frame = editor.frame();
+            let used = frame.tile_info.map(|(x, y)| Rect {
+                x,
+                y,
+                width: frame.drawer.right() - x,
+                height: 12,
+            });
             let a = render(&editor, &fixture, &empty);
             let b = render(&editor, &fixture, &busy);
             for y in 0..240 {
                 for x in 0..320 {
                     if [frame.canvas, frame.options, frame.undo, frame.redo]
                         .iter()
+                        .chain(&used)
                         .any(|part| part.contains_xy(x, y))
                     {
                         continue;

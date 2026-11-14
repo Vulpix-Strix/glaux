@@ -9,9 +9,10 @@
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
-use glaux_video::draw::{draw_text, fill_rect};
+use glaux_machine::system_rom::SystemIcon;
+use glaux_video::draw::{draw_ink_image_centered, draw_text, fill_rect};
 
-use super::{BAR, HOVER_SHADE, IDLE_SHADE, Rect, take_cells};
+use super::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells};
 use crate::system::screen::{ACCENT, DIM, ERROR, PALE, TEXT};
 use crate::system::workspace::RenderContext;
 use crate::ui_text;
@@ -24,17 +25,15 @@ pub fn menu_hint() -> String {
 const SEPARATOR_HEIGHT: i32 = 5;
 /// Cells left of a label.
 const LABEL_INDENT: i32 = 1;
+const CHECK_INDENT: i32 = 3;
 /// Cells at least between a label and its shortcut.
 const SHORTCUT_GAP: i32 = 3;
 
-/// How an item is inked when it can be chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemStyle {
     Plain,
-    /// The item stands for what is open now.
     Current,
-    /// The item stands for something that failed.
-    Broken,
+    Danger,
 }
 
 /// One row of a menu.
@@ -46,8 +45,10 @@ pub enum MenuEntry<A> {
         shortcut: Option<&'static str>,
         enabled: bool,
         style: ItemStyle,
+        checked: Option<bool>,
         action: A,
     },
+    Header(String),
     /// A rule between groups of items.
     Separator,
 }
@@ -60,6 +61,7 @@ impl<A> MenuEntry<A> {
             shortcut,
             enabled: true,
             style: ItemStyle::Plain,
+            checked: None,
             action,
         }
     }
@@ -71,11 +73,22 @@ impl<A> MenuEntry<A> {
             shortcut,
             enabled,
             style: ItemStyle::Plain,
+            checked: None,
             action,
         }
     }
 
-    /// The same entry inked as `style` when it is an item.
+    pub fn header(label: &str) -> Self {
+        Self::Header(label.to_owned())
+    }
+
+    pub fn checked(mut self, on: bool) -> Self {
+        if let Self::Item { checked, .. } = &mut self {
+            *checked = Some(on);
+        }
+        self
+    }
+
     pub fn styled(mut self, new: ItemStyle) -> Self {
         if let Self::Item { style, .. } = &mut self {
             *style = new;
@@ -111,9 +124,7 @@ pub struct ContextMenu<A> {
     anchor: Point,
     /// The highlighted entry, always an enabled item.
     focus: Option<usize>,
-    /// The tallest the window may be. A taller menu scrolls.
     max_height: Option<i32>,
-    /// The first entry shown while the menu scrolls.
     top: usize,
 }
 
@@ -123,10 +134,9 @@ pub struct MenuLayout {
     pub window: Rect,
     /// Each entry's row, in order.
     pub rows: Vec<Rect>,
-    /// The entry the first row stands for.
     pub first: usize,
     cell_w: i32,
-    /// Every entry's height and the room for them, to keep the focus in view.
+    indent: i32,
     heights: Vec<i32>,
     room: Option<i32>,
 }
@@ -151,13 +161,11 @@ impl<A: Copy> ContextMenu<A> {
         }
     }
 
-    /// The same menu no taller than `height`, scrolling when it needs more.
     pub fn limited_to(mut self, height: i32) -> Self {
         self.max_height = Some(height);
         self
     }
 
-    /// The same menu with entry `index` highlighted, if it can be chosen.
     pub fn focused_on(mut self, index: usize) -> Self {
         self.focus = self.entries.get(index).filter(|e| e.is_enabled()).map(|_| index);
         self
@@ -179,25 +187,37 @@ impl<A: Copy> ContextMenu<A> {
         let cells = |text: &str| i32::try_from(font.text_cells(text)).unwrap_or(i32::MAX);
         let (mut labels, mut shortcuts) = (0, 0);
         for entry in &self.entries {
-            if let MenuEntry::Item {
-                label, shortcut, ..
-            } = entry
-            {
-                labels = labels.max(cells(label));
-                shortcuts = shortcuts.max(shortcut.map_or(0, cells));
+            match entry {
+                MenuEntry::Item {
+                    label, shortcut, ..
+                } => {
+                    labels = labels.max(cells(label));
+                    shortcuts = shortcuts.max(shortcut.map_or(0, cells));
+                }
+                MenuEntry::Header(label) => labels = labels.max(cells(label)),
+                MenuEntry::Separator => {}
             }
         }
+        let indent = if self
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, MenuEntry::Item { checked: Some(_), .. }))
+        {
+            CHECK_INDENT
+        } else {
+            LABEL_INDENT
+        };
         let gap = if shortcuts > 0 { SHORTCUT_GAP } else { 0 };
         let row_height = cell_h + 2;
         let heights: Vec<i32> = self
             .entries
             .iter()
             .map(|entry| match entry {
-                MenuEntry::Item { .. } => row_height,
+                MenuEntry::Item { .. } | MenuEntry::Header(_) => row_height,
                 MenuEntry::Separator => SEPARATOR_HEIGHT,
             })
             .collect();
-        let width = ((LABEL_INDENT + labels + gap + shortcuts + 1) * cell_w + 2).min(area.width);
+        let width = ((indent + labels + gap + shortcuts + 1) * cell_w + 2).min(area.width);
         let room = self.max_height.map(|height| height - 2);
         let first = self.first_shown(&heights, room);
         let shown = shown_from(first, &heights, room);
@@ -233,13 +253,12 @@ impl<A: Copy> ContextMenu<A> {
             rows,
             first,
             cell_w,
+            indent,
             heights,
             room,
         }
     }
 
-    /// The first entry to show: the scroll position, moved as far as keeps
-    /// the highlighted entry in view.
     fn first_shown(&self, heights: &[i32], room: Option<i32>) -> usize {
         let Some(room) = room else { return 0 };
         let last = heights.len().saturating_sub(1);
@@ -297,7 +316,6 @@ impl<A: Copy> ContextMenu<A> {
         MenuOutcome::Stay
     }
 
-    /// Scrolls `by` entries, dropping the highlight if it leaves the view.
     fn scroll(&mut self, by: isize, layout: &MenuLayout) {
         let Some(room) = layout.room else { return };
         let len = layout.heights.len();
@@ -367,11 +385,24 @@ impl<A: Copy> ContextMenu<A> {
                     };
                     fill(framebuffer, rule, DIM);
                 }
+                MenuEntry::Header(label) => {
+                    let reach = usize::try_from(row.width / layout.cell_w - 2).unwrap_or(0);
+                    let text = take_cells(font, label, reach);
+                    draw_text(
+                        framebuffer,
+                        font,
+                        text,
+                        row.x + layout.indent * layout.cell_w,
+                        row.y + 1,
+                        DIM,
+                    );
+                }
                 MenuEntry::Item {
                     label,
                     shortcut,
                     enabled,
                     style,
+                    checked,
                     ..
                 } => {
                     let focused = self.focus == Some(index);
@@ -380,18 +411,28 @@ impl<A: Copy> ContextMenu<A> {
                     }
                     let (ink, key_ink) = match (enabled, focused, style) {
                         (false, ..) => (IDLE_SHADE, IDLE_SHADE),
-                        (true, _, ItemStyle::Current) => (ACCENT, DIM),
-                        (true, _, ItemStyle::Broken) => (ERROR, DIM),
+                        (true, true, ItemStyle::Current) => (TEXT, PALE),
+                        (true, false, ItemStyle::Current) => (ACCENT, DIM),
+                        (true, true, ItemStyle::Danger) => (TEXT, PALE),
+                        (true, false, ItemStyle::Danger) => (ERROR, DIM),
                         (true, true, ItemStyle::Plain) => (TEXT, PALE),
                         (true, false, ItemStyle::Plain) => (PALE, DIM),
                     };
                     let y = row.y + 1;
-                    let reach = (row.width / layout.cell_w - 2 * LABEL_INDENT).max(0);
+                    if *checked == Some(true) {
+                        draw_ink_image_centered(
+                            framebuffer,
+                            ctx.ui.icon(SystemIcon::Check),
+                            (row.x, row.y, CHECK_INDENT * layout.cell_w, row.height),
+                            &[OUTLINE, ink, ink],
+                        );
+                    }
+                    let reach = (row.width / layout.cell_w - layout.indent - 1).max(0);
                     draw_text(
                         framebuffer,
                         font,
                         take_cells(font, label, usize::try_from(reach).unwrap_or(0)),
-                        row.x + LABEL_INDENT * layout.cell_w,
+                        row.x + layout.indent * layout.cell_w,
                         y,
                         ink,
                     );
@@ -413,7 +454,6 @@ impl<A: Copy> ContextMenu<A> {
     }
 }
 
-/// How many entries from `first` fit in `room`, at least one.
 fn shown_from(first: usize, heights: &[i32], room: Option<i32>) -> usize {
     let Some(room) = room else {
         return heights.len() - first;

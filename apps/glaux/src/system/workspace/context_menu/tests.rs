@@ -183,3 +183,58 @@ fn the_wheel_scrolls_and_drops_a_highlight_that_leaves_the_view() {
     let end = menu.layout(&LAYOUT_FONT, AREA, 6, 12);
     assert_eq!(end.first + end.rows.len(), 20, "stops at the last entry");
 }
+
+#[test]
+fn a_focused_current_item_is_not_inked_with_the_accent_on_the_highlight() {
+    use crate::system::screen::ACCENT;
+    use crate::system::workspace::{HOVER_SHADE, RenderContext};
+    use glaux_machine::framebuffer::Framebuffer;
+
+    let rom = crate::rom::load().unwrap();
+    let mut menu = ContextMenu::new(
+        vec![
+            MenuEntry::item("Town", None, 0usize).styled(ItemStyle::Current),
+            MenuEntry::item("Cave", None, 1usize),
+        ],
+        Point::new(10, 30),
+    )
+    .focused_on(0);
+    let layout = menu.layout(rom.font(), AREA, 6, 12);
+    let row = layout.rows[0];
+    let count = |menu: &ContextMenu<usize>, color: u8| {
+        let mut fb = Framebuffer::new();
+        menu.render(&mut RenderContext::new(&mut fb, rom.font(), rom.ui()), &layout);
+        (row.y..row.bottom())
+            .flat_map(|y| (row.x..row.right()).map(move |x| (x, y)))
+            .filter(|&(x, y)| fb.pixel(x, y) == Some(color))
+            .count()
+    };
+    assert!(count(&menu, HOVER_SHADE) > 0, "the row is highlighted");
+    assert_eq!(count(&menu, ACCENT), 0);
+    menu.handle_input(InputEvent::Down { select: false }, &layout);
+    assert!(count(&menu, ACCENT) > 0, "off the highlight it keeps the accent");
+}
+
+#[test]
+fn headers_cannot_be_chosen_and_checks_do_not_change_what_runs() {
+    let mut menu = ContextMenu::new(
+        vec![
+            MenuEntry::header("BG2  Decor"),
+            MenuEntry::item("Visible", Some("V"), 1usize).checked(true),
+            MenuEntry::item("Locked", Some("L"), 2usize),
+        ],
+        Point::new(10, 30),
+    );
+    let layout = menu.layout(&LAYOUT_FONT, AREA, 6, 12);
+    menu.handle_input(InputEvent::Down { select: false }, &layout);
+    assert_eq!(menu.focus(), Some(1), "the header is skipped");
+    assert_eq!(
+        menu.handle_input(InputEvent::Enter, &layout),
+        MenuOutcome::Run(1)
+    );
+    let header = centre(layout.rows[0]);
+    assert_eq!(
+        menu.handle_input(press(PointerButton::Primary, header), &layout),
+        MenuOutcome::Stay
+    );
+}

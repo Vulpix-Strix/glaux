@@ -7,12 +7,14 @@ use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::tilemap::{BG_LAYERS, BgBank, BgLayer, TileEntry};
 
+use super::attributes::AttrPanel;
 use super::frame::{DrawerSize, Frame, Hit, Shape};
+use super::pattern::{Clip, stamp};
+use super::picker::Picker;
 use super::tools::{Selection, Tool, connected, line, would_change};
 use super::view::Viewport;
 use super::{MapEditor, MapOut, Overlay};
 use crate::system::map_document::MapDocument;
-use crate::system::workspace::context_menu::{ContextMenu, MenuEntry};
 use crate::system::workspace::dialog::text_cells;
 use crate::ui_text;
 
@@ -25,6 +27,17 @@ pub(super) enum LayerAction {
     Rename,
     ToggleVisible,
     ToggleLock,
+    ShowOnly,
+    SelectAll,
+    Clear,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TileAction {
+    UseAsBrush,
+    EditInSprites,
+    SelectOnLayer,
+    Replace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +56,10 @@ pub(super) struct Edit {
     pub(super) visible: [bool; BG_LAYERS],
     pub(super) locked: [bool; BG_LAYERS],
     pub(super) brush: TileEntry,
+    pub(super) pattern: (usize, usize),
+    pub(super) picker: Option<Picker>,
+    pub(super) attrs: Option<AttrPanel>,
+    pub(super) clipboard: Option<Clip>,
     pub(super) drawer: DrawerSize,
     pub(super) strip_top: usize,
     pub(super) grid: bool,
@@ -63,6 +80,10 @@ impl Default for Edit {
             locked: [false; BG_LAYERS],
             // Tile 1 is the first tile that draws.
             brush: TileEntry::new(1, false, false, false, BgBank::ZERO).unwrap_or(TileEntry::EMPTY),
+            pattern: (1, 1),
+            picker: None,
+            attrs: None,
+            clipboard: None,
             drawer: DrawerSize::default(),
             strip_top: 0,
             grid: true,
@@ -151,7 +172,7 @@ impl MapEditor {
     }
 
     /// Locked layers, cells off the map and unchanged entries return `false`.
-    fn write(&self, document: &mut MapDocument, cell: (i32, i32), entry: TileEntry) -> bool {
+    pub(super) fn write(&self, document: &mut MapDocument, cell: (i32, i32), entry: TileEntry) -> bool {
         let layer = self.edit.layer;
         if self.edit.locked[layer.index()] {
             return false;
@@ -162,7 +183,7 @@ impl MapEditor {
         document.set_cell(layer, x, y, entry)
     }
 
-    fn locked_notice(&self) -> MapOut {
+    pub(super) fn locked_notice(&self) -> MapOut {
         MapOut::Notice(ui_text::get_with(
             "maps-layer-locked",
             &[("layer", Arg::Text(&self.edit.layer.to_string()))],
@@ -181,6 +202,13 @@ impl MapEditor {
             self.end_stroke(Some(&mut *document));
         }
         let frame = self.frame();
+        if let Some(handled) = self.picker_input(event, &frame, document) {
+            self.fit(document);
+            return Some(handled);
+        }
+        if let Some(handled) = self.attr_input(event, &frame, document) {
+            return Some(handled);
+        }
         let out = match event {
             InputEvent::PointerMove(at) => {
                 self.edit.pointer = at;
@@ -212,7 +240,11 @@ impl MapEditor {
                     | Hit::LayerName(layer)
                     | Hit::Eye(layer)
                     | Hit::Lock(layer) => {
-                        self.open_layer_menu(layer, at);
+                        self.open_layer_menu(layer, at, document);
+                        None
+                    }
+                    Hit::Tile(tile) => {
+                        self.open_tile_menu(tile, at, document);
                         None
                     }
                     Hit::Nothing => return None,
@@ -251,7 +283,25 @@ impl MapEditor {
                 None
             }
             InputEvent::Function(2) => {
-                self.open_layer_rename(document);
+                let over_tile = self.edit.pointer.and_then(|at| {
+                    match frame.hit(at, self.edit.strip_top) {
+                        Hit::Tile(tile) => Some(tile),
+                        _ => None,
+                    }
+                });
+                match over_tile {
+                    Some(tile) => self.edit_tile_out(tile),
+                    None => {
+                        self.open_layer_rename(document);
+                        None
+                    }
+                }
+            }
+            InputEvent::Copy => self.copy(document, false),
+            InputEvent::Cut => self.copy(document, true),
+            InputEvent::Paste => self.paste_clip(&frame, document),
+            InputEvent::SelectAll => {
+                self.select_all(document);
                 None
             }
             InputEvent::Break if self.edit.selection.is_some() => {
@@ -282,6 +332,11 @@ impl MapEditor {
         }
         match key {
             'g' | 'G' => self.edit.grid = !self.edit.grid,
+            'a' | 'A' => self.toggle_attr(),
+            't' | 'T' => self.toggle_picker(),
+            'v' => self.toggle_visible(self.edit.layer),
+            'V' => self.show_only(self.edit.layer),
+            'l' | 'L' => self.toggle_lock(self.edit.layer),
             'x' | 'X' => {
                 self.edit.rulers = !self.edit.rulers;
                 self.fit(document);
@@ -307,6 +362,9 @@ impl MapEditor {
             Hit::Canvas => return self.press_canvas(frame, document, at),
             Hit::Tool(tool) => self.set_tool(tool, document),
             Hit::Grid => self.edit.grid = !self.edit.grid,
+            Hit::Attr => self.toggle_attr(),
+            Hit::Picker => self.toggle_picker(),
+            Hit::EditTile => return self.edit_tile_out(usize::from(self.edit.brush.tile())),
             Hit::Rulers => {
                 self.edit.rulers = !self.edit.rulers;
                 self.fit(document);
@@ -318,14 +376,8 @@ impl MapEditor {
                 self.fit(document);
             }
             Hit::Chip(layer) | Hit::LayerName(layer) => self.edit.layer = layer,
-            Hit::Eye(layer) => {
-                let shown = &mut self.edit.visible[layer.index()];
-                *shown = !*shown;
-            }
-            Hit::Lock(layer) => {
-                let locked = &mut self.edit.locked[layer.index()];
-                *locked = !*locked;
-            }
+            Hit::Eye(layer) => self.toggle_visible(layer),
+            Hit::Lock(layer) => self.toggle_lock(layer),
             Hit::Tile(tile) => return self.pick_tile(tile),
             Hit::Selector => self.open_list(Some(&*document)),
             Hit::Undo => {
@@ -343,7 +395,7 @@ impl MapEditor {
 
     /// Makes the strip's `tile` the brush's tile, keeping its flips,
     /// priority and bank. Tile 0 draws nothing, so it is not offered.
-    fn pick_tile(&mut self, tile: usize) -> Option<MapOut> {
+    pub(super) fn pick_tile(&mut self, tile: usize) -> Option<MapOut> {
         let brush = self.edit.brush;
         let picked = u16::try_from(tile)
             .ok()
@@ -360,6 +412,7 @@ impl MapEditor {
         match picked {
             Some(entry) => {
                 self.edit.brush = entry;
+                self.edit.pattern = (1, 1);
                 None
             }
             None => Some(MapOut::Notice(ui_text::get("maps-tile-0-transparent"))),
@@ -382,8 +435,7 @@ impl MapEditor {
             }
             Tool::Pencil | Tool::Eraser => {
                 document.begin_edit();
-                let entry = self.tool_entry();
-                self.write(document, cell, entry);
+                self.paint(document, cell);
                 self.edit.stroke = Some(Stroke::Paint { last: cell });
             }
             Tool::Fill => self.fill(document, cell),
@@ -397,6 +449,7 @@ impl MapEditor {
                 };
                 if let Some(entry) = document.layer(self.edit.layer).get(x, y) {
                     self.edit.brush = entry;
+                    self.edit.pattern = (1, 1);
                 }
             }
             Tool::Hand => {
@@ -408,10 +461,13 @@ impl MapEditor {
         None
     }
 
-    fn tool_entry(&self) -> TileEntry {
-        match self.edit.tool {
-            Tool::Eraser => TileEntry::EMPTY,
-            _ => self.edit.brush,
+    fn paint(&self, document: &mut MapDocument, cell: (i32, i32)) {
+        if self.edit.tool == Tool::Eraser {
+            self.write(document, cell, TileEntry::EMPTY);
+            return;
+        }
+        for ((dx, dy), entry) in stamp(self.edit.brush, self.edit.pattern) {
+            self.write(document, (cell.0 + dx as i32, cell.1 + dy as i32), entry);
         }
     }
 
@@ -440,7 +496,6 @@ impl MapEditor {
         match stroke {
             Stroke::Paint { last } => {
                 let cell = self.cell_at(frame, document, at);
-                let entry = self.tool_entry();
                 let view = self.viewport(frame, document);
                 let (first, shown) =
                     view.visible_cells(size, (frame.canvas.width, frame.canvas.height));
@@ -453,7 +508,7 @@ impl MapEditor {
                 // the stroke, but the cells under the controls around it
                 // are not on screen and stay as they are.
                 for step in line(last, cell).skip(1).filter(is_shown) {
-                    self.write(document, step, entry);
+                    self.paint(document, step);
                 }
                 self.edit.stroke = Some(Stroke::Paint { last: cell });
             }
@@ -538,7 +593,7 @@ impl MapEditor {
         self.edit.view.zoom()
     }
 
-    fn open_layer_rename(&mut self, document: &MapDocument) {
+    pub(super) fn open_layer_rename(&mut self, document: &MapDocument) {
         let layer = self.edit.layer;
         let label = ui_text::get_with(
             "maps-layer-rename-label",
@@ -552,64 +607,6 @@ impl MapEditor {
             layer,
             super::Prompt::new(&ui_text::get("maps-layer-rename-title"), label, "", field),
         ));
-    }
-
-    fn open_layer_menu(&mut self, layer: BgLayer, at: Point) {
-        let index = layer.index();
-        let shown = self.edit.visible[index];
-        let locked = self.edit.locked[index];
-        let entries = vec![
-            MenuEntry::item(
-                &ui_text::get("maps-layer-menu-edit"),
-                None,
-                LayerAction::Edit,
-            ),
-            MenuEntry::item(
-                &ui_text::get("maps-layer-menu-rename"),
-                Some("F2"),
-                LayerAction::Rename,
-            ),
-            MenuEntry::Separator,
-            MenuEntry::item(
-                &ui_text::get(if shown {
-                    "maps-layer-menu-hide"
-                } else {
-                    "maps-layer-menu-show"
-                }),
-                None,
-                LayerAction::ToggleVisible,
-            ),
-            MenuEntry::item(
-                &ui_text::get(if locked {
-                    "maps-layer-menu-unlock"
-                } else {
-                    "maps-layer-menu-lock"
-                }),
-                None,
-                LayerAction::ToggleLock,
-            ),
-        ];
-        self.overlay = Some(Overlay::LayerMenu(layer, ContextMenu::new(entries, at)));
-    }
-
-    pub(super) fn run_layer_action(
-        &mut self,
-        layer: BgLayer,
-        action: LayerAction,
-        document: Option<&MapDocument>,
-    ) {
-        let index = layer.index();
-        match action {
-            LayerAction::Edit => self.edit.layer = layer,
-            LayerAction::Rename => {
-                self.edit.layer = layer;
-                if let Some(document) = document {
-                    self.open_layer_rename(document);
-                }
-            }
-            LayerAction::ToggleVisible => self.edit.visible[index] = !self.edit.visible[index],
-            LayerAction::ToggleLock => self.edit.locked[index] = !self.edit.locked[index],
-        }
     }
 
     pub(super) fn has_selection(&self) -> bool {

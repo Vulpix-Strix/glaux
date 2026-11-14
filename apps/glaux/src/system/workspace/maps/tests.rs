@@ -273,7 +273,7 @@ fn the_open_map_is_marked_and_shows_unsaved_edits() {
     assert!(label.starts_with("A*"), "{label}");
     let (label, style) = row_label(&broken("c"), false, Some(&open));
     assert!(label.starts_with("c  ("), "{label}");
-    assert_eq!(style, ItemStyle::Broken);
+    assert_eq!(style, ItemStyle::Danger);
 }
 
 #[test]
