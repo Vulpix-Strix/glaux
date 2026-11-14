@@ -1,23 +1,20 @@
 //! Drawing the workspace and choosing the pointer's shape.
 
-use super::sprites::SpriteSource;
 use super::tab::{Layout, Tab, fit_name, text_width};
 use super::{
-    BAR, CURSOR_FRAME_TICKS, DOCS_PAD, HOVER_SHADE, IDLE_SHADE, OUTLINE, PLATE_PAD, StatusInfo,
-    Workspace, docs_source,
+    BAR, CURSOR_FRAME_TICKS, DOCS_PAD, HOVER_SHADE, IDLE_SHADE, OUTLINE, PLATE_PAD, RenderContext,
+    StatusInfo, ViewInput, ViewSources, Workspace, docs_source,
 };
-use crate::cartridge::LoadedCartridge;
 use crate::rom::ICON_SIZE;
 use crate::system::editing::session::CodeSession;
 use crate::system::map_document::MapDocument;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::ui_text;
 use glaux_input::Point;
-use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::{Framebuffer, WIDTH};
 use glaux_machine::ink_image::INK_SLOTS;
 use glaux_machine::machine::TICK_RATE;
-use glaux_machine::system_rom::{Cursor, SystemCursor, SystemUi};
+use glaux_machine::system_rom::{Cursor, SystemCursor};
 use glaux_video::draw::{clear, draw_ink_image, draw_text, draw_text_scaled, fill_rect};
 
 /// Draws frame `frame` of `cursor` with its hotspot on `pointer`, if any.
@@ -42,29 +39,33 @@ pub fn draw_cursor(
 }
 
 impl Workspace {
-    /// Draws the tab bar and the selected view for `cartridge`, whose
-    /// sprites the editor shows from `sprites` and whose scripts the Code
-    /// view shows from `code`, with what is under `pointer` highlighted.
-    /// The pointer itself is not drawn. See [`draw_cursor`].
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "each argument is a separate source the frame is drawn from"
-    )]
+    /// Draws the tab bar and the selected view from `sources`, with what is
+    /// under `pointer` highlighted. The pointer itself is not drawn. See
+    /// [`draw_cursor`].
     #[hotpath::measure(label = "workspace::render", impl_type = "Workspace")]
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
-        ui: &SystemUi,
-        cartridge: &LoadedCartridge,
-        sprites: Result<SpriteSource<'_>, &str>,
-        code: Option<&CodeSession>,
-        maps: Option<&MapDocument>,
+        ctx: &mut RenderContext<'_>,
+        sources: ViewSources<'_>,
         pointer: Option<Point>,
     ) {
+        let ViewSources {
+            cartridge,
+            sprites,
+            code,
+            maps,
+        } = sources;
+        let (font, ui) = (ctx.font, ctx.ui);
         let layout = self.layout;
-        clear(framebuffer, BACKGROUND);
-        fill_rect(framebuffer, 0, 0, WIDTH as i32, layout.bar_height(), BAR);
+        clear(ctx.framebuffer, BACKGROUND);
+        fill_rect(
+            ctx.framebuffer,
+            0,
+            0,
+            WIDTH as i32,
+            layout.bar_height(),
+            BAR,
+        );
 
         // Nothing under an open dialog reacts to the pointer, and only the
         // sprite editor's dialog does while one is open.
@@ -81,7 +82,7 @@ impl Workspace {
                 // The active plate takes the body's color so it reads as
                 // the front of the view below it.
                 fill_rect(
-                    framebuffer,
+                    ctx.framebuffer,
                     rect.x,
                     rect.y,
                     rect.width,
@@ -96,14 +97,14 @@ impl Workspace {
             };
             let icon_y = rect.y + (rect.height - ICON_SIZE as i32) / 2;
             draw_ink_image(
-                framebuffer,
+                ctx.framebuffer,
                 ui.icon(tab.icon()),
                 rect.x + PLATE_PAD,
                 icon_y,
                 &inks,
             );
             if active {
-                fill_rect(framebuffer, rect.x, rect.y, rect.width, 1, ACCENT);
+                fill_rect(ctx.framebuffer, rect.x, rect.y, rect.width, 1, ACCENT);
             }
         }
 
@@ -115,7 +116,7 @@ impl Workspace {
             None => (self.tab_labels.get(self.tab), DIM),
         };
         draw_text(
-            framebuffer,
+            ctx.framebuffer,
             font,
             hint,
             layout.hint_x(),
@@ -123,38 +124,37 @@ impl Workspace {
             color,
         );
 
-        self.docs_button_face(framebuffer, font, over_button);
+        self.docs_button_face(ctx, over_button);
 
         let name = &cartridge.manifest().cartridge.name;
         let cells = layout.name_cells(&self.tab_labels, font);
         if let Some(name) = fit_name(font, name, cells) {
             let x = layout.name_right(&self.tab_labels, font) - text_width(font, &name);
-            draw_text(framebuffer, font, &name, x, layout.text_y(), PALE);
+            draw_text(ctx.framebuffer, font, &name, x, layout.text_y(), PALE);
         }
 
         let notice = self
             .notice
             .as_ref()
             .map(|notice| (notice.text.as_str(), notice.color));
-        let info = StatusInfo {
-            notice,
-            rom: self.rom.as_ref(),
+        let view = ViewInput {
+            pointer,
+            info: StatusInfo {
+                notice,
+                rom: self.rom.as_ref(),
+            },
         };
         if self.docs_open {
-            self.docs
-                .render(framebuffer, font, docs_source(), pointer, notice);
+            self.docs.render(ctx, docs_source(), view);
         } else {
             match self.tab {
-                Tab::Sprites => self
-                    .sprites
-                    .render(framebuffer, font, ui, sprites, pointer, info),
-                Tab::Code => self.code.render(framebuffer, font, ui, code, pointer, info),
+                Tab::Sprites => self.sprites.render(ctx, sprites, view),
+                Tab::Code => self.code.render(ctx, code, view),
                 Tab::Map => {
                     let lit = (self.ticks / (TICK_RATE / 2)).is_multiple_of(2);
-                    self.maps
-                        .render(framebuffer, font, maps, pointer, info, lit);
+                    self.maps.render(ctx, maps, view, lit);
                 }
-                _ => self.render_placeholder(framebuffer, font),
+                _ => self.render_placeholder(ctx),
             }
         }
         if let Some(modal) = &self.modal {
@@ -162,13 +162,14 @@ impl Workspace {
                 modal
                     .dialog
                     .layout(font, layout.view_area(), layout.cell_w, layout.cell_h);
-            modal.dialog.render(framebuffer, font, &dialog_layout);
+            modal.dialog.render(ctx, &dialog_layout);
         }
     }
 
     /// The Docs button: a plate like the active tab's while the browser is
     /// open, and lit while the pointer is over it.
-    fn docs_button_face(&self, framebuffer: &mut Framebuffer, font: &BitmapFont, hovered: bool) {
+    fn docs_button_face(&self, ctx: &mut RenderContext<'_>, hovered: bool) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let button = self.docs_button();
         let ink = if self.docs_open {
             fill_rect(
@@ -197,7 +198,8 @@ impl Workspace {
     }
 
     /// The selected view's stand-in until its editor exists.
-    fn render_placeholder(&self, framebuffer: &mut Framebuffer, font: &BitmapFont) {
+    fn render_placeholder(&self, ctx: &mut RenderContext<'_>) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let Layout { cell_w, cell_h } = self.layout;
         let x = cell_w;
         let mut y = self.layout.bar_height() + cell_h;

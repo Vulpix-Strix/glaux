@@ -4,12 +4,11 @@
 //! effect. Closing the window keeps whatever was chosen.
 
 use glaux_input::{InputEvent, Point, PointerButton};
-use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::draw_text;
 
 use crate::system::editor_settings::{EditorSettings, IndentStyle};
 use crate::system::workspace::Rect;
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::dialog::{
     AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells,
 };
@@ -271,11 +270,11 @@ impl SettingsDialog {
     /// Draws the window showing `settings`.
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &SettingsLayout,
         settings: &EditorSettings,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let SettingsLayout { cell_w, cell_h, .. } = *layout;
         draw_window(
             framebuffer,

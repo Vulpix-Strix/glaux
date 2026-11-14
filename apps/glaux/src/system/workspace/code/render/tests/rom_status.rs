@@ -1,5 +1,6 @@
 use super::*;
 use crate::cartridge::rom::RomUsage;
+use crate::system::workspace::{RenderContext, StatusInfo, ViewInput};
 use pretty_assertions::assert_eq;
 
 fn status_pixels(
@@ -12,12 +13,12 @@ fn status_pixels(
     let mut framebuffer = Framebuffer::new();
     clear(&mut framebuffer, BACKGROUND);
     editor.render(
-        &mut framebuffer,
-        rom_font.font(),
-        rom_font.ui(),
+        &mut RenderContext::new(&mut framebuffer, rom_font.font(), rom_font.ui()),
         Some(session),
-        None,
-        StatusInfo { notice, rom },
+        ViewInput {
+            info: StatusInfo { notice, rom },
+            ..ViewInput::default()
+        },
     );
     let bar = editor.layout().status;
     (bar.y..bar.bottom())

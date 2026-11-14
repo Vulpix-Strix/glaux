@@ -10,6 +10,7 @@ use super::*;
 use crate::cartridge_fs::fixture::Fixture;
 use crate::system::editing::history::EditKind;
 use crate::system::shell::BLINK_TICKS;
+use crate::system::workspace::{RenderContext, ViewInput};
 
 mod completion;
 mod debugging;
@@ -32,12 +33,9 @@ fn render(editor: &CodeEditor, session: &CodeSession) -> Framebuffer {
     let mut framebuffer = Framebuffer::new();
     clear(&mut framebuffer, BACKGROUND);
     editor.render(
-        &mut framebuffer,
-        rom.font(),
-        rom.ui(),
+        &mut RenderContext::new(&mut framebuffer, rom.font(), rom.ui()),
         Some(session),
-        None,
-        StatusInfo::default(),
+        ViewInput::default(),
     );
     framebuffer
 }
@@ -340,12 +338,12 @@ fn render_at(editor: &CodeEditor, session: &CodeSession, pointer: Option<Point>)
     let mut framebuffer = Framebuffer::new();
     clear(&mut framebuffer, BACKGROUND);
     editor.render(
-        &mut framebuffer,
-        rom.font(),
-        rom.ui(),
+        &mut RenderContext::new(&mut framebuffer, rom.font(), rom.ui()),
         Some(session),
-        pointer,
-        StatusInfo::default(),
+        ViewInput {
+            pointer,
+            ..ViewInput::default()
+        },
     );
     framebuffer
 }

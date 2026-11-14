@@ -1,11 +1,10 @@
 //! The documentation browser shown apart from the workspace, filling the screen.
 
 use super::docs::{DocTarget, DocsRequest};
-use super::{HostWork, Workspace, docs_source};
+use super::{HostWork, RenderContext, StatusInfo, ViewInput, Workspace, docs_source};
 use crate::system::screen::BACKGROUND;
 use glaux_docs::DocId;
 use glaux_input::{InputEvent, Point};
-use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::system_rom::SystemCursor;
 use glaux_video::draw::clear;
 
@@ -56,14 +55,17 @@ impl Workspace {
     }
 
     /// Draws the browser shown apart from the workspace.
-    pub fn render_docs_apart(&self, framebuffer: &mut Framebuffer, pointer: Option<Point>) {
+    pub fn render_docs_apart(&self, ctx: &mut RenderContext<'_>, pointer: Option<Point>) {
         let notice = self
             .notice
             .as_ref()
             .map(|notice| (notice.text.as_str(), notice.color));
-        clear(framebuffer, BACKGROUND);
-        self.docs
-            .render(framebuffer, &self.font, docs_source(), pointer, notice);
+        clear(ctx.framebuffer, BACKGROUND);
+        let view = ViewInput {
+            pointer,
+            info: StatusInfo { notice, rom: None },
+        };
+        self.docs.render(ctx, docs_source(), view);
     }
 
     /// Inserts the clipboard's `text` into the open search of the browser

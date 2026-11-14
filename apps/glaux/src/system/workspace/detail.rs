@@ -3,12 +3,12 @@
 
 use glaux_input::InputEvent;
 use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
 use super::dialog::{INK, PAD, draw_window_with_detail};
 use super::{BAR, Rect, thumb};
 use crate::system::text::wrap;
+use crate::system::workspace::RenderContext;
 
 /// Rows of text the window shows at once.
 const ROWS: usize = 8;
@@ -92,7 +92,8 @@ impl Detail {
     }
 
     /// Draws the window.
-    pub fn render(&self, framebuffer: &mut Framebuffer, font: &BitmapFont) {
+    pub fn render(&self, ctx: &mut RenderContext<'_>) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let window = self.window;
         let bar = Rect {
             x: window.x + 1,

@@ -1,14 +1,13 @@
 //! The window that asks for a new map's name, id and size.
 
 use glaux_input::{InputEvent, PointerButton};
-use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::draw_text;
 
 use crate::cartridge::map::{MAX_ID_LEN, MapError, MapId, MapMeta};
 use crate::system::screen::ERROR;
 use crate::system::ui_errors;
 use crate::system::workspace::Rect;
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::dialog::{
     AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells,
 };
@@ -294,16 +293,10 @@ impl CreateForm {
         }
     }
 
-    pub(super) fn render(
-        &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
-        layout: &FormLayout,
-        lit: bool,
-    ) {
+    pub(super) fn render(&self, ctx: &mut RenderContext<'_>, layout: &FormLayout, lit: bool) {
         draw_window(
-            framebuffer,
-            font,
+            ctx.framebuffer,
+            ctx.font,
             layout.window,
             layout.title_bar,
             &ui_text::get("maps-new-title"),
@@ -312,17 +305,16 @@ impl CreateForm {
         for field in Field::ALL {
             let i = field.index();
             draw_text(
-                framebuffer,
-                font,
+                ctx.framebuffer,
+                ctx.font,
                 &ui_text::get(field.label_id()),
                 layout.text_x,
                 layout.label_y[i],
                 INK,
             );
-            fill(framebuffer, layout.fields[i], INK);
+            fill(ctx.framebuffer, layout.fields[i], INK);
             self.fields[i].render(
-                framebuffer,
-                font,
+                ctx,
                 layout.fields[i].inset(1),
                 // Only the focused field shows what is selected.
                 if field == self.focus {
@@ -346,9 +338,9 @@ impl CreateForm {
         }
         let (message, color) = self.message();
         draw_text(
-            framebuffer,
-            font,
-            take_cells(font, &message, layout.columns),
+            ctx.framebuffer,
+            ctx.font,
+            take_cells(ctx.font, &message, layout.columns),
             layout.text_x,
             layout.message_y,
             color,
@@ -356,8 +348,8 @@ impl CreateForm {
         // CREATE is drawn lit once the fields describe a map it can create.
         let valid = self.validate().is_ok();
         draw_button(
-            framebuffer,
-            font,
+            ctx.framebuffer,
+            ctx.font,
             layout.create,
             &ui_text::get("maps-create"),
             valid,
@@ -365,8 +357,8 @@ impl CreateForm {
             layout.cell_h,
         );
         draw_button(
-            framebuffer,
-            font,
+            ctx.framebuffer,
+            ctx.font,
             layout.cancel,
             &ui_text::get("maps-cancel"),
             false,

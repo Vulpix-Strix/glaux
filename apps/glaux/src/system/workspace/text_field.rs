@@ -6,12 +6,11 @@
 //! command from acting on the field and on the document behind it at once.
 
 use glaux_input::InputEvent;
-use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
 use super::Rect;
 use crate::system::line_editor::LineEditor;
+use crate::system::workspace::RenderContext;
 
 /// What a field did with an input.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,13 +183,13 @@ impl TextField {
     /// Text longer than the field scrolls to keep the cursor in view.
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         rect: Rect,
         colors: FieldColors,
         cursor: bool,
         cell_w: i32,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         fill_rect(
             framebuffer,
             rect.x,

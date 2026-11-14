@@ -1,13 +1,12 @@
 //! Drawing the signature popup.
 
-use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 use glaux_syntax::SyntaxKind;
 
 use super::SignaturePopup;
 use super::layout::{Segment, SignatureLayout};
 use crate::system::screen::PALE;
 use crate::system::syntax_theme;
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::code::popup::Canvas;
 use crate::system::workspace::{BAR, Rect, take_cells};
 
@@ -15,12 +14,12 @@ impl SignaturePopup {
     /// Draws the popup as `layout` places it.
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         cell_w: i32,
         cell_h: i32,
         layout: &SignatureLayout,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let mut canvas = Canvas {
             framebuffer,
             font,

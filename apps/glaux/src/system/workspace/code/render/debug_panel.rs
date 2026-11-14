@@ -11,7 +11,7 @@ use crate::system::workspace::code::symbols::{PAD, clip_name};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};
 use crate::ui_text;
 
-impl Painter<'_> {
+impl Painter<'_, '_> {
     pub(super) fn debug_panel(
         &mut self,
         view: &DebugView,
@@ -90,7 +90,7 @@ impl Painter<'_> {
         let value_cells = self.layout.cells(&row.value) as usize;
         // A long name cannot push the value below a third of the row.
         let value_room = value_cells.min(cells.saturating_sub(4)).max(cells / 3);
-        let value = clip_name(self.font, &row.value, value_room);
+        let value = clip_name(self.ctx.font, &row.value, value_room);
         let value_x = rect.right() - PAD - self.layout.cells(&value) * cell_w;
         let marker = match (row.expandable, row.open) {
             (false, _) => " ",
@@ -98,7 +98,7 @@ impl Painter<'_> {
             (true, true) => "-",
         };
         let name_room = ((value_x - x) / cell_w - 2).max(0) as usize;
-        let name = clip_name(self.font, &row.name, name_room);
+        let name = clip_name(self.ctx.font, &row.name, name_room);
         self.text(marker, x, y, DIM);
         self.text(&name, x + cell_w, y, TEXT);
         self.text(&value, value_x, y, PALE);
@@ -137,7 +137,7 @@ impl Painter<'_> {
             .unwrap_or_default();
         let line_x = rect.right() - PAD - self.layout.cells(&line) * cell_w;
         let room = ((line_x - x) / cell_w - 2).max(0) as usize;
-        let name = clip_name(self.font, name, room);
+        let name = clip_name(self.ctx.font, name, room);
         if selected {
             self.text(">", x, y, super::ACCENT);
         }
@@ -157,7 +157,7 @@ impl Painter<'_> {
                 1 => self.arrow(x, y, Arrow::Right),
                 2 => self.arrow(x, y, Arrow::Down),
                 3 => self.arrow(x, y, Arrow::Up),
-                _ => fill_rect(self.framebuffer, x + 2, y + 2, 5, 5, ERROR),
+                _ => fill_rect(self.ctx.framebuffer, x + 2, y + 2, 5, 5, ERROR),
             }
         }
     }
@@ -165,7 +165,7 @@ impl Painter<'_> {
     pub(super) fn play(&mut self, plate: Rect) {
         for column in 0..4 {
             fill_rect(
-                self.framebuffer,
+                self.ctx.framebuffer,
                 plate.x + 3 + column,
                 plate.y + 1 + column,
                 1,
@@ -178,15 +178,15 @@ impl Painter<'_> {
     pub(super) fn bug(&mut self, plate: Rect, lit: bool) {
         self.fill(plate, if lit { HOVER_SHADE } else { BAR });
         let (x, y) = (plate.x, plate.y);
-        fill_rect(self.framebuffer, x + 3, y + 3, 3, 4, WARN);
-        fill_rect(self.framebuffer, x + 4, y + 2, 1, 1, WARN);
+        fill_rect(self.ctx.framebuffer, x + 3, y + 3, 3, 4, WARN);
+        fill_rect(self.ctx.framebuffer, x + 4, y + 2, 1, 1, WARN);
         for (dx, dy) in [(2, 3), (6, 3), (2, 5), (6, 5), (2, 7), (6, 7)] {
-            pixel(self.framebuffer, x + dx, y + dy, WARN);
+            pixel(self.ctx.framebuffer, x + dx, y + dy, WARN);
         }
     }
 
     fn arrow(&mut self, x: i32, y: i32, direction: Arrow) {
-        let fb = &mut *self.framebuffer;
+        let fb = &mut *self.ctx.framebuffer;
         match direction {
             Arrow::Right => {
                 fill_rect(fb, x + 1, y + 4, 6, 1, PALE);

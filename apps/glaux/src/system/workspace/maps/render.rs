@@ -1,7 +1,6 @@
 //! Drawing the Map view.
 
 use glaux_input::Point;
-use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::system_rom::SystemCursor;
 use glaux_video::draw::{draw_text, draw_text_scaled, fill_rect};
@@ -12,10 +11,10 @@ use crate::cartridge::map::{MapMeta, MapSummary};
 use crate::cartridge::rom::RomUsage;
 use crate::system::map_document::MapDocument;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
-use crate::system::workspace::StatusInfo;
 use crate::system::workspace::dialog::{INK, text_cells};
 use crate::system::workspace::rom_tag::rom_tag;
 use crate::system::workspace::{BAR, HOVER_SHADE, Rect, take_cells};
+use crate::system::workspace::{RenderContext, ViewInput};
 use crate::ui_text;
 use glaux_i18n::Arg;
 use glaux_machine::tilemap::BgLayer;
@@ -30,26 +29,25 @@ impl MapEditor {
     /// is the phase of the text carets.
     pub(in crate::system::workspace) fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         document: Option<&MapDocument>,
-        pointer: Option<Point>,
-        info: StatusInfo<'_>,
+        view: ViewInput<'_>,
         lit: bool,
     ) {
+        let ViewInput { pointer, info } = view;
         let layout = self.layout();
         let hover = pointer
             .filter(|_| self.overlay.is_none())
             .map_or(Hit::Nothing, |at| self.hit(&layout, at, document));
-        self.header(framebuffer, font, &layout, document, hover);
+        self.header(ctx, &layout, document, hover);
         // The open list takes the place of the body.
         if self.list_open {
-            self.list(framebuffer, font, &layout, document, hover);
+            self.list(ctx, &layout, document, hover);
         } else {
-            self.body(framebuffer, font, &layout, document, hover);
+            self.body(ctx, &layout, document, hover);
         }
-        self.status_bar(framebuffer, font, &layout, info.notice, info.rom);
-        self.overlay(framebuffer, font, lit);
+        self.status_bar(ctx, &layout, info.notice, info.rom);
+        self.overlay(ctx, lit);
     }
 
     fn hit(&self, layout: &Layout, at: Point, document: Option<&MapDocument>) -> Hit {
@@ -77,12 +75,12 @@ impl MapEditor {
 
     fn header(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &Layout,
         document: Option<&MapDocument>,
         hover: Hit,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let selector = layout.selector();
         let lit = matches!(hover, Hit::Selector) || self.list_open;
         fill(framebuffer, selector, if lit { HOVER_SHADE } else { BAR });
@@ -133,17 +131,17 @@ impl MapEditor {
 
     fn body(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &Layout,
         document: Option<&MapDocument>,
         hover: Hit,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let body = layout.body();
         let cell_h = self.metrics.cell_h;
         let y = body.y + cell_h;
         if let Some(document) = document {
-            self.info(framebuffer, font, body, y, document);
+            self.info(ctx, body, y, document);
             return;
         }
         match &self.summaries {
@@ -174,14 +172,8 @@ impl MapEditor {
     }
 
     /// The open map's name, size and layers.
-    fn info(
-        &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
-        body: Rect,
-        top: i32,
-        document: &MapDocument,
-    ) {
+    fn info(&self, ctx: &mut RenderContext<'_>, body: Rect, top: i32, document: &MapDocument) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let cell_h = self.metrics.cell_h;
         let meta: &MapMeta = document.meta();
         let mut y = top;
@@ -228,12 +220,12 @@ impl MapEditor {
 
     fn list(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &Layout,
         document: Option<&MapDocument>,
         hover: Hit,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let maps = self.maps();
         let first = first_visible(self.highlighted, layout.visible_rows());
         let shown = maps.len().saturating_sub(first).min(layout.visible_rows());
@@ -263,12 +255,12 @@ impl MapEditor {
     /// Cart ROM on the right.
     fn status_bar(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &Layout,
         notice: Option<(&str, u8)>,
         rom: Option<&RomUsage>,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let bar = layout.status();
         let cell_w = self.metrics.cell_w;
         fill(framebuffer, bar, BAR);
@@ -293,13 +285,13 @@ impl MapEditor {
         }
     }
 
-    fn overlay(&self, framebuffer: &mut Framebuffer, font: &BitmapFont, lit: bool) {
+    fn overlay(&self, ctx: &mut RenderContext<'_>, lit: bool) {
         let area = self.metrics.area();
         let (cell_w, cell_h) = (self.metrics.cell_w, self.metrics.cell_h);
         match &self.overlay {
             Some(Overlay::Create(form)) => {
                 let layout = form.layout(area, cell_w, cell_h);
-                form.render(framebuffer, font, &layout, lit);
+                form.render(ctx, &layout, lit);
             }
             Some(Overlay::Rename(prompt)) => {
                 let layout = prompt.layout(area, cell_w, cell_h);
@@ -313,7 +305,7 @@ impl MapEditor {
                 } else {
                     (String::new(), INK)
                 };
-                prompt.render(framebuffer, font, &layout, (&message.0, message.1), lit);
+                prompt.render(ctx, &layout, (&message.0, message.1), lit);
             }
             None => {}
         }

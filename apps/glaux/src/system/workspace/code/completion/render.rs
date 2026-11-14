@@ -2,8 +2,6 @@
 
 use glaux_i18n::Arg;
 use glaux_input::Point;
-use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 
 use super::layout::{
     CompletionLayout, MARKER_GAP, PANEL_PAD_X, PanelLayout, PanelLine, ROW_PAD_LEFT, ROW_PAD_RIGHT,
@@ -12,6 +10,7 @@ use super::panel::DocPanel;
 use super::{CompletionPopup, marker};
 use crate::system::screen::{BACKGROUND, DIM, PALE, TEXT};
 use crate::system::syntax_theme;
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::code::popup::Canvas;
 use crate::system::workspace::{BAR, HOVER_SHADE, Rect, take_cells};
 use crate::ui_text;
@@ -24,12 +23,12 @@ impl CompletionPopup {
     /// under `pointer` highlighted.
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         cell_w: i32,
         layout: &CompletionLayout,
         pointer: Option<Point>,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let mut canvas = Canvas {
             framebuffer,
             font,

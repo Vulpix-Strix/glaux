@@ -24,6 +24,7 @@ use crate::sprite_import::{FitSummary, Fitted, SheetSource};
 use crate::system::screen::DIM;
 use crate::system::sprite_document::{ReplaceImpact, SpriteDocument};
 use crate::system::video::{CartridgeVideo, CartridgeVideoDefaults};
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::dialog::{
     AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,
 };
@@ -366,7 +367,8 @@ impl ImportPreview {
 
     /// Draws the dialog over the editor, with the converted sheet in the
     /// colors of [`frame_palette`](Self::frame_palette).
-    pub fn render(&self, framebuffer: &mut Framebuffer, font: &BitmapFont, layout: &ImportLayout) {
+    pub fn render(&self, ctx: &mut RenderContext<'_>, layout: &ImportLayout) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let (cell_w, cell_h) = (layout.cell_w, layout.cell_h);
         let text = |fb: &mut Framebuffer, text: &str, x: i32, y: i32, color: u8| {
             draw_text(fb, font, text, x, y, color);

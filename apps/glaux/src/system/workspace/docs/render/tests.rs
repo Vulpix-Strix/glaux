@@ -12,6 +12,8 @@ use crate::system::test_font::LAYOUT_FONT;
 use crate::system::workspace::HOVER_SHADE;
 use crate::system::workspace::docs::Metrics;
 use crate::system::workspace::docs::layout::Layout;
+use crate::system::workspace::{RenderContext, ViewInput};
+use glaux_machine::system_rom::SystemUi;
 
 const METRICS: Metrics = Metrics {
     cell_w: 6,
@@ -98,8 +100,15 @@ impl Scene {
     fn frame_with(&self, pointer: Option<Point>) -> Framebuffer {
         let mut framebuffer = Framebuffer::new();
         framebuffer.clear(BACKGROUND);
-        self.browser
-            .render(&mut framebuffer, &LAYOUT_FONT, self.source(), pointer, None);
+        let ui = SystemUi::default();
+        self.browser.render(
+            &mut RenderContext::new(&mut framebuffer, &LAYOUT_FONT, &ui),
+            self.source(),
+            ViewInput {
+                pointer,
+                ..ViewInput::default()
+            },
+        );
         framebuffer
     }
 

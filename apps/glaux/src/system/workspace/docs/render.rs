@@ -3,7 +3,6 @@
 use glaux_i18n::Arg;
 use glaux_input::Point;
 use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect, pixel};
 
 use super::layout::{Deco, Row, Run};
@@ -16,7 +15,9 @@ use crate::system::text::clip;
 use crate::system::workspace::code::text_view::thumb;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::text_field::FieldColors;
-use crate::system::workspace::{BAR, ELLIPSIS, HOVER_SHADE, IDLE_SHADE, Rect};
+use crate::system::workspace::{
+    BAR, ELLIPSIS, HOVER_SHADE, IDLE_SHADE, Rect, RenderContext, ViewInput,
+};
 use crate::ui_text;
 
 /// Thickness of the box around a code block or a table, in pixels from the
@@ -24,17 +25,16 @@ use crate::ui_text;
 const FRAME_INSET: i32 = 2;
 
 /// Where the drawing goes, with the font that measures the text.
-struct Canvas<'a> {
-    framebuffer: &'a mut Framebuffer,
-    font: &'a BitmapFont,
+struct Canvas<'a, 'c> {
+    ctx: &'a mut RenderContext<'c>,
     cell_w: i32,
     cell_h: i32,
 }
 
-impl Canvas<'_> {
+impl Canvas<'_, '_> {
     fn fill(&mut self, rect: Rect, color: u8) {
         fill_rect(
-            self.framebuffer,
+            self.ctx.framebuffer,
             rect.x,
             rect.y,
             rect.width,
@@ -44,19 +44,19 @@ impl Canvas<'_> {
     }
 
     fn text(&mut self, text: &str, x: i32, y: i32, color: u8) {
-        draw_text(self.framebuffer, self.font, text, x, y, color);
+        draw_text(self.ctx.framebuffer, self.ctx.font, text, x, y, color);
     }
 
     fn hline(&mut self, x: i32, y: i32, width: i32, color: u8) {
-        fill_rect(self.framebuffer, x, y, width, 1, color);
+        fill_rect(self.ctx.framebuffer, x, y, width, 1, color);
     }
 
     fn vline(&mut self, x: i32, y: i32, height: i32, color: u8) {
-        fill_rect(self.framebuffer, x, y, 1, height, color);
+        fill_rect(self.ctx.framebuffer, x, y, 1, height, color);
     }
 
     fn cells(&self, text: &str) -> i32 {
-        i32::try_from(self.font.text_cells(text)).unwrap_or(i32::MAX)
+        i32::try_from(self.ctx.font.text_cells(text)).unwrap_or(i32::MAX)
     }
 
     /// Top of a text row centred in a bar that starts at `y`.
@@ -66,20 +66,14 @@ impl Canvas<'_> {
 }
 
 impl DocsBrowser {
-    /// Draws the browser over the view area. `pointer` highlights what is
-    /// under it, and `notice` replaces the status bar's text.
-    pub fn render(
-        &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
-        source: Source<'_>,
-        pointer: Option<Point>,
-        notice: Option<(&str, u8)>,
-    ) {
+    /// Draws the browser over the view area. `view.pointer` highlights what
+    /// is under it, and `view.info.notice` replaces the status bar's text.
+    pub fn render(&self, ctx: &mut RenderContext<'_>, source: Source<'_>, view: ViewInput<'_>) {
+        let ViewInput { pointer, info } = view;
+        let notice = info.notice;
         let metrics = self.geometry.metrics;
         let mut canvas = Canvas {
-            framebuffer,
-            font,
+            ctx,
             cell_w: metrics.cell_w,
             cell_h: metrics.cell_h,
         };
@@ -99,7 +93,7 @@ impl DocsBrowser {
         }
     }
 
-    fn strip(&self, canvas: &mut Canvas<'_>, source: Source<'_>, pointer: Option<Point>) {
+    fn strip(&self, canvas: &mut Canvas<'_, '_>, source: Source<'_>, pointer: Option<Point>) {
         let geometry = &self.geometry;
         let strip = geometry.strip;
         canvas.fill(strip, BACKGROUND);
@@ -109,9 +103,9 @@ impl DocsBrowser {
             return;
         }
         let hit = pointer.map_or(StripHit::None, |at| {
-            geometry.strip_hit(canvas.font, &labels, self.strip_scroll, at)
+            geometry.strip_hit(canvas.ctx.font, &labels, self.strip_scroll, at)
         });
-        let tabs = geometry.strip_tabs(canvas.font, &labels, self.strip_scroll);
+        let tabs = geometry.strip_tabs(canvas.ctx.font, &labels, self.strip_scroll);
         for tab in &tabs {
             let active = tab.index == self.active;
             let hovered = matches!(hit, StripHit::Tab(i) | StripHit::Close(i) if i == tab.index);
@@ -161,31 +155,32 @@ impl DocsBrowser {
         }
     }
 
-    fn options(&self, canvas: &mut Canvas<'_>, pointer: Option<Point>) {
+    fn options(&self, canvas: &mut Canvas<'_, '_>, pointer: Option<Point>) {
         let bar = self.geometry.options;
         let items = self.options_bar();
         canvas.hline(bar.x, bar.bottom() - 1, bar.width, BAR);
         let y = canvas.bar_text_y(bar.y, bar.height - 1);
         let hover = |rect: Rect| pointer.is_some_and(|at| rect.contains(at));
         let pad = Geometry::button_pad();
-        let button = |canvas: &mut Canvas<'_>, rect: Rect, label: &str, lit: bool, live: bool| {
-            let ground = match (live && hover(rect), lit) {
-                (true, _) => Some(HOVER_SHADE),
-                (false, true) => Some(BAR),
-                (false, false) => None,
+        let button =
+            |canvas: &mut Canvas<'_, '_>, rect: Rect, label: &str, lit: bool, live: bool| {
+                let ground = match (live && hover(rect), lit) {
+                    (true, _) => Some(HOVER_SHADE),
+                    (false, true) => Some(BAR),
+                    (false, false) => None,
+                };
+                if let Some(ground) = ground {
+                    canvas.fill(rect, ground);
+                }
+                let ink = if !live {
+                    IDLE_SHADE
+                } else if lit {
+                    TEXT
+                } else {
+                    PALE
+                };
+                canvas.text(label, rect.x + pad, y, ink);
             };
-            if let Some(ground) = ground {
-                canvas.fill(rect, ground);
-            }
-            let ink = if !live {
-                IDLE_SHADE
-            } else if lit {
-                TEXT
-            } else {
-                PALE
-            };
-            canvas.text(label, rect.x + pad, y, ink);
-        };
         button(canvas, items.back, "<", true, self.can_go(true));
         button(canvas, items.forward, ">", true, self.can_go(false));
         button(canvas, items.filter, &self.filter.label(), true, true);
@@ -202,17 +197,17 @@ impl DocsBrowser {
             return;
         };
         let columns = usize::try_from(items.crumb.width / canvas.cell_w.max(1)).unwrap_or(0);
-        let title_cells = canvas.font.text_cells(&shown.title);
+        let title_cells = canvas.ctx.font.text_cells(&shown.title);
         let crumb_room = columns.saturating_sub(title_cells);
-        let crumb = shorten_start(canvas.font, &shown.crumb, crumb_room);
+        let crumb = shorten_start(canvas.ctx.font, &shown.crumb, crumb_room);
         canvas.text(&crumb, items.crumb.x, y, DIM);
         let title_x = items.crumb.x + canvas.cells(&crumb) * canvas.cell_w;
-        let title_room = columns.saturating_sub(canvas.font.text_cells(&crumb));
-        let title = clip(canvas.font, &shown.title, title_room);
+        let title_room = columns.saturating_sub(canvas.ctx.font.text_cells(&crumb));
+        let title = clip(canvas.ctx.font, &shown.title, title_room);
         canvas.text(&title, title_x, y, TEXT);
     }
 
-    fn panel(&self, canvas: &mut Canvas<'_>, pointer: Option<Point>) {
+    fn panel(&self, canvas: &mut Canvas<'_, '_>, pointer: Option<Point>) {
         let Some(rows) = self.panel_rows() else {
             return;
         };
@@ -232,7 +227,7 @@ impl DocsBrowser {
                     active,
                 } => {
                     let title = self.outline_title(target);
-                    let label = clip(canvas.font, &title, columns - 2);
+                    let label = clip(canvas.ctx.font, &title, columns - 2);
                     if active {
                         canvas.fill(row.rect, BAR);
                         canvas.text(">", text_x, y, ACCENT);
@@ -250,7 +245,7 @@ impl DocsBrowser {
                     else {
                         continue;
                     };
-                    let label = clip(canvas.font, title, columns);
+                    let label = clip(canvas.ctx.font, title, columns);
                     let ink = if hovered { TEXT } else { ACCENT };
                     canvas.text(&label, text_x, y, ink);
                     let width = canvas.cells(&label) * canvas.cell_w;
@@ -269,7 +264,7 @@ impl DocsBrowser {
             .unwrap_or_default()
     }
 
-    fn page(&self, canvas: &mut Canvas<'_>, pointer: Option<Point>) {
+    fn page(&self, canvas: &mut Canvas<'_, '_>, pointer: Option<Point>) {
         let Some(shown) = &self.shown else {
             return;
         };
@@ -304,7 +299,12 @@ impl DocsBrowser {
         }
     }
 
-    fn status(&self, canvas: &mut Canvas<'_>, pointer: Option<Point>, notice: Option<(&str, u8)>) {
+    fn status(
+        &self,
+        canvas: &mut Canvas<'_, '_>,
+        pointer: Option<Point>,
+        notice: Option<(&str, u8)>,
+    ) {
         let bar = self.geometry.status;
         canvas.fill(bar, BAR);
         let hint = self.hint();
@@ -315,14 +315,14 @@ impl DocsBrowser {
         };
         let columns = usize::try_from((bar.width - 8) / canvas.cell_w.max(1)).unwrap_or(0);
         let y = canvas.bar_text_y(bar.y, bar.height);
-        let shown = clip(canvas.font, text, columns);
+        let shown = clip(canvas.ctx.font, text, columns);
         canvas.text(&shown, 4, y, ink);
     }
 
     /// The list of every tab, `focus` highlighted.
     fn menu_window(
         &self,
-        canvas: &mut Canvas<'_>,
+        canvas: &mut Canvas<'_, '_>,
         source: Source<'_>,
         focus: usize,
         pointer: Option<Point>,
@@ -349,11 +349,11 @@ impl DocsBrowser {
         }
     }
 
-    fn search_window(&self, canvas: &mut Canvas<'_>, search: &Search, pointer: Option<Point>) {
+    fn search_window(&self, canvas: &mut Canvas<'_, '_>, search: &Search, pointer: Option<Point>) {
         let layout: SearchLayout = self.search_layout(self.search_area());
         draw_window(
-            canvas.framebuffer,
-            canvas.font,
+            canvas.ctx.framebuffer,
+            canvas.ctx.font,
             layout.window,
             layout.title_bar,
             &ui_text::get("docs-search-docs"),
@@ -361,8 +361,7 @@ impl DocsBrowser {
         );
         canvas.fill(layout.field, INK);
         search.field().render(
-            canvas.framebuffer,
-            canvas.font,
+            canvas.ctx,
             layout.field.inset(1),
             FieldColors {
                 ground: BODY,
@@ -402,11 +401,11 @@ impl DocsBrowser {
             canvas.fill(*rect, ground);
             let mut mark = [0; 4];
             canvas.text(found.mark.encode_utf8(&mut mark), rect.x + 2, rect.y, ink);
-            let tag_cells = canvas.font.text_cells(&found.tag);
+            let tag_cells = canvas.ctx.font.text_cells(&found.tag);
             let tag_x = rect.right() - 2 - i32::try_from(tag_cells).unwrap_or(0) * canvas.cell_w;
             canvas.text(&found.tag, tag_x, rect.y, ink);
             let room = columns.saturating_sub(tag_cells + 5);
-            let mut title = clip(canvas.font, &found.title, room);
+            let mut title = clip(canvas.ctx.font, &found.title, room);
             if found.is_fallback {
                 title.push('*');
             }
@@ -424,11 +423,11 @@ impl DocsBrowser {
 }
 
 /// A diagonal cross filling `rect`.
-fn close_glyph(canvas: &mut Canvas<'_>, rect: Rect, color: u8) {
+fn close_glyph(canvas: &mut Canvas<'_, '_>, rect: Rect, color: u8) {
     for i in 0..CLOSE_SIZE {
-        pixel(canvas.framebuffer, rect.x + i, rect.y + i, color);
+        pixel(canvas.ctx.framebuffer, rect.x + i, rect.y + i, color);
         pixel(
-            canvas.framebuffer,
+            canvas.ctx.framebuffer,
             rect.x + CLOSE_SIZE - 1 - i,
             rect.y + i,
             color,
@@ -457,7 +456,7 @@ fn shorten_start(font: &BitmapFont, text: &str, cells: usize) -> String {
 /// Draws `row` with its top at `y` and its cells starting at `x`, across
 /// `width` pixels.
 fn draw_row(
-    canvas: &mut Canvas<'_>,
+    canvas: &mut Canvas<'_, '_>,
     row: &Row,
     x: i32,
     y: i32,
@@ -474,7 +473,7 @@ fn draw_row(
 }
 
 fn draw_run(
-    canvas: &mut Canvas<'_>,
+    canvas: &mut Canvas<'_, '_>,
     run: &Run,
     x: i32,
     y: i32,
@@ -511,7 +510,7 @@ fn draw_run(
 }
 
 /// The lines around a row's text: bands, boxes, rules.
-fn draw_deco(canvas: &mut Canvas<'_>, deco: &Deco, x: i32, y: i32, width: i32, height: i32) {
+fn draw_deco(canvas: &mut Canvas<'_, '_>, deco: &Deco, x: i32, y: i32, width: i32, height: i32) {
     let cell_w = canvas.cell_w;
     if let Some(table) = &deco.table {
         let table_width = table.width as i32 * cell_w;

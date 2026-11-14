@@ -3,6 +3,7 @@ use pretty_assertions::assert_eq;
 use super::form::{CreateForm, slug};
 use super::*;
 use crate::cartridge::map::{MapError, MapMeta};
+use crate::system::workspace::{RenderContext, ViewInput};
 use glaux_machine::font::FontMetrics;
 
 fn id(text: &str) -> MapId {
@@ -282,7 +283,15 @@ fn cart_rom_shows_in_the_status_bar_without_a_notice() {
             rom: usage,
             ..Default::default()
         };
-        editor.render(&mut fb, rom.font(), None, None, info, false);
+        editor.render(
+            &mut RenderContext::new(&mut fb, rom.font(), rom.ui()),
+            None,
+            ViewInput {
+                info,
+                ..ViewInput::default()
+            },
+            false,
+        );
         (status.y..status.bottom())
             .flat_map(|y| (status.x..status.right()).map(move |x| (x, y)))
             .map(|(x, y)| fb.pixel(x, y))

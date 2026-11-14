@@ -12,6 +12,7 @@ use glaux_video::draw::{draw_text, fill_rect};
 
 use super::{BAR, Rect, take_cells, wrap};
 use crate::system::screen::{BACKGROUND, ERROR, TEXT};
+use crate::system::workspace::RenderContext;
 
 /// Window body.
 pub const BODY: u8 = TEXT;
@@ -262,7 +263,8 @@ impl<A: Copy> Dialog<A> {
 
     /// Draws the dialog as laid out in `layout`, over whatever is already
     /// in `framebuffer`.
-    pub fn render(&self, framebuffer: &mut Framebuffer, font: &BitmapFont, layout: &DialogLayout) {
+    pub fn render(&self, ctx: &mut RenderContext<'_>, layout: &DialogLayout) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let DialogLayout {
             window,
             title_bar,

@@ -8,13 +8,13 @@
 use std::ops::Range;
 
 use glaux_input::{InputEvent, Point};
-use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
 use crate::system::editing::document::{CodeDocument, DocumentId};
 use crate::system::editing::search::{SearchOptions, find_all};
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::text_field::{FieldColors, FieldInput, TextField};
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};
 use crate::ui_text;
@@ -294,8 +294,7 @@ impl FindBar {
     /// one selected, if any. `lit` shows the focused field's cursor.
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &FindLayout,
         matches: usize,
         current: Option<usize>,
@@ -304,9 +303,9 @@ impl FindBar {
         let fill = |framebuffer: &mut Framebuffer, rect: Rect, color| {
             fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, color);
         };
-        fill(framebuffer, layout.panel, BAR);
+        fill(ctx.framebuffer, layout.panel, BAR);
         fill(
-            framebuffer,
+            ctx.framebuffer,
             Rect {
                 y: layout.panel.bottom() - 1,
                 height: 1,
@@ -322,8 +321,7 @@ impl FindBar {
         };
         let query_focused = self.focus == Some(FindFocus::Query);
         self.query.render(
-            framebuffer,
-            font,
+            ctx,
             layout.query,
             field_colors(query_focused),
             query_focused && lit,
@@ -337,8 +335,8 @@ impl FindBar {
         };
         let count_color = if matches == 0 { ERROR } else { PALE };
         draw_text(
-            framebuffer,
-            font,
+            ctx.framebuffer,
+            ctx.font,
             &count,
             layout.count.x,
             layout.text_y(layout.count),
@@ -361,47 +359,46 @@ impl FindBar {
                         ACCENT,
                     );
                 }
-                let cells = i32::try_from(font.text_cells(label)).unwrap_or(0);
+                let cells = i32::try_from(ctx.font.text_cells(label)).unwrap_or(0);
                 let x = rect.x + (rect.width - cells * layout.cell_w) / 2;
-                draw_text(framebuffer, font, label, x, layout.text_y(rect), ink);
+                draw_text(framebuffer, ctx.font, label, x, layout.text_y(rect), ink);
             };
         let focused = |part: FindFocus| self.focus == Some(part);
         button(
-            framebuffer,
+            ctx.framebuffer,
             layout.match_case,
             "Aa",
             self.options.match_case,
             focused(FindFocus::MatchCase),
         );
         button(
-            framebuffer,
+            ctx.framebuffer,
             layout.whole_word,
             &ui_text::get("code-find-whole-word-button"),
             self.options.whole_word,
             focused(FindFocus::WholeWord),
         );
-        button(framebuffer, layout.previous, "<", false, false);
-        button(framebuffer, layout.next, ">", false, false);
-        button(framebuffer, layout.close, "x", false, false);
+        button(ctx.framebuffer, layout.previous, "<", false, false);
+        button(ctx.framebuffer, layout.next, ">", false, false);
+        button(ctx.framebuffer, layout.close, "x", false, false);
         if self.replacing {
             let replacement_focused = focused(FindFocus::Replacement);
             self.replacement.render(
-                framebuffer,
-                font,
+                ctx,
                 layout.replacement,
                 field_colors(replacement_focused),
                 replacement_focused && lit,
                 layout.cell_w,
             );
             button(
-                framebuffer,
+                ctx.framebuffer,
                 layout.replace_one,
                 &ui_text::get("code-replace-2"),
                 false,
                 focused(FindFocus::ReplaceOne),
             );
             button(
-                framebuffer,
+                ctx.framebuffer,
                 layout.replace_all,
                 &ui_text::get("code-all"),
                 false,

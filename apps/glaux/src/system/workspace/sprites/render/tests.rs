@@ -1,11 +1,13 @@
 use super::*;
+use crate::system::workspace::StatusInfo;
 use glaux_machine::bg::BgVram;
-use glaux_machine::font::FontMetrics;
+use glaux_machine::font::{BitmapFont, FontMetrics};
 use glaux_machine::obj_palette::{OBJ_PALETTES_BYTES, ObjPalettes};
 use glaux_machine::palette::Palette;
 use glaux_machine::sprite::{
     OBJ_TILE_BYTES, OBJ_TILE_CAPACITY, ObjTileAttributes, ObjTileBank, ObjVram,
 };
+use glaux_machine::system_rom::SystemUi;
 use glaux_machine::tilemap::BgBank;
 use glaux_video::preview::ObjPreviewPalette;
 use pretty_assertions::assert_eq;
@@ -79,13 +81,11 @@ impl Fixture {
 fn render(editor: &SpriteEditor, fixture: &Fixture) -> Framebuffer {
     let mut fb = Framebuffer::new();
     let font = BitmapFont::new(FontMetrics::SYSTEM);
+    let ui = SystemUi::default();
     editor.render(
-        &mut fb,
-        &font,
-        &SystemUi::default(),
+        &mut RenderContext::new(&mut fb, &font, &ui),
         Ok(fixture.source()),
-        None,
-        StatusInfo::default(),
+        ViewInput::default(),
     );
     fb
 }
@@ -317,12 +317,9 @@ fn the_options_bar_names_the_tool_and_flags_unsaved_edits() {
         };
         let ui = SystemUi::default();
         editor.render(
-            &mut fb,
-            &coded_font(),
-            &ui,
+            &mut RenderContext::new(&mut fb, &coded_font(), &ui),
             Ok(source),
-            None,
-            StatusInfo::default(),
+            ViewInput::default(),
         );
         fb
     };
@@ -371,14 +368,14 @@ fn cart_rom_shares_the_status_bar_when_the_status_leaves_room() {
     let mut fb = Framebuffer::new();
     let ui = SystemUi::default();
     editor.render(
-        &mut fb,
-        &coded_font(),
-        &ui,
+        &mut RenderContext::new(&mut fb, &coded_font(), &ui),
         Ok(fixture.source()),
-        None,
-        StatusInfo {
-            rom: Some(&usage),
-            ..StatusInfo::default()
+        ViewInput {
+            info: StatusInfo {
+                rom: Some(&usage),
+                ..StatusInfo::default()
+            },
+            ..ViewInput::default()
         },
     );
 
@@ -445,13 +442,11 @@ fn the_options_bar_names_the_tile_set_being_shown() {
     let mut editor = SpriteEditor::new(METRICS);
     let draw = |editor: &SpriteEditor| {
         let mut fb = Framebuffer::new();
+        let ui = SystemUi::default();
         editor.render(
-            &mut fb,
-            &coded_font(),
-            &SystemUi::default(),
+            &mut RenderContext::new(&mut fb, &coded_font(), &ui),
             Ok(fixture.source()),
-            None,
-            StatusInfo::default(),
+            ViewInput::default(),
         );
         fb
     };

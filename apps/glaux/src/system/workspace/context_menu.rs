@@ -13,6 +13,7 @@ use glaux_video::draw::{draw_text, fill_rect};
 
 use super::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};
 use crate::system::screen::{DIM, PALE, TEXT};
+use crate::system::workspace::RenderContext;
 use crate::ui_text;
 
 /// The status bar hint while a context menu is open.
@@ -264,7 +265,8 @@ impl<A: Copy> ContextMenu<A> {
     }
 
     /// Draws the menu.
-    pub fn render(&self, framebuffer: &mut Framebuffer, font: &BitmapFont, layout: &MenuLayout) {
+    pub fn render(&self, ctx: &mut RenderContext<'_>, layout: &MenuLayout) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let fill = |framebuffer: &mut Framebuffer, rect: Rect, color| {
             fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, color);
         };

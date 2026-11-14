@@ -1,6 +1,6 @@
 use super::*;
 use glaux_machine::bg::BgVram;
-use glaux_machine::font::FontMetrics;
+use glaux_machine::font::{BitmapFont, FontMetrics};
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use glaux_machine::obj_palette::ObjPalettes;
 use glaux_machine::palette::Palette;
@@ -9,7 +9,9 @@ use glaux_video::preview::ObjPreviewPalette;
 use pretty_assertions::assert_eq;
 
 use super::super::render::{CHECK_DARK, CHECK_LIGHT};
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::SYSTEM_COLORS;
+use glaux_machine::system_rom::SystemUi;
 
 const METRICS: Metrics = crate::system::workspace::tests_support::SPRITE_METRICS;
 
@@ -244,7 +246,13 @@ impl Fixture {
 fn render(picker: &PalettePicker, fixture: &Fixture, pointer: Option<Point>) -> Framebuffer {
     let mut fb = Framebuffer::new();
     let font = BitmapFont::new(FontMetrics::SYSTEM);
-    picker.render(&mut fb, &font, &layout(false), &fixture.source(), pointer);
+    let ui = SystemUi::default();
+    picker.render(
+        &mut RenderContext::new(&mut fb, &font, &ui),
+        &layout(false),
+        &fixture.source(),
+        pointer,
+    );
     fb
 }
 

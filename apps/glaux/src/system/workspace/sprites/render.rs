@@ -5,13 +5,11 @@
 //! [`ObjPreviewPalette`]: glaux_video::preview::ObjPreviewPalette
 
 use glaux_i18n::Arg;
-use glaux_input::Point;
-use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, ObjBank};
 use glaux_machine::palette::Rgb;
 use glaux_machine::sprite::{OBJ_GRID_COLUMNS, OBJ_GRID_ROWS, OBJ_TILE_WIDTH};
-use glaux_machine::system_rom::{SystemIcon, SystemUi};
+use glaux_machine::system_rom::SystemIcon;
 use glaux_machine::tilemap::{BG_PALETTE_BANKS, BgBank};
 use glaux_video::draw::{
     ObjPaletteChoice, draw_bg_tile_scaled, draw_ink_image, draw_obj_tile_scaled, draw_text,
@@ -28,9 +26,9 @@ use crate::cartridge::rom::RomUsage;
 use crate::rom::ICON_SIZE;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::system::sprite_document::{PaletteBank, TileSet};
-use crate::system::workspace::StatusInfo;
 use crate::system::workspace::rom_tag::rom_tag;
 use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, wrap};
+use crate::system::workspace::{RenderContext, ViewInput};
 use crate::ui_text;
 
 /// The two colors of the checkerboard behind transparent pixels.
@@ -68,17 +66,16 @@ pub(super) fn waiting_notice() -> String {
 
 impl SpriteEditor {
     /// Draws the editor below the tab bar from `source`, or explains why
-    /// there is nothing to show. `pointer` highlights what it hovers, and
-    /// `notice`, when given, takes the status bar's left side in its color.
+    /// there is nothing to show. `view.pointer` highlights what it hovers,
+    /// and `view.info.notice`, when given, takes the status bar's left side
+    /// in its color.
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
-        ui: &SystemUi,
+        ctx: &mut RenderContext<'_>,
         source: Result<SpriteSource<'_>, &str>,
-        pointer: Option<Point>,
-        info: StatusInfo<'_>,
+        view: ViewInput<'_>,
     ) {
+        let ViewInput { pointer, info } = view;
         let layout = self.layout();
         // Nothing under a dialog reacts to the pointer.
         let hover = match (&self.dialog, pointer) {
@@ -90,14 +87,13 @@ impl SpriteEditor {
         // document's colors may show while it is open.
         let importing = matches!(self.dialog, Some(EditorDialog::Import(_)));
         let mut painter = Painter {
-            framebuffer,
-            font,
+            ctx: &mut *ctx,
             layout: &layout,
         };
 
         let modified = source.is_ok_and(|source| source.modified);
         painter.options_bar(self, hover, modified);
-        painter.toolbar(ui, self.tool, hover);
+        painter.toolbar(self.tool, hover);
         match source {
             Ok(source) => {
                 if !importing {
@@ -140,15 +136,15 @@ impl SpriteEditor {
         match (&self.dialog, source) {
             (Some(EditorDialog::Palette(picker)), Ok(source)) => {
                 let layout = self.picker_layout();
-                picker.render(framebuffer, font, &layout, &source, pointer);
+                picker.render(ctx, &layout, &source, pointer);
             }
             (Some(EditorDialog::Color(editor)), Ok(source)) => {
                 let layout = self.edit_color_layout();
-                editor.render(framebuffer, font, &layout, &source);
+                editor.render(ctx, &layout, &source);
             }
             (Some(EditorDialog::Import(preview)), _) => {
                 let layout = self.import_layout();
-                preview.render(framebuffer, font, &layout);
+                preview.render(ctx, &layout);
             }
             _ => {}
         }
@@ -301,20 +297,19 @@ impl SpriteEditor {
 }
 
 /// Draws into one frame with one layout.
-struct Painter<'a> {
-    framebuffer: &'a mut Framebuffer,
-    font: &'a BitmapFont,
+struct Painter<'a, 'c> {
+    ctx: &'a mut RenderContext<'c>,
     layout: &'a SpriteLayout,
 }
 
-impl Painter<'_> {
+impl Painter<'_, '_> {
     fn text(&mut self, text: &str, x: i32, y: i32, color: u8) {
-        draw_text(self.framebuffer, self.font, text, x, y, color);
+        draw_text(self.ctx.framebuffer, self.ctx.font, text, x, y, color);
     }
 
     fn fill(&mut self, rect: Rect, color: u8) {
         fill_rect(
-            self.framebuffer,
+            self.ctx.framebuffer,
             rect.x,
             rect.y,
             rect.width,
@@ -324,11 +319,11 @@ impl Painter<'_> {
     }
 
     fn outline(&mut self, rect: Rect, color: u8) {
-        outline(self.framebuffer, rect, color);
+        outline(self.ctx.framebuffer, rect, color);
     }
 
     fn checker(&mut self, rect: Rect, square: i32) {
-        checker(self.framebuffer, rect, square);
+        checker(self.ctx.framebuffer, rect, square);
     }
 
     /// Top of a text row centred in a bar that starts at `y`.
@@ -338,14 +333,22 @@ impl Painter<'_> {
 
     /// Width of `text` in pixels.
     fn cells(&self, text: &str) -> i32 {
-        i32::try_from(self.font.text_cells(text)).unwrap_or(i32::MAX) * self.layout.metrics.cell_w
+        i32::try_from(self.ctx.font.text_cells(text)).unwrap_or(i32::MAX)
+            * self.layout.metrics.cell_w
     }
 
     fn options_bar(&mut self, editor: &SpriteEditor, hover: Hit, modified: bool) {
         let layout = self.layout;
         let bar = layout.options;
         let cell_w = layout.metrics.cell_w;
-        fill_rect(self.framebuffer, bar.x, bar.bottom() - 1, bar.width, 1, BAR);
+        fill_rect(
+            self.ctx.framebuffer,
+            bar.x,
+            bar.bottom() - 1,
+            bar.width,
+            1,
+            BAR,
+        );
         let text_y = self.bar_text_y(bar.y, bar.height - 1);
         let tile = ui_text::get_with(
             "sprites-tile",
@@ -431,7 +434,7 @@ impl Painter<'_> {
         self.text(zoom.label(), layout.zoom_label.x, text_y, TEXT);
     }
 
-    fn toolbar(&mut self, ui: &SystemUi, active: ToolSlot, hover: Hit) {
+    fn toolbar(&mut self, active: ToolSlot, hover: Hit) {
         for (tool, rect) in self.layout.tools {
             let icon = match tool {
                 ToolSlot::Pencil => SystemIcon::Sprites,
@@ -454,8 +457,8 @@ impl Painter<'_> {
             };
             let pad = (rect.width - ICON_SIZE as i32) / 2;
             draw_ink_image(
-                self.framebuffer,
-                ui.icon(icon),
+                self.ctx.framebuffer,
+                self.ctx.ui.icon(icon),
                 rect.x + pad,
                 rect.y + pad,
                 &inks,
@@ -479,7 +482,7 @@ impl Painter<'_> {
             for k in 1..OBJ_TILE_WIDTH as i32 {
                 let offset = k * CANVAS_ZOOM;
                 fill_rect(
-                    self.framebuffer,
+                    self.ctx.framebuffer,
                     canvas.x + offset,
                     canvas.y,
                     1,
@@ -487,7 +490,7 @@ impl Painter<'_> {
                     GRID_LINE,
                 );
                 fill_rect(
-                    self.framebuffer,
+                    self.ctx.framebuffer,
                     canvas.x,
                     canvas.y + offset,
                     canvas.width,
@@ -523,7 +526,7 @@ impl Painter<'_> {
     ) {
         match editor.tileset {
             TileSet::Obj => draw_obj_tile_scaled(
-                self.framebuffer,
+                self.ctx.framebuffer,
                 source.obj,
                 tile,
                 ObjPaletteChoice::TileDefault,
@@ -532,7 +535,7 @@ impl Painter<'_> {
                 source.preview.slots(),
             ),
             TileSet::Bg => draw_bg_tile_scaled(
-                self.framebuffer,
+                self.ctx.framebuffer,
                 source.bg,
                 tile,
                 editor.bg_bank,
@@ -596,8 +599,8 @@ impl Painter<'_> {
             OBJ_GRID_ROWS,
         );
         let x = sheet.right() + 2;
-        fill_rect(self.framebuffer, x, y, SCROLLBAR, height, BAR);
-        fill_rect(self.framebuffer, x, thumb_y, SCROLLBAR, thumb_h, DIM);
+        fill_rect(self.ctx.framebuffer, x, y, SCROLLBAR, height, BAR);
+        fill_rect(self.ctx.framebuffer, x, thumb_y, SCROLLBAR, thumb_h, DIM);
 
         if visible.columns < OBJ_GRID_COLUMNS {
             let (x, width, thumb_x, thumb_w) = track(
@@ -608,8 +611,8 @@ impl Painter<'_> {
                 OBJ_GRID_COLUMNS,
             );
             let y = sheet.bottom() + 2;
-            fill_rect(self.framebuffer, x, y, width, SCROLLBAR, BAR);
-            fill_rect(self.framebuffer, thumb_x, y, thumb_w, SCROLLBAR, DIM);
+            fill_rect(self.ctx.framebuffer, x, y, width, SCROLLBAR, BAR);
+            fill_rect(self.ctx.framebuffer, thumb_x, y, thumb_w, SCROLLBAR, DIM);
         }
     }
 
@@ -618,7 +621,7 @@ impl Painter<'_> {
         let panel = layout.palette;
         let cell_w = layout.metrics.cell_w;
         let background = editor.tileset == TileSet::Bg;
-        fill_rect(self.framebuffer, panel.x, panel.y, panel.width, 1, BAR);
+        fill_rect(self.ctx.framebuffer, panel.x, panel.y, panel.width, 1, BAR);
         let bank = editor.palette_bank(source);
         let master = |local: u8| resolve(source, bank, local);
         let color = editor.color();
@@ -719,7 +722,11 @@ impl Painter<'_> {
             TEXT,
         );
         y += cell_h + 2;
-        for line in wrap(self.font, message, usize::try_from(columns).unwrap_or(1)) {
+        for line in wrap(
+            self.ctx.font,
+            message,
+            usize::try_from(columns).unwrap_or(1),
+        ) {
             self.text(&line, 4, y, ERROR);
             y += cell_h;
         }
@@ -745,7 +752,7 @@ impl Painter<'_> {
         self.fill(bar, BAR);
         let y = self.bar_text_y(bar.y, bar.height);
         let columns = (bar.width - 8) / self.layout.metrics.cell_w;
-        let length = |text: &str| i32::try_from(self.font.text_cells(text)).unwrap_or(i32::MAX);
+        let length = |text: &str| i32::try_from(self.ctx.font.text_cells(text)).unwrap_or(i32::MAX);
         let (left_len, right_len) = (length(left), length(right));
         if left_len + 2 + right_len <= columns {
             self.text(left, 4, y, left_color);
@@ -754,7 +761,7 @@ impl Painter<'_> {
             // Cart ROM sits between the two, in the room they leave once
             // each keeps a gap of two cells.
             let free = usize::try_from(columns - left_len - right_len - 4).unwrap_or(0);
-            if let Some(tag) = rom_tag(rom, self.font, free) {
+            if let Some(tag) = rom_tag(rom, self.ctx.font, free) {
                 let gap = if right.is_empty() { 0 } else { 2 };
                 let x = x - self.cells(" ") * gap - self.cells(&tag.text);
                 self.text(&tag.text, x, y, tag.color);

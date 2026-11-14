@@ -7,7 +7,6 @@ pub mod hsv;
 
 use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
-use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::palette::{PALETTE_LEN, Rgb};
 use glaux_machine::sprite::{OBJ_TILE_CAPACITY, OBJ_TILE_WIDTH};
@@ -23,6 +22,7 @@ use crate::system::sprite_document::{
     CODE_COLORS, ColorScope, ColorTarget, ColorUses, PaletteBank, Spare, spare_master,
 };
 use crate::system::workspace::Rect;
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::dialog::{
     BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window_with_detail, fill, text_cells as cells,
 };
@@ -628,11 +628,11 @@ impl ColorEditor {
     /// Draws the dialog over the editor from `source`.
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &ColorEditorLayout,
         source: &SpriteSource<'_>,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let (cell_w, cell_h) = (layout.cell_w, layout.cell_h);
         let text = |fb: &mut Framebuffer, text: &str, x: i32, y: i32, color: u8| {
             draw_text(fb, font, text, x, y, color);

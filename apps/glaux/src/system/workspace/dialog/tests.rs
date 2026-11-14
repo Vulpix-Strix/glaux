@@ -1,5 +1,6 @@
 use super::*;
 use crate::system::test_font::LAYOUT_FONT;
+use crate::system::workspace::RenderContext;
 use glaux_machine::font::FontMetrics;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
 use pretty_assertions::assert_eq;
@@ -185,7 +186,10 @@ fn the_focused_button_is_drawn_inverted() {
     let dialog = dialog();
     let layout = dialog.layout(&LAYOUT_FONT, AREA, CELL_W, CELL_H);
     let mut fb = Framebuffer::new();
-    dialog.render(&mut fb, rom.font(), &layout);
+    dialog.render(
+        &mut RenderContext::new(&mut fb, rom.font(), rom.ui()),
+        &layout,
+    );
     let face = |rect: Rect| fb.pixel(rect.x + 1, rect.y + 1);
     assert_eq!(face(layout.buttons[2]), Some(INK), "focused");
     assert_eq!(face(layout.buttons[0]), Some(BODY));

@@ -1,7 +1,9 @@
 //! Drawing the system into the machine's framebuffer.
 
+use crate::cartridge::LoadedCartridge;
 use crate::system::running::RunningCartridge;
 use crate::system::screen::{BACKGROUND, text_columns, text_rows};
+use crate::system::workspace::{RenderContext, ViewSources, WorkspaceVideo};
 use crate::system::{PausedView, System, SystemState};
 use glaux_input::Point;
 use glaux_machine::framebuffer::Framebuffer;
@@ -95,7 +97,10 @@ impl System {
             SystemState::Workspace { .. } | SystemState::Debugging { .. }
         );
         let layout = self.workspace.dialog_layout(flow.dialog(), whole_screen);
-        flow.dialog().render(framebuffer, rom.font(), &layout);
+        flow.dialog().render(
+            &mut RenderContext::new(framebuffer, rom.font(), rom.ui()),
+            &layout,
+        );
     }
 
     /// Draws the log panel over the frame, if it is open. Over a running
@@ -127,6 +132,30 @@ impl System {
         );
     }
 
+    /// Draws the workspace over `cartridge`, with its sprites from `video`.
+    fn render_workspace(
+        &self,
+        framebuffer: &mut Framebuffer,
+        rom: &SystemRom,
+        cartridge: &LoadedCartridge,
+        video: &WorkspaceVideo,
+        pointer: Option<Point>,
+    ) {
+        let sprites = video.source(self.sprites.as_ref());
+        let sources = ViewSources {
+            cartridge,
+            sprites: sprites
+                .as_ref()
+                .map(|source| *source)
+                .map_err(String::as_str),
+            code: self.code.as_ref(),
+            maps: self.maps.as_ref(),
+        };
+        let mut ctx = RenderContext::new(framebuffer, rom.font(), rom.ui());
+        self.workspace.render(&mut ctx, sources, pointer);
+        self.render_log_panel(ctx.framebuffer, rom, None);
+    }
+
     fn render_state(&self, framebuffer: &mut Framebuffer, rom: &SystemRom, pointer: Option<Point>) {
         let font = rom.font();
         let metrics = font.metrics();
@@ -152,39 +181,11 @@ impl System {
             SystemState::Workspace {
                 cartridge, video, ..
             } => {
-                self.workspace.render(
-                    framebuffer,
-                    font,
-                    rom.ui(),
-                    cartridge,
-                    video
-                        .source(self.sprites.as_ref())
-                        .as_ref()
-                        .map(|source| *source)
-                        .map_err(String::as_str),
-                    self.code.as_ref(),
-                    self.maps.as_ref(),
-                    pointer,
-                );
-                self.render_log_panel(framebuffer, rom, None);
+                self.render_workspace(framebuffer, rom, cartridge, video, pointer);
                 return;
             }
             SystemState::Debugging { running, video, .. } => {
-                self.workspace.render(
-                    framebuffer,
-                    font,
-                    rom.ui(),
-                    running.cartridge(),
-                    video
-                        .source(self.sprites.as_ref())
-                        .as_ref()
-                        .map(|source| *source)
-                        .map_err(String::as_str),
-                    self.code.as_ref(),
-                    self.maps.as_ref(),
-                    pointer,
-                );
-                self.render_log_panel(framebuffer, rom, None);
+                self.render_workspace(framebuffer, rom, running.cartridge(), video, pointer);
                 return;
             }
             SystemState::Credits { view, .. } => {
@@ -192,7 +193,10 @@ impl System {
                 return;
             }
             SystemState::Docs { .. } => {
-                self.workspace.render_docs_apart(framebuffer, pointer);
+                self.workspace.render_docs_apart(
+                    &mut RenderContext::new(framebuffer, font, rom.ui()),
+                    pointer,
+                );
                 return;
             }
             SystemState::Running { running, .. } => {

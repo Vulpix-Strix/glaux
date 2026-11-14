@@ -5,14 +5,13 @@
 
 use glaux_i18n::Arg;
 use glaux_input::InputEvent;
-use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 
 use super::new_file::{CODE_DIR, path_for};
 use super::prompt::{Prompt, PromptInput, PromptLayout};
 use crate::cartridge::source::SourcePath;
 use crate::system::editing::document::DocumentId;
 use crate::system::screen::ERROR;
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::dialog::INK;
 use crate::system::workspace::text_field::TextField;
 use crate::ui_text;
@@ -131,15 +130,8 @@ impl RenameScript {
         }
     }
 
-    pub fn render(
-        &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
-        layout: &PromptLayout,
-        lit: bool,
-    ) {
+    pub fn render(&self, ctx: &mut RenderContext<'_>, layout: &PromptLayout, lit: bool) {
         let (message, color) = self.message();
-        self.prompt
-            .render(framebuffer, font, layout, (&message, color), lit);
+        self.prompt.render(ctx, layout, (&message, color), lit);
     }
 }

@@ -22,6 +22,7 @@ mod maps;
 mod menu;
 mod modal;
 mod render;
+mod render_context;
 mod request;
 mod rom_tag;
 mod sprites;
@@ -59,6 +60,7 @@ pub(super) use modal::{
     script_conflict_dialog, source_write_advice, unsaved_dialog, write_advice,
 };
 pub use render::draw_cursor;
+pub use render_context::{RenderContext, ViewInput, ViewSources};
 pub use request::{
     AssetRequest, HostWork, MapRequest, NavigationRequest, ScriptRequest, WorkspaceRequest,
 };

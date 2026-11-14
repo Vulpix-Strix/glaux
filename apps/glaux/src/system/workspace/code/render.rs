@@ -4,9 +4,7 @@ use std::ops::Range;
 
 use glaux_i18n::Arg;
 use glaux_input::Point;
-use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
-use glaux_machine::system_rom::{SystemIcon, SystemUi};
+use glaux_machine::system_rom::SystemIcon;
 use glaux_syntax::{Span, SymbolKind, SyntaxKind};
 use glaux_video::draw::{draw_glyph, draw_ink_image, draw_text, fill_rect, pixel};
 
@@ -30,10 +28,11 @@ use crate::system::editor_settings::EditorSettings;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, OK, PALE, TEXT, WARN};
 use crate::system::syntax_theme;
 use crate::system::text::clip;
-use crate::system::workspace::StatusInfo;
 use crate::system::workspace::dialog::{BODY, INK, draw_window};
 use crate::system::workspace::rom_tag::rom_tag;
-use crate::system::workspace::{BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, take_cells, wrap};
+use crate::system::workspace::{
+    BAR, HOVER_SHADE, IDLE_SHADE, OUTLINE, Rect, RenderContext, ViewInput, take_cells, wrap,
+};
 use crate::ui_text;
 
 /// Side of the dot marking a tab whose document has unsaved edits.
@@ -86,16 +85,13 @@ impl CodeEditor {
     #[hotpath::measure(label = "code_editor::render", impl_type = "CodeEditor")]
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
-        ui: &SystemUi,
+        ctx: &mut RenderContext<'_>,
         session: Option<&CodeSession>,
-        pointer: Option<Point>,
-        info: StatusInfo<'_>,
+        view: ViewInput<'_>,
     ) {
+        let ViewInput { pointer, info } = view;
         let mut painter = Painter {
-            framebuffer,
-            font,
+            ctx,
             layout: &self.layout,
             stopped: self.debug.is_some(),
         };
@@ -120,7 +116,7 @@ impl CodeEditor {
                             .reset(document);
                         let geometry = self.geometry(document);
                         let key = geometry.metrics_key();
-                        let caret = spot(document, selection.caret().byte(), key, font);
+                        let caret = spot(document, selection.caret().byte(), key, painter.ctx.font);
                         let caret_byte = selection.caret().byte();
                         painter.options_bar(
                             document.language(),
@@ -135,22 +131,22 @@ impl CodeEditor {
                             .find
                             .as_ref()
                             .map_or(&[][..], |bar| bar.matches_in(document));
-                        painter.text_view(
+                        painter.text_view(TextContent {
                             document,
-                            &geometry,
+                            geometry: &geometry,
                             view,
                             metrics,
-                            &self.settings,
-                            lit.then_some((&caret, caret_byte)),
-                            selection.range(),
+                            settings: &self.settings,
+                            caret: lit.then_some((&caret, caret_byte)),
+                            selected: selection.range(),
                             matches,
-                            session.syntax_spans(id),
-                            Marks {
+                            syntax: session.syntax_spans(id),
+                            marks: Marks {
                                 breakpoints: document.breakpoints(),
                                 stopped_at: self.stopped_line(document),
                                 findings: session.diagnostics(id),
                             },
-                        );
+                        });
                         if let (Some(panel), Some(layout)) = (&self.symbols, self.panel_layout()) {
                             painter.symbol_panel(panel, &layout, hover_pointer);
                         }
@@ -164,8 +160,7 @@ impl CodeEditor {
                             && !self.has_overlay()
                         {
                             popup.render(
-                                painter.framebuffer,
-                                font,
+                                painter.ctx,
                                 self.layout.metrics.cell_w,
                                 self.layout.metrics.cell_h,
                                 &layout,
@@ -176,8 +171,7 @@ impl CodeEditor {
                             && !self.has_overlay()
                         {
                             popup.render(
-                                painter.framebuffer,
-                                font,
+                                painter.ctx,
                                 self.layout.metrics.cell_w,
                                 &layout,
                                 hover_pointer,
@@ -186,20 +180,13 @@ impl CodeEditor {
                         if let Some((layout, _)) = self.hover_layout(session)
                             && !self.has_overlay()
                         {
-                            layout.render(painter.framebuffer, font, self.layout.metrics.cell_w);
+                            layout.render(painter.ctx, self.layout.metrics.cell_w);
                         }
                         if let (Some(bar), Some(layout)) = (&self.find, self.find_layout()) {
                             let current =
                                 matches.iter().position(|found| *found == selection.range());
                             let lit = self.caret_lit() && !self.has_overlay();
-                            bar.render(
-                                painter.framebuffer,
-                                font,
-                                &layout,
-                                matches.len(),
-                                current,
-                                lit,
-                            );
+                            bar.render(painter.ctx, &layout, matches.len(), current, lit);
                         }
                     }
                     None => {
@@ -221,17 +208,11 @@ impl CodeEditor {
         if let Some(document) = session.and_then(|session| session.active_document()) {
             let found = session.map_or(&[][..], |session| session.diagnostics(document.id()));
             let hover = hover_pointer.and_then(|at| self.diag_row_at(at, found.len()));
-            self.diag.render(
-                painter.framebuffer,
-                font,
-                &self.layout,
-                document,
-                found,
-                hover,
-            );
+            self.diag
+                .render(painter.ctx, &self.layout, document, found, hover);
         }
         painter.run_buttons(run_lit, debug_lit, hover_pointer);
-        painter.settings_button(ui, settings_lit);
+        painter.settings_button(settings_lit);
         let hint = self.hint();
         let problem = session.and_then(|session| self.problem_at_caret(session));
         let (status, color) = info
@@ -254,32 +235,48 @@ impl CodeEditor {
             painter.picker(picker, session);
         }
         if let Some(menu) = &self.context_menu {
-            menu.render(painter.framebuffer, font, &self.menu_layout(menu));
+            menu.render(painter.ctx, &self.menu_layout(menu));
         }
         let lit = self.caret_lit();
         if let Some(dialog) = &self.new_file {
             let layout = self.prompt_layout(dialog.prompt());
-            dialog.render(painter.framebuffer, font, &layout, lit);
+            dialog.render(painter.ctx, &layout, lit);
         }
         if let Some(dialog) = &self.rename {
             let layout = self.prompt_layout(dialog.prompt());
-            dialog.render(painter.framebuffer, font, &layout, lit);
+            dialog.render(painter.ctx, &layout, lit);
         }
         if let Some(dialog) = &self.go_to {
             let layout = self.prompt_layout(dialog.prompt());
-            dialog.render(painter.framebuffer, font, &layout, lit);
+            dialog.render(painter.ctx, &layout, lit);
         }
         if let Some(detail) = &self.detail {
-            detail.render(painter.framebuffer, font);
+            detail.render(painter.ctx);
         }
         if let Some(dialog) = &self.settings_dialog {
             let layout = settings_layout(&self.layout);
-            dialog.render(painter.framebuffer, font, &layout, &self.settings);
+            dialog.render(painter.ctx, &layout, &self.settings);
         }
     }
 }
 
 /// Draws into one frame with one layout.
+/// What the text area shows of one document.
+struct TextContent<'a> {
+    document: &'a CodeDocument,
+    geometry: &'a TextGeometry,
+    view: DocumentView,
+    metrics: Option<&'a TextMetrics>,
+    settings: &'a EditorSettings,
+    /// The caret's spot and byte, `None` while it is hidden.
+    caret: Option<(&'a Spot, usize)>,
+    selected: Range<usize>,
+    /// The find bar's matches, sorted and apart, drawn on a highlight.
+    matches: &'a [Range<usize>],
+    syntax: &'a [Span],
+    marks: Marks<'a>,
+}
+
 /// What the margin marks beside the lines of the document drawn.
 struct Marks<'a> {
     breakpoints: &'a Breakpoints,
@@ -289,23 +286,22 @@ struct Marks<'a> {
     findings: &'a [EditorDiagnostic],
 }
 
-struct Painter<'a> {
-    framebuffer: &'a mut Framebuffer,
-    font: &'a BitmapFont,
+struct Painter<'a, 'c> {
+    ctx: &'a mut RenderContext<'c>,
     layout: &'a CodeLayout,
     /// Whether a debugged cartridge is stopped, which replaces the run
     /// plates with the ones that go on with it.
     stopped: bool,
 }
 
-impl Painter<'_> {
+impl Painter<'_, '_> {
     fn text(&mut self, text: &str, x: i32, y: i32, color: u8) {
-        draw_text(self.framebuffer, self.font, text, x, y, color);
+        draw_text(self.ctx.framebuffer, self.ctx.font, text, x, y, color);
     }
 
     fn fill(&mut self, rect: Rect, color: u8) {
         fill_rect(
-            self.framebuffer,
+            self.ctx.framebuffer,
             rect.x,
             rect.y,
             rect.width,
@@ -319,7 +315,7 @@ impl Painter<'_> {
     fn dotted(&mut self, rect: Rect, color: u8) {
         let y = rect.bottom() - 1;
         for x in (rect.x..rect.right()).step_by(2) {
-            fill_rect(self.framebuffer, x, y, 1, 1, color);
+            fill_rect(self.ctx.framebuffer, x, y, 1, 1, color);
         }
     }
 
@@ -341,7 +337,7 @@ impl Painter<'_> {
         let strip = self.layout.strip;
         self.fill(strip, BACKGROUND);
         fill_rect(
-            self.framebuffer,
+            self.ctx.framebuffer,
             strip.x,
             strip.bottom() - 1,
             strip.width,
@@ -353,7 +349,7 @@ impl Painter<'_> {
     /// The document tabs and the button listing them all.
     fn strip(&mut self, session: &CodeSession, pointer: Option<Point>, menu_open: bool) {
         self.strip_background();
-        let labels = labels(self.font, session);
+        let labels = labels(self.ctx.font, session);
         if labels.is_empty() {
             return;
         }
@@ -405,7 +401,7 @@ impl Painter<'_> {
             }
             if is_active {
                 fill_rect(
-                    self.framebuffer,
+                    self.ctx.framebuffer,
                     tab.rect.x,
                     tab.rect.bottom() - 1,
                     tab.rect.width,
@@ -434,9 +430,9 @@ impl Painter<'_> {
     /// A diagonal cross filling `rect`.
     fn close_glyph(&mut self, rect: Rect, color: u8) {
         for i in 0..CLOSE_SIZE {
-            pixel(self.framebuffer, rect.x + i, rect.y + i, color);
+            pixel(self.ctx.framebuffer, rect.x + i, rect.y + i, color);
             pixel(
-                self.framebuffer,
+                self.ctx.framebuffer,
                 rect.x + CLOSE_SIZE - 1 - i,
                 rect.y + i,
                 color,
@@ -448,7 +444,7 @@ impl Painter<'_> {
     fn chevron(&mut self, x: i32, y: i32, color: u8) {
         for row in 0..3 {
             let width = CHEVRON_WIDTH - 2 * row;
-            fill_rect(self.framebuffer, x + row, y + row, width, 1, color);
+            fill_rect(self.ctx.framebuffer, x + row, y + row, width, 1, color);
         }
     }
 
@@ -495,7 +491,7 @@ impl Painter<'_> {
             path_x += (self.layout.cells(&label) + 1) * self.cell_w();
         }
         let room = (position_x - self.cell_w() - path_x) / self.cell_w().max(1);
-        let path = shorten_start(self.font, path, usize::try_from(room).unwrap_or(0));
+        let path = shorten_start(self.ctx.font, path, usize::try_from(room).unwrap_or(0));
         self.text(&path, path_x, y, PALE);
         self.text(&position, position_x, y, PALE);
     }
@@ -519,11 +515,18 @@ impl Painter<'_> {
         self.fill(stop, BAR);
         self.play(run);
         self.bug(self.layout.debug_button(), debug_lit);
-        fill_rect(self.framebuffer, stop.x + 2, stop.y + 2, 5, 5, IDLE_SHADE);
+        fill_rect(
+            self.ctx.framebuffer,
+            stop.x + 2,
+            stop.y + 2,
+            5,
+            5,
+            IDLE_SHADE,
+        );
     }
 
     /// The cogwheel opening EDITOR SETTINGS, `lit` while hovered or open.
-    fn settings_button(&mut self, ui: &SystemUi, lit: bool) {
+    fn settings_button(&mut self, lit: bool) {
         let button = self.layout.settings_button();
         let inks = if lit {
             [OUTLINE, HOVER_SHADE, PALE]
@@ -532,8 +535,8 @@ impl Painter<'_> {
         };
         // The icon's transparent margin runs past the bar and draws nothing.
         draw_ink_image(
-            self.framebuffer,
-            ui.icon(SystemIcon::Settings),
+            self.ctx.framebuffer,
+            self.ctx.ui.icon(SystemIcon::Settings),
             button.x - SETTINGS_MARGIN,
             button.y - SETTINGS_MARGIN,
             &inks,
@@ -542,12 +545,18 @@ impl Painter<'_> {
 
     fn options_rule(&mut self) {
         let bar = self.layout.options;
-        fill_rect(self.framebuffer, bar.x, bar.bottom() - 1, bar.width, 1, BAR);
+        fill_rect(
+            self.ctx.framebuffer,
+            bar.x,
+            bar.bottom() - 1,
+            bar.width,
+            1,
+            BAR,
+        );
     }
 
-    /// The rows of `document` that fit from `view`, with line numbers,
-    /// scroll indicators, the caret at `caret` (its spot and byte) and the
-    /// `selected` bytes as `settings` and `metrics` allow.
+    /// The rows of the document that fit from the view, with line numbers,
+    /// scroll indicators, the caret and the selection.
     ///
     /// Selected characters show inverted, each in its own cells however
     /// shaping joins it with its neighbours, and a selected line ending
@@ -556,25 +565,19 @@ impl Painter<'_> {
     /// Only the rows shown are laid out. `metrics` that don't describe this
     /// view leave the indicators and the caret out rather than being
     /// measured again here.
-    /// The text of `document` in `geometry`, with `selected` inverted and
-    /// each of `matches`, sorted and apart, on a highlight.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "each is one part of the view drawn"
-    )]
-    fn text_view(
-        &mut self,
-        document: &CodeDocument,
-        geometry: &TextGeometry,
-        view: DocumentView,
-        metrics: Option<&TextMetrics>,
-        settings: &EditorSettings,
-        caret: Option<(&Spot, usize)>,
-        selected: Range<usize>,
-        matches: &[Range<usize>],
-        syntax: &[Span],
-        marks: Marks<'_>,
-    ) {
+    fn text_view(&mut self, content: TextContent<'_>) {
+        let TextContent {
+            document,
+            geometry,
+            view,
+            metrics,
+            settings,
+            caret,
+            selected,
+            matches,
+            syntax,
+            marks,
+        } = content;
         let geometry = *geometry;
         let found = |byte: usize| {
             let at = matches.partition_point(|found| found.end <= byte);
@@ -601,7 +604,7 @@ impl Painter<'_> {
         let (cell_w, cell_h) = (self.cell_w(), self.cell_h());
         if let Some(gutter) = geometry.gutter {
             fill_rect(
-                self.framebuffer,
+                self.ctx.framebuffer,
                 gutter.right() - 1,
                 gutter.y,
                 1,
@@ -610,7 +613,7 @@ impl Painter<'_> {
             );
         }
         let top_row = if geometry.wrap { view.top_row } else { 0 };
-        let columns = geometry.metrics_key().columns(self.font);
+        let columns = geometry.metrics_key().columns(self.ctx.font);
         let rows = visual_rows(
             document,
             view.top_line,
@@ -626,7 +629,7 @@ impl Painter<'_> {
                 // The line the cartridge stopped on, across the whole row.
                 let gutter_right = geometry.gutter.map_or(geometry.viewport.x, Rect::right);
                 fill_rect(
-                    self.framebuffer,
+                    self.ctx.framebuffer,
                     gutter_right,
                     y,
                     geometry.vertical.x - gutter_right,
@@ -663,7 +666,7 @@ impl Painter<'_> {
             };
             // Shaping never changes which cells characters take, so each
             // glyph lands in its character's cell.
-            let glyphs = self.font.shape(row.text, settings.features());
+            let glyphs = self.ctx.font.shape(row.text, settings.features());
             let row_bytes = row.start.byte..row.start.byte + row.text.len();
             let row_findings: Vec<&EditorDiagnostic> = marks
                 .findings
@@ -708,7 +711,7 @@ impl Painter<'_> {
                 // Characters the font lacks show its fallback, dimmed, and so
                 // do control characters other than tabs, so none of them
                 // goes unseen.
-                let own = self.font.glyph_id(cell.ch).is_some();
+                let own = self.ctx.font.glyph_id(cell.ch).is_some();
                 let (ink, missing) = if is_selected {
                     (BACKGROUND, BACKGROUND)
                 } else if found(cell.byte) {
@@ -720,11 +723,11 @@ impl Painter<'_> {
                 let glyph = match glyph {
                     Some(glyph) if own => Some((glyph, ink)),
                     _ if cell.ch == '\t' => None,
-                    _ => self.font.fallback().map(|glyph| (glyph, missing)),
+                    _ => self.ctx.font.fallback().map(|glyph| (glyph, missing)),
                 };
                 if let Some((glyph, color)) = glyph {
                     let x = geometry.viewport.x + (cell.column - first) as i32 * cell_w;
-                    draw_glyph(self.framebuffer, self.font, glyph, x, y, color);
+                    draw_glyph(self.ctx.framebuffer, self.ctx.font, glyph, x, y, color);
                 }
             }
             let line_end = row.start.byte + row.text.len();
@@ -869,7 +872,11 @@ impl Painter<'_> {
             let line_x = area.right() - PAD - self.layout.cells(&line) * cell_w;
             self.text(&line, line_x, text_y, DIM);
             let room = (line_x - x) / cell_w.max(1) - 3;
-            let name = clip_name(self.font, &symbol.name, usize::try_from(room).unwrap_or(0));
+            let name = clip_name(
+                self.ctx.font,
+                &symbol.name,
+                usize::try_from(room).unwrap_or(0),
+            );
             let color = if selected { TEXT } else { PALE };
             self.text(&name, x + 2 * cell_w, text_y, color);
         }
@@ -891,7 +898,7 @@ impl Painter<'_> {
             // A right-pointing triangle in the space left of the numbers.
             for column in 0..3 {
                 fill_rect(
-                    self.framebuffer,
+                    self.ctx.framebuffer,
                     gutter.x + column,
                     y + (cell_h - 5) / 2 + column,
                     1,
@@ -902,7 +909,7 @@ impl Painter<'_> {
         }
         if marks.breakpoints.contains(line) {
             fill_rect(
-                self.framebuffer,
+                self.ctx.framebuffer,
                 gutter.x + 1,
                 y,
                 gutter.width - 3,
@@ -915,7 +922,7 @@ impl Painter<'_> {
         // It stays readable as the underline and in the status bar.
         if let Some(severity) = finding {
             fill_rect(
-                self.framebuffer,
+                self.ctx.framebuffer,
                 gutter.right() - 4,
                 y + 1,
                 2,
@@ -965,7 +972,7 @@ impl Painter<'_> {
                 TEXT,
             );
             for line in wrap(
-                self.font,
+                self.ctx.font,
                 error,
                 self.layout.text_columns().saturating_sub(2),
             ) {
@@ -990,12 +997,17 @@ impl Painter<'_> {
         let reserved = counts.map_or(0, |counts| self.summary_width(&counts) + self.cell_w());
         let columns =
             usize::try_from((bar.width - 8 - reserved) / self.cell_w().max(1)).unwrap_or(0);
-        let text = clip(self.font, text.lines().next().unwrap_or_default(), columns);
+        let text = clip(
+            self.ctx.font,
+            text.lines().next().unwrap_or_default(),
+            columns,
+        );
         self.text(&text, 4, y, color);
         // Cart ROM takes only the room the text and the counts leave.
-        let free = columns.saturating_sub(self.font.text_cells(&text) + 1);
-        if let Some(tag) = rom_tag(rom, self.font, free) {
-            let width = i32::try_from(self.font.text_cells(&tag.text)).unwrap_or(0) * self.cell_w();
+        let free = columns.saturating_sub(self.ctx.font.text_cells(&text) + 1);
+        if let Some(tag) = rom_tag(rom, self.ctx.font, free) {
+            let width =
+                i32::try_from(self.ctx.font.text_cells(&tag.text)).unwrap_or(0) * self.cell_w();
             self.text(&tag.text, bar.right() - 4 - reserved - width, y, tag.color);
         }
         if let Some(counts) = counts {
@@ -1039,7 +1051,7 @@ impl Painter<'_> {
 
     /// The list of every open tab, `focus` highlighted.
     fn menu(&mut self, session: &CodeSession, window: Rect, rows: &[(usize, Rect)], focus: usize) {
-        let labels = labels(self.font, session);
+        let labels = labels(self.ctx.font, session);
         let active = session
             .tabs()
             .active()
@@ -1069,8 +1081,8 @@ impl Painter<'_> {
         let layout = picker_layout(self.layout, picker);
         let cell_w = self.cell_w();
         draw_window(
-            self.framebuffer,
-            self.font,
+            self.ctx.framebuffer,
+            self.ctx.font,
             layout.window,
             layout.title_bar,
             &ui_text::get("code-open-file-2"),
@@ -1080,7 +1092,7 @@ impl Painter<'_> {
         self.text(&filter, layout.filter.x, layout.filter.y, INK);
         let rule_y = layout.filter.bottom() + self.cell_h() / 2;
         fill_rect(
-            self.framebuffer,
+            self.ctx.framebuffer,
             layout.filter.x,
             rule_y,
             layout.filter.width,
@@ -1105,7 +1117,7 @@ impl Painter<'_> {
                 // Inverted against the row, so it reads on the light body
                 // and on the highlight alike.
                 let marker_y = rect.y + (rect.height - 3) / 2;
-                fill_rect(self.framebuffer, rect.x + 2, marker_y, 3, 3, ink);
+                fill_rect(self.ctx.framebuffer, rect.x + 2, marker_y, 3, 3, ink);
                 let tag = Rect {
                     x: rect.right() - 4 - tag_width,
                     y: rect.y,
@@ -1116,7 +1128,11 @@ impl Painter<'_> {
                 self.text(&open_tag(), tag.x + 2, rect.y + 1, ground);
             }
             let room = (rect.width - marker - tag_width - 4 - cell_w) / cell_w.max(1);
-            let label = shorten_start(self.font, path.as_str(), usize::try_from(room).unwrap_or(0));
+            let label = shorten_start(
+                self.ctx.font,
+                path.as_str(),
+                usize::try_from(room).unwrap_or(0),
+            );
             self.text(&label, rect.x + marker, rect.y + 1, ink);
         }
 
@@ -1137,7 +1153,7 @@ impl Painter<'_> {
         };
         let columns = usize::try_from(layout.list.width / cell_w.max(1)).unwrap_or(0);
         let mut y = layout.summary_y;
-        let font = self.font;
+        let font = self.ctx.font;
         let clip = |text: &str| take_cells(font, text, columns).to_owned();
         self.text(&clip(&summary), layout.text_x, y, INK);
         for line in picker.gap_lines() {

@@ -3,7 +3,6 @@
 
 use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
-use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjBank};
 use glaux_machine::sprite::OBJ_TILE_WIDTH;
@@ -14,6 +13,7 @@ use super::layout::Metrics;
 use super::render::{bank_name, checker, outline};
 use crate::system::screen::PALE;
 use crate::system::workspace::Rect;
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::dialog::{
     BODY, INK, PAD, SHADOW_OFFSET, draw_button, draw_window, fill, text_cells as cells,
 };
@@ -157,12 +157,12 @@ impl PalettePicker {
     /// `pointer` highlighted.
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &PickerLayout,
         source: &SpriteSource<'_>,
         pointer: Option<Point>,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let (cell_w, cell_h) = (layout.cell_w, layout.cell_h);
         let text = |fb: &mut Framebuffer, text: &str, x: i32, y: i32, color: u8| {
             draw_text(fb, font, text, x, y, color);

@@ -3,8 +3,6 @@
 //! The rows are the findings the session already holds, in the order of
 //! their position, so they read in the same order as F8 visits them.
 
-use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
 use glaux_i18n::Arg;
@@ -20,6 +18,7 @@ use crate::system::editing::session::CodeSession;
 use crate::system::screen::{BACKGROUND, DIM, PALE, TEXT};
 use crate::system::text::clip;
 use crate::system::workspace::BAR;
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::detail::Detail;
 use crate::ui_text;
 
@@ -181,13 +180,13 @@ impl DiagList {
     /// Draws the list into the layout's problem rows.
     pub(super) fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &CodeLayout,
         document: &CodeDocument,
         found: &[EditorDiagnostic],
         hover: Option<usize>,
     ) {
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let area = layout.diag;
         fill_rect(
             framebuffer,

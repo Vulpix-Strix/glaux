@@ -2,11 +2,10 @@
 //! FILE. The window holding it decides what the text means.
 
 use glaux_input::{InputEvent, PointerButton};
-use glaux_machine::font::BitmapFont;
-use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::draw_text;
 
 use crate::system::workspace::Rect;
+use crate::system::workspace::RenderContext;
 use crate::system::workspace::dialog::{
     AREA_MARGIN, BODY, INK, PAD, SHADOW_OFFSET, draw_window, fill, text_cells,
 };
@@ -143,26 +142,25 @@ impl Prompt {
     /// Draws the prompt with `message` under the field in its color.
     pub fn render(
         &self,
-        framebuffer: &mut Framebuffer,
-        font: &BitmapFont,
+        ctx: &mut RenderContext<'_>,
         layout: &PromptLayout,
         message: (&str, u8),
         lit: bool,
     ) {
         draw_window(
-            framebuffer,
-            font,
+            ctx.framebuffer,
+            ctx.font,
             layout.window,
             layout.title_bar,
             &self.title,
             layout.cell_w,
         );
         let clip = |text: &str| {
-            crate::system::workspace::take_cells(font, text, layout.columns).to_owned()
+            crate::system::workspace::take_cells(ctx.font, text, layout.columns).to_owned()
         };
         draw_text(
-            framebuffer,
-            font,
+            ctx.framebuffer,
+            ctx.font,
             &clip(&self.label),
             layout.text_x,
             layout.label_y,
@@ -170,17 +168,16 @@ impl Prompt {
         );
         let field_text_y = layout.field.y + 2;
         draw_text(
-            framebuffer,
-            font,
+            ctx.framebuffer,
+            ctx.font,
             self.prefix,
             layout.text_x,
             field_text_y,
             INK,
         );
-        fill(framebuffer, layout.field, INK);
+        fill(ctx.framebuffer, layout.field, INK);
         self.field.render(
-            framebuffer,
-            font,
+            ctx,
             layout.field.inset(1),
             FieldColors {
                 ground: BODY,
@@ -193,8 +190,8 @@ impl Prompt {
         );
         let (text, color) = message;
         draw_text(
-            framebuffer,
-            font,
+            ctx.framebuffer,
+            ctx.font,
             &clip(text),
             layout.text_x,
             layout.message_y,
