@@ -1,10 +1,12 @@
-//! A frame palette that shows system UI colors and a cartridge's object
-//! and background colors in the same indexed frame.
+//! A frame palette that shows system UI colors and a cartridge's object or
+//! background colors in the same indexed frame.
 //!
 //! A frame is presented with a single 256-entry palette. Tools that draw
 //! their own interface next to cartridge graphics keep their UI colors in
-//! the low entries and place every master color the palette banks can
-//! resolve to in the entries after them.
+//! the low entries and place every master color the palette banks of the
+//! tiles they show can resolve to in the entries after them. Showing both
+//! kinds at once could need 180 entries, so a tool builds the preview for
+//! the kind it draws.
 
 use glaux_machine::bg::{BG_PALETTE_COLORS, BgPalettes};
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjBank, ObjPalettes};
@@ -29,8 +31,7 @@ pub struct ObjPreviewPaletteError {
 /// with those indices looks as it does elsewhere. Each master index that
 /// some object palette bank maps a local index to gets one entry after
 /// them, holding exactly that master color. Entries are allocated in
-/// bank order, then local order, on a master index's first appearance,
-/// object banks before background ones, so
+/// bank order, then local order, on a master index's first appearance, so
 /// the same palettes always produce the same layout. Masters are never
 /// merged by color: two master indices with equal RGB keep separate entries.
 ///
@@ -56,28 +57,35 @@ impl ObjPreviewPalette {
         master: &Palette,
         obj: &ObjPalettes,
     ) -> Result<Self, ObjPreviewPaletteError> {
-        Self::build(system, reserved, master, obj, None)
+        let masters = (0..OBJ_PALETTE_BANKS as u8)
+            .filter_map(ObjBank::new)
+            .flat_map(|bank| (1..OBJ_PALETTE_COLORS as u8).map(move |local| (bank, local)))
+            .filter_map(|(bank, local)| obj.resolve(bank, local));
+        Self::build(system, reserved, master, masters)
     }
 
-    /// Like [`new`](Self::new), and also giving an entry to every master
-    /// color the background palette banks `bg` can resolve to, after the
-    /// object ones.
-    pub fn with_background(
+    /// Builds the palette for background tiles: every master color the
+    /// background palette banks `bg` can resolve to gets an entry, and the
+    /// object banks get none. Entries follow the same allocation order as
+    /// [`new`](Self::new), over the four background banks.
+    pub fn for_background(
         system: &Palette,
         reserved: usize,
         master: &Palette,
-        obj: &ObjPalettes,
         bg: &BgPalettes,
     ) -> Result<Self, ObjPreviewPaletteError> {
-        Self::build(system, reserved, master, obj, Some(bg))
+        let masters = (0..BG_PALETTE_BANKS as u8)
+            .filter_map(BgBank::new)
+            .flat_map(|bank| (1..BG_PALETTE_COLORS as u8).map(move |local| (bank, local)))
+            .filter_map(|(bank, local)| bg.resolve(bank, local));
+        Self::build(system, reserved, master, masters)
     }
 
     fn build(
         system: &Palette,
         reserved: usize,
         master: &Palette,
-        obj: &ObjPalettes,
-        bg: Option<&BgPalettes>,
+        masters: impl Iterator<Item = u8>,
     ) -> Result<Self, ObjPreviewPaletteError> {
         let reserved = reserved.min(PALETTE_LEN);
         let mut entries = *system.entries();
@@ -85,17 +93,7 @@ impl ObjPreviewPalette {
         let mut next = reserved;
         let mut needed = 0;
 
-        let object_masters = (0..OBJ_PALETTE_BANKS as u8)
-            .filter_map(ObjBank::new)
-            .flat_map(|bank| (1..OBJ_PALETTE_COLORS as u8).map(move |local| (bank, local)))
-            .filter_map(|(bank, local)| obj.resolve(bank, local));
-        let background_masters = bg.into_iter().flat_map(|bg| {
-            (0..BG_PALETTE_BANKS as u8)
-                .filter_map(BgBank::new)
-                .flat_map(|bank| (1..BG_PALETTE_COLORS as u8).map(move |local| (bank, local)))
-                .filter_map(|(bank, local)| bg.resolve(bank, local))
-        });
-        for index in object_masters.chain(background_masters) {
+        for index in masters {
             let slot = &mut slots[usize::from(index)];
             if slot.is_some() {
                 continue;

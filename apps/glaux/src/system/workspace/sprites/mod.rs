@@ -154,7 +154,7 @@ impl SpriteEditor {
         self.advanced
     }
 
-    #[cfg(test)]
+    /// Which tiles the editor shows.
     pub fn tileset(&self) -> TileSet {
         self.tileset
     }

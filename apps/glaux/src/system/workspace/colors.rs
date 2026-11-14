@@ -2,7 +2,7 @@
 
 use super::sprites::SpriteSource;
 use super::{SYSTEM_COLORS, Workspace};
-use crate::system::sprite_document::SpriteDocument;
+use crate::system::sprite_document::{SpriteDocument, TileSet};
 use crate::ui_text;
 use glaux_machine::bg::BgPalettes;
 use glaux_machine::obj_palette::ObjPalettes;
@@ -10,8 +10,13 @@ use glaux_machine::palette::Palette;
 use glaux_video::preview::ObjPreviewPalette;
 
 /// How the workspace shows the cartridge's colors: where the frame palette
-/// holds each master color the object and background palettes use, or why the cartridge's
-/// video state can't be shown.
+/// holds each master color the palettes of the tiles on show use, or why
+/// the cartridge's video state can't be shown.
+///
+/// Only one kind of tile is shown at a time, so the frame palette only
+/// holds the colors of that kind's palette banks. Object and background
+/// banks together could need more entries than fit before the colors of the
+/// sprite editor's dialogs.
 #[derive(Debug)]
 // Boxed: a frame palette would make every system state as large as this
 // one.
@@ -27,8 +32,25 @@ pub(super) struct PreparedVideo {
     /// with.
     frame: Palette,
     master: Palette,
-    obj: ObjPalettes,
-    bg: BgPalettes,
+    /// The palette banks the preview was built from, which are the object
+    /// ones or the background ones according to `set`.
+    banks: Banks,
+    set: TileSet,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Banks {
+    Obj(ObjPalettes),
+    Bg(BgPalettes),
+}
+
+impl Banks {
+    fn of(document: &SpriteDocument, set: TileSet) -> Self {
+        match set {
+            TileSet::Obj => Self::Obj(document.obj().palettes().clone()),
+            TileSet::Bg => Self::Bg(document.bg().palettes().clone()),
+        }
+    }
 }
 
 impl WorkspaceVideo {
@@ -67,36 +89,49 @@ impl WorkspaceVideo {
         })
     }
 
-    /// Whether the frame palette was built from `document`'s palettes as
-    /// they are now.
-    fn matches(&self, document: &SpriteDocument) -> bool {
+    /// Whether the frame palette was built from `document`'s palettes of
+    /// the tiles `set` shows, as they are now.
+    fn matches(&self, document: &SpriteDocument, set: TileSet) -> bool {
         self.0.as_ref().is_ok_and(|video| {
-            video.master == document.video().palette
-                && video.obj == *document.obj().palettes()
-                && video.bg == *document.bg().palettes()
+            video.set == set
+                && video.master == document.video().palette
+                && video.banks == Banks::of(document, set)
         })
     }
 }
 
 impl Workspace {
-    /// Prepares to show `document` in the workspace's frame palette. It
-    /// holds until the document's palettes change. See
+    /// Prepares to show `document` in the workspace's frame palette, for
+    /// the tiles the sprite editor shows now. It holds until the document's
+    /// palettes change or the editor switches tiles. See
     /// [`refresh_video`](Self::refresh_video).
     pub fn prepare_video(&self, document: &SpriteDocument) -> WorkspaceVideo {
+        self.prepare_video_for(document, self.sprites.tileset())
+    }
+
+    fn prepare_video_for(&self, document: &SpriteDocument, set: TileSet) -> WorkspaceVideo {
         let video = document.video();
-        match ObjPreviewPalette::with_background(
-            &self.system_palette,
-            SYSTEM_COLORS,
-            &video.palette,
-            video.obj.palettes(),
-            video.bg.palettes(),
-        ) {
+        let preview = match set {
+            TileSet::Obj => ObjPreviewPalette::new(
+                &self.system_palette,
+                SYSTEM_COLORS,
+                &video.palette,
+                video.obj.palettes(),
+            ),
+            TileSet::Bg => ObjPreviewPalette::for_background(
+                &self.system_palette,
+                SYSTEM_COLORS,
+                &video.palette,
+                video.bg.palettes(),
+            ),
+        };
+        match preview {
             Ok(preview) => WorkspaceVideo(Ok(Box::new(PreparedVideo {
                 frame: preview.palette().clone(),
                 preview,
                 master: video.palette.clone(),
-                obj: video.obj.palettes().clone(),
-                bg: video.bg.palettes().clone(),
+                banks: Banks::of(document, set),
+                set,
             }))),
             Err(err) => {
                 WorkspaceVideo::unavailable(super::super::ui_errors::video::preview_palette(&err))
@@ -104,12 +139,13 @@ impl Workspace {
         }
     }
 
-    /// Prepares `video` again if `document`'s palettes changed since it was
-    /// prepared, so the frame palette never shows stale colors, and gives
+    /// Prepares `video` again if `document`'s palettes, or the tiles the
+    /// sprite editor shows, changed since it was prepared, so the frame
+    /// palette never shows stale colors or misses the ones on show, and gives
     /// the frame palette the colors of the sprite editor's open dialog.
     /// Video that could not be prepared stays as it is.
     pub fn refresh_video(&self, video: &mut WorkspaceVideo, document: &SpriteDocument) {
-        if video.is_ready() && !video.matches(document) {
+        if video.is_ready() && !video.matches(document, self.sprites.tileset()) {
             *video = self.prepare_video(document);
         }
         if let Ok(prepared) = &mut video.0 {
@@ -128,3 +164,6 @@ impl Workspace {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

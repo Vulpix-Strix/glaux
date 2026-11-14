@@ -115,11 +115,9 @@ fn too_many_colors_for_the_free_entries_is_an_error() {
     );
 }
 
-#[test]
-fn background_banks_get_their_own_entries_after_the_object_ones() {
-    // The object banks map 1..=120 and the background banks 200..=214 in
-    // bank 0 only, the rest of them to master 1.
-    let obj = obp(|bank, local| (bank * 15 + local) as u8);
+/// Background banks mapping masters 200..=214 in BGP0 and master 1 in the
+/// other banks.
+fn background_banks() -> BgPalettes {
     let mut bytes = [1; glaux_machine::bg::BG_PALETTES_BYTES];
     for bank in 0..4 {
         bytes[bank * 16] = 0;
@@ -127,26 +125,48 @@ fn background_banks_get_their_own_entries_after_the_object_ones() {
     for (local, byte) in bytes.iter_mut().enumerate().take(16).skip(1) {
         *byte = 199 + local as u8;
     }
-    let bg = BgPalettes::from_bytes(&bytes).unwrap();
-    let preview =
-        ObjPreviewPalette::with_background(&system(), RESERVED, &master(), &obj, &bg).unwrap();
+    BgPalettes::from_bytes(&bytes).unwrap()
+}
 
+#[test]
+fn background_previews_give_entries_to_background_masters_only() {
+    let preview =
+        ObjPreviewPalette::for_background(&system(), RESERVED, &master(), &background_banks())
+            .unwrap();
     for index in 200..=214u8 {
         let slot = preview.slot(index).expect("a background master has a slot");
         assert_eq!(preview.palette().get(slot), master().get(index));
     }
-    // 120 object masters come first, then the 15 background ones.
-    assert_eq!(preview.slot(1), Some(RESERVED as u8));
-    assert_eq!(preview.slot(200), Some(RESERVED as u8 + 120));
+    // Master 1 comes first as bank 0's neighbours map it, after BGP0's 15.
+    assert_eq!(preview.slot(200), Some(RESERVED as u8));
+    assert_eq!(preview.slot(1), Some(RESERVED as u8 + 15));
+    // Linear object banks map masters this one never refers to.
+    assert_eq!(preview.slot(2), None);
+    let used = preview.slots().iter().filter(|&&slot| slot != 0).count();
+    assert_eq!(used, 16, "15 masters of BGP0 and master 1");
 }
 
 #[test]
-fn a_master_shared_by_both_kinds_of_bank_has_one_entry() {
-    let obj = ObjPalettes::linear();
-    let bg = BgPalettes::linear();
-    let both =
-        ObjPreviewPalette::with_background(&system(), RESERVED, &master(), &obj, &bg).unwrap();
-    // Linear object banks cover masters 1..=127 but for multiples of 16
-    // and the background ones are inside them, so nothing is added.
-    assert_eq!(both, build(&obj));
+fn a_full_set_of_banks_of_either_kind_leaves_room_for_the_dialog_colors() {
+    // The largest object and background previews end before the entries a
+    // tool keeps for its dialogs, 97 from the end of the palette.
+    let obj = obp(|bank, local| (bank * 15 + local) as u8);
+    let object = build(&obj);
+    let mut bytes = [0; glaux_machine::bg::BG_PALETTES_BYTES];
+    for (offset, byte) in bytes.iter_mut().enumerate() {
+        if offset % 16 != 0 {
+            *byte = 100 + (offset - offset / 16 - 1) as u8;
+        }
+    }
+    let background = ObjPreviewPalette::for_background(
+        &system(),
+        RESERVED,
+        &master(),
+        &BgPalettes::from_bytes(&bytes).unwrap(),
+    )
+    .unwrap();
+    for preview in [&object, &background] {
+        let highest = preview.slots().iter().copied().max().unwrap();
+        assert!(usize::from(highest) < PALETTE_LEN - 97, "{highest}");
+    }
 }

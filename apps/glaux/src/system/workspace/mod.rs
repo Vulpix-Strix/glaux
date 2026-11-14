@@ -28,12 +28,14 @@ mod sprites;
 mod tab;
 mod text_field;
 
+use glaux_machine::bg::BG_PALETTE_COLORS;
 use glaux_machine::font::BitmapFont;
 #[cfg(test)]
 use glaux_machine::font::FontMetrics;
 use glaux_machine::machine::TICK_RATE;
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS};
 use glaux_machine::palette::Palette;
+use glaux_machine::tilemap::BG_PALETTE_BANKS;
 
 use super::docs as library_docs;
 use super::editing::session::CodeSession;
@@ -72,10 +74,14 @@ pub use tab::{Rect, Tab, TabLabels};
 /// are placed after it.
 const SYSTEM_COLORS: usize = 32;
 
-// The UI colors, every master color the object palettes can reach and the
-// sprite editor's dialog colors each keep entries of their own.
+// The UI colors, every master color the palettes of the tiles on show can
+// reach and the sprite editor's dialog colors each keep entries of their
+// own. Object and background tiles are never shown together, so each kind
+// is checked alone.
 const _: () =
     assert!(SYSTEM_COLORS + OBJ_PALETTE_BANKS * (OBJ_PALETTE_COLORS - 1) <= sprites::SCRATCH_BASE);
+const _: () =
+    assert!(SYSTEM_COLORS + BG_PALETTE_BANKS * (BG_PALETTE_COLORS - 1) <= sprites::SCRATCH_BASE);
 
 /// Fill of the tab bar, as a system palette index.
 const BAR: u8 = 12;
