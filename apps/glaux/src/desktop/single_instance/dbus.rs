@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 use anyhow::Context;
-use zbus::blocking::Connection;
-use zbus::blocking::connection::Builder;
+use zbus::Connection;
+use zbus::block_on;
+use zbus::connection::Builder;
 use zbus::fdo::RequestNameFlags;
 
 use super::{Claim, SecondaryLaunch};
@@ -40,10 +41,11 @@ pub(super) fn claim(
     launch: &SecondaryLaunch,
     launches: Sender<SecondaryLaunch>,
 ) -> Claim<Connection> {
-    let connection = match Builder::session()
-        .and_then(|builder| builder.serve_at(OBJECT_PATH, Listener { launches }))
-        .and_then(Builder::build)
-    {
+    let connection = match block_on(
+        Builder::session()
+            .serve_at(OBJECT_PATH, Listener { launches })
+            .build(),
+    ) {
         Ok(connection) => connection,
         Err(err) => {
             return Claim::Unavailable(
@@ -52,8 +54,8 @@ pub(super) fn claim(
         }
     };
     // The name is requested with exactly `DoNotQueue` rather than through
-    // `Builder::name`. zbus's default flags are `AllowReplacement |
-    // ReplaceExisting | DoNotQueue`, so with the defaults a later launch
+    // `Builder::name`. zbus's default flags are `ALLOW_REPLACEMENT |
+    // REPLACE_EXISTING | DO_NOT_QUEUE`, so with the defaults a later launch
     // silently takes the name from the running instance instead of failing
     // with `NameTaken`, and both processes start as owners. See
     // https://github.com/z-galaxy/zbus/pull/1431 and
@@ -61,7 +63,7 @@ pub(super) fn claim(
     //
     // After updating zbus, check that requesting an owned name with these
     // flags still fails with `NameTaken` (e.g. launch Glaux twice).
-    match connection.request_name_with_flags(BUS_NAME, RequestNameFlags::DoNotQueue.into()) {
+    match block_on(connection.request_name_with_flags(BUS_NAME, RequestNameFlags::DO_NOT_QUEUE)) {
         Ok(_) => Claim::Owner(connection),
         Err(zbus::Error::NameTaken) => match forward(launch) {
             Ok(()) => Claim::Forwarded,
@@ -75,16 +77,16 @@ pub(super) fn claim(
 
 /// Calls the running owner with `launch`.
 fn forward(launch: &SecondaryLaunch) -> anyhow::Result<()> {
-    let connection = Connection::session().context("failed to connect to the session D-Bus")?;
+    let connection =
+        block_on(Connection::session()).context("failed to connect to the session D-Bus")?;
     let cwd = launch.cwd.to_string_lossy();
-    connection
-        .call_method(
-            Some(BUS_NAME),
-            OBJECT_PATH,
-            Some(INTERFACE),
-            METHOD,
-            &(&launch.args, cwd.as_ref()),
-        )
-        .with_context(|| format!("failed to call {METHOD} on {BUS_NAME}"))?;
+    block_on(connection.call_method(
+        Some(BUS_NAME),
+        OBJECT_PATH,
+        Some(INTERFACE),
+        METHOD,
+        &(&launch.args, cwd.as_ref()),
+    ))
+    .with_context(|| format!("failed to call {METHOD} on {BUS_NAME}"))?;
     Ok(())
 }
