@@ -138,3 +138,48 @@ fn near_the_areas_edges_the_menu_moves_back_inside() {
     }
     assert!(layout.rows.last().unwrap().bottom() < layout.window.bottom());
 }
+
+fn long_menu() -> ContextMenu<usize> {
+    let entries = (0..20)
+        .map(|n| MenuEntry::item(&format!("Item {n}"), None, n))
+        .collect();
+    ContextMenu::new(entries, Point::new(10, 30)).limited_to(5 * 14 + 2)
+}
+
+#[test]
+fn a_limited_menu_scrolls_to_keep_the_highlight_in_view() {
+    let area = AREA;
+    let layout = |menu: &ContextMenu<usize>| menu.layout(&LAYOUT_FONT, area, 6, 12);
+    let mut menu = long_menu();
+    let first = layout(&menu);
+    assert_eq!((first.first, first.rows.len()), (0, 5));
+    assert_eq!(first.window.height, 5 * 14 + 2);
+
+    let down = InputEvent::Down { select: false };
+    for _ in 0..7 {
+        let current = layout(&menu);
+        menu.handle_input(down, &current);
+    }
+    let scrolled = layout(&menu);
+    assert_eq!(menu.focus(), Some(6));
+    assert_eq!(scrolled.first, 2, "the highlighted entry is the last shown");
+    assert_eq!(
+        scrolled.entry_at(centre(scrolled.rows[4])),
+        Some(6),
+        "rows report the entry they stand for"
+    );
+}
+
+#[test]
+fn the_wheel_scrolls_and_drops_a_highlight_that_leaves_the_view() {
+    let mut menu = long_menu().focused_on(1);
+    let layout = menu.layout(&LAYOUT_FONT, AREA, 6, 12);
+    menu.handle_input(InputEvent::Wheel { delta: -3 }, &layout);
+    let after = menu.layout(&LAYOUT_FONT, AREA, 6, 12);
+    assert_eq!(after.first, 3);
+    assert_eq!(menu.focus(), None);
+
+    menu.handle_input(InputEvent::Wheel { delta: -100 }, &after);
+    let end = menu.layout(&LAYOUT_FONT, AREA, 6, 12);
+    assert_eq!(end.first + end.rows.len(), 20, "stops at the last entry");
+}

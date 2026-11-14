@@ -11,8 +11,8 @@ use glaux_machine::font::BitmapFont;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_video::draw::{draw_text, fill_rect};
 
-use super::{BAR, HOVER_SHADE, IDLE_SHADE, Rect};
-use crate::system::screen::{DIM, PALE, TEXT};
+use super::{BAR, HOVER_SHADE, IDLE_SHADE, Rect, take_cells};
+use crate::system::screen::{ACCENT, DIM, ERROR, PALE, TEXT};
 use crate::system::workspace::RenderContext;
 use crate::ui_text;
 
@@ -27,6 +27,16 @@ const LABEL_INDENT: i32 = 1;
 /// Cells at least between a label and its shortcut.
 const SHORTCUT_GAP: i32 = 3;
 
+/// How an item is inked when it can be chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemStyle {
+    Plain,
+    /// The item stands for what is open now.
+    Current,
+    /// The item stands for something that failed.
+    Broken,
+}
+
 /// One row of a menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuEntry<A> {
@@ -35,6 +45,7 @@ pub enum MenuEntry<A> {
         /// The keys that do the same, shown at the row's right end.
         shortcut: Option<&'static str>,
         enabled: bool,
+        style: ItemStyle,
         action: A,
     },
     /// A rule between groups of items.
@@ -48,6 +59,7 @@ impl<A> MenuEntry<A> {
             label: label.to_owned(),
             shortcut,
             enabled: true,
+            style: ItemStyle::Plain,
             action,
         }
     }
@@ -58,8 +70,17 @@ impl<A> MenuEntry<A> {
             label: label.to_owned(),
             shortcut,
             enabled,
+            style: ItemStyle::Plain,
             action,
         }
+    }
+
+    /// The same entry inked as `style` when it is an item.
+    pub fn styled(mut self, new: ItemStyle) -> Self {
+        if let Self::Item { style, .. } = &mut self {
+            *style = new;
+        }
+        self
     }
 
     fn is_enabled(&self) -> bool {
@@ -90,6 +111,10 @@ pub struct ContextMenu<A> {
     anchor: Point,
     /// The highlighted entry, always an enabled item.
     focus: Option<usize>,
+    /// The tallest the window may be. A taller menu scrolls.
+    max_height: Option<i32>,
+    /// The first entry shown while the menu scrolls.
+    top: usize,
 }
 
 /// Where a menu's parts sit for one area and font.
@@ -98,13 +123,19 @@ pub struct MenuLayout {
     pub window: Rect,
     /// Each entry's row, in order.
     pub rows: Vec<Rect>,
+    /// The entry the first row stands for.
+    pub first: usize,
     cell_w: i32,
+    /// Every entry's height and the room for them, to keep the focus in view.
+    heights: Vec<i32>,
+    room: Option<i32>,
 }
 
 impl MenuLayout {
     /// The entry whose row is under `point`.
     pub fn entry_at(&self, point: Point) -> Option<usize> {
-        self.rows.iter().position(|row| row.contains(point))
+        let shown = self.rows.iter().position(|row| row.contains(point))?;
+        Some(self.first + shown)
     }
 }
 
@@ -115,7 +146,21 @@ impl<A: Copy> ContextMenu<A> {
             entries,
             anchor,
             focus: None,
+            max_height: None,
+            top: 0,
         }
+    }
+
+    /// The same menu no taller than `height`, scrolling when it needs more.
+    pub fn limited_to(mut self, height: i32) -> Self {
+        self.max_height = Some(height);
+        self
+    }
+
+    /// The same menu with entry `index` highlighted, if it can be chosen.
+    pub fn focused_on(mut self, index: usize) -> Self {
+        self.focus = self.entries.get(index).filter(|e| e.is_enabled()).map(|_| index);
+        self
     }
 
     #[cfg(test)]
@@ -143,17 +188,20 @@ impl<A: Copy> ContextMenu<A> {
             }
         }
         let gap = if shortcuts > 0 { SHORTCUT_GAP } else { 0 };
-        let width = (LABEL_INDENT + labels + gap + shortcuts + 1) * cell_w + 2;
         let row_height = cell_h + 2;
-        let height = self
+        let heights: Vec<i32> = self
             .entries
             .iter()
             .map(|entry| match entry {
                 MenuEntry::Item { .. } => row_height,
                 MenuEntry::Separator => SEPARATOR_HEIGHT,
             })
-            .sum::<i32>()
-            + 2;
+            .collect();
+        let width = ((LABEL_INDENT + labels + gap + shortcuts + 1) * cell_w + 2).min(area.width);
+        let room = self.max_height.map(|height| height - 2);
+        let first = self.first_shown(&heights, room);
+        let shown = shown_from(first, &heights, room);
+        let height = heights[first..first + shown].iter().sum::<i32>() + 2;
         let x = i32::from(self.anchor.x)
             .min(area.right() - width)
             .max(area.x);
@@ -167,14 +215,9 @@ impl<A: Copy> ContextMenu<A> {
             height,
         };
         let mut top = y + 1;
-        let rows = self
-            .entries
+        let rows = heights[first..first + shown]
             .iter()
-            .map(|entry| {
-                let height = match entry {
-                    MenuEntry::Item { .. } => row_height,
-                    MenuEntry::Separator => SEPARATOR_HEIGHT,
-                };
+            .map(|&height| {
                 let row = Rect {
                     x: x + 1,
                     y: top,
@@ -188,8 +231,29 @@ impl<A: Copy> ContextMenu<A> {
         MenuLayout {
             window,
             rows,
+            first,
             cell_w,
+            heights,
+            room,
         }
+    }
+
+    /// The first entry to show: the scroll position, moved as far as keeps
+    /// the highlighted entry in view.
+    fn first_shown(&self, heights: &[i32], room: Option<i32>) -> usize {
+        let Some(room) = room else { return 0 };
+        let last = heights.len().saturating_sub(1);
+        let mut first = self.top.min(last);
+        match self.focus {
+            Some(focus) if focus < first => first = focus,
+            Some(focus) => {
+                while first < focus && heights[first..=focus].iter().sum::<i32>() > room {
+                    first += 1;
+                }
+            }
+            None => {}
+        }
+        first
     }
 
     /// Applies `event`. Every input is taken while the menu is open.
@@ -209,6 +273,7 @@ impl<A: Copy> ContextMenu<A> {
                     return MenuOutcome::Run(action);
                 }
             }
+            InputEvent::Wheel { delta } => self.scroll(-isize::from(delta), layout),
             InputEvent::PointerMove(Some(at)) => {
                 if let Some(index) = layout.entry_at(at) {
                     self.focus = self.entries[index].is_enabled().then_some(index);
@@ -226,7 +291,25 @@ impl<A: Copy> ContextMenu<A> {
             }
             _ => {}
         }
+        if self.max_height.is_some() {
+            self.top = self.first_shown(&layout.heights, layout.room);
+        }
         MenuOutcome::Stay
+    }
+
+    /// Scrolls `by` entries, dropping the highlight if it leaves the view.
+    fn scroll(&mut self, by: isize, layout: &MenuLayout) {
+        let Some(room) = layout.room else { return };
+        let len = layout.heights.len();
+        let last_top = (0..len)
+            .find(|&first| shown_from(first, &layout.heights, Some(room)) == len - first)
+            .unwrap_or(0);
+        let top = layout.first.saturating_add_signed(by).min(last_top);
+        let shown = shown_from(top, &layout.heights, Some(room));
+        if self.focus.is_some_and(|at| at < top || at >= top + shown) {
+            self.focus = None;
+        }
+        self.top = top;
     }
 
     /// Whether a press at `point` would choose an item.
@@ -272,7 +355,8 @@ impl<A: Copy> ContextMenu<A> {
         };
         fill(framebuffer, layout.window, DIM);
         fill(framebuffer, layout.window.inset(1), BAR);
-        for (index, (entry, &row)) in self.entries.iter().zip(&layout.rows).enumerate() {
+        let entries = self.entries.iter().enumerate().skip(layout.first);
+        for ((index, entry), &row) in entries.zip(&layout.rows) {
             match entry {
                 MenuEntry::Separator => {
                     let rule = Rect {
@@ -287,22 +371,26 @@ impl<A: Copy> ContextMenu<A> {
                     label,
                     shortcut,
                     enabled,
+                    style,
                     ..
                 } => {
                     let focused = self.focus == Some(index);
                     if focused {
                         fill(framebuffer, row, HOVER_SHADE);
                     }
-                    let (ink, key_ink) = match (enabled, focused) {
-                        (false, _) => (IDLE_SHADE, IDLE_SHADE),
-                        (true, true) => (TEXT, PALE),
-                        (true, false) => (PALE, DIM),
+                    let (ink, key_ink) = match (enabled, focused, style) {
+                        (false, ..) => (IDLE_SHADE, IDLE_SHADE),
+                        (true, _, ItemStyle::Current) => (ACCENT, DIM),
+                        (true, _, ItemStyle::Broken) => (ERROR, DIM),
+                        (true, true, ItemStyle::Plain) => (TEXT, PALE),
+                        (true, false, ItemStyle::Plain) => (PALE, DIM),
                     };
                     let y = row.y + 1;
+                    let reach = (row.width / layout.cell_w - 2 * LABEL_INDENT).max(0);
                     draw_text(
                         framebuffer,
                         font,
-                        label,
+                        take_cells(font, label, usize::try_from(reach).unwrap_or(0)),
                         row.x + LABEL_INDENT * layout.cell_w,
                         y,
                         ink,
@@ -315,7 +403,30 @@ impl<A: Copy> ContextMenu<A> {
                 }
             }
         }
+        let total = self.entries.len();
+        if layout.rows.len() < total {
+            let inner = layout.window.inset(1);
+            let thumb = inner.height * layout.rows.len() as i32 / total as i32;
+            let at = inner.y + inner.height * layout.first as i32 / total as i32;
+            fill(framebuffer, Rect { x: inner.right() - 2, y: at, width: 2, height: thumb }, DIM);
+        }
     }
+}
+
+/// How many entries from `first` fit in `room`, at least one.
+fn shown_from(first: usize, heights: &[i32], room: Option<i32>) -> usize {
+    let Some(room) = room else {
+        return heights.len() - first;
+    };
+    let mut used = 0;
+    let fitting = heights[first..]
+        .iter()
+        .take_while(|&&height| {
+            used += height;
+            used <= room
+        })
+        .count();
+    fitting.max(1).min(heights.len() - first)
 }
 
 #[cfg(test)]
