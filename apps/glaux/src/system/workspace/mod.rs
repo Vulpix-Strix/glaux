@@ -214,7 +214,7 @@ impl Workspace {
                 EditorSettings::default(),
             ),
             sprites: SpriteEditor::new(layout.sprite_metrics()),
-            maps: MapEditor::new(layout.map_metrics()),
+            maps: MapEditor::new(layout.map_metrics(), font.clone()),
             docs: DocsBrowser::new(layout.docs_metrics(), font.clone()),
             docs_open: false,
             modal: None,

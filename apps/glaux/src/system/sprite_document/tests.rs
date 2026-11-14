@@ -1513,8 +1513,6 @@ fn reopening_over_unreadable_or_invalid_files_keeps_everything() {
     assert_eq!(doc, before);
 }
 
-// Background tiles and palettes.
-
 const BG_TILES: VideoAsset = VideoAsset::BgTiles;
 const BGP: VideoAsset = VideoAsset::BgPalettes;
 

@@ -152,7 +152,7 @@ impl Workspace {
                 Tab::Code => self.code.render(ctx, code, view),
                 Tab::Map => {
                     let lit = (self.ticks / (TICK_RATE / 2)).is_multiple_of(2);
-                    self.maps.render(ctx, maps, view, lit);
+                    self.maps.render(ctx, sprites, maps, view, lit);
                 }
                 _ => self.render_placeholder(ctx),
             }

@@ -554,20 +554,17 @@ fn each_state_of_the_view_is_drawn() {
     let system = open_maps(loaded_with(&fixture, &[]));
     let selector = workspace::tests_support::map_selector(&system.workspace);
     let row = workspace::tests_support::map_row(&system.workspace, 0);
-    let body = Rect {
-        x: 0,
-        y: row.y + 20,
-        width: 320,
-        height: 60,
-    };
+    let canvas = workspace::tests_support::map_canvas(&system.workspace);
+    let drawer = workspace::tests_support::map_drawer(&system.workspace);
 
     let closed = render(&system);
     assert!(inked(&closed, selector) > 0, "the selector");
-    assert!(inked(&closed, body) > 0, "the map's name and size");
-    assert_eq!(inked(&closed, row), 0, "no list while it is closed");
+    assert!(inked(&closed, canvas) > 0, "the open map");
+    assert!(inked(&closed, drawer) > 0, "the drawer");
 
     let listed = render(&press_selector(system));
     assert!(inked(&listed, row) > 0, "the list shows its rows");
+    assert_eq!(inked(&listed, drawer), 0, "no drawer under the list");
 }
 
 #[test]
@@ -606,5 +603,13 @@ fn the_pointer_is_a_hand_over_controls_only() {
     let delete = workspace::tests_support::map_button(&system.workspace, "DELETE");
     assert_eq!(hover(centre(selector)), SystemCursor::Hand);
     assert_eq!(hover(centre(delete)), SystemCursor::Hand);
-    assert_eq!(hover(Point::new(160, 200)), SystemCursor::Arrow);
+    let canvas = workspace::tests_support::map_canvas(&system.workspace);
+    assert_eq!(hover(centre(canvas)), SystemCursor::Arrow, "the canvas");
+    let drawer = workspace::tests_support::map_drawer(&system.workspace);
+    let button = Point::new((drawer.x + 6) as u16, (drawer.y + 6) as u16);
+    assert_eq!(
+        hover(button),
+        SystemCursor::Hand,
+        "the drawer's size button"
+    );
 }

@@ -192,14 +192,9 @@ pub fn draw_obj_tile_scaled(
     }
 }
 
-/// Draws background tile `tile` through palette bank `bank` with its
-/// top-left corner at `(x, y)`, each pixel enlarged to a `scale`×`scale`
-/// block. Master index `m` is written as `slots[m]`, as in
-/// [`draw_obj_tile_scaled`].
+/// Like [`draw_obj_tile_scaled`] for background tile `tile` through palette bank `bank`.
 ///
-/// Tile-local index 0 is transparent. Tile 0 is drawn like any other: the
-/// transparency the hardware gives it belongs to tilemap cells, not to the
-/// tile's pixels. A non-positive `scale` or an invalid tile draws nothing.
+/// Tile 0 is drawn like any other: its transparency belongs to tilemap cells, not to its pixels.
 pub fn draw_bg_tile_scaled(
     framebuffer: &mut Framebuffer,
     vram: &BgVram,
@@ -416,6 +411,26 @@ pub fn draw_ink_image(
             }
         }
     }
+}
+
+/// Draws `image` like [`draw_ink_image`] with the middle of its opaque pixels
+/// at the middle of the `width` by `height` area at `(x, y)`. Padding in the
+/// image does not count, so a small drawing sits in the middle of a 16 pixel
+/// icon canvas.
+pub fn draw_ink_image_centered(
+    framebuffer: &mut Framebuffer,
+    image: &InkImage,
+    (x, y, width, height): (i32, i32, i32, i32),
+    inks: &[u8; INK_SLOTS],
+) {
+    let Some((left, top, right, bottom)) = image.bounds() else {
+        return;
+    };
+    // An image is a few pixels across, so its sizes fit in i32.
+    let (drawn_w, drawn_h) = ((right - left + 1) as i32, (bottom - top + 1) as i32);
+    let at_x = x + (width - drawn_w) / 2 - left as i32;
+    let at_y = y + (height - drawn_h) / 2 - top as i32;
+    draw_ink_image(framebuffer, image, at_x, at_y, inks);
 }
 
 /// Whether any part of a glyph drawn at the pen position can land on the

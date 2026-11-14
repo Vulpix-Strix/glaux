@@ -53,6 +53,16 @@ pub fn map_button(workspace: &Workspace, label: &str) -> Rect {
     workspace.maps.button_rect(label)
 }
 
+/// Where the Map view's canvas shows the open map.
+pub fn map_canvas(workspace: &Workspace) -> Rect {
+    workspace.maps.canvas_rect()
+}
+
+/// Where the Map view's drawer is drawn.
+pub fn map_drawer(workspace: &Workspace) -> Rect {
+    workspace.maps.drawer_rect()
+}
+
 /// Where the Map view's selector is drawn.
 pub fn map_selector(workspace: &Workspace) -> Rect {
     workspace.maps.selector_rect()

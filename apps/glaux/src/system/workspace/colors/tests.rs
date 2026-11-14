@@ -34,7 +34,6 @@ fn workspace() -> Workspace {
     Workspace::new(&font, Palette::default())
 }
 
-/// The highest frame entry the prepared preview gives a master color.
 fn highest_slot(video: &WorkspaceVideo) -> usize {
     let prepared = video.0.as_ref().unwrap();
     prepared
@@ -46,7 +45,6 @@ fn highest_slot(video: &WorkspaceVideo) -> usize {
         .unwrap()
 }
 
-/// The frame entry of every master the document's palettes of `set` map.
 fn shown_masters(document: &SpriteDocument, set: TileSet) -> Vec<u8> {
     match set {
         TileSet::Obj => (0..8)

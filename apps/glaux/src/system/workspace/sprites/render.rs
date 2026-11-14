@@ -278,8 +278,6 @@ impl SpriteEditor {
 }
 
 impl SpriteEditor {
-    /// The palette bank the selected tile is shown with: its own for an
-    /// object tile, the chosen one for a background tile.
     pub(super) fn palette_bank(&self, source: &SpriteSource<'_>) -> PaletteBank {
         match self.tileset {
             TileSet::Obj => PaletteBank::Obj(source.obj.attributes().bank(self.selected)),
@@ -287,7 +285,6 @@ impl SpriteEditor {
         }
     }
 
-    /// One pixel of the selected tile, in the editor's tile set.
     fn tile_pixel(&self, source: &SpriteSource<'_>, x: usize, y: usize) -> Option<u8> {
         match self.tileset {
             TileSet::Obj => source.obj.tiles().pixel(self.selected, x, y),
@@ -513,9 +510,6 @@ impl Painter<'_, '_> {
         self.text(&caption, layout.caption.x, layout.caption.y, DIM);
     }
 
-    /// Draws `tile` of the editor's tile set at `at`, through its own
-    /// palette bank for object tiles and the chosen one for background
-    /// tiles.
     fn tile(
         &mut self,
         editor: &SpriteEditor,
@@ -836,7 +830,7 @@ impl Painter<'_, '_> {
 }
 
 /// Draws a one-pixel outline just inside `rect`.
-pub(super) fn outline(framebuffer: &mut Framebuffer, rect: Rect, color: u8) {
+pub(in crate::system::workspace) fn outline(framebuffer: &mut Framebuffer, rect: Rect, color: u8) {
     let Rect {
         x,
         y,
@@ -851,7 +845,11 @@ pub(super) fn outline(framebuffer: &mut Framebuffer, rect: Rect, color: u8) {
 
 /// Fills `rect` with the transparency checkerboard of `square`-pixel
 /// squares, the top-left one dark.
-pub(super) fn checker(framebuffer: &mut Framebuffer, rect: Rect, square: i32) {
+pub(in crate::system::workspace) fn checker(
+    framebuffer: &mut Framebuffer,
+    rect: Rect,
+    square: i32,
+) {
     let square = square.max(1);
     let mut y = rect.y;
     while y < rect.bottom() {
@@ -868,8 +866,6 @@ pub(super) fn checker(framebuffer: &mut Framebuffer, rect: Rect, square: i32) {
     }
 }
 
-/// The master index local color `local` of `bank` maps to, `None` for the
-/// transparent local 0.
 fn resolve(source: &SpriteSource<'_>, bank: PaletteBank, local: u8) -> Option<u8> {
     match bank {
         PaletteBank::Obj(bank) => source.obj.palettes().resolve(bank, local),

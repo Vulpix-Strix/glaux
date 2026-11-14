@@ -31,7 +31,7 @@ LLM/AI models; please respect that request.
 
 ## Icons
 
-The workspace tab icons and the sprite editor's tool icons come from
+The workspace tab icons and the editors' tool and button icons come from
 [1-bit Pixel Icons](https://nikoichu.itch.io/pixel-icons) by **Nikoichu**,
 copied unmodified and renamed. Each is 16×16 with a black outline
 (`#000000`) and white fill (`#ffffff`).
@@ -47,8 +47,18 @@ copied unmodified and renamed. Each is 16×16 with a black outline
 | `icons/eyedropper.png` | `Tools_Crafting_Graphic_Design_Eyedropper_Color_Picker.png`                  |
 | `icons/fill.png`       | `Tools_Crafting_Graphic_Design_Paint_Bucket_Fill.png`                        |
 | `icons/settings.png`   | `Software_Options_Settings_Cogwheel_Gear_Mechanics.png`                      |
+| `icons/select.png`     | `Tools_Crafting_Graphic_Design_Selection_Rectangle.png`                      |
+| `icons/hand.png`       | `Emoji_Hand_Wave_Cursor_Pan_Open.png`                                        |
+| `icons/visible.png`    | `Media_Eyeball_Vision_Shown.png`                                             |
+| `icons/hidden.png`     | `Media_Eyeball_Vision_Hidden_Disabled_Off.png`                               |
+| `icons/locked.png`     | `Tools_Crafting_Padlock_Locked.png`                                          |
+| `icons/unlocked.png`   | `Tools_Crafting_Padlock_Unlocked_2.png`                                      |
+| `icons/expand.png`     | `Software_Window_Maximize_Button_1.png`                                       |
+| `icons/resize.png`     | `Arrows_Double_Vertical_Up_Down.png`                                         |
+| `icons/collapse.png`   | `Software_Window_Minimize_Button.png`                                        |
 
-The sprite editor's pencil tool reuses `icons/sprites.png`. The settings
+The sprite editor's pencil tool reuses `icons/sprites.png`, and the Map
+editor's pencil, eraser, fill and eyedropper tools reuse the sprite editor's. The settings
 cogwheel's art fills only the central 12×12 pixels of its canvas, so it fits
 the Code view's options bar.
 

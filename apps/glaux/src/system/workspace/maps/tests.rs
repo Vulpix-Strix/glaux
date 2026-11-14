@@ -4,7 +4,7 @@ use super::form::{CreateForm, slug};
 use super::*;
 use crate::cartridge::map::{MapError, MapMeta};
 use crate::system::workspace::{RenderContext, ViewInput};
-use glaux_machine::font::FontMetrics;
+use glaux_machine::font::{BitmapFont, FontMetrics};
 
 fn id(text: &str) -> MapId {
     MapId::parse(text).unwrap()
@@ -12,7 +12,7 @@ fn id(text: &str) -> MapId {
 
 fn editor() -> MapEditor {
     let layout = super::super::tab::Layout::new(FontMetrics::SYSTEM);
-    MapEditor::new(layout.map_metrics())
+    MapEditor::new(layout.map_metrics(), BitmapFont::new(FontMetrics::SYSTEM))
 }
 
 fn summary(text: &str, name: &str) -> MapSummary {
@@ -285,6 +285,7 @@ fn cart_rom_shows_in_the_status_bar_without_a_notice() {
         };
         editor.render(
             &mut RenderContext::new(&mut fb, rom.font(), rom.ui()),
+            Err(""),
             None,
             ViewInput {
                 info,

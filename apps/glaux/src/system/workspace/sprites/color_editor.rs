@@ -912,12 +912,10 @@ fn heading(target: ColorTarget, uses: &ColorUses, advanced: bool) -> String {
     }
 }
 
-/// The kind of palette `bank` is, as the messages select on it.
 fn kind(bank: PaletteBank) -> &'static str {
     if bank.is_background() { "bg" } else { "obj" }
 }
 
-/// The name of `bank` in Advanced mode, without its number.
 fn prefix(bank: PaletteBank) -> &'static str {
     if bank.is_background() { "BGP" } else { "OBP" }
 }

@@ -927,8 +927,6 @@ fn the_pointer_is_a_hand_over_controls_and_an_hourglass_while_a_file_is_awaited(
     assert_eq!(editor.cursor(centre_of(tool)), SystemCursor::Hand);
 }
 
-// Background tiles.
-
 use crate::cartridge::VideoAsset;
 use crate::system::sprite_document::TileSet;
 use glaux_machine::tilemap::BgBank;

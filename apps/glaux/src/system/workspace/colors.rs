@@ -1,7 +1,7 @@
 //! How the workspace shows the cartridge's colors.
 
 use super::sprites::SpriteSource;
-use super::{SYSTEM_COLORS, Workspace};
+use super::{SYSTEM_COLORS, Tab, Workspace};
 use crate::system::sprite_document::{SpriteDocument, TileSet};
 use crate::ui_text;
 use glaux_machine::bg::BgPalettes;
@@ -106,7 +106,17 @@ impl Workspace {
     /// palettes change or the editor switches tiles. See
     /// [`refresh_video`](Self::refresh_video).
     pub fn prepare_video(&self, document: &SpriteDocument) -> WorkspaceVideo {
-        self.prepare_video_for(document, self.sprites.tileset())
+        self.prepare_video_for(document, self.shown_tiles())
+    }
+
+    /// The tiles the open view draws: the background ones in the Map view
+    /// and the sprite editor's own choice anywhere else.
+    fn shown_tiles(&self) -> TileSet {
+        if self.tab == Tab::Map {
+            TileSet::Bg
+        } else {
+            self.sprites.tileset()
+        }
     }
 
     fn prepare_video_for(&self, document: &SpriteDocument, set: TileSet) -> WorkspaceVideo {
@@ -145,7 +155,7 @@ impl Workspace {
     /// the frame palette the colors of the sprite editor's open dialog.
     /// Video that could not be prepared stays as it is.
     pub fn refresh_video(&self, video: &mut WorkspaceVideo, document: &SpriteDocument) {
-        if video.is_ready() && !video.matches(document, self.sprites.tileset()) {
+        if video.is_ready() && !video.matches(document, self.shown_tiles()) {
             *video = self.prepare_video(document);
         }
         if let Ok(prepared) = &mut video.0 {

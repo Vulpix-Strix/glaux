@@ -3,33 +3,34 @@
 use glaux_input::Point;
 use glaux_machine::framebuffer::Framebuffer;
 use glaux_machine::system_rom::SystemCursor;
-use glaux_video::draw::{draw_text, draw_text_scaled, fill_rect};
+use glaux_video::draw::{draw_text, fill_rect};
 
+use super::editing::map_size;
+use super::frame::Hit as EditorHit;
 use super::layout::{Action, Hit, Layout, first_visible};
 use super::{MapEditor, Overlay};
-use crate::cartridge::map::{MapMeta, MapSummary};
+use crate::cartridge::map::MapSummary;
 use crate::cartridge::rom::RomUsage;
 use crate::system::map_document::MapDocument;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
 use crate::system::workspace::dialog::{INK, text_cells};
 use crate::system::workspace::rom_tag::rom_tag;
+use crate::system::workspace::sprites::SpriteSource;
 use crate::system::workspace::{BAR, HOVER_SHADE, Rect, take_cells};
 use crate::system::workspace::{RenderContext, ViewInput};
 use crate::ui_text;
 use glaux_i18n::Arg;
-use glaux_machine::tilemap::BgLayer;
 
 fn fill(framebuffer: &mut Framebuffer, rect: Rect, color: u8) {
     fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, color);
 }
 
 impl MapEditor {
-    /// Draws the view below the tab bar for the open `document`. `pointer`
-    /// highlights what it hovers, `notice` takes the status bar and `lit`
-    /// is the phase of the text carets.
+    /// `source` holds the background tiles and the palette they are drawn in.
     pub(in crate::system::workspace) fn render(
         &self,
         ctx: &mut RenderContext<'_>,
+        source: Result<SpriteSource<'_>, &str>,
         document: Option<&MapDocument>,
         view: ViewInput<'_>,
         lit: bool,
@@ -40,13 +41,19 @@ impl MapEditor {
             .filter(|_| self.overlay.is_none())
             .map_or(Hit::Nothing, |at| self.hit(&layout, at, document));
         self.header(ctx, &layout, document, hover);
-        // The open list takes the place of the body.
+        let editing = document.filter(|_| !self.list_open);
         if self.list_open {
             self.list(ctx, &layout, document, hover);
+        } else if let Some(document) = editing {
+            self.render_editor(ctx, source, document, pointer);
         } else {
-            self.body(ctx, &layout, document, hover);
+            self.body(ctx, &layout, hover);
         }
-        self.status_bar(ctx, &layout, info.notice, info.rom);
+        let status = editing.map(|document| self.status_text(document, pointer));
+        let left = info
+            .notice
+            .or_else(|| status.as_deref().map(|text| (text, PALE)));
+        self.status_bar(ctx, &layout, left, info.rom);
         self.overlay(ctx, lit);
     }
 
@@ -67,10 +74,63 @@ impl MapEditor {
         if self.overlay.is_some() {
             return SystemCursor::Arrow;
         }
+        if document.is_some()
+            && !self.list_open
+            && !matches!(
+                self.frame().hit(at, self.edit.strip_top),
+                EditorHit::Nothing | EditorHit::Canvas
+            )
+        {
+            return SystemCursor::Hand;
+        }
         match self.hit(&self.layout(), at, document) {
             Hit::Nothing => SystemCursor::Arrow,
             _ => SystemCursor::Hand,
         }
+    }
+
+    pub(super) fn status_text(&self, document: &MapDocument, pointer: Option<Point>) -> String {
+        let frame = self.frame();
+        let size = map_size(document);
+        let view = self.viewport(&frame, document);
+        let under = pointer
+            .filter(|at| frame.canvas.contains(*at))
+            .map(|at| view.cell_at(frame.canvas, (i32::from(at.x), i32::from(at.y))));
+        if let Some(cell) = under.filter(|cell| super::canvas::in_map(*cell, size)) {
+            let layer = self.edit.layer;
+            // `in_map` holds, so both coordinates are not negative.
+            let tile = document
+                .layer(layer)
+                .get(cell.0 as usize, cell.1 as usize)
+                .map_or(0, |entry| entry.tile());
+            return ui_text::get_with(
+                "maps-status-cell",
+                &[
+                    ("x", Arg::Number(cell.0.into())),
+                    ("y", Arg::Number(cell.1.into())),
+                    ("layer", Arg::Text(&layer.to_string())),
+                    ("tile", Arg::Text(&format!("{tile:04}"))),
+                ],
+            );
+        }
+        if let Some(selection) = self.edit.selection {
+            return ui_text::get_with(
+                "maps-status-selection",
+                &[
+                    ("width", Arg::Number(selection.width() as f64)),
+                    ("height", Arg::Number(selection.height() as f64)),
+                    ("x", Arg::Number(selection.left as f64)),
+                    ("y", Arg::Number(selection.top as f64)),
+                ],
+            );
+        }
+        ui_text::get_with(
+            "maps-info-size",
+            &[
+                ("width", Arg::Text(&size.0.to_string())),
+                ("height", Arg::Text(&size.1.to_string())),
+            ],
+        )
     }
 
     fn header(
@@ -129,21 +189,11 @@ impl MapEditor {
         }
     }
 
-    fn body(
-        &self,
-        ctx: &mut RenderContext<'_>,
-        layout: &Layout,
-        document: Option<&MapDocument>,
-        hover: Hit,
-    ) {
+    fn body(&self, ctx: &mut RenderContext<'_>, layout: &Layout, hover: Hit) {
         let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let body = layout.body();
         let cell_h = self.metrics.cell_h;
         let y = body.y + cell_h;
-        if let Some(document) = document {
-            self.info(ctx, body, y, document);
-            return;
-        }
         match &self.summaries {
             Some(Err(message)) => draw_text(framebuffer, font, message, body.x, y, ERROR),
             Some(Ok(maps)) if maps.is_empty() => {
@@ -168,53 +218,6 @@ impl MapEditor {
                 );
             }
             None => {}
-        }
-    }
-
-    /// The open map's name, size and layers.
-    fn info(&self, ctx: &mut RenderContext<'_>, body: Rect, top: i32, document: &MapDocument) {
-        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
-        let cell_h = self.metrics.cell_h;
-        let meta: &MapMeta = document.meta();
-        let mut y = top;
-        draw_text_scaled(framebuffer, font, &meta.name, body.x, y, 2, ACCENT);
-        y += 3 * cell_h;
-        let size = ui_text::get_with(
-            "maps-info-size",
-            &[
-                ("width", Arg::Text(&meta.width.to_string())),
-                ("height", Arg::Text(&meta.height.to_string())),
-            ],
-        );
-        draw_text(framebuffer, font, &size, body.x, y, TEXT);
-        y += 2 * cell_h;
-        for layer in BgLayer::ALL {
-            let line = match &meta.layer_names[layer.index()] {
-                Some(name) => ui_text::get_with(
-                    "maps-info-layer",
-                    &[
-                        ("layer", Arg::Text(&layer.to_string())),
-                        ("name", Arg::Text(name)),
-                    ],
-                ),
-                None => ui_text::get_with(
-                    "maps-info-layer-unnamed",
-                    &[("layer", Arg::Text(&layer.to_string()))],
-                ),
-            };
-            draw_text(framebuffer, font, &line, body.x, y, PALE);
-            y += cell_h;
-        }
-        if document.is_modified() {
-            y += cell_h;
-            draw_text(
-                framebuffer,
-                font,
-                &ui_text::get("maps-info-unsaved"),
-                body.x,
-                y,
-                ACCENT,
-            );
         }
     }
 
@@ -292,6 +295,14 @@ impl MapEditor {
             Some(Overlay::Create(form)) => {
                 let layout = form.layout(area, cell_w, cell_h);
                 form.render(ctx, &layout, lit);
+            }
+            Some(Overlay::RenameLayer(_, prompt)) => {
+                let layout = prompt.layout(area, cell_w, cell_h);
+                prompt.render(ctx, &layout, ("", INK), lit);
+            }
+            Some(Overlay::LayerMenu(_, menu)) => {
+                let layout = menu.layout(ctx.font, area, cell_w, cell_h);
+                menu.render(ctx, &layout);
             }
             Some(Overlay::Rename(prompt)) => {
                 let layout = prompt.layout(area, cell_w, cell_h);

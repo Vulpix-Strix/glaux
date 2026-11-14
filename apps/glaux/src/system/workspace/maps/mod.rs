@@ -6,18 +6,31 @@
 //! editors. The header holds a selector that lists the cartridge's maps and
 //! the buttons for the map operations.
 
+mod canvas;
+mod compose;
+mod drawer;
+mod editing;
+#[cfg(test)]
+mod fixture;
 mod form;
+mod frame;
 mod layout;
 mod render;
 #[cfg(test)]
 mod tests;
+mod tools;
+mod view;
 
 use glaux_input::{InputEvent, PointerButton};
+use glaux_machine::font::BitmapFont;
+use glaux_machine::tilemap::BgLayer;
 
+use self::editing::{Edit, LayerAction};
 use self::form::{CreateForm, FormInput};
 use self::layout::{Action, Hit, Layout, first_visible};
 use super::Rect;
 use super::code::prompt::{Prompt, PromptInput};
+use super::context_menu::{ContextMenu, MenuOutcome};
 use super::dialog::text_cells;
 use super::request::MapRequest;
 use super::text_field::TextField;
@@ -66,6 +79,14 @@ impl MapEditor {
         self.layout().selector()
     }
 
+    pub(in crate::system::workspace) fn canvas_rect(&self) -> Rect {
+        self.frame().canvas
+    }
+
+    pub(in crate::system::workspace) fn drawer_rect(&self) -> Rect {
+        self.frame().drawer
+    }
+
     /// Where the list draws the row `slot` places below its top.
     pub(in crate::system::workspace) fn row_rect(&self, slot: usize) -> Rect {
         self.layout().row(slot)
@@ -107,6 +128,8 @@ pub(super) enum MapOut {
 enum Overlay {
     Create(CreateForm),
     Rename(Prompt),
+    RenameLayer(BgLayer, Prompt),
+    LayerMenu(BgLayer, ContextMenu<LayerAction>),
 }
 
 /// The Map view's UI state.
@@ -124,10 +147,12 @@ pub(super) struct MapEditor {
     list_open: bool,
     highlighted: usize,
     overlay: Option<Overlay>,
+    font: BitmapFont,
+    edit: Edit,
 }
 
 impl MapEditor {
-    pub(super) fn new(metrics: Metrics) -> Self {
+    pub(super) fn new(metrics: Metrics, font: BitmapFont) -> Self {
         let button_w = Action::ALL
             .map(|action| (text_cells(&ui_text::get(action.message_id())) + 2) * metrics.cell_w);
         Self {
@@ -139,6 +164,8 @@ impl MapEditor {
             list_open: false,
             highlighted: 0,
             overlay: None,
+            font,
+            edit: Edit::default(),
         }
     }
 
@@ -181,6 +208,10 @@ impl MapEditor {
     }
 
     pub(super) fn opened(&mut self, id: &MapId) {
+        // A map opened again after a reload keeps its view.
+        if self.remembered.as_ref() != Some(id) {
+            self.edit.reset_for_new_map();
+        }
         self.remembered = Some(id.clone());
         self.list_open = false;
     }
@@ -194,7 +225,7 @@ impl MapEditor {
 
     /// Forgets everything of the cartridge that was replaced or unloaded.
     pub(super) fn forget(&mut self) {
-        *self = Self::new(self.metrics);
+        *self = Self::new(self.metrics, self.font.clone());
     }
 
     pub(super) fn has_overlay(&self) -> bool {
@@ -203,13 +234,16 @@ impl MapEditor {
 
     /// Whether Escape closes something in the view.
     pub(super) fn claims_break(&self) -> bool {
-        self.overlay.is_some() || self.list_open
+        self.overlay.is_some() || self.list_open || self.has_selection()
     }
 
     /// Closes the windows and the list, as when the view is left.
     pub(super) fn close_overlays(&mut self) {
         self.overlay = None;
         self.list_open = false;
+        // A drag must not outlive the visit it started in. Its edit, if
+        // open, closes with the next undo, redo or save.
+        self.edit.stroke = None;
     }
 
     pub(super) fn close_create(&mut self) {
@@ -228,8 +262,8 @@ impl MapEditor {
     pub(super) fn paste(&mut self, text: &str) {
         match &mut self.overlay {
             Some(Overlay::Create(form)) => form.paste(text),
-            Some(Overlay::Rename(prompt)) => prompt.paste(text),
-            None => {}
+            Some(Overlay::Rename(prompt) | Overlay::RenameLayer(_, prompt)) => prompt.paste(text),
+            Some(Overlay::LayerMenu(..)) | None => {}
         }
     }
 
@@ -263,14 +297,19 @@ impl MapEditor {
     pub(super) fn handle_input(
         &mut self,
         event: InputEvent,
-        document: Option<&mut MapDocument>,
+        mut document: Option<&mut MapDocument>,
     ) -> Option<MapOut> {
         if self.overlay.is_some() {
-            return self.overlay_input(event);
+            return self.overlay_input(event, document);
         }
         let layout = self.layout();
         if self.list_open {
             return self.list_input(event, &layout, document.as_deref());
+        }
+        if let Some(document) = document.as_deref_mut()
+            && let Some(out) = self.editor_input(event, document)
+        {
+            return out;
         }
         let create_cells = self.create_label_cells(document.as_deref());
         match event {
@@ -390,10 +429,48 @@ impl MapEditor {
         }
     }
 
-    fn overlay_input(&mut self, event: InputEvent) -> Option<MapOut> {
+    fn overlay_input(
+        &mut self,
+        event: InputEvent,
+        document: Option<&mut MapDocument>,
+    ) -> Option<MapOut> {
         let area = self.metrics.area();
         let (cell_w, cell_h) = (self.metrics.cell_w, self.metrics.cell_h);
         match self.overlay.as_mut()? {
+            Overlay::LayerMenu(layer, menu) => {
+                let layer = *layer;
+                let layout = menu.layout(&self.font, area, cell_w, cell_h);
+                match menu.handle_input(event, &layout) {
+                    MenuOutcome::Stay => {}
+                    MenuOutcome::Close | MenuOutcome::Outside => self.overlay = None,
+                    MenuOutcome::Run(action) => {
+                        self.overlay = None;
+                        self.run_layer_action(layer, action, document.as_deref());
+                    }
+                }
+                None
+            }
+            Overlay::RenameLayer(layer, prompt) => {
+                let layer = *layer;
+                let layout = prompt.layout(area, cell_w, cell_h);
+                match prompt.handle_input(event, &layout) {
+                    PromptInput::None | PromptInput::Edited => None,
+                    PromptInput::Submit => {
+                        let name = prompt.text().trim().to_owned();
+                        self.overlay = None;
+                        if let Some(document) = document {
+                            document.set_layer_name(layer, (!name.is_empty()).then_some(&name));
+                        }
+                        None
+                    }
+                    PromptInput::Close => {
+                        self.overlay = None;
+                        None
+                    }
+                    PromptInput::Copy(text) => Some(MapOut::Copy(text)),
+                    PromptInput::Paste => Some(MapOut::Paste),
+                }
+            }
             Overlay::Create(form) => {
                 let layout = form.layout(area, cell_w, cell_h);
                 match form.handle_input(event, &layout) {

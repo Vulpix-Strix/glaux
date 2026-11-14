@@ -64,6 +64,22 @@ impl InkImage {
         self.height
     }
 
+    /// The smallest rectangle holding every opaque pixel, as `(left, top,
+    /// right, bottom)` with both corners inside it, or `None` when every
+    /// pixel is transparent.
+    pub fn bounds(&self) -> Option<(usize, usize, usize, usize)> {
+        let mut found: Option<(usize, usize, usize, usize)> = None;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if self.pixels[y * self.width + x] != 0 {
+                    let (left, top, right, bottom) = found.unwrap_or((x, y, x, y));
+                    found = Some((left.min(x), top.min(y), right.max(x), bottom.max(y)));
+                }
+            }
+        }
+        found
+    }
+
     /// The ink slot at `(x, y)`, or 0 (transparent) outside the image.
     pub fn pixel(&self, x: usize, y: usize) -> u8 {
         if x < self.width && y < self.height {
@@ -93,6 +109,24 @@ mod tests {
         );
         assert_eq!(image.pixel(2, 0), 0);
         assert_eq!(image.pixel(0, 2), 0);
+    }
+
+    #[test]
+    fn bounds_hold_the_opaque_pixels_and_nothing_else() {
+        #[rustfmt::skip]
+        let image = InkImage::new(4, 4, vec![
+            0, 0, 0, 0,
+            0, 0, 2, 0,
+            0, 1, 0, 0,
+            0, 0, 0, 0,
+        ]).unwrap();
+        assert_eq!(image.bounds(), Some((1, 1, 2, 2)));
+        assert_eq!(InkImage::new(3, 2, vec![0; 6]).unwrap().bounds(), None);
+        assert_eq!(InkImage::default().bounds(), None);
+        assert_eq!(
+            InkImage::new(1, 1, vec![3]).unwrap().bounds(),
+            Some((0, 0, 0, 0))
+        );
     }
 
     #[test]

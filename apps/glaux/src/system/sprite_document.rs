@@ -199,7 +199,6 @@ pub enum PaletteBank {
 }
 
 impl PaletteBank {
-    /// The bank's number within its own kind.
     pub fn number(self) -> u8 {
         match self {
             Self::Obj(bank) => bank.get(),
@@ -399,7 +398,6 @@ impl Target {
 /// One value an edit changed, with what it held before and after.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Change {
-    /// A tile-local palette index of an object tile.
     Pixel {
         tile: u16,
         x: u8,
@@ -407,7 +405,6 @@ enum Change {
         before: u8,
         after: u8,
     },
-    /// A tile-local palette index of a background tile.
     BgPixel {
         tile: u16,
         x: u8,
@@ -429,8 +426,6 @@ enum Change {
         before: u8,
         after: u8,
     },
-    /// The master index a local index resolves to in a background palette
-    /// bank.
     BgColor {
         bank: BgBank,
         local: u8,
@@ -603,7 +598,6 @@ impl History {
     }
 }
 
-/// Which tile bank an operation works on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TileSet {
     #[default]
@@ -675,7 +669,6 @@ impl SpriteDocument {
         self.video.obj.tiles()
     }
 
-    /// The background tiles and palette banks as edited, saved or not.
     pub fn bg(&self) -> &BgVram {
         &self.video.bg
     }
@@ -737,8 +730,6 @@ impl SpriteDocument {
         self.tiles().pixel(tile, x, y)
     }
 
-    /// One tile-local palette index of a background tile, or `None` for an
-    /// invalid tile or pixel.
     pub fn bg_pixel(&self, tile: usize, x: usize, y: usize) -> Option<u8> {
         self.bg_tiles().pixel(tile, x, y)
     }
@@ -868,8 +859,6 @@ impl SpriteDocument {
         true
     }
 
-    /// The master index `target` resolves to, `None` for the transparent
-    /// local 0 and locals above 15.
     fn target_master(&self, target: ColorTarget) -> Option<u8> {
         match target.bank {
             PaletteBank::Obj(bank) => self.obj().palettes().resolve(bank, target.local),
@@ -883,7 +872,6 @@ impl SpriteDocument {
     pub fn color_uses(&self, target: ColorTarget, edited: usize) -> Option<ColorUses> {
         let master = self.target_master(target)?;
         let mut entries = Vec::new();
-        // Per object bank, which locals resolve to `master`.
         let mut shows = [[false; OBJ_PALETTE_COLORS]; OBJ_PALETTE_BANKS];
         for bank in (0..OBJ_PALETTE_BANKS as u8).filter_map(ObjBank::new) {
             for local in 1..OBJ_PALETTE_COLORS as u8 {
@@ -941,9 +929,6 @@ impl SpriteDocument {
         })
     }
 
-    /// Maps `local` in palette `bank` to master index `master`. Returns
-    /// whether the mapping changed. See [`set_obj_color`](Self::set_obj_color)
-    /// and [`set_bg_color`](Self::set_bg_color).
     pub fn set_palette_color(&mut self, bank: PaletteBank, local: u8, master: u8) -> bool {
         match bank {
             PaletteBank::Obj(bank) => self.set_obj_color(bank, local, master),
@@ -1439,7 +1424,6 @@ impl SpriteDocument {
         Some(previous)
     }
 
-    /// Writes one background pixel. Returns the previous index if it changed.
     fn write_bg_pixel(&mut self, tile: usize, x: usize, y: usize, index: u8) -> Option<u8> {
         let previous = self.video.bg.tiles_mut().set_pixel(tile, x, y, index)?;
         if previous == index {
@@ -1450,8 +1434,6 @@ impl SpriteDocument {
         Some(previous)
     }
 
-    /// Writes one background palette entry. Returns the previous master
-    /// index if it changed.
     fn write_bg_color(&mut self, bank: BgBank, local: u8, master: u8) -> Option<u8> {
         let previous = self.video.bg.palettes_mut().set(bank, local, master)?;
         if previous == master {
@@ -1467,7 +1449,6 @@ impl SpriteDocument {
         Some(previous)
     }
 
-    /// One tile-local palette index of a tile of `set`.
     pub fn pixel_in(&self, set: TileSet, tile: usize, x: usize, y: usize) -> Option<u8> {
         match set {
             TileSet::Obj => self.pixel(tile, x, y),
@@ -1475,7 +1456,6 @@ impl SpriteDocument {
         }
     }
 
-    /// [`set_pixel`](Self::set_pixel) on a tile of `set`.
     pub fn set_pixel_in(
         &mut self,
         set: TileSet,

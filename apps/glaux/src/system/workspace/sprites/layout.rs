@@ -27,8 +27,6 @@ const BUTTON_PAD: i32 = 2;
 /// Space between neighbouring palette cells, wide enough that the
 /// two-digit master indices under them read as separate numbers.
 const SWATCH_GAP: i32 = 3;
-/// Character cells of the button that switches tile sets, wide enough for
-/// OBJ.
 const SET_BUTTON_CELLS: i32 = 3;
 /// Character cells reserved for the palette panel's row labels.
 const LABEL_CELLS: i32 = 7;
@@ -120,7 +118,6 @@ pub enum Hit {
     /// An object palette bank in Advanced mode's OBP row.
     Bank(u8),
     GridButton,
-    /// Switches between the object and the background tiles.
     SetButton,
     AdvancedButton,
     ZoomOut,

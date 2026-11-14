@@ -1111,7 +1111,6 @@ fn background_tiles_draw_through_the_chosen_bank_and_slots() {
     use glaux_machine::bg::{BgPalettes, BgTileBank, BgVram};
     use glaux_machine::tilemap::BgBank;
 
-    // Tile 1 holds local 3 in every pixel.
     let mut tiles = BgTileBank::new();
     for y in 0..8 {
         for x in 0..8 {
@@ -1168,4 +1167,39 @@ fn background_tiles_keep_local_zero_transparent_and_ignore_a_bad_tile() {
         &reversed_slots(),
     );
     assert!(fb.as_bytes().iter().all(|&p| p == 9));
+}
+
+#[test]
+fn a_centered_ink_image_ignores_its_padding() {
+    let mut pixels = vec![0; 36];
+    for (x, y) in [(3, 1), (4, 1), (3, 2), (4, 2)] {
+        pixels[y * 6 + x] = 1;
+    }
+    let image = InkImage::new(6, 6, pixels).unwrap();
+    let mut fb = Framebuffer::new();
+    draw_ink_image_centered(&mut fb, &image, (10, 20, 10, 6), &[INK, INK, INK]);
+    let drawn: Vec<(i32, i32)> = (0..WIDTH as i32)
+        .flat_map(|x| (0..HEIGHT as i32).map(move |y| (x, y)))
+        .filter(|&(x, y)| fb.pixel(x, y) == Some(INK))
+        .collect();
+    // The 2 by 2 drawing sits in the middle of a 10 by 6 area.
+    assert_eq!(drawn, [(14, 22), (14, 23), (15, 22), (15, 23)]);
+
+    let mut blank = Framebuffer::new();
+    draw_ink_image_centered(&mut blank, &InkImage::default(), (0, 0, 8, 8), &[INK; 3]);
+    assert_frame_eq!(blank, Framebuffer::new());
+}
+
+#[test]
+fn a_centered_ink_image_larger_than_its_area_is_still_centered_and_clipped() {
+    let image = InkImage::new(4, 1, vec![1; 4]).unwrap();
+    let mut fb = Framebuffer::new();
+    draw_ink_image_centered(&mut fb, &image, (0, 0, 2, 1), &[INK; 3]);
+    assert_eq!(fb.pixel(0, 0), Some(INK));
+    assert_eq!(fb.pixel(1, 0), Some(INK));
+    assert_eq!(
+        fb.pixel(2, 0),
+        Some(INK),
+        "it spills over by the same amount"
+    );
 }

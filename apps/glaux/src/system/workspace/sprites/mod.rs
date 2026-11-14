@@ -9,7 +9,7 @@ mod layout;
 mod palette_picker;
 mod render;
 mod sheet;
-mod stroke;
+pub(super) mod stroke;
 
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::bg::BgVram;
@@ -29,6 +29,7 @@ use import_preview::{ImportLayout, ImportOutcome};
 pub use layout::Metrics;
 use layout::{Hit, SpriteLayout, ToolSlot};
 use palette_picker::{PalettePicker, PickerLayout, PickerOutcome};
+pub(in crate::system::workspace) use render::{checker, outline};
 use sheet::{SheetView, grid_position};
 
 use crate::system::sprite_document::{
@@ -43,7 +44,6 @@ const DOUBLE_CLICK_TICKS: u32 = TICK_RATE * 2 / 5;
 #[derive(Debug, Clone, Copy)]
 pub struct SpriteSource<'a> {
     pub obj: &'a ObjVram,
-    /// The background tiles and palettes, as edited and not yet saved.
     pub bg: &'a BgVram,
     /// The cartridge's master palette, for the colors Advanced mode names.
     pub master: &'a Palette,
@@ -97,7 +97,6 @@ struct Stroke {
 pub struct SpriteEditor {
     metrics: Metrics,
     selected: usize,
-    /// Which tile bank the sheet, the canvas and the palette show.
     tileset: TileSet,
     /// The background palette bank background tiles are shown and edited
     /// through. Background tiles have no palette of their own: each map
@@ -154,7 +153,6 @@ impl SpriteEditor {
         self.advanced
     }
 
-    /// Which tiles the editor shows.
     pub fn tileset(&self) -> TileSet {
         self.tileset
     }
@@ -613,9 +611,6 @@ impl SpriteEditor {
         )));
     }
 
-    /// Uses background palette `bank` for the editor's view of background
-    /// tiles. Object banks are chosen per tile through the palette picker,
-    /// so there is nothing to do for them here.
     fn pick_bank(&mut self, document: Option<&mut SpriteDocument>, bank: u8) {
         match self.tileset {
             TileSet::Obj => self.open_picker(document, ObjBank::new(bank)),
@@ -628,7 +623,6 @@ impl SpriteEditor {
         }
     }
 
-    /// The palette bank of the selected tile, as the editor shows it.
     fn document_palette_bank(&self, document: &SpriteDocument) -> PaletteBank {
         match self.tileset {
             TileSet::Obj => PaletteBank::Obj(document.obj().attributes().bank(self.selected)),
@@ -636,8 +630,6 @@ impl SpriteEditor {
         }
     }
 
-    /// Switches between object and background tiles. A drag never carries
-    /// over, and the selected tile and local color stay as they are.
     fn toggle_tileset(&mut self, document: Option<&mut SpriteDocument>) {
         self.end_stroke(document);
         self.tileset = match self.tileset {
@@ -778,7 +770,6 @@ impl SpriteEditor {
     }
 }
 
-/// The background palette bank after `bank`, wrapping to the first.
 fn next_bg_bank(bank: BgBank) -> BgBank {
     BgBank::new((bank.get() + 1) % BG_PALETTE_BANKS as u8).unwrap_or(BgBank::ZERO)
 }

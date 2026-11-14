@@ -348,6 +348,7 @@ logs-up-down-scroll-tab-back = Up/Down: scroll  Tab: back
 ## Map view
 
 maps-broken = cannot be opened
+maps-can-t-show-the-tiles = Can't show this cartridge's background tiles
 maps-cancel = CANCEL
 maps-create = CREATE
 maps-create-map = CREATE MAP
@@ -362,11 +363,20 @@ maps-field-height = Height
 maps-field-id = Id
 maps-field-name = Name
 maps-field-width = Width
+maps-grid = Grid
 maps-id-hint = The id names the map's folder and never changes.
-maps-info-layer = { $layer }: { $name }
-maps-info-layer-unnamed = { $layer }
 maps-info-size = { $width } x { $height } tiles
-maps-info-unsaved = Unsaved changes
+maps-layer-edit = Edit
+maps-layer-locked = { $layer } is locked
+maps-layer-menu-edit = Edit this layer
+maps-layer-menu-hide = Hide layer
+maps-layer-menu-lock = Lock layer
+maps-layer-menu-rename = Rename...
+maps-layer-menu-show = Show layer
+maps-layer-menu-unlock = Unlock layer
+maps-layer-rename-label = New name for { $layer }, empty removes it:
+maps-layer-rename-title = RENAME LAYER
+maps-locked = LOCKED
 maps-new = NEW
 maps-new-title = NEW MAP
 maps-no-maps = This cartridge has no maps yet.
@@ -378,10 +388,13 @@ maps-rename-title = RENAME MAP
 maps-renamed = Renamed map to { $name }
 maps-reloaded = Reloaded map { $id } from disk
 maps-reloaded-files = { $value } changed on disk: reloaded
+maps-rulers = XY
 maps-save = SAVE
 maps-saved = Saved { $files }
 maps-select = Select a map
 maps-size-number = Width and height are whole numbers.
+maps-status-cell = X { $x } Y { $y }  { $layer }  Tile { $tile }
+maps-status-selection = Selection { $width }x{ $height }  X { $x } Y { $y }
 maps-switch-instructions = SAVE writes them first. DISCARD drops them and opens the other map.
 maps-switch-title = UNSAVED CHANGES
 maps-switch-unsaved = Map { $id } has unsaved changes.
@@ -389,6 +402,13 @@ maps-conflict-reload-instructions = { $count ->
     [one] OVERWRITE DISK replaces the file with your edits. DISCARD & RELOAD throws away all your unsaved edits to this map.
    *[other] OVERWRITE DISK replaces these files with your edits. DISCARD & RELOAD throws away all your unsaved edits to this map.
     }
+maps-tile-0-transparent = Tile 0 is always transparent
+maps-tool-eraser = Eraser
+maps-tool-eyedropper = Eyedropper
+maps-tool-fill = Fill
+maps-tool-hand = Hand
+maps-tool-pencil = Pencil
+maps-tool-select = Select
 
 ## Sprite editor
 

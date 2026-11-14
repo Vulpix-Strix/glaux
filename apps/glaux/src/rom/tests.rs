@@ -308,6 +308,15 @@ fn embedded_ui_images_load() {
         SystemIcon::Eyedropper,
         SystemIcon::Fill,
         SystemIcon::Settings,
+        SystemIcon::Select,
+        SystemIcon::Hand,
+        SystemIcon::Visible,
+        SystemIcon::Hidden,
+        SystemIcon::Locked,
+        SystemIcon::Unlocked,
+        SystemIcon::Expand,
+        SystemIcon::Resize,
+        SystemIcon::Collapse,
     ] {
         let image = ui.icon(icon);
         assert_eq!((image.width(), image.height()), (ICON_SIZE, ICON_SIZE));
