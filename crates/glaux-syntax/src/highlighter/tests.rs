@@ -158,6 +158,25 @@ fn consecutive_edits_match_a_fresh_parse() {
     }
 }
 
+/// Tokens lexed while recovering from an error depend on the text before them, so
+/// they must not be reused when that text changes.
+#[test]
+fn tokens_around_a_syntax_error_match_a_fresh_parse() {
+    for (before, after) in [
+        ("if a then local ]]\"ab\"", "local \"ab\""),
+        ("\"ab\"", "local \"ab\""),
+    ] {
+        let mut incremental = Highlighter::new(Grammar::Luau).unwrap();
+        incremental.update(before);
+        incremental.update(after);
+        assert_eq!(
+            incremental.spans(0..after.len()),
+            fresh(Grammar::Luau, after),
+            "{before:?} -> {after:?}"
+        );
+    }
+}
+
 fn source_strategy() -> impl Strategy<Value = Vec<std::string::String>> {
     let piece = prop_oneof![
         Just("local ".to_owned()),

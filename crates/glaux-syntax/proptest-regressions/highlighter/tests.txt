@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc cdca2c090955113496a4ecf408845f2a83ab7768a4ae8f1b5138480ddf91ae43 # shrinks to texts = ["if a then local ]]\"é日\"", "local \"é日\""]

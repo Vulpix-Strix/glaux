@@ -63,17 +63,34 @@ impl Highlighter {
     }
 
     /// Brings the parse tree in line with `text`, reusing the previous tree.
+    ///
+    /// The previous tree is reused only when neither it nor the result has a syntax
+    /// error. Tree-sitter lexes the tokens of an error region while recovering, and
+    /// those tokens depend on the text around them, so reusing them across an error
+    /// can give a tree that a fresh parse would not.
     #[hotpath::measure(label = "syntax::highlighter_update")]
     pub fn update(&mut self, text: &str) {
         if self.tree.is_some() && self.source == text {
             return;
         }
-        if let Some(tree) = &mut self.tree {
+        let mut old = self
+            .tree
+            .take()
+            .filter(|tree| !tree.root_node().has_error());
+        if let Some(tree) = &mut old {
             tree.edit(&edit::between(&self.source, text));
         }
         self.source.clear();
         self.source.push_str(text);
-        self.tree = self.parser.parse(text, self.tree.as_ref());
+        let mut tree = self.parser.parse(text, old.as_ref());
+        if old.is_some()
+            && tree
+                .as_ref()
+                .is_some_and(|tree| tree.root_node().has_error())
+        {
+            tree = self.parser.parse(text, None);
+        }
+        self.tree = tree;
     }
 
     /// Whether the current tree was parsed from exactly `text`.
