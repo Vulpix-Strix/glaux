@@ -1,0 +1,11 @@
+(
+    format: 1,
+    name: "Arena worn",
+    width: 40,
+    height: 32,
+    layers: (
+        bg0: Some("Floor"),
+        bg1: None,
+        bg2: None,
+    ),
+)

@@ -1,11 +1,12 @@
 -- Thrown axes
 
 local arena = require("arena")
+local objects = require("objects")
 local sheet = require("sheet")
 
 local projectiles = {}
 
-local MAX = 12
+projectiles.MAX = 12
 local SPEED = 4.2
 -- Hitbox inside the axe head and haft.
 projectiles.HIT_X, projectiles.HIT_Y, projectiles.HIT_W, projectiles.HIT_H = 4, 3, 9, 11
@@ -17,7 +18,7 @@ end
 -- Throws an axe centered on `(cx, cy)` travelling along the unit vector
 -- `(dx, dy)`. Returns false when too many axes are already in flight.
 function projectiles.throw(list, cx, cy, dx, dy)
-    if #list >= MAX then
+    if #list >= projectiles.MAX then
         return false
     end
     table.insert(list, { x = cx - 8, y = cy - 8, vx = dx * SPEED, vy = dy * SPEED, dead = false })
@@ -34,11 +35,12 @@ function projectiles.update(list)
     end
 end
 
-function projectiles.draw(list, tick)
+function projectiles.place(list, tick)
     -- Alternating between the axe and its mirror image reads as a spin.
     local flip = (tick // 4) % 2 == 1
-    for _, axe in list do
-        spr(sheet.axe, axe.x, axe.y, 2, 2, flip)
+    for i = #list, 1, -1 do
+        local axe = list[i]
+        objects.sprite(sheet.axe, axe.x, axe.y, 2, 2, flip)
     end
 end
 

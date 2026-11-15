@@ -1,0 +1,11 @@
+(
+    format: 1,
+    name: "HUD hearts",
+    width: 10,
+    height: 22,
+    layers: (
+        bg0: None,
+        bg1: None,
+        bg2: Some("Hearts"),
+    ),
+)

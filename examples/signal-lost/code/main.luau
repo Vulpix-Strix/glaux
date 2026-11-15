@@ -5,6 +5,7 @@
 
 local arena = require("arena")
 local enemies = require("enemies")
+local objects = require("objects")
 local particles = require("particles")
 local pickups = require("pickups")
 local player = require("player")
@@ -19,6 +20,12 @@ local GAMEOVER_LOCK = 60
 local FLASK_CHANCE = 0.04
 
 local WHITE, LIME, GRAY, DARK, ORANGE, PALE = 15, 7, 13, 11, 5, 6
+
+-- Only skulls may be left out when OAM fills up.
+assert(
+    projectiles.MAX + 2 + enemies.MAX * 2 + pickups.MAX <= hardware.oam.ENTRIES,
+    "entity caps exceed OAM"
+)
 
 local game
 
@@ -47,6 +54,8 @@ local function start_run()
     game.runs += 1
     game.run = new_run()
     game.state = "playing"
+    arena.reset()
+    arena.show_hud(true)
     sfx.play("start")
     if game.runs == 1 then
         log.info("run 1 started")
@@ -79,6 +88,7 @@ function boot()
         lock = 0,
     }
     sfx.silence()
+    arena.boot()
     log.info("Signal Lost ready")
 end
 
@@ -147,6 +157,7 @@ local function resolve_contact(run)
             local px, py = player.center(p)
             particles.burst(run.sparks, game.rng, px, py, 10, 1.8, 12, { ORANGE, 4, 3 })
             sfx.play("hurt")
+            arena.shake()
             return died
         end
     end
@@ -176,6 +187,7 @@ local function tick_playing()
     for _, kind in appeared do
         if kind == "ogre" then
             sfx.play("heavy")
+            arena.shake()
             log.debug("an ogre entered at " .. util.clock(run.elapsed))
         end
     end
@@ -206,6 +218,7 @@ local function tick_playing()
     local level = run.elapsed // MILESTONE_TICKS
     if level > run.level then
         run.level = level
+        arena.wear()
         local d = enemies.difficulty(run.elapsed)
         log.info(string.format("difficulty %d at %s: spawn every %d ticks, %d per wave", level, util.clock(run.elapsed), d.interval, d.batch))
     end
@@ -213,6 +226,41 @@ local function tick_playing()
     if resolve_contact(run) then
         game_over()
     end
+end
+
+local function place_title(tick)
+    -- A small cast lineup: the knight between the three enemy kinds.
+    local step = (tick // 7) % 4 + 1
+    objects.sprite(sheet.ogre_run[step], 64, 108, 4, 4)
+    objects.sprite(sheet.orc_run[step], 108, 116, 2, 3)
+    objects.sprite(sheet.goblin_run[step], 132, 124, 2, 2)
+    objects.sprite(sheet.knight_idle[(tick // 8) % 4 + 1], 196, 116, 2, 3, true)
+    objects.sprite(sheet.coin[(tick // 6) % 4 + 1], 176, 128)
+end
+
+-- Front to back, since the lower OAM index wins.
+local function place_world(run, tick)
+    projectiles.place(run.axes, tick)
+    if game.state == "playing" then
+        player.place(run.player, tick)
+    end
+    enemies.place(run.enemies, tick)
+    pickups.place(run.pickups, tick)
+    particles.place_remains(run.remains, tick)
+end
+
+-- Layers and objects are composed between `tick()` and `draw()`.
+local function compose()
+    local tick = frame()
+    local dx, dy = arena.update()
+    objects.begin(dx, dy)
+    if game.state == "title" then
+        place_title(tick)
+    else
+        place_world(game.run, tick)
+        arena.hearts(game.run.player.hp)
+    end
+    objects.finish()
 end
 
 function tick()
@@ -231,6 +279,7 @@ function tick()
             start_run()
         end
     end
+    compose()
 end
 
 -- Text with a one-pixel drop shadow, readable over sprites and bricks.
@@ -244,18 +293,6 @@ local function centered(text, y, color)
 end
 
 local function draw_hud(run)
-    rectfill(0, 0, 320, 16, DARK)
-
-    local hp = run.player.hp
-    for i = 1, player.MAX_HP // 2 do
-        local tile = sheet.heart_empty
-        if hp >= i * 2 then
-            tile = sheet.heart_full
-        elseif hp == i * 2 - 1 then
-            tile = sheet.heart_half
-        end
-        spr(tile, 2 + (i - 1) * 14, 0, 2, 2)
-    end
     label(string.format("SCORE %05d", run.score), 84, 3, WHITE)
     label("TIME " .. util.clock(math.floor(run.survived * 60)), 168, 3, WHITE)
 
@@ -273,26 +310,12 @@ local function draw_hud(run)
 end
 
 local function draw_world(run, tick)
-    particles.draw_remains(run.remains, tick)
-    pickups.draw(run.pickups, tick)
-    enemies.draw(run.enemies, tick)
-    if game.state == "playing" then
-        player.draw(run.player, tick)
-    end
-    projectiles.draw(run.axes, tick)
-    particles.draw(run.sparks)
+    enemies.draw_warnings(run.enemies, tick, arena.dx, arena.dy)
+    particles.draw(run.sparks, arena.dx, arena.dy)
     draw_hud(run)
 end
 
 local function draw_title(tick)
-    -- A small cast lineup: the knight between the three enemy kinds.
-    local step = (tick // 7) % 4 + 1
-    spr(sheet.ogre_run[step], 64, 108, 4, 4)
-    spr(sheet.orc_run[step], 108, 116, 2, 3)
-    spr(sheet.goblin_run[step], 132, 124, 2, 2)
-    spr(sheet.knight_idle[(tick // 8) % 4 + 1], 196, 116, 2, 3, true)
-    spr(sheet.coin[(tick // 6) % 4 + 1], 176, 128)
-
     centered("SIGNAL LOST", 64, ORANGE)
     centered("SURVIVE THE ARENA", 80, PALE)
     -- Prompts name the default desktop keys (Z = A, X = B), not the
@@ -318,7 +341,6 @@ end
 
 function draw()
     local tick = frame()
-    arena.draw()
     if game.state == "title" then
         draw_title(tick)
     else

@@ -1,6 +1,7 @@
 -- The knight
 
 local arena = require("arena")
+local objects = require("objects")
 local sheet = require("sheet")
 local util = require("util")
 
@@ -141,14 +142,14 @@ function player.center(p)
     return p.x + player.HIT_X + player.HIT_W / 2, p.y + player.HIT_Y + player.HIT_H / 2
 end
 
-function player.draw(p, tick)
+function player.place(p, tick)
     -- Blink while invulnerable after a hit.
     if p.hurt > 0 and (tick // 3) % 2 == 0 then
         return
     end
     local frames = (p.moving or p.dash > 0) and sheet.knight_run or sheet.knight_idle
     local speed = p.dash > 0 and 3 or 6
-    spr(frames[(tick // speed) % #frames + 1], p.x, p.y, 2, 3, p.flip)
+    objects.sprite(frames[(tick // speed) % #frames + 1], p.x, p.y, 2, 3, p.flip)
 end
 
 return player

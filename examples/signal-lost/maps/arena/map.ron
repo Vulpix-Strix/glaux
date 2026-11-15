@@ -1,0 +1,11 @@
+(
+    format: 1,
+    name: "Arena",
+    width: 40,
+    height: 32,
+    layers: (
+        bg0: Some("Floor"),
+        bg1: Some("Walls"),
+        bg2: Some("HUD"),
+    ),
+)

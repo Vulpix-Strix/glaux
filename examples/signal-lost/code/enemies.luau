@@ -2,6 +2,7 @@
 -- difficulty curve that drives spawning.
 
 local arena = require("arena")
+local objects = require("objects")
 local sheet = require("sheet")
 local util = require("util")
 
@@ -24,9 +25,8 @@ enemies.KINDS = {
     },
 }
 
--- Enemies plus pending spawns. With every slot an orc and two ogres, the
--- enemies cost about 17k of the 65k per-frame draw budget.
-local MAX = 40
+-- Enemies plus pending spawns.
+enemies.MAX = 40
 local MAX_OGRES = 2
 local WARNING_TICKS = 36
 local MIN_SPAWN_DISTANCE = 72
@@ -97,7 +97,7 @@ local function edge_point(rng, px, py)
 end
 
 local function announce(state, rng, kind, px, py)
-    if #state.list + #state.pending >= MAX then
+    if #state.list + #state.pending >= enemies.MAX then
         return false
     end
     local x, y = edge_point(rng, px, py)
@@ -178,7 +178,7 @@ function enemies.update(state, px, py)
         local dx, dy = util.normalize(px - cx, py - cy)
         local mx, my = dx * e.speed, dy * e.speed
 
-        -- Separation: a gentle push away from close neighbours.
+        -- a gentle push away from close neighbours.
         for j = i + 1, #list do
             local other = list[j]
             local ox, oy = enemies.center(other)
@@ -224,26 +224,29 @@ function enemies.remove_dead(state)
 end
 
 -- Draws pending-spawn warnings: a pulsing ring of pixels.
-local function draw_warning(s, tick)
-    local radius = 2 + (s.timer // 3) % 5
+function enemies.draw_warnings(state, tick, dx, dy)
     local color = (tick // 4) % 2 == 0 and 6 or 5
-    for k = 0, 7 do
-        local angle = k * math.pi / 4 + tick * 0.08
-        pset(s.x + math.cos(angle) * radius, s.y + math.sin(angle) * radius, color)
+    for _, s in state.pending do
+        local radius = 2 + (s.timer // 3) % 5
+        for k = 0, 7 do
+            local angle = k * math.pi / 4 + tick * 0.08
+            local y = s.y + math.sin(angle) * radius + dy
+            if y >= arena.HUD_HEIGHT then
+                pset(s.x + math.cos(angle) * radius + dx, y, color)
+            end
+        end
     end
 end
 
-function enemies.draw(state, tick)
-    for _, s in state.pending do
-        draw_warning(s, tick)
-    end
-    for _, e in state.list do
-        -- Skipping frames is the only hit flash available: sprites cannot be
-        -- tinted without OBJ palette banks.
+function enemies.place(state, tick)
+    local list = state.list
+    -- Later enemies overlap earlier ones.
+    for i = #list, 1, -1 do
+        local e = list[i]
         if e.flash == 0 or (tick // 2) % 2 == 0 then
             local kind = enemies.KINDS[e.kind]
             local frames = kind.frames
-            spr(frames[((tick // 7) + e.phase) % #frames + 1], e.x, e.y, kind.w, kind.h, e.flip)
+            objects.sprite(frames[((tick // 7) + e.phase) % #frames + 1], e.x, e.y, kind.w, kind.h, e.flip)
         end
     end
 end

@@ -1,11 +1,12 @@
 -- Dropped signal coins and healing flasks.
 
+local objects = require("objects")
 local sheet = require("sheet")
 local util = require("util")
 
 local pickups = {}
 
-local MAX = 30
+pickups.MAX = 30
 local MAX_FLASKS = 3
 local LIFETIME = 600
 local BLINK_FROM = 120
@@ -21,7 +22,7 @@ end
 
 -- Drops a pickup of `kind` ("coin" or "flask") centered on `(cx, cy)`.
 function pickups.drop(list, kind, cx, cy)
-    if #list >= MAX then
+    if #list >= pickups.MAX then
         return
     end
     if kind == "flask" then
@@ -65,14 +66,15 @@ function pickups.update(list, px, py, bx, by, bw, bh)
     return collected
 end
 
-function pickups.draw(list, tick)
+function pickups.place(list, tick)
     local coin = sheet.coin[(tick // 6) % #sheet.coin + 1]
-    for _, p in list do
+    for i = #list, 1, -1 do
+        local p = list[i]
         if p.life > BLINK_FROM or (tick // 4) % 2 == 0 then
             if p.kind == "coin" then
-                spr(coin, p.x, p.y)
+                objects.sprite(coin, p.x, p.y)
             else
-                spr(sheet.flask, p.x, p.y, 2, 2)
+                objects.sprite(sheet.flask, p.x, p.y, 2, 2)
             end
         end
     end
