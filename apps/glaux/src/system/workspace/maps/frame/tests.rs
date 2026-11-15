@@ -15,6 +15,7 @@ fn frame_with(size: DrawerSize, rulers: bool, tile: i32) -> Frame {
             rulers,
             tile,
             tool_cells: 6,
+            zoom_cells: 2,
             locked: [false; 3],
         },
     )
@@ -152,6 +153,7 @@ fn the_options_bar_holds_every_part_without_overlapping() {
                 rulers: false,
                 tile: 16,
                 tool_cells,
+                zoom_cells: 4,
                 locked: [false; 3],
             },
         );
@@ -276,6 +278,7 @@ fn a_locked_layer_shows_its_padlock_in_its_chip_only_where_it_fits() {
             rulers: false,
             tile: 16,
             tool_cells: 6,
+            zoom_cells: 2,
             locked: [true; 3],
         },
     );

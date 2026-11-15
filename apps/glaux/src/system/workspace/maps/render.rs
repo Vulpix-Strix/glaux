@@ -109,6 +109,13 @@ impl MapEditor {
         if self.overlay.is_some() {
             return SystemCursor::Arrow;
         }
+        if let Some(document) = document.filter(|_| self.edit.overview.is_some()) {
+            return if self.overview_reacts(at, document) {
+                SystemCursor::Hand
+            } else {
+                SystemCursor::Arrow
+            };
+        }
         let editor = self.frame_hit(&self.frame(), at, document);
         let over_editor = !matches!(editor, EditorHit::Nothing | EditorHit::Canvas);
         if over_editor || self.hit(&self.layout(), at, document) != Hit::Nothing {
@@ -124,6 +131,9 @@ impl MapEditor {
         source: Option<&SpriteSource<'_>>,
         pointer: Option<Point>,
     ) -> String {
+        if self.overlay.is_none() && self.edit.overview.is_some() {
+            return ui_text::get("maps-hint-overview");
+        }
         if self.overlay.is_none() {
             let empty = source.and_then(|source| self.empty_status(document, source.bg.tiles()));
             if let Some(text) = self.panel_status(source).or(empty) {
@@ -175,6 +185,7 @@ impl MapEditor {
         }
         let id = match (&self.overlay, &self.edit.picker, &self.edit.attrs) {
             (Some(Overlay::Maps(_)), ..) => return menu_hint(),
+            (None, ..) if self.edit.overview.is_some() => return String::new(),
             (Some(Overlay::LayerMenu(..)), ..) => "maps-hint-layer-menu",
             (None, Some(_), _) => "maps-hint-picker",
             (None, None, Some(_)) => "maps-hint-attr",

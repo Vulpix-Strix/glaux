@@ -12,6 +12,7 @@ use super::compose::{Cell, Composer};
 use super::editing::map_size;
 use super::first_tile::{is_blank, map_is_blank};
 use super::frame::{Frame, Hit};
+use super::overview::{OverviewZoom, map_pixels};
 use super::tile_editor::uses_text;
 use super::tools::Tool;
 use super::usage::{Census, MapUsage};
@@ -140,6 +141,17 @@ pub(super) fn plate(ctx: &mut RenderContext<'_>, rect: Rect, icon: SystemIcon, s
     );
 }
 
+fn tool_icon(tool: Tool) -> SystemIcon {
+    match tool {
+        Tool::Pencil => SystemIcon::Sprites,
+        Tool::Eraser => SystemIcon::Eraser,
+        Tool::Fill => SystemIcon::Fill,
+        Tool::Select => SystemIcon::Select,
+        Tool::Eyedropper => SystemIcon::Eyedropper,
+        Tool::Hand => SystemIcon::Hand,
+    }
+}
+
 fn ruler_step(tile: i32, needed: i32) -> i32 {
     RULER_STEPS
         .into_iter()
@@ -164,6 +176,16 @@ impl MapEditor {
             _ => (document.can_undo(), document.can_redo()),
         };
         self.toolbar(ctx, &frame, history, hover);
+        if let Some(overview) = &self.edit.overview {
+            match source {
+                Ok(source) => {
+                    self.render_overview(ctx, &frame, document, &source, overview, pointer);
+                    self.drawer(ctx, &frame, document, &source, Hit::Nothing);
+                }
+                Err(message) => self.unavailable(ctx, &frame, message),
+            }
+            return;
+        }
         match source {
             Ok(source) => {
                 let census = self.has_panel().then(|| Census {
@@ -215,7 +237,6 @@ impl MapEditor {
         graphics_modified: bool,
         hover: Hit,
     ) {
-        let editing = document.is_some();
         let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let bar = frame.options;
         fill_rect(framebuffer, bar.x, bar.bottom() - 1, bar.width, 1, BAR);
@@ -260,11 +281,17 @@ impl MapEditor {
                 );
             }
         }
-        if !editing {
+        let Some(document) = document else {
             return;
-        }
-
-        let tool = ui_text::get(self.edit.tool.message_id());
+        };
+        let overview = self.edit.overview;
+        let shown_tool = if overview.is_some() {
+            Tool::Hand
+        } else {
+            self.edit.tool
+        };
+        let tool = ui_text::get(shown_tool.message_id());
+        let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         for (rect, text, ink) in [
             (frame.tool_tag, tool, PALE),
             (frame.layer_tag, self.edit.layer.to_string(), ACCENT),
@@ -274,26 +301,45 @@ impl MapEditor {
         }
 
         let zoom = self.edit.view.zoom();
-        let buttons: [(Rect, String, Hit, bool, bool); 5] = [
+        let editing = overview.is_none();
+        let (can_zoom_out, can_zoom_in) = match overview {
+            Some(overview) => {
+                let map = map_pixels(document);
+                let shown = overview.zoom(map);
+                (
+                    shown.zoomed_out().is_some(),
+                    shown.zoomed_in(OverviewZoom::fit(map)).is_some(),
+                )
+            }
+            None => (zoom.zoomed_out().is_some(), zoom.zoomed_in().is_some()),
+        };
+        let buttons: [(Rect, String, Hit, bool, bool); 6] = [
             (
                 frame.attr_button,
                 ui_text::get("maps-attr"),
                 Hit::Attr,
                 self.edit.attrs.is_some(),
-                true,
+                editing,
             ),
             (
                 frame.grid_button,
                 ui_text::get("maps-grid"),
                 Hit::Grid,
                 self.edit.grid,
-                true,
+                editing,
             ),
             (
                 frame.rulers_button,
                 ui_text::get("maps-rulers"),
                 Hit::Rulers,
                 self.edit.rulers,
+                editing,
+            ),
+            (
+                frame.overview_button,
+                ui_text::get("maps-overview"),
+                Hit::Overview,
+                overview.is_some(),
                 true,
             ),
             (
@@ -301,32 +347,55 @@ impl MapEditor {
                 "-".to_owned(),
                 Hit::ZoomOut,
                 false,
-                zoom.zoomed_out().is_some(),
+                can_zoom_out,
             ),
             (
                 frame.zoom_in,
                 "+".to_owned(),
                 Hit::ZoomIn,
                 false,
-                zoom.zoomed_in().is_some(),
+                can_zoom_in,
             ),
         ];
         for (rect, label, which, on, enabled) in buttons {
-            let hovered = hover == which && enabled;
-            if hovered || on {
-                fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, BAR);
-            }
-            let ink = match (enabled, on, hovered) {
-                (false, ..) => IDLE_SHADE,
-                (true, true, _) => ACCENT,
-                (true, false, true) => PALE,
-                (true, false, false) => DIM,
-            };
-            let x = rect.x + (rect.width - self.cells(&label)) / 2;
-            draw_text(framebuffer, font, &label, x, y, ink);
+            self.toggle(ctx, rect, &label, on, enabled && hover == which, enabled);
         }
-        let label_x = frame.zoom_label.x + (frame.zoom_label.width - self.cells(zoom.label())) / 2;
-        draw_text(framebuffer, font, zoom.label(), label_x, y, TEXT);
+        let zoom_label = match overview {
+            Some(overview) => overview.zoom(map_pixels(document)).label(),
+            None => zoom.label(),
+        };
+        let label_x = frame.zoom_label.x + (frame.zoom_label.width - self.cells(zoom_label)) / 2;
+        draw_text(ctx.framebuffer, ctx.font, zoom_label, label_x, y, TEXT);
+    }
+
+    /// A text button of the options bar, also used by the overview.
+    pub(super) fn toggle(
+        &self,
+        ctx: &mut RenderContext<'_>,
+        rect: Rect,
+        label: &str,
+        on: bool,
+        hovered: bool,
+        enabled: bool,
+    ) {
+        if enabled && (hovered || on) {
+            fill_rect(
+                ctx.framebuffer,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                BAR,
+            );
+        }
+        let ink = match (enabled, on, hovered) {
+            (false, ..) => IDLE_SHADE,
+            (true, true, _) => ACCENT,
+            (true, false, true) => PALE,
+            (true, false, false) => DIM,
+        };
+        let x = rect.x + (rect.width - self.cells(label)) / 2;
+        draw_text(ctx.framebuffer, ctx.font, label, x, rect.y, ink);
     }
 
     fn toolbar(
@@ -336,6 +405,17 @@ impl MapEditor {
         (can_undo, can_redo): (bool, bool),
         hover: Hit,
     ) {
+        if self.edit.overview.is_some() {
+            for (tool, rect) in frame.tools {
+                let state = if tool == Tool::Hand {
+                    PlateState::Active
+                } else {
+                    PlateState::Off
+                };
+                plate(ctx, rect, tool_icon(tool), state);
+            }
+            return;
+        }
         for (tool, rect) in frame.tools {
             let state = if tool == self.edit.tool {
                 PlateState::Active
@@ -344,15 +424,7 @@ impl MapEditor {
             } else {
                 PlateState::Idle
             };
-            let icon = match tool {
-                Tool::Pencil => SystemIcon::Sprites,
-                Tool::Eraser => SystemIcon::Eraser,
-                Tool::Fill => SystemIcon::Fill,
-                Tool::Select => SystemIcon::Select,
-                Tool::Eyedropper => SystemIcon::Eyedropper,
-                Tool::Hand => SystemIcon::Hand,
-            };
-            plate(ctx, rect, icon, state);
+            plate(ctx, rect, tool_icon(tool), state);
         }
         for (rect, icon, which, enabled) in [
             (frame.undo, SystemIcon::Undo, Hit::Undo, can_undo),

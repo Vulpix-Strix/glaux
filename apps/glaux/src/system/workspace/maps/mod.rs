@@ -21,6 +21,7 @@ mod form;
 mod frame;
 mod layout;
 mod master_color;
+mod overview;
 mod panels;
 mod pattern;
 mod picker;
@@ -306,6 +307,7 @@ impl MapEditor {
         self.overlay.is_some()
             || self.has_panel()
             || self.edit.picker.is_some()
+            || self.edit.overview.is_some()
             || self.edit.attrs.is_some()
             || self.has_selection()
     }
@@ -315,6 +317,7 @@ impl MapEditor {
         self.overlay = None;
         self.edit.panels.clear();
         self.close_picker();
+        self.close_overview();
         self.edit.attrs = None;
         // A drag must not outlive the visit it started in. Its edit, if
         // open, closes with the next undo, redo or save.

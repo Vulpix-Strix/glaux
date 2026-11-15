@@ -10,6 +10,7 @@ use glaux_machine::tilemap::{BG_LAYERS, BgBank, BgLayer, TileEntry};
 use super::attributes::AttrPanel;
 use super::first_tile::{first_drawn, first_free, is_blank, map_is_blank};
 use super::frame::{DrawerSize, Frame, Hit, Shape};
+use super::overview::Overview;
 use super::panels::Panel;
 use super::pattern::{Clip, stamp};
 use super::picker::Picker;
@@ -61,6 +62,7 @@ pub(super) struct Edit {
     pub(super) brush: TileEntry,
     pub(super) pattern: (usize, usize),
     pub(super) picker: Option<Picker>,
+    pub(super) overview: Option<Overview>,
     pub(super) attrs: Option<AttrPanel>,
     /// The last one is on top.
     pub(super) panels: Vec<Panel>,
@@ -90,6 +92,7 @@ impl Default for Edit {
             brush: TileEntry::new(1, false, false, false, BgBank::ZERO).unwrap_or(TileEntry::EMPTY),
             pattern: (1, 1),
             picker: None,
+            overview: None,
             attrs: None,
             panels: Vec::new(),
             coach: false,
@@ -114,6 +117,9 @@ impl Edit {
         self.stroke = None;
         self.selection = None;
         self.pointer = None;
+        if let Some(overview) = &mut self.overview {
+            overview.new_map();
+        }
     }
 }
 
@@ -135,7 +141,7 @@ fn changes_what_a_stroke_draws_on(event: &InputEvent) -> bool {
         InputEvent::Text(key) => {
             matches!(
                 key,
-                'x' | 'X' | '+' | '=' | '-' | '_' | '0'..='2' | 'd' | 'D' | 'n' | 'N'
+                'x' | 'X' | '+' | '=' | '-' | '_' | '0'..='2' | 'd' | 'D' | 'n' | 'N' | 'm' | 'M'
             )
         }
         _ => false,
@@ -148,14 +154,33 @@ pub(super) fn map_size(document: &MapDocument) -> (usize, usize) {
 }
 
 impl MapEditor {
+    /// The parts as drawn. The overview shows Hand as the tool and room
+    /// for its longer zoom labels.
     pub(super) fn frame(&self) -> Frame {
+        let overview = self.edit.overview.is_some();
+        let tool = if overview { Tool::Hand } else { self.edit.tool };
+        self.frame_with(self.edit.drawer, tool, if overview { 4 } else { 2 })
+    }
+
+    /// The parts as they are once the overview closes, whose canvas is the
+    /// one the viewport is measured against.
+    pub(super) fn editor_frame(&self) -> Frame {
+        let drawer = self
+            .edit
+            .overview
+            .map_or(self.edit.drawer, |overview| overview.restore);
+        self.frame_with(drawer, self.edit.tool, 2)
+    }
+
+    fn frame_with(&self, drawer: DrawerSize, tool: Tool, zoom_cells: i32) -> Frame {
         Frame::new(
             self.metrics,
             Shape {
-                drawer: self.edit.drawer,
+                drawer,
                 rulers: self.edit.rulers,
                 tile: self.edit.view.zoom().tile_px(),
-                tool_cells: text_cells(&ui_text::get(self.edit.tool.message_id())),
+                tool_cells: text_cells(&ui_text::get(tool.message_id())),
+                zoom_cells,
                 locked: self.edit.locked,
             },
         )
@@ -171,7 +196,7 @@ impl MapEditor {
     }
 
     fn fit(&mut self, document: &MapDocument) {
-        let frame = self.frame();
+        let frame = self.editor_frame();
         self.edit.view = self.viewport(&frame, document);
     }
 
@@ -228,6 +253,10 @@ impl MapEditor {
             self.end_stroke(Some(&mut *document));
         }
         let frame = self.frame();
+        if let Some(handled) = self.overview_input(event, &frame, document) {
+            self.fit(document);
+            return Some(handled);
+        }
         if let Some(handled) = self.panel_input(event, &frame, sprites.as_deref_mut()) {
             return Some(handled);
         }
@@ -375,6 +404,7 @@ impl MapEditor {
             'd' | 'D' => return Some(sprites.and_then(|sprites| self.open_tile_editor(sprites))),
             'n' | 'N' => return Some(sprites.and_then(|sprites| self.new_tile(sprites))),
             'g' | 'G' => self.edit.grid = !self.edit.grid,
+            'm' | 'M' => self.toggle_overview(document),
             'a' | 'A' => self.toggle_attr(),
             't' | 'T' => self.toggle_picker(),
             'v' => self.toggle_visible(self.edit.layer),
@@ -430,6 +460,7 @@ impl MapEditor {
             Hit::Tool(tool) => self.set_tool(tool, document),
             Hit::Grid => self.edit.grid = !self.edit.grid,
             Hit::Attr => self.toggle_attr(),
+            Hit::Overview => self.toggle_overview(document),
             Hit::Picker => self.toggle_picker(),
             Hit::EditTile => return self.edit_tile_out(usize::from(self.edit.brush.tile())),
             Hit::Rulers => {

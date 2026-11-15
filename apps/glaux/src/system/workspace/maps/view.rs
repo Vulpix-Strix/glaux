@@ -86,6 +86,12 @@ impl Viewport {
         self.clamp(map, area);
     }
 
+    pub(super) fn scroll_to(&mut self, x: i32, y: i32, map: (usize, usize), area: (i32, i32)) {
+        self.x = x;
+        self.y = y;
+        self.clamp(map, area);
+    }
+
     pub(super) fn scroll_tiles(
         &mut self,
         columns: i32,

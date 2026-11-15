@@ -96,6 +96,7 @@ pub(super) enum Hit {
     Grid,
     Rulers,
     Attr,
+    Overview,
     ZoomOut,
     ZoomIn,
     DrawerSize,
@@ -125,6 +126,8 @@ pub(super) struct Shape {
     pub(super) tile: i32,
     /// Cells of the tool's name.
     pub(super) tool_cells: i32,
+    /// Cells of the zoom's label.
+    pub(super) zoom_cells: i32,
     pub(super) locked: [bool; 3],
 }
 
@@ -197,6 +200,7 @@ impl Frame {
             rulers,
             tile,
             tool_cells,
+            zoom_cells,
             locked,
         } = shape;
         let width = WIDTH as i32;
@@ -222,7 +226,7 @@ impl Frame {
             rect
         };
         let zoom_in = item(1, 2, 0);
-        let zoom_label = item(2, 1, 0);
+        let zoom_label = item(zoom_cells, 1, 0);
         let zoom_out = item(1, 2, 4);
         let overview_button = item(8, 2, 4);
         let attr_button = item(4, 2, 4);
@@ -595,6 +599,7 @@ impl Frame {
             (self.grid_button, Hit::Grid),
             (self.rulers_button, Hit::Rulers),
             (self.attr_button, Hit::Attr),
+            (self.overview_button, Hit::Overview),
             (self.zoom_out, Hit::ZoomOut),
             (self.zoom_in, Hit::ZoomIn),
         ] {
