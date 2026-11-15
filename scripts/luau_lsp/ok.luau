@@ -35,3 +35,16 @@ local long: number = peek32(0)
 poke32(0, long)
 memcpy(0, 16, 4)
 memset(0, 0, 4)
+
+map.load("arena", 0)
+map.load("arena", 1, 0, 0, 1)
+map.copy("arena", 0, 10, 4, 2, 2)
+map.copy("arena", 0, 10, 4, 2, 2, 1)
+local width: number, height: number = map.size("arena")
+local tile: number, entry: number = map.get("arena", 1, width - 1, height - 1)
+poke16(hardware.bg[0].TILEMAP + tile * hardware.tile.ENTRY_BYTES, entry)
+poke16(hardware.bg[2].SCROLL_X, hardware.bg.MAP_SIDE)
+poke(hardware.addr.DISPLAY_ENABLE, bit32.bor(hardware.display.BG0, hardware.display.OBJ))
+local oam = hardware.addr.OAM + hardware.oam.ENTRIES * hardware.oam.ENTRY_BYTES
+local colors: number = hardware.palette.COLORS + hardware.obj.PALETTE_BANKS + hardware.size.OAM
+log.info(oam, colors)

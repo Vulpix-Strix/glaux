@@ -3,8 +3,9 @@ use std::ops::Range;
 use glaux_docs::{ApiCatalog, ApiEntry, DocId, Kind, ScriptLanguage};
 use glaux_syntax::{Definition, DefinitionKind, Grammar, Highlighter};
 
+use crate::context::INDEX;
 use crate::context::{Context, Position, Separator, context};
-use crate::resolve::{Resolved, constant_members, resolve};
+use crate::resolve::{Resolved, group_members, resolve};
 
 /// The most candidates a single answer holds.
 pub const MAX_CANDIDATES: usize = 100;
@@ -315,6 +316,12 @@ fn member_candidates(
         return;
     }
     let path: Vec<&str> = receiver.iter().map(String::as_str).collect();
+    if path.last() == Some(&INDEX) {
+        if let Some((group, members)) = group_members(api, language, syntax, request.caret, &path) {
+            push_constants(out, language, group, &members);
+        }
+        return;
+    }
     let Some(Resolved::Entry(owner)) = resolve(api, language, syntax, request.caret, &path) else {
         return;
     };
@@ -336,19 +343,35 @@ fn member_candidates(
             }
         }
         Kind::ConstantGroup => {
-            let group = receiver.last().map_or("", String::as_str);
-            for member in constant_members(owner).unwrap_or_default() {
-                out.push(Candidate {
-                    label: member.to_owned(),
-                    kind: CandidateKind::Constant,
-                    origin: Origin::Api,
-                    insertion: Insertion::Name(member.to_owned()),
-                    detail: group.to_owned(),
-                    doc: Doc::Api(owner.id().clone()),
-                });
+            if let Some((group, members)) =
+                group_members(api, language, syntax, request.caret, &path)
+            {
+                push_constants(out, language, group, &members);
             }
         }
         Kind::Function | Kind::Keyword | Kind::Callback => {}
+    }
+}
+
+fn push_constants(
+    out: &mut Vec<Candidate>,
+    language: ScriptLanguage,
+    group: &ApiEntry,
+    members: &[&str],
+) {
+    let detail = group
+        .binding(language)
+        .map(|binding| binding.name.clone())
+        .unwrap_or_default();
+    for member in members {
+        out.push(Candidate {
+            label: (*member).to_owned(),
+            kind: CandidateKind::Constant,
+            origin: Origin::Api,
+            insertion: Insertion::Name((*member).to_owned()),
+            detail: detail.clone(),
+            doc: Doc::Api(group.id().clone()),
+        });
     }
 }
 

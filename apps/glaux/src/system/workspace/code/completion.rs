@@ -21,7 +21,7 @@ use crate::system::editing::metrics::spot;
 use crate::system::editing::session::CodeSession;
 use crate::ui_text;
 use layout::{CompletionLayout, VISIBLE_ROWS};
-pub(super) use panel::{DocPanel, entry_signature, local_panel, type_name};
+pub(super) use panel::{DocPanel, entry_signature, local_panel, returns_text, type_name};
 use panel::{PanelSource, panel_for};
 
 /// The status bar hint while suggestions are listed.

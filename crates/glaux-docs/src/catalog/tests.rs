@@ -110,7 +110,52 @@ fn required_params_and_return_overrides() {
     assert_eq!(diagnostics, []);
     let entry = &catalog.entries()[0];
     assert_eq!(entry.required_params(ScriptLanguage::Luau), 1);
-    assert_eq!(entry.returns(ScriptLanguage::Luau), Some(ValueType::Int));
+    assert_eq!(
+        entry.returns(ScriptLanguage::Luau),
+        [ReturnValue {
+            name: None,
+            ty: ValueType::Int
+        }]
+    );
+}
+
+#[test]
+fn several_results_are_named_and_keep_their_order() {
+    let source = r#"#![enable(implicit_some)]
+[(
+    id: "api/map/size",
+    kind: Function,
+    luau: (path: ["map"], name: "size"),
+    returns: [(name: "width", ty: Int), (name: "height", ty: Int)],
+)]"#;
+    let (catalog, diagnostics) = merge(&[("api/map.ron", source)]);
+    assert_eq!(diagnostics, []);
+    let names: Vec<_> = catalog.entries()[0]
+        .returns(ScriptLanguage::Luau)
+        .into_iter()
+        .map(|value| value.name.unwrap())
+        .collect();
+    assert_eq!(names, ["width", "height"]);
+}
+
+#[test]
+fn a_constant_group_lists_its_constants_and_indexed_tables() {
+    let source = r#"#![enable(implicit_some)]
+[(
+    id: "api/hardware/bg",
+    kind: ConstantGroup,
+    luau: (path: ["hardware"], name: "bg"),
+    constants: (ty: Int, names: ["LAYERS"]),
+    elements: (first: 0, last: 2, constants: (ty: Int, names: ["TILEMAP", "PRIORITY"])),
+)]"#;
+    let (catalog, diagnostics) = merge(&[("api/hardware.ron", source)]);
+    assert_eq!(diagnostics, []);
+    let entry = &catalog.entries()[0];
+    assert_eq!(entry.constants().unwrap().names, ["LAYERS"]);
+    let elements = entry.elements().unwrap();
+    assert_eq!((elements.first, elements.last), (0, 2));
+    assert_eq!(elements.constants.names, ["TILEMAP", "PRIORITY"]);
+    assert_eq!(entry.source(), None);
 }
 
 fn single(category: &str, entry: &str) -> Vec<&'static str> {
@@ -176,6 +221,15 @@ fn rejects_invalid_definitions() {
         r#"(id: "api/a/x", kind: Function, luau: (name: "x", params: [(name: "p", ty: Int, optional: true), (name: "q", ty: Int)]))"#,
         r#"(id: "api/a/x", kind: Namespace, luau: (name: "x", varargs: Any))"#,
         r#"(id: "api/a/x", kind: Namespace, luau: (name: "x", params: []))"#,
+        r#"(id: "api/a/x", kind: Function, luau: (name: "x"), returns: [(name: "a", ty: Int)])"#,
+        r#"(id: "api/a/x", kind: Function, luau: (name: "x"), returns: [(name: "a", ty: Int), (ty: Int)])"#,
+        r#"(id: "api/a/x", kind: Function, luau: (name: "x"), returns: [(name: "a", ty: Int), (name: "a", ty: Int)])"#,
+        r#"(id: "api/a/x", kind: Function, luau: (name: "x"), constants: (ty: Int, names: ["A"]))"#,
+        r#"(id: "api/a/x", kind: ConstantGroup, luau: (name: "X"), source: "glaux_input::Key", constants: (ty: Int, names: ["A"]))"#,
+        r#"(id: "api/a/x", kind: ConstantGroup, luau: (name: "X"), source: "glaux_input::Key", elements: (first: 0, last: 1, constants: (ty: Int, names: ["A"])))"#,
+        r#"(id: "api/a/x", kind: ConstantGroup, luau: (name: "X"), constants: (ty: Int, names: []))"#,
+        r#"(id: "api/a/x", kind: ConstantGroup, luau: (name: "X"), constants: (ty: Int, names: ["A", "A"]))"#,
+        r#"(id: "api/a/x", kind: ConstantGroup, luau: (name: "X"), constants: (ty: Int, names: ["A"]), elements: (first: 2, last: 0, constants: (ty: Int, names: ["B"])))"#,
     ];
     for case in cases {
         assert_eq!(single("a", case), ["catalog-definition"], "{case}");
@@ -243,7 +297,7 @@ fn a_callback_is_a_global_with_no_signature() {
     let entry = catalog.lookup(ScriptLanguage::Luau, &[], "tick").unwrap();
     assert_eq!(entry.kind(), Kind::Callback);
     assert_eq!(entry.params(), []);
-    assert_eq!(entry.returns(ScriptLanguage::Luau), None);
+    assert_eq!(entry.returns(ScriptLanguage::Luau), []);
 }
 
 #[test]

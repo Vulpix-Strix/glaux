@@ -1,0 +1,78 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/hardware/index",
+        kind: Namespace,
+        luau: (name: "hardware"),
+    ),
+    (
+        id: "api/hardware/addr",
+        kind: ConstantGroup,
+        luau: (path: ["hardware"], name: "addr"),
+        constants: (ty: Int, names: [
+            "WORK_RAM", "FRAMEBUFFER", "BG_TILES", "OBJ_TILES", "MASTER_PALETTE", "BG_PALETTES",
+            "OBJ_PALETTES", "OBJ_ATTRIBUTES", "OAM", "DISPLAY_ENABLE", "BACKDROP_COLOR",
+        ]),
+    ),
+    (
+        id: "api/hardware/size",
+        kind: ConstantGroup,
+        luau: (path: ["hardware"], name: "size"),
+        constants: (ty: Int, names: [
+            "ADDRESS_SPACE", "WORK_RAM", "FRAMEBUFFER", "BG_TILES", "OBJ_TILES", "TILEMAP",
+            "MASTER_PALETTE", "BG_PALETTES", "OBJ_PALETTES", "OBJ_ATTRIBUTES", "OAM",
+        ]),
+    ),
+    (
+        id: "api/hardware/bg",
+        kind: ConstantGroup,
+        luau: (path: ["hardware"], name: "bg"),
+        constants: (ty: Int, names: [
+            "LAYERS", "MAP_SIDE", "TILE_BYTES", "TILE_CAPACITY", "PALETTE_BANKS", "PRIORITY_MASK",
+        ]),
+        elements: (first: 0, last: 2, constants: (ty: Int, names: [
+            "TILEMAP", "SCROLL_X", "SCROLL_Y", "PRIORITY",
+        ])),
+    ),
+    (
+        id: "api/hardware/display",
+        kind: ConstantGroup,
+        luau: (path: ["hardware"], name: "display"),
+        constants: (ty: Int, names: ["WIDTH", "HEIGHT", "BG0", "BG1", "BG2", "OBJ", "MASK"]),
+    ),
+    (
+        id: "api/hardware/tile",
+        kind: ConstantGroup,
+        luau: (path: ["hardware"], name: "tile"),
+        constants: (ty: Int, names: [
+            "ENTRY_BYTES", "INDEX_MASK", "FLIP_X", "FLIP_Y", "PRIORITY", "BANK_SHIFT", "BANK_MASK",
+        ]),
+    ),
+    (
+        id: "api/hardware/oam",
+        kind: ConstantGroup,
+        luau: (path: ["hardware"], name: "oam"),
+        constants: (ty: Int, names: [
+            "ENTRIES", "ENTRY_BYTES", "FIELD_X", "FIELD_Y", "FIELD_TILE", "FIELD_ATTRIBUTES",
+            "FIELD_SIZE", "TILE_MASK", "ATTR_BANK_MASK", "ATTR_FLIP_X", "ATTR_FLIP_Y",
+            "ATTR_PRIORITY_SHIFT", "ATTR_PRIORITY_MASK", "SIZE_MASK", "ENABLED", "SIZE_8X8",
+            "SIZE_16X16", "SIZE_32X32", "SIZE_8X16", "SIZE_16X8", "SIZE_16X32", "SIZE_32X16",
+            "SIZE_RESERVED",
+        ]),
+    ),
+    (
+        id: "api/hardware/obj",
+        kind: ConstantGroup,
+        luau: (path: ["hardware"], name: "obj"),
+        constants: (ty: Int, names: [
+            "TILE_WIDTH", "TILE_HEIGHT", "TILE_BYTES", "TILE_CAPACITY", "GRID_COLUMNS",
+            "PALETTE_BANKS",
+        ]),
+    ),
+    (
+        id: "api/hardware/palette",
+        kind: ConstantGroup,
+        luau: (path: ["hardware"], name: "palette"),
+        constants: (ty: Int, names: ["COLORS", "BANK_COLORS"]),
+    ),
+]

@@ -64,15 +64,19 @@ fn optional_parameters_and_types_come_from_the_catalog() {
 
 #[test]
 fn the_return_type_comes_from_the_catalog() {
-    assert_eq!(
-        help(Luau, "btnp(¦").expect("help").signature().returns,
-        Some(ValueType::Bool)
-    );
-    assert_eq!(help(Luau, "spr(¦").expect("help").signature().returns, None);
-    assert_eq!(
-        help(Luau, "frame(¦").expect("help").signature().returns,
-        Some(ValueType::Number)
-    );
+    let returns = |text: &str| -> Vec<ValueType> {
+        help(Luau, text)
+            .expect("help")
+            .signature()
+            .returns
+            .iter()
+            .map(|value| value.ty)
+            .collect()
+    };
+    assert_eq!(returns("btnp(¦"), [ValueType::Bool]);
+    assert_eq!(returns("spr(¦"), []);
+    assert_eq!(returns("frame(¦"), [ValueType::Number]);
+    assert_eq!(returns("map.size(¦"), [ValueType::Int, ValueType::Int]);
 }
 
 #[test]

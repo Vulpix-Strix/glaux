@@ -73,6 +73,34 @@ fn constant_groups_list_their_members() {
 }
 
 #[test]
+fn listed_constant_groups_and_their_indexed_tables_list_their_members() {
+    assert_eq!(
+        labels(&run(Luau, "hardware.|", Trigger::Member)),
+        [
+            "addr", "bg", "display", "oam", "obj", "palette", "size", "tile"
+        ]
+    );
+    let oam = run(Luau, "hardware.oam.|", Trigger::Member);
+    assert!(labels(&oam).contains(&"ENTRIES"));
+    assert_eq!(find(&oam, "ENTRIES").kind, CandidateKind::Constant);
+    assert_eq!(find(&oam, "ENTRIES").detail, "oam");
+
+    let bg = run(Luau, "hardware.bg.|", Trigger::Member);
+    let bg = labels(&bg);
+    assert!(bg.contains(&"LAYERS") && !bg.contains(&"TILEMAP"), "{bg:?}");
+    let layer = run(Luau, "hardware.bg[0].|", Trigger::Member);
+    let mut layer = labels(&layer);
+    layer.sort_unstable();
+    assert_eq!(layer, ["PRIORITY", "SCROLL_X", "SCROLL_Y", "TILEMAP"]);
+    assert_eq!(run(Luau, "hardware.oam[0].|", Trigger::Member).items, []);
+
+    assert_eq!(
+        labels(&run(Luau, "map.|", Trigger::Member)),
+        ["copy", "get", "load", "size"]
+    );
+}
+
+#[test]
 fn broken_code_after_the_separator_still_completes() {
     let luau = run(Luau, "audio.|\nend", Trigger::Member);
     assert_eq!(labels(&luau), ["env", "gate", "tone"]);

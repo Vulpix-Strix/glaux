@@ -13,7 +13,10 @@ mod link;
 mod page;
 pub mod validate;
 
-pub use catalog::{ApiCatalog, ApiEntry, Binding, Kind, Param, ScriptLanguage, ValueType};
+pub use catalog::{
+    ApiCatalog, ApiEntry, Binding, Constants, Elements, Kind, Param, ReturnValue, ScriptLanguage,
+    ValueType,
+};
 pub use diagnostic::{Diagnostic, Severity};
 pub use id::{DocId, DocIdError, URI_SCHEME};
 pub use ids_lock::{IdsLock, IdsLockError};

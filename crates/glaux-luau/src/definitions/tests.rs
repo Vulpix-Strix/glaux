@@ -75,16 +75,42 @@ fn signatures_follow_the_luau_side_of_the_catalog() {
          params: [(name: "value", ty: Any)]),
         (id: "api/a/four", kind: Function, luau: (path: ["ns"], name: "four", varargs: Any),
          params: [(name: "first", ty: Key)]),
+        (id: "api/a/five", kind: Function, luau: (path: ["ns"], name: "five"),
+         returns: [(name: "width", ty: Int), (name: "height", ty: Int)]),
+        (id: "api/a/six", kind: Function, luau: (name: "six"),
+         returns: [(name: "tile", ty: Int), (name: "entry", ty: Int)]),
         (id: "api/a/ns", kind: Namespace, luau: (name: "ns")),
         (id: "api/a/empty", kind: Namespace, luau: (name: "empty")),
         "#,
     );
     let text = definitions(&api).unwrap();
+    assert!(text.contains("\tfive: () -> (number, number),\n"));
+    assert!(text.contains("declare function six(): (number, number)\n"));
     assert!(text.contains("declare function one(p: number, q: string?): boolean\n"));
     assert!(text.contains("declare function two(): number\n"));
     assert!(text.contains("\tthree: (...any) -> (),\n"));
     assert!(text.contains("\tfour: (first: Key, ...any) -> (),\n"));
     assert!(text.contains("declare empty: {}\n"));
+}
+
+#[test]
+fn listed_constant_groups_are_closed_types_with_an_indexer_for_their_elements() {
+    let api = catalog(
+        r#"
+        (id: "api/a/hw", kind: Namespace, luau: (name: "hw")),
+        (id: "api/a/bg-regs", kind: ConstantGroup, luau: (path: ["hw"], name: "bg_regs"),
+         constants: (ty: Int, names: ["LAYERS"]),
+         elements: (first: 0, last: 2, constants: (ty: Int, names: ["TILEMAP", "PRIORITY"]))),
+        "#,
+    );
+    let text = definitions(&api).unwrap();
+    assert!(text.contains(
+        "declare extern type HwBgRegsElement with\n\tTILEMAP: number\n\tPRIORITY: number\nend\n"
+    ));
+    assert!(text.contains(
+        "declare extern type HwBgRegs with\n\tLAYERS: number\n\t[number]: HwBgRegsElement\nend\n"
+    ));
+    assert!(text.contains("declare hw: {\n\tbg_regs: HwBgRegs,\n}\n"));
 }
 
 #[test]

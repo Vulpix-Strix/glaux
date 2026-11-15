@@ -1,0 +1,53 @@
+#![enable(implicit_some)]
+[
+    (
+        id: "api/map/index",
+        kind: Namespace,
+        luau: (name: "map"),
+    ),
+    (
+        id: "api/map/load",
+        kind: Function,
+        luau: (path: ["map"], name: "load"),
+        params: [
+            (name: "id", ty: Text),
+            (name: "window", ty: Int),
+            (name: "x", ty: Int, optional: true),
+            (name: "y", ty: Int, optional: true),
+            (name: "source_layer", ty: Int, optional: true),
+        ],
+    ),
+    (
+        id: "api/map/copy",
+        kind: Function,
+        luau: (path: ["map"], name: "copy"),
+        params: [
+            (name: "id", ty: Text),
+            (name: "window", ty: Int),
+            (name: "x", ty: Int),
+            (name: "y", ty: Int),
+            (name: "width", ty: Int),
+            (name: "height", ty: Int),
+            (name: "source_layer", ty: Int, optional: true),
+        ],
+    ),
+    (
+        id: "api/map/size",
+        kind: Function,
+        luau: (path: ["map"], name: "size"),
+        params: [(name: "id", ty: Text)],
+        returns: [(name: "width", ty: Int), (name: "height", ty: Int)],
+    ),
+    (
+        id: "api/map/get",
+        kind: Function,
+        luau: (path: ["map"], name: "get"),
+        params: [
+            (name: "id", ty: Text),
+            (name: "layer", ty: Int),
+            (name: "x", ty: Int),
+            (name: "y", ty: Int),
+        ],
+        returns: [(name: "tile", ty: Int), (name: "entry", ty: Int)],
+    ),
+]

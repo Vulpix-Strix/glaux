@@ -89,6 +89,111 @@ declare Key: {
 	Right: Key,
 }
 
+declare extern type HardwareAddr with
+	WORK_RAM: number
+	FRAMEBUFFER: number
+	BG_TILES: number
+	OBJ_TILES: number
+	MASTER_PALETTE: number
+	BG_PALETTES: number
+	OBJ_PALETTES: number
+	OBJ_ATTRIBUTES: number
+	OAM: number
+	DISPLAY_ENABLE: number
+	BACKDROP_COLOR: number
+end
+
+declare extern type HardwareBgElement with
+	TILEMAP: number
+	SCROLL_X: number
+	SCROLL_Y: number
+	PRIORITY: number
+end
+
+declare extern type HardwareBg with
+	LAYERS: number
+	MAP_SIDE: number
+	TILE_BYTES: number
+	TILE_CAPACITY: number
+	PALETTE_BANKS: number
+	PRIORITY_MASK: number
+	[number]: HardwareBgElement
+end
+
+declare extern type HardwareDisplay with
+	WIDTH: number
+	HEIGHT: number
+	BG0: number
+	BG1: number
+	BG2: number
+	OBJ: number
+	MASK: number
+end
+
+declare extern type HardwareOam with
+	ENTRIES: number
+	ENTRY_BYTES: number
+	FIELD_X: number
+	FIELD_Y: number
+	FIELD_TILE: number
+	FIELD_ATTRIBUTES: number
+	FIELD_SIZE: number
+	TILE_MASK: number
+	ATTR_BANK_MASK: number
+	ATTR_FLIP_X: number
+	ATTR_FLIP_Y: number
+	ATTR_PRIORITY_SHIFT: number
+	ATTR_PRIORITY_MASK: number
+	SIZE_MASK: number
+	ENABLED: number
+	SIZE_8X8: number
+	SIZE_16X16: number
+	SIZE_32X32: number
+	SIZE_8X16: number
+	SIZE_16X8: number
+	SIZE_16X32: number
+	SIZE_32X16: number
+	SIZE_RESERVED: number
+end
+
+declare extern type HardwareObj with
+	TILE_WIDTH: number
+	TILE_HEIGHT: number
+	TILE_BYTES: number
+	TILE_CAPACITY: number
+	GRID_COLUMNS: number
+	PALETTE_BANKS: number
+end
+
+declare extern type HardwarePalette with
+	COLORS: number
+	BANK_COLORS: number
+end
+
+declare extern type HardwareSize with
+	ADDRESS_SPACE: number
+	WORK_RAM: number
+	FRAMEBUFFER: number
+	BG_TILES: number
+	OBJ_TILES: number
+	TILEMAP: number
+	MASTER_PALETTE: number
+	BG_PALETTES: number
+	OBJ_PALETTES: number
+	OBJ_ATTRIBUTES: number
+	OAM: number
+end
+
+declare extern type HardwareTile with
+	ENTRY_BYTES: number
+	INDEX_MASK: number
+	FLIP_X: number
+	FLIP_Y: number
+	PRIORITY: number
+	BANK_SHIFT: number
+	BANK_MASK: number
+end
+
 declare function btn(button: Button): boolean
 declare function btnp(button: Button): boolean
 declare function cls(color: number)
@@ -115,9 +220,27 @@ declare audio: {
 	tone: (channel: number, frequency: number, volume: number, waveform: Waveform) -> (),
 }
 
+declare hardware: {
+	addr: HardwareAddr,
+	bg: HardwareBg,
+	display: HardwareDisplay,
+	oam: HardwareOam,
+	obj: HardwareObj,
+	palette: HardwarePalette,
+	size: HardwareSize,
+	tile: HardwareTile,
+}
+
 declare log: {
 	debug: (...any) -> (),
 	info: (...any) -> (),
 	trace: (...any) -> (),
 	warn: (...any) -> (),
+}
+
+declare map: {
+	copy: (id: string, window: number, x: number, y: number, width: number, height: number, source_layer: number?) -> (),
+	get: (id: string, layer: number, x: number, y: number) -> (number, number),
+	load: (id: string, window: number, x: number?, y: number?, source_layer: number?) -> (),
+	size: (id: string) -> (number, number),
 }

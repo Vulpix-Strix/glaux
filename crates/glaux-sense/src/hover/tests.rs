@@ -74,6 +74,15 @@ fn constant_members_stand_for_their_group() {
         "{luau}"
     );
     assert_eq!(subject(LUAU, "Key.¦Nope"), "unknown");
+    assert_eq!(
+        subject(LUAU, "hardware.oam.¦ENTRIES"),
+        "constant api/hardware/oam ENTRIES"
+    );
+    assert_eq!(
+        subject(LUAU, "hardware.bg[0].¦TILEMAP"),
+        "constant api/hardware/bg TILEMAP"
+    );
+    assert_eq!(subject(LUAU, "hardware.bg[0].¦LAYERS"), "unknown");
 }
 
 #[test]

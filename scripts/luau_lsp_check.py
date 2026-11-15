@@ -24,7 +24,8 @@ FIXTURES = Path(__file__).resolve().parent / "luau_lsp"
 EXAMPLES = ROOT / "examples"
 DIAGNOSTIC = re.compile(r"^(?P<file>.+?)\((?P<line>\d+),\d+\): (?P<kind>\w+): (?P<message>.*)$")
 GLAUX_API = re.compile(
-    r"Unknown global|'(Button|Key|Waveform)'|Function '(log|audio)\.|table '(Button|Key|audio|log)'"
+    r"Unknown global|'(Button|Key|Waveform|Hardware\w*)'|Function '(log|audio|map)\."
+    r"|table '(Button|Key|audio|log|map|hardware)'"
 )
 FATAL = ("Failed to read definitions", "SyntaxError")
 

@@ -71,9 +71,8 @@ fn every_catalog_entry_exists_with_the_documented_kind() {
 fn constant_groups_hold_exactly_their_source_members() {
     let runtime = started("");
     let library = Library::embedded();
-    let mut checked = 0;
     for entry in library.api().entries_for(LANGUAGE) {
-        if entry.kind() != Kind::ConstantGroup {
+        if entry.kind() != Kind::ConstantGroup || entry.constants().is_some() {
             continue;
         }
         let expected: BTreeSet<String> = match entry.source() {
@@ -86,9 +85,70 @@ fn constant_groups_hold_exactly_their_source_members() {
         let name = &entry.binding(LANGUAGE).unwrap().name;
         let table = walk(runtime.lua(), std::slice::from_ref(name)).unwrap();
         assert_eq!(member_names(&table), expected, "{}", entry.id());
+    }
+}
+
+/// The names of `table`'s integer-valued string keys, and its integer keys.
+/// Any other key or value fails the test.
+fn integer_constants(table: &Table, id: &str) -> (BTreeSet<String>, BTreeSet<i64>) {
+    let (mut names, mut indices) = (BTreeSet::new(), BTreeSet::new());
+    for pair in table.pairs::<Value, Value>() {
+        match pair.unwrap() {
+            (Value::String(name), Value::Integer(_)) => {
+                names.insert(name.to_str().unwrap().to_owned());
+            }
+            (Value::Integer(index), Value::Table(_)) => {
+                indices.insert(index);
+            }
+            (key, value) => panic!("{id}: unexpected {key:?} = {value:?}"),
+        }
+    }
+    (names, indices)
+}
+
+fn listed(names: &[String]) -> BTreeSet<String> {
+    names.iter().cloned().collect()
+}
+
+#[test]
+fn listed_constant_groups_match_the_read_only_runtime_tables() {
+    let runtime = started("");
+    let library = Library::embedded();
+    let mut checked = 0;
+    for entry in library.api().entries_for(LANGUAGE) {
+        let Some(constants) = entry.constants() else {
+            continue;
+        };
+        let id = entry.id().to_string();
+        let binding = entry.binding(LANGUAGE).unwrap();
+        let path: Vec<String> = binding
+            .path
+            .iter()
+            .chain([&binding.name])
+            .cloned()
+            .collect();
+        let table = walk(runtime.lua(), &path).unwrap_or_else(|| panic!("{id} is missing"));
+        assert!(table.is_readonly(), "{id} can be written");
+
+        let (names, indices) = integer_constants(&table, &id);
+        assert_eq!(names, listed(&constants.names), "{id}");
+        let expected: BTreeSet<i64> = entry
+            .elements()
+            .map(|elements| (elements.first..=elements.last).collect())
+            .unwrap_or_default();
+        assert_eq!(indices, expected, "{id}: indexed tables");
+
+        for index in indices {
+            let element: Table = table.raw_get(index).unwrap();
+            assert!(element.is_readonly(), "{id}[{index}] can be written");
+            let (names, inner) = integer_constants(&element, &format!("{id}[{index}]"));
+            let elements = entry.elements().unwrap();
+            assert_eq!(names, listed(&elements.constants.names), "{id}[{index}]");
+            assert!(inner.is_empty(), "{id}[{index}]");
+        }
         checked += 1;
     }
-    assert_eq!(checked, 2, "Button and Key are the constant groups");
+    assert!(checked > 0, "no constant group lists its constants");
 }
 
 #[test]

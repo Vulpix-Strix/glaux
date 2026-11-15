@@ -5,7 +5,7 @@ use glaux_docs::DocId;
 use glaux_i18n::Arg;
 use glaux_sense::{Doc, ParamInfo, SignatureHelp};
 
-use super::super::completion::type_name;
+use super::super::completion::{returns_text, type_name};
 use crate::ui_text;
 
 /// The parameter the caret is writing, as its name and, when it has one,
@@ -23,7 +23,7 @@ pub struct SignatureView {
     /// Each parameter as the signature writes it, `?` marking an optional
     /// one.
     pub params: Vec<String>,
-    pub returns: Option<&'static str>,
+    pub returns: Option<String>,
     /// The parameter the caret is writing.
     pub active: Option<usize>,
     /// Which of several signatures this is, as its position and the count.
@@ -61,7 +61,7 @@ pub fn view_for(help: &SignatureHelp, source: &ViewSource<'_>) -> SignatureView 
     SignatureView {
         name: signature.name.clone(),
         params: signature.params.iter().map(written).collect(),
-        returns: signature.returns.map(type_name),
+        returns: returns_text(&signature.returns),
         active: help.active_param,
         overload: (help.signatures.len() > 1)
             .then_some((help.active_signature + 1, help.signatures.len())),

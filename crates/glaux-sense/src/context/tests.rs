@@ -73,9 +73,18 @@ fn receivers_can_be_chains() {
 }
 
 #[test]
+fn a_literal_index_is_part_of_the_chain() {
+    assert_eq!(
+        position(Luau, "hardware.bg[0].|"),
+        member(&["hardware", "bg", INDEX], Separator::Dot)
+    );
+    assert_eq!(position(Luau, "t[i].|"), member(&[], Separator::Dot));
+    assert_eq!(position(Luau, "f()[0].|"), member(&[], Separator::Dot));
+}
+
+#[test]
 fn a_receiver_that_is_not_a_plain_chain_is_empty() {
     assert_eq!(position(Luau, "f().|"), member(&[], Separator::Dot));
-    assert_eq!(position(Luau, "t[1].|"), member(&[], Separator::Dot));
     assert_eq!(position(Luau, "a.b().c.|"), member(&[], Separator::Dot));
     assert_eq!(position(Luau, "(a).|"), member(&[], Separator::Dot));
 }

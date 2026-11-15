@@ -2,6 +2,8 @@ use glaux_docs::{ApiCatalog, ApiEntry, ScriptLanguage};
 use glaux_input::{Button, Key};
 use glaux_syntax::{Definition, Highlighter};
 
+use crate::context::INDEX;
+
 /// What a name in a script refers to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolved<'a> {
@@ -33,15 +35,47 @@ pub fn resolve<'a>(
     api.lookup(language, outer, name).map(Resolved::Entry)
 }
 
-/// The member names of a constant group such as `Key`.
+/// The member names of a constant group such as `Key` or `hardware.oam`.
 ///
-/// The catalog only records the Rust item that defines the members, so this maps
-/// that source to the list. It returns `None` for entries that are not constant groups.
-pub fn constant_members(entry: &ApiEntry) -> Option<Vec<&'static str>> {
+/// Opaque groups name the Rust item that defines their members, so this maps that
+/// source to the list. Other groups list their constants in the catalog. It returns
+/// `None` for entries that are not constant groups.
+pub fn constant_members(entry: &ApiEntry) -> Option<Vec<&str>> {
+    if let Some(constants) = entry.constants() {
+        return Some(constants.names.iter().map(String::as_str).collect());
+    }
     match entry.source()? {
         "glaux_input::Key" => Some(Key::ALL.iter().map(|key| key.name()).collect()),
         "glaux_input::Button" => Some(Button::ALL.iter().map(|button| button.name()).collect()),
         _ => None,
+    }
+}
+
+/// The constant group a receiver such as `hardware.oam` or `hardware.bg[0]` names,
+/// with the members it offers. An index offers the members of the group's
+/// indexed tables.
+pub fn group_members<'a>(
+    api: &'a ApiCatalog,
+    language: ScriptLanguage,
+    syntax: &Highlighter,
+    offset: usize,
+    receiver: &[&str],
+) -> Option<(&'a ApiEntry, Vec<&'a str>)> {
+    match receiver.split_last()? {
+        (&INDEX, owner) => {
+            let Some(Resolved::Entry(group)) = resolve(api, language, syntax, offset, owner) else {
+                return None;
+            };
+            let names = &group.elements()?.constants.names;
+            Some((group, names.iter().map(String::as_str).collect()))
+        }
+        _ => {
+            let Some(Resolved::Entry(group)) = resolve(api, language, syntax, offset, receiver)
+            else {
+                return None;
+            };
+            Some((group, constant_members(group)?))
+        }
     }
 }
 

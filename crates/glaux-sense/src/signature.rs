@@ -1,4 +1,4 @@
-use glaux_docs::{ApiCatalog, ApiEntry, Kind, ScriptLanguage, ValueType};
+use glaux_docs::{ApiCatalog, ApiEntry, Kind, ReturnValue, ScriptLanguage, ValueType};
 use glaux_syntax::{Definition, DefinitionKind, Highlighter};
 
 use crate::complete::{Doc, grammar};
@@ -47,7 +47,8 @@ pub struct Signature {
     /// The function as the script writes it, such as `audio.tone` or `audio::tone`.
     pub name: String,
     pub params: Vec<ParamInfo>,
-    pub returns: Option<ValueType>,
+    /// The values a call gives back, empty when unknown or none.
+    pub returns: Vec<ReturnValue>,
     pub doc: Doc,
 }
 
@@ -190,7 +191,7 @@ fn local_signature(definition: Definition) -> Signature {
                 variadic: name == VARARGS,
             })
             .collect(),
-        returns: None,
+        returns: Vec::new(),
         doc: Doc::Local(definition),
     }
 }

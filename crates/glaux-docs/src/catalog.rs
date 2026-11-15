@@ -13,7 +13,9 @@
 //! # What is checked
 //!
 //! The runtime crates (`glaux-luau`) test that every entry's names exist and
-//! that nothing is installed which the catalog does not list. **Parameter
+//! that nothing is installed which the catalog does not list. They also check
+//! that a constant group's listed `constants` and `elements` are exactly the
+//! runtime's table. **Parameter
 //! names, parameter types and return types are maintained by hand and
 //! nothing verifies them.** Neither does arity. Review them against the
 //! runtime when changing an API.
@@ -79,8 +81,9 @@ pub enum Kind {
     Function,
     /// A table or module that groups functions, such as `audio`.
     Namespace,
-    /// A table of constants whose members are defined elsewhere, such as
-    /// `Key`. The entry's `source` names where.
+    /// A table of constants. Its members are either opaque values defined
+    /// in Rust, such as `Key`, named by the entry's `source`, or values listed
+    /// in the entry's `constants` and, for indexed tables, its `elements`.
     ConstantGroup,
     /// Syntax rather than a registered function.
     /// Not looked up in the runtime.
@@ -131,6 +134,51 @@ pub struct Binding {
     pub varargs: Option<ValueType>,
 }
 
+/// One value a function gives back.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReturnValue {
+    /// What the value means, when a function gives back several.
+    #[serde(default)]
+    pub name: Option<String>,
+    pub ty: ValueType,
+}
+
+/// `returns: Int` for one value, or a list of named values.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawReturns {
+    One(ValueType),
+    Many(Vec<ReturnValue>),
+}
+
+impl RawReturns {
+    fn into_values(self) -> Vec<ReturnValue> {
+        match self {
+            Self::One(ty) => vec![ReturnValue { name: None, ty }],
+            Self::Many(values) => values,
+        }
+    }
+}
+
+/// Named constants of one type. Their values are defined by the runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Constants {
+    pub ty: ValueType,
+    pub names: Vec<String>,
+}
+
+/// The tables a constant group holds at the integer keys `first` to `last`,
+/// inclusive, each with the same constants.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Elements {
+    pub first: i64,
+    pub last: i64,
+    pub constants: Constants,
+}
+
 /// A parameter of a function.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -149,8 +197,10 @@ pub struct ApiEntry {
     kind: Kind,
     luau: Option<Binding>,
     params: Vec<Param>,
-    returns: Option<ValueType>,
+    returns: Vec<ReturnValue>,
     source: Option<String>,
+    constants: Option<Constants>,
+    elements: Option<Elements>,
 }
 
 impl ApiEntry {
@@ -204,16 +254,29 @@ impl ApiEntry {
             .count()
     }
 
-    /// The result type in `language`, or `None` for no result.
-    pub fn returns(&self, language: ScriptLanguage) -> Option<ValueType> {
-        self.binding(language)
-            .and_then(|binding| binding.returns)
-            .or(self.returns)
+    /// The values a call in `language` gives back, in order. Empty when it
+    /// gives back nothing.
+    pub fn returns(&self, language: ScriptLanguage) -> Vec<ReturnValue> {
+        match self.binding(language).and_then(|binding| binding.returns) {
+            Some(ty) => vec![ReturnValue { name: None, ty }],
+            None => self.returns.clone(),
+        }
     }
 
-    /// For a constant group, the Rust item that defines its members.
+    /// For a constant group of opaque values, the Rust item that defines its
+    /// members.
     pub fn source(&self) -> Option<&str> {
         self.source.as_deref()
+    }
+
+    /// For a constant group of listed values, its named constants.
+    pub fn constants(&self) -> Option<&Constants> {
+        self.constants.as_ref()
+    }
+
+    /// For a constant group with indexed tables, what they hold.
+    pub fn elements(&self) -> Option<&Elements> {
+        self.elements.as_ref()
     }
 }
 
@@ -352,9 +415,13 @@ struct RawEntry {
     #[serde(default)]
     params: Vec<Param>,
     #[serde(default)]
-    returns: Option<ValueType>,
+    returns: Option<RawReturns>,
     #[serde(default)]
     source: Option<String>,
+    #[serde(default)]
+    constants: Option<Constants>,
+    #[serde(default)]
+    elements: Option<Elements>,
 }
 
 /// Why an entry was left out of the catalog.
@@ -403,8 +470,13 @@ impl RawEntry {
             kind: self.kind,
             luau: self.luau,
             params: self.params,
-            returns: self.returns,
+            returns: self
+                .returns
+                .map(RawReturns::into_values)
+                .unwrap_or_default(),
             source: self.source,
+            constants: self.constants,
+            elements: self.elements,
         })
     }
 
@@ -435,16 +507,11 @@ impl RawEntry {
                 "only functions and keywords take parameters or return values".into(),
             ));
         }
-        match (self.kind, &self.source) {
-            (Kind::ConstantGroup, None) => {
-                return Err(definition("a constant group needs a `source`".into()));
-            }
-            (kind, Some(_)) if kind != Kind::ConstantGroup => {
-                return Err(definition("only a constant group has a `source`".into()));
-            }
-            _ => {}
-        }
+        self.check_constants()?;
         check_params(&self.params)?;
+        if let Some(RawReturns::Many(values)) = &self.returns {
+            check_returns(values)?;
+        }
         if let Some(binding) = &self.luau
             && let Some(params) = &binding.params
         {
@@ -482,7 +549,82 @@ fn check_params(params: &[Param]) -> Result<(), Problem> {
     Ok(())
 }
 
+fn check_returns(values: &[ReturnValue]) -> Result<(), Problem> {
+    let definition = |message: String| Problem::new("catalog-definition", message);
+    if values.len() < 2 {
+        return Err(definition(
+            "a list of results needs at least two; write `returns: Type` for one".into(),
+        ));
+    }
+    let mut names = BTreeSet::new();
+    for value in values {
+        let Some(name) = &value.name else {
+            return Err(definition("each of several results needs a name".into()));
+        };
+        if !is_identifier(name) || !names.insert(name.as_str()) {
+            return Err(definition(format!(
+                "result name {name:?} is invalid or repeated"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn check_constants(constants: &Constants) -> Result<(), Problem> {
+    let definition = |message: String| Problem::new("catalog-definition", message);
+    if constants.names.is_empty() {
+        return Err(definition("a constant list needs at least one name".into()));
+    }
+    let mut names = BTreeSet::new();
+    for name in &constants.names {
+        if !is_identifier(name) || !names.insert(name.as_str()) {
+            return Err(definition(format!(
+                "constant name {name:?} is invalid or repeated"
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl RawEntry {
+    /// A constant group has either a `source` or `constants`, and only a
+    /// group with `constants` may have `elements`.
+    fn check_constants(&self) -> Result<(), Problem> {
+        let definition = |message: &str| Problem::new("catalog-definition", message);
+        let listed = self.constants.is_some() || self.elements.is_some();
+        if self.kind != Kind::ConstantGroup {
+            if self.source.is_some() || listed {
+                return Err(definition(
+                    "only a constant group has a `source`, `constants` or `elements`",
+                ));
+            }
+            return Ok(());
+        }
+        match (&self.source, &self.constants) {
+            (None, None) => {
+                return Err(definition(
+                    "a constant group needs a `source` or `constants`",
+                ));
+            }
+            (Some(_), _) if listed => {
+                return Err(definition(
+                    "a constant group has a `source` or `constants`, not both",
+                ));
+            }
+            _ => {}
+        }
+        if let Some(constants) = &self.constants {
+            check_constants(constants)?;
+        }
+        if let Some(elements) = &self.elements {
+            if elements.first > elements.last {
+                return Err(definition("`elements` needs `first` at most `last`"));
+            }
+            check_constants(&elements.constants)?;
+        }
+        Ok(())
+    }
+
     /// A callback is a plain global.
     fn check_callback(&self) -> Result<(), Problem> {
         let definition = |message: &str| Problem::new("catalog-definition", message);

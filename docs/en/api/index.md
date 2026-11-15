@@ -22,6 +22,10 @@ The [audio](glaux://api/audio/index) functions: [tone](glaux://api/audio/tone), 
 
 Luau only: [peek](glaux://api/memory/peek), [poke](glaux://api/memory/poke), [peek16](glaux://api/memory/peek16), [poke16](glaux://api/memory/poke16), [peek32](glaux://api/memory/peek32), [poke32](glaux://api/memory/poke32), [memcpy](glaux://api/memory/memcpy) and [memset](glaux://api/memory/memset) read and write the machine's memory. See [Memory](glaux://guide/memory).
 
+## Maps and hardware
+
+The [map](glaux://api/map/index) functions [load](glaux://api/map/load), [copy](glaux://api/map/copy), [size](glaux://api/map/size) and [get](glaux://api/map/get) put the cartridge's maps on the background layers. The [hardware](glaux://api/hardware/index) constants name the machine's addresses and register bits for the memory functions.
+
 ## Time, logging and modules
 
 [frame](glaux://api/time/frame) and [t](glaux://api/time/t) report logical time. [log](glaux://api/logging/index) records messages. [require](glaux://api/modules/require) loads cartridge modules.

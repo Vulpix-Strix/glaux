@@ -73,7 +73,7 @@ fn only_functions_have_a_return_type() {
         .lookup(ScriptLanguage::Luau, &[], "btnp")
         .expect("btnp is in the catalog");
     let (view, _) = view_of(&Subject::Entry(btnp)).expect("a view");
-    assert_eq!(view.returns, Some("bool"));
+    assert_eq!(view.returns.as_deref(), Some("bool"));
     let audio = library
         .api()
         .lookup(ScriptLanguage::Luau, &[], "audio")

@@ -2,7 +2,7 @@
 //! candidate.
 
 use crate::ui_text;
-use glaux_docs::{ApiCatalog, ApiEntry, DocId, Kind, ScriptLanguage, ValueType};
+use glaux_docs::{ApiCatalog, ApiEntry, DocId, Kind, ReturnValue, ScriptLanguage, ValueType};
 use glaux_i18n::Arg;
 use glaux_sense::{Candidate, CandidateKind, Doc};
 use glaux_syntax::{Definition, DefinitionKind, SyntaxKind};
@@ -149,9 +149,9 @@ pub(in crate::system::workspace::code) fn entry_signature(
                 (names.join(", "), SyntaxKind::Variable),
                 op(")"),
             ];
-            if let Some(returns) = entry.returns(language) {
+            if let Some(returns) = returns_text(&entry.returns(language)) {
                 signature.push(op(" : "));
-                signature.push((type_name(returns).to_owned(), SyntaxKind::Type));
+                signature.push((returns, SyntaxKind::Type));
             }
             signature
         }
@@ -175,6 +175,22 @@ pub(in crate::system::workspace::code) fn entry_signature(
             ]
         }
     }
+}
+
+/// `number` for one result, `width: number, height: number` for several,
+/// `None` for none.
+pub fn returns_text(values: &[ReturnValue]) -> Option<String> {
+    if values.is_empty() {
+        return None;
+    }
+    let written: Vec<String> = values
+        .iter()
+        .map(|value| match &value.name {
+            Some(name) => format!("{name}: {}", type_name(value.ty)),
+            None => type_name(value.ty).to_owned(),
+        })
+        .collect();
+    Some(written.join(", "))
 }
 
 pub fn type_name(ty: ValueType) -> &'static str {

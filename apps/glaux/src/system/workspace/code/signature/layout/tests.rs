@@ -109,7 +109,7 @@ fn a_function_without_parameters_shows_empty_parentheses() {
 #[test]
 fn the_return_type_and_overload_follow_the_parentheses() {
     let view = SignatureView {
-        returns: Some("bool"),
+        returns: Some("bool".into()),
         overload: Some((2, 3)),
         ..view(&["a"], Some(0))
     };
@@ -123,7 +123,7 @@ fn a_long_signature_drops_the_return_type_before_any_parameter() {
     // "spr(param0, ..., param8)" is 4 + 9 * 6 + 8 * 2 + 1 = 75 columns, so
     // narrow the area to leave exactly enough for it without the type.
     let view = SignatureView {
-        returns: Some("bool"),
+        returns: Some("bool".into()),
         ..view(&params, Some(0))
     };
     let narrow = Rect {

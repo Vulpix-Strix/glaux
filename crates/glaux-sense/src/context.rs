@@ -12,6 +12,9 @@ use glaux_syntax::Highlighter;
 
 use crate::lexical::{self, State};
 
+/// The receiver segment that stands for a literal index, as in `hardware.bg[0]`.
+pub const INDEX: &str = "[]";
+
 /// The token between a receiver and its member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Separator {
@@ -30,8 +33,9 @@ pub enum Position {
     },
     /// A member of a receiver, such as `to` in `audio.to` or `Sp` in `Key::Sp`.
     Member {
-        /// The names before the separator, outermost first. Empty when the receiver is
-        /// not a plain chain of names, as in `f().`, because nothing is known about it.
+        /// The names before the separator, outermost first. A literal index such as
+        /// `[0]` is the segment [`INDEX`]. Empty when the receiver is not a chain of
+        /// names and indices, as in `f().`, because nothing is known about it.
         receiver: Vec<String>,
         separator: Separator,
     },
@@ -144,6 +148,10 @@ fn member_before(language: ScriptLanguage, text: &str, start: usize) -> Option<P
     let mut receiver = Vec::new();
     let mut end = separator_start;
     loop {
+        while let Some(open) = index_ending_at(text, end) {
+            receiver.push(INDEX.to_owned());
+            end = open;
+        }
         let word = word_ending_at(text, end);
         if word.is_empty() {
             receiver.clear();
@@ -217,6 +225,14 @@ fn starts_top_level_statement(language: ScriptLanguage, text: &str, at: usize) -
 }
 
 /// The identifier that ends at `end`, which is empty when there is none.
+/// Where `[` starts when `text[..end]` ends with an index of digits, such as `[0]`.
+fn index_ending_at(text: &str, end: usize) -> Option<usize> {
+    let before = text[..end].strip_suffix(']')?;
+    let open = before.rfind('[')?;
+    let digits = &before[open + 1..];
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some(open)
+}
+
 fn word_ending_at(text: &str, end: usize) -> Range<usize> {
     let start = text.as_bytes()[..end]
         .iter()

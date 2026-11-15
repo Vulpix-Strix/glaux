@@ -85,7 +85,7 @@ impl HoverLayout {
             .take(summary_lines)
             .collect();
         let table = Table::new(font, view, param_rows, columns);
-        let returns = view.returns.map(|ty| {
+        let returns = view.returns.as_deref().map(|ty| {
             let label = ui_text::get("code-hover-returns");
             (font.text_cells(&label) + 1, label, ty)
         });

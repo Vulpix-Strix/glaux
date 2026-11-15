@@ -45,7 +45,7 @@ fn view() -> HoverView {
         tag: Some("graphics".to_owned()),
         summary: Some("Draws the sprite with this id at a position on the screen.".to_owned()),
         params: ["id", "x", "y", "flip"].map(row).to_vec(),
-        returns: Some("bool"),
+        returns: Some("bool".into()),
         opens_page: true,
     }
 }

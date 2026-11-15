@@ -4,7 +4,7 @@ use glaux_docs::{ApiCatalog, ApiEntry, ScriptLanguage};
 use glaux_syntax::{Definition, Highlighter};
 
 use crate::context::{Position, context};
-use crate::resolve::{Resolved, constant_members, resolve};
+use crate::resolve::{Resolved, group_members, resolve};
 
 /// What the word under a pointer names.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,7 +15,7 @@ pub enum Subject<'a> {
     /// of their own, so the group stands for them.
     Constant {
         group: &'a ApiEntry,
-        member: &'static str,
+        member: &'a str,
     },
     /// Something the script defines.
     Local(Definition),
@@ -74,8 +74,8 @@ pub fn hover<'a>(
     Some(Hover { range, subject })
 }
 
-/// Recognizes `Key.A` and `Key::A`, which `resolve` cannot find because the members
-/// are not catalog entries.
+/// Recognizes `Key.A` and `hardware.bg[0].TILEMAP`, which `resolve` cannot find
+/// because the members are not catalog entries.
 fn constant<'a>(
     api: &'a ApiCatalog,
     language: ScriptLanguage,
@@ -84,12 +84,8 @@ fn constant<'a>(
     path: &[&str],
 ) -> Option<Subject<'a>> {
     let (member, owner) = path.split_last()?;
-    let Some(Resolved::Entry(group)) = resolve(api, language, syntax, offset, owner) else {
-        return None;
-    };
-    let member = constant_members(group)?
-        .into_iter()
-        .find(|name| name == member)?;
+    let (group, members) = group_members(api, language, syntax, offset, owner)?;
+    let member = members.into_iter().find(|name| name == member)?;
     Some(Subject::Constant { group, member })
 }
 

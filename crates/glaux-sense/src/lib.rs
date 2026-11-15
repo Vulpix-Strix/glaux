@@ -41,8 +41,8 @@ pub use complete::{
     Candidate, CandidateKind, Completions, Doc, Insertion, MAX_CANDIDATES, Origin, Request,
     Trigger, complete,
 };
-pub use context::{Context, Position, Separator, context};
+pub use context::{Context, INDEX, Position, Separator, context};
 pub use definition::{Resolution, definition};
 pub use hover::{Hover, Subject, hover};
-pub use resolve::{Resolved, constant_members, resolve};
+pub use resolve::{Resolved, constant_members, group_members, resolve};
 pub use signature::{ParamInfo, Signature, SignatureHelp, SignatureRequest, signature_help};

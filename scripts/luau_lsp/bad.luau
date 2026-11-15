@@ -25,3 +25,11 @@ local wrong: string = require("util").double(1) -- error
 peek("0") -- error
 poke(0) -- error
 local nothing: number = memset(0, 0, 1) -- error
+map.load("arena") -- error
+map.copy("arena", 0, 0, 0) -- error
+local name: string = map.size("arena") -- error
+local f, g, h = map.get("arena", 0, 0, 0) -- error
+local o = hardware.oam.NOPE -- error
+local p: string = hardware.bg[0].TILEMAP -- error
+local q = hardware.bg[0].LAYERS -- error
+local r = hardware.nope -- error

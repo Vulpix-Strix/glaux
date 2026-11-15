@@ -277,7 +277,7 @@ fn signature_line(view: &SignatureView, shown: Range<usize>, returns: bool) -> V
         line.push(operator(ELIDED));
     }
     line.push(operator(")"));
-    if returns && let Some(ty) = view.returns {
+    if returns && let Some(ty) = &view.returns {
         line.push(operator(" : "));
         line.push(piece(ty, SyntaxKind::Type));
     }

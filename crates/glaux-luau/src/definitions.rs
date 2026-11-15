@@ -10,6 +10,12 @@
 //! Their members come from the Rust items the catalog names in `source`.
 //! `Waveform` is a union of the strings the runtime accepts.
 //!
+//! A constant group whose catalog entry lists its `constants`, such as
+//! `hardware.oam`, is an `extern type` too, so the analyzer rejects names
+//! the group does not have. Its `elements` become a number indexer. The
+//! default type solver has no read-only table properties, so writes are
+//! only rejected by the runtime.
+//!
 //! The catalog does not describe everything, and the output does not guess:
 //!
 //! - `Number` and `Int` are both `number`, since Luau has no integer type.
@@ -25,7 +31,9 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use glaux_audio::Waveform;
-use glaux_docs::{ApiCatalog, ApiEntry, Kind, Param, ScriptLanguage, ValueType};
+use glaux_docs::{
+    ApiCatalog, ApiEntry, Constants, Kind, Param, ReturnValue, ScriptLanguage, ValueType,
+};
 use glaux_input::{Button, Key};
 
 const LANGUAGE: ScriptLanguage = ScriptLanguage::Luau;
@@ -62,7 +70,7 @@ pub fn definitions(api: &ApiCatalog) -> Result<String, DefinitionsError> {
 
     let mut groups = Vec::new();
     for entry in api.entries_for(LANGUAGE) {
-        if entry.kind() == Kind::ConstantGroup {
+        if entry.kind() == Kind::ConstantGroup && entry.constants().is_none() {
             groups.push(constant_group(entry)?);
         }
     }
@@ -78,6 +86,7 @@ pub fn definitions(api: &ApiCatalog) -> Result<String, DefinitionsError> {
     }
 
     let mut root = Namespace::default();
+    let mut tables = String::new();
     for entry in api.entries_for(LANGUAGE) {
         let Some(binding) = entry.binding(LANGUAGE) else {
             continue;
@@ -95,13 +104,27 @@ pub fn definitions(api: &ApiCatalog) -> Result<String, DefinitionsError> {
                     .descend(std::slice::from_ref(&binding.name));
                 None
             }
-            Kind::ConstantGroup | Kind::Keyword | Kind::Callback => None,
+            Kind::ConstantGroup => {
+                if let Some(constants) = entry.constants() {
+                    let ty = table_type_name(&binding.path, &binding.name);
+                    write_table_types(&mut tables, &ty, constants, entry);
+                    root.descend(&binding.path)
+                        .tables
+                        .insert(binding.name.clone(), ty);
+                }
+                None
+            }
+            Kind::Keyword | Kind::Callback => None,
         };
     }
 
+    out.push_str(&tables);
     out.push('\n');
     for (name, function) in &root.functions {
         let _ = writeln!(out, "declare function {name}{}", function.declaration());
+    }
+    for (name, ty) in &root.tables {
+        let _ = writeln!(out, "declare {name}: {ty}");
     }
     for (name, namespace) in &root.children {
         let _ = write!(out, "\ndeclare {name}: ");
@@ -134,11 +157,50 @@ fn constant_group(entry: &ApiEntry) -> Result<ConstantGroup, DefinitionsError> {
     Ok(ConstantGroup { name, members })
 }
 
+/// `HardwareOam` for `hardware.oam`.
+fn table_type_name(path: &[String], name: &str) -> String {
+    path.iter()
+        .map(String::as_str)
+        .chain([name])
+        .flat_map(|segment| segment.split('_'))
+        .map(|word| {
+            let mut chars = word.chars();
+            chars.next().map_or_else(String::new, |first| {
+                first.to_ascii_uppercase().to_string() + &chars.as_str().to_ascii_lowercase()
+            })
+        })
+        .collect()
+}
+
+/// Declares `ty` with the group's constants and, for indexed tables, the
+/// `<ty>Element` type they share.
+fn write_table_types(out: &mut String, ty: &str, constants: &Constants, entry: &ApiEntry) {
+    let element = entry.elements().map(|elements| {
+        let element = format!("{ty}Element");
+        write_extern_type(out, &element, &elements.constants, None);
+        element
+    });
+    write_extern_type(out, ty, constants, element.as_deref());
+}
+
+fn write_extern_type(out: &mut String, ty: &str, constants: &Constants, indexer: Option<&str>) {
+    let _ = writeln!(out, "\ndeclare extern type {ty} with");
+    for name in &constants.names {
+        let _ = writeln!(out, "\t{name}: {}", type_name(constants.ty));
+    }
+    if let Some(element) = indexer {
+        let _ = writeln!(out, "\t[number]: {element}");
+    }
+    out.push_str("end\n");
+}
+
 /// The functions and nested tables under one global, sorted by name.
 #[derive(Default)]
 struct Namespace {
     functions: BTreeMap<String, FunctionType>,
     children: BTreeMap<String, Namespace>,
+    /// Constant groups, by the name of their declared type.
+    tables: BTreeMap<String, String>,
 }
 
 impl Namespace {
@@ -154,7 +216,7 @@ impl Namespace {
     }
 
     fn render(&self, out: &mut String, depth: usize) {
-        if self.functions.is_empty() && self.children.is_empty() {
+        if self.functions.is_empty() && self.children.is_empty() && self.tables.is_empty() {
             out.push_str("{}");
             return;
         }
@@ -168,13 +230,17 @@ impl Namespace {
             child.render(out, depth + 1);
             out.push_str(",\n");
         }
+        for (name, ty) in &self.tables {
+            let _ = writeln!(out, "{indent}{name}: {ty},");
+        }
         let _ = write!(out, "{}}}", "\t".repeat(depth));
     }
 }
 
 struct FunctionType {
     params: Vec<String>,
-    returns: Option<&'static str>,
+    /// `number` or `(number, number)`, `None` for no result.
+    returns: Option<String>,
 }
 
 impl FunctionType {
@@ -183,13 +249,17 @@ impl FunctionType {
         format!(
             "({}) -> {}",
             self.params.join(", "),
-            self.returns.unwrap_or("()")
+            self.returns.as_deref().unwrap_or("()")
         )
     }
 
     /// `(a: number): boolean`, as `declare function` spells it.
     fn declaration(&self) -> String {
-        let returns = self.returns.map(|ty| format!(": {ty}")).unwrap_or_default();
+        let returns = self
+            .returns
+            .as_ref()
+            .map(|ty| format!(": {ty}"))
+            .unwrap_or_default();
         format!("({}){returns}", self.params.join(", "))
     }
 }
@@ -201,7 +271,18 @@ fn function_type(entry: &ApiEntry) -> FunctionType {
     }
     FunctionType {
         params,
-        returns: entry.returns(LANGUAGE).map(type_name),
+        returns: returns_type(&entry.returns(LANGUAGE)),
+    }
+}
+
+fn returns_type(values: &[ReturnValue]) -> Option<String> {
+    match values {
+        [] => None,
+        [one] => Some(type_name(one.ty).to_owned()),
+        many => {
+            let types: Vec<_> = many.iter().map(|value| type_name(value.ty)).collect();
+            Some(format!("({})", types.join(", ")))
+        }
     }
 }
 

@@ -13,6 +13,15 @@ api/graphics/pset
 api/graphics/rectfill
 api/graphics/spr
 api/graphics/text
+api/hardware/addr
+api/hardware/bg
+api/hardware/display
+api/hardware/index
+api/hardware/oam
+api/hardware/obj
+api/hardware/palette
+api/hardware/size
+api/hardware/tile
 api/index
 api/input/btn
 api/input/btnp
@@ -28,6 +37,11 @@ api/logging/index
 api/logging/info
 api/logging/trace
 api/logging/warn
+api/map/copy
+api/map/get
+api/map/index
+api/map/load
+api/map/size
 api/memory/memcpy
 api/memory/memset
 api/memory/peek

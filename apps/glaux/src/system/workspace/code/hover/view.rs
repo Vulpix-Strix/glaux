@@ -4,7 +4,7 @@ use glaux_docs::{ApiEntry, DocId, Kind, ScriptLanguage};
 use glaux_sense::Subject;
 use glaux_syntax::SyntaxKind;
 
-use super::super::completion::{entry_signature, local_panel, type_name};
+use super::super::completion::{entry_signature, local_panel, returns_text, type_name};
 use crate::system::workspace::docs::DocTarget;
 use crate::ui_text;
 
@@ -26,7 +26,7 @@ pub struct HoverView {
     /// The page's opening paragraph, wrapped when drawn.
     pub summary: Option<String>,
     pub params: Vec<ParamRow>,
-    pub returns: Option<&'static str>,
+    pub returns: Option<String>,
     /// Whether the full page can be opened from the popup.
     pub opens_page: bool,
 }
@@ -50,7 +50,7 @@ impl HoverView {
                 text.push_str(&format!(": {}", row.meaning));
             }
         }
-        if let Some(ty) = self.returns {
+        if let Some(ty) = &self.returns {
             text.push_str(&format!("\n\n{}: {ty}", ui_text::get("code-hover-returns")));
         }
         text
@@ -124,7 +124,7 @@ fn entry_view(
         tag: Some(entry.category().to_owned()),
         summary: (source.summary)(id),
         params,
-        returns: entry.returns(language).filter(|_| function).map(type_name),
+        returns: returns_text(&entry.returns(language)).filter(|_| function),
         opens_page: true,
     };
     (view, Some(DocTarget::page(id.clone())))

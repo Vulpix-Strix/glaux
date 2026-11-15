@@ -71,7 +71,7 @@ fn the_active_parameter_gets_its_type_and_what_the_page_says_about_it() {
 
 #[test]
 fn the_return_type_is_named_when_the_function_has_one() {
-    assert_eq!(luau("btnp(¦").returns, Some("bool"));
+    assert_eq!(luau("btnp(¦").returns.as_deref(), Some("bool"));
 }
 
 #[test]

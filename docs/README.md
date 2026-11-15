@@ -27,6 +27,8 @@ A page's id is its path below the language directory without `.md`, and its link
 
 `api/*.ron` lists the names, parameters and return types of the script API. It is maintained by hand. Tests in `glaux-luau` check that the names exist and that nothing undocumented is installed. A `Callback` entry, such as `boot`, describes a function the script defines and Glaux calls. The tests check that the runtime does not install it and that the catalog lists exactly the callbacks it calls. Parameter names, types and return types are not verified, so review them against the runtime when an API changes. See the `glaux_docs::catalog` module documentation.
 
+A function that gives back several values lists them by name, as in `returns: [(name: "width", ty: Int), (name: "height", ty: Int)]`. A `ConstantGroup` either names in `source` the Rust item that defines its opaque members, as `Button` does, or lists its constants in `constants`, as the `hardware` groups do. `elements` describes the tables a group holds at integer keys, such as `hardware.bg[0]` to `hardware.bg[2]`. The tests check listed constants and elements against the runtime's tables, whose values come from the machine.
+
 An entry's id is `api/<category>/<name>` and must match its file name. Every entry needs a page with the same id.
 
 ## Checking and publishing ids
