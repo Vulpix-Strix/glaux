@@ -2,8 +2,8 @@
 use glaux_i18n::Arg;
 use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::framebuffer::Framebuffer;
-use glaux_machine::tilemap::{BG_PALETTE_BANKS, BgBank, TileEntry};
 use glaux_machine::system_rom::SystemIcon;
+use glaux_machine::tilemap::{BG_PALETTE_BANKS, BgBank, TileEntry};
 use glaux_video::draw::{draw_ink_image_centered, draw_text, fill_rect};
 
 use super::frame::Frame;
@@ -209,10 +209,14 @@ impl MapEditor {
                         self.edit.attrs = Some(AttrPanel { tab });
                         None
                     }
-                    AttrHit::Bank(bank) => self.change_attr(document, panel, BgBank::new(bank).map(Attr::Bank)),
+                    AttrHit::Bank(bank) => {
+                        self.change_attr(document, panel, BgBank::new(bank).map(Attr::Bank))
+                    }
                     AttrHit::FlipX => self.toggle_flip(document, panel, true),
                     AttrHit::FlipY => self.toggle_flip(document, panel, false),
-                    AttrHit::Priority(high) => self.change_attr(document, panel, Some(Attr::Priority(high))),
+                    AttrHit::Priority(high) => {
+                        self.change_attr(document, panel, Some(Attr::Priority(high)))
+                    }
                     AttrHit::Nothing => None,
                 };
                 Some(out)
@@ -228,7 +232,9 @@ impl MapEditor {
 
     fn summary(&self, document: &MapDocument, panel: AttrPanel) -> Option<Summary> {
         match (self.attr_tab(panel), self.edit.selection) {
-            (AttrTab::Cells, Some(selection)) => summarize(document.layer(self.edit.layer), selection),
+            (AttrTab::Cells, Some(selection)) => {
+                summarize(document.layer(self.edit.layer), selection)
+            }
             (AttrTab::Cells, None) => None,
             (AttrTab::Brush, _) => {
                 let brush = self.edit.brush;
@@ -243,7 +249,12 @@ impl MapEditor {
         }
     }
 
-    fn toggle_flip(&mut self, document: &mut MapDocument, panel: AttrPanel, x: bool) -> Option<MapOut> {
+    fn toggle_flip(
+        &mut self,
+        document: &mut MapDocument,
+        panel: AttrPanel,
+        x: bool,
+    ) -> Option<MapOut> {
         let summary = self.summary(document, panel)?;
         let shared = if x { summary.flip_x } else { summary.flip_y };
         // A mixed flip goes to on first.
@@ -251,7 +262,11 @@ impl MapEditor {
         self.change_attr(
             document,
             panel,
-            Some(if x { Attr::FlipX(next) } else { Attr::FlipY(next) }),
+            Some(if x {
+                Attr::FlipX(next)
+            } else {
+                Attr::FlipY(next)
+            }),
         )
     }
 
@@ -262,7 +277,11 @@ impl MapEditor {
         attr: Option<Attr>,
     ) -> Option<MapOut> {
         let attr = attr?;
-        let Some(selection) = self.edit.selection.filter(|_| self.attr_tab(panel) == AttrTab::Cells) else {
+        let Some(selection) = self
+            .edit
+            .selection
+            .filter(|_| self.attr_tab(panel) == AttrTab::Cells)
+        else {
             self.edit.brush = attr.apply(self.edit.brush);
             return None;
         };
@@ -317,30 +336,65 @@ impl MapEditor {
             fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, color);
         };
         let window = layout.window;
-        fill(framebuffer, Rect { x: window.x + 2, y: window.y + 2, ..window }, BAR);
+        fill(
+            framebuffer,
+            Rect {
+                x: window.x + 2,
+                y: window.y + 2,
+                ..window
+            },
+            BAR,
+        );
         fill(framebuffer, window, DIM);
         fill(framebuffer, window.inset(1), BACKGROUND);
 
         let tab = self.attr_tab(panel);
-        let hover = pointer.map_or(AttrHit::Nothing, |at| layout.hit(at, self.edit.selection.is_some()));
+        let hover = pointer.map_or(AttrHit::Nothing, |at| {
+            layout.hit(at, self.edit.selection.is_some())
+        });
         let label = |tab: AttrTab| match tab {
             AttrTab::Brush => ui_text::get("maps-attr-brush-tab"),
             AttrTab::Cells => self.cells_label(),
         };
         let tabs = if self.edit.selection.is_some() {
-            vec![(AttrTab::Brush, layout.tabs[0]), (AttrTab::Cells, layout.tabs[1])]
+            vec![
+                (AttrTab::Brush, layout.tabs[0]),
+                (AttrTab::Cells, layout.tabs[1]),
+            ]
         } else {
             vec![(AttrTab::Brush, layout.tabs[0])]
         };
         let inner = window.inset(1);
-        fill(framebuffer, Rect { y: inner.y + ROW - 1, height: 1, ..inner }, BAR);
+        fill(
+            framebuffer,
+            Rect {
+                y: inner.y + ROW - 1,
+                height: 1,
+                ..inner
+            },
+            BAR,
+        );
         for (which, rect) in tabs {
             fill(framebuffer, rect, BAR);
             let on = which == tab;
-            let ink = if on { TEXT } else if hover == AttrHit::Tab(which) { PALE } else { DIM };
+            let ink = if on {
+                TEXT
+            } else if hover == AttrHit::Tab(which) {
+                PALE
+            } else {
+                DIM
+            };
             draw_text(framebuffer, font, &label(which), rect.x + 4, rect.y, ink);
             if on {
-                fill(framebuffer, Rect { y: rect.bottom() - 1, height: 1, ..rect }, ACCENT);
+                fill(
+                    framebuffer,
+                    Rect {
+                        y: rect.bottom() - 1,
+                        height: 1,
+                        ..rect
+                    },
+                    ACCENT,
+                );
             }
         }
 
@@ -358,7 +412,14 @@ impl MapEditor {
                 &[("tile", Arg::Text(&format!("{:04}", self.edit.brush.tile())))],
             ),
         };
-        draw_text(framebuffer, font, &count, layout.count.0, layout.count.1, PALE);
+        draw_text(
+            framebuffer,
+            font,
+            &count,
+            layout.count.0,
+            layout.count.1,
+            PALE,
+        );
 
         let label_x = inner.x + 4;
         let rows = [
@@ -374,7 +435,8 @@ impl MapEditor {
             return;
         };
         for (bank, rect) in layout.banks.iter().enumerate() {
-            let chosen = summary.bank == Shared::Same(BgBank::new(bank as u8).unwrap_or(BgBank::ZERO));
+            let chosen =
+                summary.bank == Shared::Same(BgBank::new(bank as u8).unwrap_or(BgBank::ZERO));
             let (face, ink) = if chosen {
                 (PALE, BACKGROUND)
             } else if hover == AttrHit::Bank(bank as u8) {
@@ -388,14 +450,24 @@ impl MapEditor {
             draw_text(framebuffer, font, &text, x, rect.y - 1, ink);
         }
         if summary.bank == Shared::Mixed {
-            draw_text(framebuffer, font, &ui_text::get("maps-attr-mixed"), layout.mixed.0, layout.mixed.1, PALE);
+            draw_text(
+                framebuffer,
+                font,
+                &ui_text::get("maps-attr-mixed"),
+                layout.mixed.0,
+                layout.mixed.1,
+                PALE,
+            );
         }
         for (rect, shared, letter, which) in [
             (layout.flips[0], summary.flip_x, "X", AttrHit::FlipX),
             (layout.flips[1], summary.flip_y, "Y", AttrHit::FlipY),
         ] {
             let ink = if hover == which { PALE } else { TEXT };
-            let slot = Rect { width: CHECK, ..rect };
+            let slot = Rect {
+                width: CHECK,
+                ..rect
+            };
             if shared == Shared::Same(true) {
                 draw_ink_image_centered(
                     framebuffer,
@@ -412,7 +484,12 @@ impl MapEditor {
                 };
                 outline_box(framebuffer, outer, ink);
                 if shared == Shared::Mixed {
-                    let dash = Rect { x: outer.x + 2, y: outer.y + BOX / 2, width: BOX - 4, height: 1 };
+                    let dash = Rect {
+                        x: outer.x + 2,
+                        y: outer.y + BOX / 2,
+                        width: BOX - 4,
+                        height: 1,
+                    };
                     fill(framebuffer, dash, ink);
                 }
             }
@@ -422,8 +499,17 @@ impl MapEditor {
             (layout.priorities[0], false, ui_text::get("maps-attr-low")),
             (layout.priorities[1], true, ui_text::get("maps-attr-high")),
         ] {
-            let ink = if hover == AttrHit::Priority(high) { PALE } else { TEXT };
-            let outer = Rect { y: rect.y + 2, width: RADIO, height: RADIO, ..rect };
+            let ink = if hover == AttrHit::Priority(high) {
+                PALE
+            } else {
+                TEXT
+            };
+            let outer = Rect {
+                y: rect.y + 2,
+                width: RADIO,
+                height: RADIO,
+                ..rect
+            };
             outline_box(framebuffer, outer, ink);
             if summary.priority == Shared::Same(high) {
                 fill(framebuffer, outer.inset(1), ink);
@@ -432,7 +518,14 @@ impl MapEditor {
         }
         if summary.priority == Shared::Mixed {
             let x = layout.priorities[1].right() + 6;
-            draw_text(framebuffer, font, &ui_text::get("maps-attr-mixed"), x, layout.priorities[1].y, PALE);
+            draw_text(
+                framebuffer,
+                font,
+                &ui_text::get("maps-attr-mixed"),
+                x,
+                layout.priorities[1].y,
+                PALE,
+            );
         }
         self.attr_foot(framebuffer, font, &layout);
     }
@@ -443,11 +536,32 @@ impl MapEditor {
         font: &glaux_machine::font::BitmapFont,
         layout: &AttrLayout,
     ) {
-        fill_rect(framebuffer, layout.foot.x, layout.foot.y, layout.foot.width, layout.foot.height, BAR);
-        draw_text(framebuffer, font, &ui_text::get("maps-attr-applies"), layout.foot.x + 4, layout.foot.y, DIM);
+        fill_rect(
+            framebuffer,
+            layout.foot.x,
+            layout.foot.y,
+            layout.foot.width,
+            layout.foot.height,
+            BAR,
+        );
+        draw_text(
+            framebuffer,
+            font,
+            &ui_text::get("maps-attr-applies"),
+            layout.foot.x + 4,
+            layout.foot.y,
+            DIM,
+        );
         let undo = ui_text::get("maps-attr-undo");
         let width = i32::try_from(font.text_cells(&undo)).unwrap_or(0) * self.metrics.cell_w;
-        draw_text(framebuffer, font, &undo, layout.foot.right() - 4 - width, layout.foot.y, DIM);
+        draw_text(
+            framebuffer,
+            font,
+            &undo,
+            layout.foot.right() - 4 - width,
+            layout.foot.y,
+            DIM,
+        );
     }
 }
 

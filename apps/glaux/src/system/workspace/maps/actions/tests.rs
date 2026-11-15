@@ -103,11 +103,17 @@ fn clearing_a_layer_asks_first_and_is_one_undo_step() {
     }
     doc.set_cell(BgLayer::Bg1, 0, 0, entry(2));
     editor.run_layer_action(BgLayer::Bg2, LayerAction::Clear, Some(&doc));
-    assert!(matches!(editor.overlay, Some(Overlay::Confirm(Confirm::Clear(_), _))));
+    assert!(matches!(
+        editor.overlay,
+        Some(Overlay::Confirm(Confirm::Clear(_), _))
+    ));
 
     answer_no(&mut editor, &mut doc);
     assert!(editor.overlay.is_none());
-    assert!(!doc.layer(BgLayer::Bg2).is_blank(), "cancel changes nothing");
+    assert!(
+        !doc.layer(BgLayer::Bg2).is_blank(),
+        "cancel changes nothing"
+    );
 
     editor.run_layer_action(BgLayer::Bg2, LayerAction::Clear, Some(&doc));
     answer_yes(&mut editor, &mut doc);
@@ -115,7 +121,11 @@ fn clearing_a_layer_asks_first_and_is_one_undo_step() {
     assert!(!doc.layer(BgLayer::Bg1).is_blank(), "other layers stay");
     doc.undo();
     assert_eq!(doc.layer(BgLayer::Bg2).get(5, 3), Some(entry(4)));
-    assert!(doc.layer(BgLayer::Bg2).get(0, 3).is_some_and(|e| e == entry(4)));
+    assert!(
+        doc.layer(BgLayer::Bg2)
+            .get(0, 3)
+            .is_some_and(|e| e == entry(4))
+    );
 }
 
 #[test]
@@ -131,12 +141,23 @@ fn replacing_a_tile_keeps_each_cells_attributes_and_asks_first() {
     editor.open_tile_menu(7, at(50, 150), &doc);
     let out = editor.run_tile_action(7, TileAction::Replace, Some(&doc));
     assert_eq!(out, None);
-    assert!(matches!(editor.overlay, Some(Overlay::Confirm(Confirm::Replace { from: 7, to: 9 }, _))));
+    assert!(matches!(
+        editor.overlay,
+        Some(Overlay::Confirm(Confirm::Replace { from: 7, to: 9 }, _))
+    ));
     answer_yes(&mut editor, &mut doc);
 
     let layer = doc.layer(BgLayer::Bg1);
     let moved = layer.get(1, 1).unwrap();
-    assert_eq!((moved.tile(), moved.flip_x(), moved.priority(), moved.bank().get()), (9, true, true, 2));
+    assert_eq!(
+        (
+            moved.tile(),
+            moved.flip_x(),
+            moved.priority(),
+            moved.bank().get()
+        ),
+        (9, true, true, 2)
+    );
     assert_eq!(layer.get(2, 2).unwrap().tile(), 9);
     assert_eq!(layer.get(3, 3).unwrap().tile(), 8, "other tiles stay");
     doc.undo();
@@ -175,7 +196,11 @@ fn the_tile_menu_disables_what_cannot_apply() {
 
     editor.edit.locked[1] = true;
     editor.open_tile_menu(7, at(50, 150), &doc);
-    assert_eq!(enabled(&editor)[3].1, false, "a locked layer is not replaced into");
+    assert_eq!(
+        enabled(&editor)[3].1,
+        false,
+        "a locked layer is not replaced into"
+    );
 
     editor.open_tile_menu(0, at(50, 150), &doc);
     assert!(!enabled(&editor)[0].1, "tile 0 draws nothing");
@@ -190,7 +215,12 @@ fn selecting_a_tile_on_the_layer_takes_the_rectangle_around_its_cells() {
     editor.run_tile_action(7, TileAction::SelectOnLayer, Some(&doc));
     let selection = editor.edit.selection.unwrap();
     assert_eq!(
-        (selection.left, selection.top, selection.right, selection.bottom),
+        (
+            selection.left,
+            selection.top,
+            selection.right,
+            selection.bottom
+        ),
         (2, 3, 6, 8)
     );
 }
@@ -234,7 +264,10 @@ fn copy_and_paste_move_a_block_as_one_edit_cut_at_the_maps_edge() {
     doc.set_cell(BgLayer::Bg1, 1, 2, entry(7));
     doc.set_cell(BgLayer::Bg1, 2, 2, entry(8));
     select(&mut editor, &mut doc, (1, 1), (2, 2));
-    assert!(matches!(input(&mut editor, &mut doc, InputEvent::Copy), Some(MapOut::Notice(_))));
+    assert!(matches!(
+        input(&mut editor, &mut doc, InputEvent::Copy),
+        Some(MapOut::Notice(_))
+    ));
 
     let target = canvas_cell(&editor, &doc, (7, 7));
     input(&mut editor, &mut doc, InputEvent::PointerMove(Some(target)));
@@ -242,10 +275,17 @@ fn copy_and_paste_move_a_block_as_one_edit_cut_at_the_maps_edge() {
     let layer = doc.layer(BgLayer::Bg1);
     assert_eq!(layer.get(7, 7), Some(entry(5)));
     let pasted = editor.edit.selection.unwrap();
-    assert_eq!((pasted.left, pasted.top, pasted.width(), pasted.height()), (7, 7, 1, 1));
+    assert_eq!(
+        (pasted.left, pasted.top, pasted.width(), pasted.height()),
+        (7, 7, 1, 1)
+    );
     doc.undo();
     assert_eq!(doc.layer(BgLayer::Bg1).get(7, 7), Some(TileEntry::EMPTY));
-    assert_eq!(doc.layer(BgLayer::Bg1).get(1, 1), Some(entry(5)), "the source stays");
+    assert_eq!(
+        doc.layer(BgLayer::Bg1).get(1, 1),
+        Some(entry(5)),
+        "the source stays"
+    );
 }
 
 #[test]
@@ -278,10 +318,16 @@ fn a_locked_layer_refuses_cut_and_paste_and_an_empty_clipboard_says_so() {
     input(&mut editor, &mut doc, InputEvent::Copy);
     editor.edit.locked[1] = true;
 
-    assert!(matches!(input(&mut editor, &mut doc, InputEvent::Cut), Some(MapOut::Notice(_))));
+    assert!(matches!(
+        input(&mut editor, &mut doc, InputEvent::Cut),
+        Some(MapOut::Notice(_))
+    ));
     assert_eq!(doc.layer(BgLayer::Bg1).get(0, 0), Some(entry(5)));
     let target = canvas_cell(&editor, &doc, (3, 3));
     input(&mut editor, &mut doc, InputEvent::PointerMove(Some(target)));
-    assert!(matches!(input(&mut editor, &mut doc, InputEvent::Paste), Some(MapOut::Notice(_))));
+    assert!(matches!(
+        input(&mut editor, &mut doc, InputEvent::Paste),
+        Some(MapOut::Notice(_))
+    ));
     assert_eq!(doc.layer(BgLayer::Bg1).get(3, 3), Some(TileEntry::EMPTY));
 }

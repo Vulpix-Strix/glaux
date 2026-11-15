@@ -37,7 +37,13 @@ fn the_panel_fits_below_the_options_bar_and_its_parts_sit_inside_it() {
             && rect.y >= layout.window.y
             && rect.bottom() <= layout.window.bottom()
     };
-    for rect in layout.tabs.iter().chain(&layout.banks).chain(&layout.flips).chain(&layout.priorities) {
+    for rect in layout
+        .tabs
+        .iter()
+        .chain(&layout.banks)
+        .chain(&layout.flips)
+        .chain(&layout.priorities)
+    {
         assert!(inside(*rect), "{rect:?}");
     }
     assert!(inside(layout.foot));
@@ -68,7 +74,15 @@ fn the_brush_tab_edits_the_brush_at_once() {
     press(&mut editor, &mut doc, middle(layout.flips[1]));
     press(&mut editor, &mut doc, middle(layout.priorities[1]));
     let brush = editor.edit.brush;
-    assert_eq!((brush.bank().get(), brush.flip_x(), brush.flip_y(), brush.priority()), (3, true, true, true));
+    assert_eq!(
+        (
+            brush.bank().get(),
+            brush.flip_x(),
+            brush.flip_y(),
+            brush.priority()
+        ),
+        (3, true, true, true)
+    );
     press(&mut editor, &mut doc, middle(layout.flips[0]));
     press(&mut editor, &mut doc, middle(layout.priorities[0]));
     assert!(!editor.edit.brush.flip_x() && !editor.edit.brush.priority());
@@ -87,7 +101,11 @@ fn the_cells_tab_changes_the_tiled_cells_as_one_edit_and_leaves_empty_ones() {
     for (x, y) in [(1, 1), (2, 1), (1, 2)] {
         assert_eq!(layer.get(x, y).unwrap().bank().get(), 2);
     }
-    assert_eq!(layer.get(0, 0), Some(TileEntry::EMPTY), "an empty cell stays empty");
+    assert_eq!(
+        layer.get(0, 0),
+        Some(TileEntry::EMPTY),
+        "an empty cell stays empty"
+    );
     doc.undo();
     assert_eq!(doc.layer(BgLayer::Bg1).get(2, 1), Some(entry(6)));
     assert_eq!(doc.layer(BgLayer::Bg1).get(1, 1), Some(entry(5)));
@@ -98,11 +116,20 @@ fn a_mixed_flip_turns_on_first_and_a_locked_layer_refuses_the_edit() {
     let mut editor = editor();
     let mut doc = document(8, 8);
     open_with_cells(&mut editor, &mut doc);
-    doc.set_cell(BgLayer::Bg1, 1, 1, TileEntry::new(5, true, false, false, BgBank::ZERO).unwrap());
+    doc.set_cell(
+        BgLayer::Bg1,
+        1,
+        1,
+        TileEntry::new(5, true, false, false, BgBank::ZERO).unwrap(),
+    );
     let layout = layout(&editor);
     press(&mut editor, &mut doc, middle(layout.flips[0]));
     let layer = doc.layer(BgLayer::Bg1);
-    assert!([(1, 1), (2, 1), (1, 2)].iter().all(|&(x, y)| layer.get(x, y).unwrap().flip_x()));
+    assert!(
+        [(1, 1), (2, 1), (1, 2)]
+            .iter()
+            .all(|&(x, y)| layer.get(x, y).unwrap().flip_x())
+    );
 
     editor.edit.locked[1] = true;
     let out = input(

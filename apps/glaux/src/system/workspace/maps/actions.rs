@@ -53,19 +53,42 @@ impl MapEditor {
             Some(name) => format!("{layer}  {name}"),
             None => layer.to_string(),
         };
-        let only = ui_text::get_with("maps-layer-menu-only", &[("layer", Arg::Text(&layer.to_string()))]);
+        let only = ui_text::get_with(
+            "maps-layer-menu-only",
+            &[("layer", Arg::Text(&layer.to_string()))],
+        );
         let entries = vec![
             MenuEntry::header(&head),
-            MenuEntry::item(&ui_text::get("maps-layer-menu-rename"), Some("F2"), LayerAction::Rename),
-            MenuEntry::item(&ui_text::get("maps-layer-menu-edit"), Some(LAYER_KEYS[index]), LayerAction::Edit),
+            MenuEntry::item(
+                &ui_text::get("maps-layer-menu-rename"),
+                Some("F2"),
+                LayerAction::Rename,
+            ),
+            MenuEntry::item(
+                &ui_text::get("maps-layer-menu-edit"),
+                Some(LAYER_KEYS[index]),
+                LayerAction::Edit,
+            ),
             MenuEntry::Separator,
-            MenuEntry::item(&ui_text::get("maps-layer-menu-visible"), Some("V"), LayerAction::ToggleVisible)
-                .checked(self.edit.visible[index]),
-            MenuEntry::item(&ui_text::get("maps-layer-menu-locked"), Some("L"), LayerAction::ToggleLock)
-                .checked(locked),
+            MenuEntry::item(
+                &ui_text::get("maps-layer-menu-visible"),
+                Some("V"),
+                LayerAction::ToggleVisible,
+            )
+            .checked(self.edit.visible[index]),
+            MenuEntry::item(
+                &ui_text::get("maps-layer-menu-locked"),
+                Some("L"),
+                LayerAction::ToggleLock,
+            )
+            .checked(locked),
             MenuEntry::item(&only, Some("Shift+V"), LayerAction::ShowOnly),
             MenuEntry::Separator,
-            MenuEntry::item(&ui_text::get("maps-layer-menu-select-all"), Some("Ctrl+A"), LayerAction::SelectAll),
+            MenuEntry::item(
+                &ui_text::get("maps-layer-menu-select-all"),
+                Some("Ctrl+A"),
+                LayerAction::SelectAll,
+            ),
             MenuEntry::Separator,
             MenuEntry::when(
                 !locked && !document.layer(layer).is_blank(),
@@ -118,14 +141,26 @@ impl MapEditor {
         let used = uses(document.layer(layer), tile) > 0;
         let locked = self.edit.locked[layer.index()];
         let brush = self.edit.brush.tile();
-        let select = ui_text::get_with("maps-tile-menu-select", &[("layer", Arg::Text(&layer.to_string()))]);
+        let select = ui_text::get_with(
+            "maps-tile-menu-select",
+            &[("layer", Arg::Text(&layer.to_string()))],
+        );
         let entries = vec![
             MenuEntry::header(&ui_text::get_with(
                 "maps-tile-menu-title",
                 &[("tile", Arg::Text(&format!("{tile:04}")))],
             )),
-            MenuEntry::when(tile != 0, &ui_text::get("maps-tile-menu-brush"), Some("Click"), TileAction::UseAsBrush),
-            MenuEntry::item(&ui_text::get("maps-tile-menu-edit"), Some("F2"), TileAction::EditInSprites),
+            MenuEntry::when(
+                tile != 0,
+                &ui_text::get("maps-tile-menu-brush"),
+                Some("Click"),
+                TileAction::UseAsBrush,
+            ),
+            MenuEntry::item(
+                &ui_text::get("maps-tile-menu-edit"),
+                Some("F2"),
+                TileAction::EditInSprites,
+            ),
             MenuEntry::Separator,
             MenuEntry::when(used, &select, None, TileAction::SelectOnLayer),
             MenuEntry::when(
@@ -212,7 +247,11 @@ impl MapEditor {
         self.overlay = Some(Overlay::Confirm(Confirm::Clear(layer), dialog));
     }
 
-    pub(super) fn run_confirm(&mut self, confirm: Confirm, document: &mut MapDocument) -> Option<MapOut> {
+    pub(super) fn run_confirm(
+        &mut self,
+        confirm: Confirm,
+        document: &mut MapDocument,
+    ) -> Option<MapOut> {
         if self.edit.locked[self.edit.layer.index()] {
             return Some(self.locked_notice());
         }
@@ -220,7 +259,9 @@ impl MapEditor {
         let mut changes = Vec::new();
         for y in 0..layer.height() {
             for x in 0..layer.width() {
-                let Some(entry) = layer.get(x, y) else { continue };
+                let Some(entry) = layer.get(x, y) else {
+                    continue;
+                };
                 let next = match confirm {
                     Confirm::Replace { from, to } if entry.tile() == from => TileEntry::new(
                         to,
@@ -268,7 +309,11 @@ impl MapEditor {
         )))
     }
 
-    pub(super) fn paste_clip(&mut self, frame: &Frame, document: &mut MapDocument) -> Option<MapOut> {
+    pub(super) fn paste_clip(
+        &mut self,
+        frame: &Frame,
+        document: &mut MapDocument,
+    ) -> Option<MapOut> {
         let Some(clip) = self.edit.clipboard.clone() else {
             return Some(MapOut::Notice(ui_text::get("maps-nothing-to-paste")));
         };
@@ -277,20 +322,31 @@ impl MapEditor {
         }
         let size = map_size(document);
         let view = self.viewport(frame, document);
-        let target = match (self.edit.pointer.filter(|at| frame.canvas.contains(*at)), self.edit.selection) {
+        let target = match (
+            self.edit.pointer.filter(|at| frame.canvas.contains(*at)),
+            self.edit.selection,
+        ) {
             (Some(at), _) => view.cell_at(frame.canvas, (i32::from(at.x), i32::from(at.y))),
             (None, Some(selection)) => (selection.left as i32, selection.top as i32),
             (None, None) => {
-                let (first, _) = view.visible_cells(size, (frame.canvas.width, frame.canvas.height));
+                let (first, _) =
+                    view.visible_cells(size, (frame.canvas.width, frame.canvas.height));
                 (first.0 as i32, first.1 as i32)
             }
         };
         document.begin_edit();
         for ((dx, dy), entry) in clip.cells() {
-            self.write(document, (target.0 + dx as i32, target.1 + dy as i32), entry);
+            self.write(
+                document,
+                (target.0 + dx as i32, target.1 + dy as i32),
+                entry,
+            );
         }
         document.end_edit();
-        let far = (target.0 + clip.width as i32 - 1, target.1 + clip.height as i32 - 1);
+        let far = (
+            target.0 + clip.width as i32 - 1,
+            target.1 + clip.height as i32 - 1,
+        );
         self.edit.selection = Selection::between(target, far, size);
         None
     }

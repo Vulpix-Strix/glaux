@@ -167,7 +167,11 @@ impl<A: Copy> ContextMenu<A> {
     }
 
     pub fn focused_on(mut self, index: usize) -> Self {
-        self.focus = self.entries.get(index).filter(|e| e.is_enabled()).map(|_| index);
+        self.focus = self
+            .entries
+            .get(index)
+            .filter(|e| e.is_enabled())
+            .map(|_| index);
         self
     }
 
@@ -198,11 +202,15 @@ impl<A: Copy> ContextMenu<A> {
                 MenuEntry::Separator => {}
             }
         }
-        let indent = if self
-            .entries
-            .iter()
-            .any(|entry| matches!(entry, MenuEntry::Item { checked: Some(_), .. }))
-        {
+        let indent = if self.entries.iter().any(|entry| {
+            matches!(
+                entry,
+                MenuEntry::Item {
+                    checked: Some(_),
+                    ..
+                }
+            )
+        }) {
             CHECK_INDENT
         } else {
             LABEL_INDENT
@@ -449,7 +457,16 @@ impl<A: Copy> ContextMenu<A> {
             let inner = layout.window.inset(1);
             let thumb = inner.height * layout.rows.len() as i32 / total as i32;
             let at = inner.y + inner.height * layout.first as i32 / total as i32;
-            fill(framebuffer, Rect { x: inner.right() - 2, y: at, width: 2, height: thumb }, DIM);
+            fill(
+                framebuffer,
+                Rect {
+                    x: inner.right() - 2,
+                    y: at,
+                    width: 2,
+                    height: thumb,
+                },
+                DIM,
+            );
         }
     }
 }

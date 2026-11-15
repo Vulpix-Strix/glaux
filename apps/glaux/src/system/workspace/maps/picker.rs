@@ -239,7 +239,10 @@ impl MapEditor {
     pub(super) fn picker_status(&self, picker: &Picker) -> String {
         let (first, (width, height)) = self.shown_pattern(picker);
         if (width, height) == (1, 1) {
-            return ui_text::get_with("maps-status-tile", &[("tile", Arg::Text(&format!("{first:04}")))]);
+            return ui_text::get_with(
+                "maps-status-tile",
+                &[("tile", Arg::Text(&format!("{first:04}")))],
+            );
         }
         let last = first + (height - 1) * STRIP_COLUMNS + width - 1;
         ui_text::get_with(
@@ -266,12 +269,21 @@ impl MapEditor {
             fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, color);
         };
         let window = layout.window;
-        fill(framebuffer, Rect { x: window.x + 2, y: window.y + 2, ..window }, BAR);
+        fill(
+            framebuffer,
+            Rect {
+                x: window.x + 2,
+                y: window.y + 2,
+                ..window
+            },
+            BAR,
+        );
         fill(framebuffer, window, DIM);
         fill(framebuffer, window.inset(1), BACKGROUND);
 
         let (first, (width, height)) = self.shown_pattern(picker);
-        let cells = |text: &str| i32::try_from(font.text_cells(text)).unwrap_or(0) * self.metrics.cell_w;
+        let cells =
+            |text: &str| i32::try_from(font.text_cells(text)).unwrap_or(0) * self.metrics.cell_w;
         let mut x = layout.header.x + 4;
         for (text, ink, gap) in [
             (ui_text::get("maps-picker-title"), PALE, 8),
@@ -310,10 +322,13 @@ impl MapEditor {
         for row in 0..PAGE_ROWS {
             for column in 0..STRIP_COLUMNS {
                 let tile = (picker.page * PAGE_ROWS + row) * STRIP_COLUMNS + column;
-                let Some(entry) = u16::try_from(tile)
-                    .ok()
-                    .filter(|_| tile < TILES)
-                    .and_then(|tile| TileEntry::new(tile, false, false, false, self.edit.brush.bank()))
+                let Some(entry) =
+                    u16::try_from(tile)
+                        .ok()
+                        .filter(|_| tile < TILES)
+                        .and_then(|tile| {
+                            TileEntry::new(tile, false, false, false, self.edit.brush.bank())
+                        })
                 else {
                     continue;
                 };

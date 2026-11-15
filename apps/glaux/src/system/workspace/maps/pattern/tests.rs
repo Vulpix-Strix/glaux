@@ -21,9 +21,20 @@ fn a_pattern_is_a_rectangle_of_the_sheet_with_the_anchors_attributes() {
     let tiles: Vec<_> = cells.iter().map(|(at, e)| (*at, e.tile())).collect();
     assert_eq!(
         tiles,
-        [((0, 0), 20), ((1, 0), 21), ((2, 0), 22), ((0, 1), 36), ((1, 1), 37), ((2, 1), 38)]
+        [
+            ((0, 0), 20),
+            ((1, 0), 21),
+            ((2, 0), 22),
+            ((0, 1), 36),
+            ((1, 1), 37),
+            ((2, 1), 38)
+        ]
     );
-    assert!(cells.iter().all(|(_, e)| e.flip_x() && e.priority() && e.bank().get() == 2));
+    assert!(
+        cells
+            .iter()
+            .all(|(_, e)| e.flip_x() && e.priority() && e.bank().get() == 2)
+    );
 }
 
 #[test]
@@ -31,7 +42,10 @@ fn a_pattern_stays_inside_the_sheet_and_skips_tile_zero() {
     let cells = stamp(entry(15), (2, 1));
     assert_eq!(cells.len(), 1);
     assert_eq!(stamp(entry(1023), (1, 2)).len(), 1);
-    let tiles: Vec<_> = stamp(entry(0), (2, 1)).iter().map(|(_, e)| e.tile()).collect();
+    let tiles: Vec<_> = stamp(entry(0), (2, 1))
+        .iter()
+        .map(|(_, e)| e.tile())
+        .collect();
     assert_eq!(tiles, [1]);
 }
 
@@ -56,7 +70,10 @@ fn a_clip_keeps_the_block_and_its_empty_cells() {
 fn an_attribute_changes_only_itself() {
     let base = TileEntry::new(9, true, false, false, BgBank::ZERO).unwrap();
     let banked = Attr::Bank(BgBank::new(3).unwrap()).apply(base);
-    assert_eq!((banked.tile(), banked.bank().get(), banked.flip_x()), (9, 3, true));
+    assert_eq!(
+        (banked.tile(), banked.bank().get(), banked.flip_x()),
+        (9, 3, true)
+    );
     let flipped = Attr::FlipY(true).apply(banked);
     assert!(flipped.flip_x() && flipped.flip_y() && !flipped.priority());
     assert!(Attr::Priority(true).apply(flipped).priority());

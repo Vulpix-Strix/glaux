@@ -203,7 +203,10 @@ fn a_focused_current_item_is_not_inked_with_the_accent_on_the_highlight() {
     let row = layout.rows[0];
     let count = |menu: &ContextMenu<usize>, color: u8| {
         let mut fb = Framebuffer::new();
-        menu.render(&mut RenderContext::new(&mut fb, rom.font(), rom.ui()), &layout);
+        menu.render(
+            &mut RenderContext::new(&mut fb, rom.font(), rom.ui()),
+            &layout,
+        );
         (row.y..row.bottom())
             .flat_map(|y| (row.x..row.right()).map(move |x| (x, y)))
             .filter(|&(x, y)| fb.pixel(x, y) == Some(color))
@@ -212,7 +215,10 @@ fn a_focused_current_item_is_not_inked_with_the_accent_on_the_highlight() {
     assert!(count(&menu, HOVER_SHADE) > 0, "the row is highlighted");
     assert_eq!(count(&menu, ACCENT), 0);
     menu.handle_input(InputEvent::Down { select: false }, &layout);
-    assert!(count(&menu, ACCENT) > 0, "off the highlight it keeps the accent");
+    assert!(
+        count(&menu, ACCENT) > 0,
+        "off the highlight it keeps the accent"
+    );
 }
 
 #[test]
