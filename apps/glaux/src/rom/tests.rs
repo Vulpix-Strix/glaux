@@ -57,8 +57,8 @@ fn palette_keeps_order_and_reports_bad_lines() {
 fn embedded_rom_loads() {
     let rom = load().unwrap();
 
-    assert_eq!(rom.version(), &Version::new(0, 1, 0));
-    assert_eq!(rom.copyright(), "(C) 2026 CUERVOLU");
+    assert_eq!(rom.version().to_string(), VERSION.trim());
+    assert_eq!(rom.copyright(), COPYRIGHT.trim());
 
     // The machine's own default palette is the one the ROM ships.
     assert_eq!(rom.palette(), &Palette::default());
