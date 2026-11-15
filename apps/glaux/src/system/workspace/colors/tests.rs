@@ -67,7 +67,7 @@ fn the_preview_never_reaches_the_entries_the_color_editor_draws_with() {
     let document = document();
     for set in [TileSet::Obj, TileSet::Bg] {
         let workspace = workspace();
-        let video = workspace.prepare_video_for(&document, set);
+        let video = workspace.prepare_video_for(&document, Shown::Tiles(set));
         assert!(
             highest_slot(&video) < super::super::sprites::SCRATCH_BASE,
             "{set:?}: a preview entry would be overwritten by the dialog's colors"
@@ -80,7 +80,7 @@ fn each_preview_shows_every_color_of_the_tiles_on_show() {
     let document = document();
     let workspace = workspace();
     for set in [TileSet::Obj, TileSet::Bg] {
-        let video = workspace.prepare_video_for(&document, set);
+        let video = workspace.prepare_video_for(&document, Shown::Tiles(set));
         let prepared = video.0.as_ref().unwrap();
         let masters = shown_masters(&document, set);
         assert_eq!(masters.len(), if set == TileSet::Obj { 120 } else { 60 });
@@ -106,12 +106,12 @@ fn switching_tiles_prepares_the_preview_again_and_only_then() {
     assert!(object_slot(&video, 40).is_some() && object_slot(&video, 160).is_none());
 
     workspace.refresh_video(&mut video, &document);
-    assert!(video.matches(&document, TileSet::Obj));
+    assert!(video.matches(&document, &Shown::Tiles(TileSet::Obj)));
 
     workspace
         .sprites
         .handle_input(glaux_input::InputEvent::Text('b'), None);
-    assert!(!video.matches(&document, workspace.sprites.tileset()));
+    assert!(!video.matches(&document, &Shown::Tiles(workspace.sprites.tileset())));
     workspace.refresh_video(&mut video, &document);
     assert!(object_slot(&video, 40).is_none() && object_slot(&video, 160).is_some());
 }

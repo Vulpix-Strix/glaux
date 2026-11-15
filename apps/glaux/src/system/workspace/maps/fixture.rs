@@ -68,6 +68,8 @@ impl Fixture {
             master: &self.master,
             preview: &self.preview,
             modified: false,
+            can_undo: false,
+            can_redo: false,
         }
     }
 
@@ -78,7 +80,11 @@ impl Fixture {
 
 pub(super) fn editor() -> MapEditor {
     let layout = super::super::tab::Layout::new(FontMetrics::SYSTEM);
-    MapEditor::new(layout.map_metrics(), BitmapFont::new(FontMetrics::SYSTEM))
+    MapEditor::new(
+        layout.map_metrics(),
+        BitmapFont::new(FontMetrics::SYSTEM),
+        glaux_machine::palette::Palette::default(),
+    )
 }
 
 pub(super) fn document(width: usize, height: usize) -> MapDocument {
@@ -109,7 +115,7 @@ pub(super) fn render_with(
     let mut ctx = RenderContext::new(&mut fb, rom.font(), rom.ui());
     let frame = editor.frame();
     let hover = pointer.map_or(Hit::Nothing, |at| frame.hit(at, editor.edit.strip_top));
-    editor.options_bar(&mut ctx, &frame, Some(document), true, hover);
+    editor.options_bar(&mut ctx, &frame, Some(document), false, hover);
     editor.render_editor(&mut ctx, source, document, pointer, hover);
     fb
 }
@@ -127,7 +133,7 @@ pub(super) fn input(
     document: &mut MapDocument,
     event: glaux_input::InputEvent,
 ) -> Option<super::MapOut> {
-    editor.handle_input(event, Some(document))
+    editor.handle_input(event, Some(document), None)
 }
 
 pub(super) fn pointer(
@@ -151,7 +157,11 @@ pub(super) fn press(editor: &mut MapEditor, document: &mut MapDocument, at: Poin
     pointer(editor, document, glaux_input::PointerButton::Primary, at);
 }
 
-pub(super) fn release(editor: &mut MapEditor, document: &mut MapDocument, at: Point) -> Option<super::MapOut> {
+pub(super) fn release(
+    editor: &mut MapEditor,
+    document: &mut MapDocument,
+    at: Point,
+) -> Option<super::MapOut> {
     input(
         editor,
         document,
@@ -164,4 +174,42 @@ pub(super) fn release(editor: &mut MapEditor, document: &mut MapDocument, at: Po
 
 pub(super) fn key(editor: &mut MapEditor, document: &mut MapDocument, key: char) {
     input(editor, document, glaux_input::InputEvent::Text(key));
+}
+
+/// The video assets of a cartridge that has none of its own, so no
+/// background tile is drawn yet.
+pub(super) fn sprites() -> crate::system::sprite_document::SpriteDocument {
+    use crate::system::video::{CartridgeVideoDefaults, VideoFiles};
+    let defaults = CartridgeVideoDefaults::from_rom(&crate::rom::load().unwrap());
+    crate::system::sprite_document::SpriteDocument::from_files(&VideoFiles::default(), &defaults)
+        .unwrap()
+}
+
+pub(super) fn input_with(
+    editor: &mut MapEditor,
+    document: &mut MapDocument,
+    sprites: &mut crate::system::sprite_document::SpriteDocument,
+    event: glaux_input::InputEvent,
+) -> Option<super::MapOut> {
+    editor.handle_input(event, Some(document), Some(sprites))
+}
+
+pub(super) fn click(
+    editor: &mut MapEditor,
+    document: &mut MapDocument,
+    sprites: &mut crate::system::sprite_document::SpriteDocument,
+    at: Point,
+) -> Option<super::MapOut> {
+    let down = glaux_input::InputEvent::PointerDown {
+        button: glaux_input::PointerButton::Primary,
+        at,
+        select: false,
+    };
+    let out = input_with(editor, document, sprites, down);
+    let up = glaux_input::InputEvent::PointerUp {
+        button: glaux_input::PointerButton::Primary,
+        at,
+    };
+    input_with(editor, document, sprites, up);
+    out
 }

@@ -58,6 +58,21 @@ pub fn map_canvas(workspace: &Workspace) -> Rect {
     workspace.maps.canvas_rect()
 }
 
+/// The middle of pixel `(x, y)` of the tile the Map view's tile editor
+/// shows.
+pub fn map_tile_pixel(workspace: &Workspace, x: i32, y: i32) -> Point {
+    workspace.maps.tile_pixel(x, y)
+}
+
+/// The cells and the maps of the cartridge that use the tile the Map
+/// view's tile editor shows.
+pub fn map_tile_uses(
+    workspace: &Workspace,
+    open: &crate::system::map_document::MapDocument,
+) -> (usize, usize) {
+    workspace.maps.counted_tile_uses(open)
+}
+
 /// Where the Map view's drawer is drawn.
 pub fn map_drawer(workspace: &Workspace) -> Rect {
     workspace.maps.drawer_rect()

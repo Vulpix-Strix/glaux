@@ -99,8 +99,10 @@ pub(super) enum Hit {
     ZoomOut,
     ZoomIn,
     DrawerSize,
-    /// The brush in the drawer's bar.
+    /// The brush's tile in the drawer's bar, which opens the tile editor.
     Brush,
+    /// The brush's palette bank, which opens the palette selector.
+    Bank,
     Picker,
     EditTile,
     /// A layer's chip in the collapsed drawer's bar.
@@ -156,6 +158,8 @@ pub(super) struct Frame {
     pub(super) size_button: Rect,
     pub(super) tiles_label: (i32, i32),
     pub(super) brush: Rect,
+    pub(super) brush_chip: Rect,
+    pub(super) bank_chip: Rect,
     pub(super) brush_number: (i32, i32),
     pub(super) bank_text: (i32, i32),
     pub(super) first_separator: Rect,
@@ -345,6 +349,16 @@ impl Frame {
             width: 8,
             height: 8,
         };
+        let brush_chip = Rect {
+            x: BRUSH_X - 2,
+            width: FIRST_SEPARATOR_X - (BRUSH_X - 2),
+            ..drawer_bar
+        };
+        let bank_chip = Rect {
+            x: FIRST_SEPARATOR_X + 2,
+            width: SECOND_SEPARATOR_X - (FIRST_SEPARATOR_X + 2),
+            ..drawer_bar
+        };
         let first_separator = Rect {
             x: FIRST_SEPARATOR_X,
             width: 1,
@@ -485,6 +499,8 @@ impl Frame {
             size_button,
             tiles_label: (TILES_LABEL_X, drawer_bar.y),
             brush,
+            brush_chip,
+            bank_chip,
             brush_number: (BRUSH_NUMBER_X, drawer_bar.y),
             bank_text: (BANK_X, drawer_bar.y),
             first_separator,
@@ -540,8 +556,11 @@ impl Frame {
                 }
             }
         }
-        if self.brush.contains(at) {
+        if self.brush_chip.contains(at) {
             return Hit::Brush;
+        }
+        if self.bank_chip.contains(at) {
+            return Hit::Bank;
         }
         if self.picker_button.contains(at) {
             return Hit::Picker;

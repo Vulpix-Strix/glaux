@@ -6,10 +6,12 @@ use glaux_machine::tilemap::{BgLayer, TileEntry};
 use glaux_video::draw::{draw_ink_image_centered, draw_text, fill_rect};
 
 use super::MapEditor;
-use super::pattern::uses;
 use super::canvas::draw_cell;
 use super::compose::Cell;
+use super::first_tile::{first_drawn, first_free, is_blank};
 use super::frame::{DrawerSize, EYE_WIDTH, Frame, Hit, LOCK_WIDTH, STRIP_COLUMNS};
+use super::pattern::uses;
+use super::tile_editor::bank_chip;
 use crate::system::map_document::MapDocument;
 use crate::system::screen::{ACCENT, BACKGROUND, DIM, PALE, TEXT};
 use crate::system::workspace::sprites::{SpriteSource, checker, outline};
@@ -78,6 +80,24 @@ impl MapEditor {
         );
 
         let brush = self.edit.brush;
+        let tiles = source.bg.tiles();
+        let chips = [
+            (frame.brush_chip, self.shows_tile_editor().is_some()),
+            (frame.bank_chip, self.shows_palettes()),
+        ];
+        for (chip, open) in chips {
+            if open {
+                fill_rect(
+                    ctx.framebuffer,
+                    chip.x,
+                    chip.y,
+                    chip.width,
+                    chip.height,
+                    BACKGROUND,
+                );
+                fill_rect(ctx.framebuffer, chip.x, chip.y, chip.width, 1, ACCENT);
+            }
+        }
         checker(ctx.framebuffer, frame.brush, 2);
         draw_cell(
             ctx.framebuffer,
@@ -89,27 +109,53 @@ impl MapEditor {
             frame.brush,
         );
         outline(ctx.framebuffer, frame.brush.inset(-1), DIM);
-        draw_text(
-            ctx.framebuffer,
-            ctx.font,
-            &format!("{:04}", brush.tile()),
-            frame.brush_number.0,
-            frame.brush_number.1,
-            TEXT,
-        );
-        let brush_info = match self.edit.pattern {
-            (1, 1) => brush_bank_text(brush),
-            (width, height) => format!("{width}x{height}"),
+        let (number, ink) = if is_blank(tiles, usize::from(brush.tile())) {
+            ("----".to_owned(), IDLE_SHADE)
+        } else {
+            (format!("{:04}", brush.tile()), TEXT)
         };
-        draw_text(
-            ctx.framebuffer,
-            ctx.font,
-            &brush_info,
-            frame.bank_text.0,
-            frame.bank_text.1,
-            PALE,
-        );
-        self.picker_button(ctx, frame, hover);
+        let (x, y) = frame.brush_number;
+        draw_text(ctx.framebuffer, ctx.font, &number, x, y, ink);
+        let ink = if hover == Hit::Bank { TEXT } else { PALE };
+        let flags = flags(brush);
+        // The bar has room for the bank's colors beside one flag at most.
+        match self.edit.pattern {
+            (1, 1) if flags.len() <= 1 => {
+                let cell_w = self.metrics.cell_w;
+                let end = bank_chip(ctx, source, frame.bank_text, brush.bank(), ink, cell_w);
+                draw_text(
+                    ctx.framebuffer,
+                    ctx.font,
+                    &flags,
+                    end + 3,
+                    frame.bank_text.1,
+                    ink,
+                );
+            }
+            (1, 1) => {
+                let (x, y) = frame.bank_text;
+                draw_text(
+                    ctx.framebuffer,
+                    ctx.font,
+                    &brush_bank_text(brush),
+                    x,
+                    y,
+                    ink,
+                );
+            }
+            (width, height) => {
+                let (x, y) = frame.bank_text;
+                draw_text(
+                    ctx.framebuffer,
+                    ctx.font,
+                    &format!("{width}x{height}"),
+                    x,
+                    y,
+                    ink,
+                );
+            }
+        }
+        self.picker_button(ctx, frame, hover, first_drawn(tiles).is_some());
         for separator in [frame.first_separator, frame.second_separator] {
             fill_rect(
                 ctx.framebuffer,
@@ -132,17 +178,26 @@ impl MapEditor {
                 frame.layers_label.1,
                 DIM,
             );
-            self.strip(ctx.framebuffer, frame, source, hover);
+            self.strip(ctx, frame, source, hover);
             self.layer_list(ctx, frame, document, hover);
             self.tile_info(ctx, frame, document, hover);
         }
     }
 
-    fn picker_button(&self, ctx: &mut RenderContext<'_>, frame: &Frame, hover: Hit) {
+    fn picker_button(&self, ctx: &mut RenderContext<'_>, frame: &Frame, hover: Hit, tiles: bool) {
         let rect = frame.picker_button;
         let open = self.edit.picker.is_some();
-        let ink = if open {
-            fill_rect(ctx.framebuffer, rect.x, rect.y, rect.width, rect.height, BACKGROUND);
+        let ink = if !tiles {
+            IDLE_SHADE
+        } else if open {
+            fill_rect(
+                ctx.framebuffer,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                BACKGROUND,
+            );
             fill_rect(ctx.framebuffer, rect.x, rect.y, rect.width, 1, ACCENT);
             ACCENT
         } else if hover == Hit::Picker {
@@ -174,12 +229,22 @@ impl MapEditor {
             .filter_map(BgLayer::from_index)
             .map(|layer| uses(document.layer(layer), tile))
             .sum::<usize>();
-        let head = ui_text::get_with("maps-tile-info", &[("tile", Arg::Text(&format!("{tile:04}")))]);
+        let head = ui_text::get_with(
+            "maps-tile-info",
+            &[("tile", Arg::Text(&format!("{tile:04}")))],
+        );
         draw_text(framebuffer, font, &head, info.0, info.1, TEXT);
         let used = ui_text::get_with("maps-tile-used", &[("count", Arg::Number(used as f64))]);
         let x = info.0 + self.cells(&head) + 12;
         let room = usize::try_from((frame.drawer.right() - x) / self.metrics.cell_w).unwrap_or(0);
-        draw_text(framebuffer, font, take_cells(font, &used, room), x, info.1, DIM);
+        draw_text(
+            framebuffer,
+            font,
+            take_cells(font, &used, room),
+            x,
+            info.1,
+            DIM,
+        );
 
         let hovered = hover == Hit::EditTile;
         fill_rect(
@@ -193,7 +258,14 @@ impl MapEditor {
         outline(framebuffer, button, DIM);
         let label = ui_text::get("maps-tile-menu-edit");
         let x = button.x + (button.width - self.cells(&label)) / 2;
-        draw_text(framebuffer, font, &label, x, button.y, if hovered { TEXT } else { PALE });
+        draw_text(
+            framebuffer,
+            font,
+            &label,
+            x,
+            button.y,
+            if hovered { TEXT } else { PALE },
+        );
     }
 
     fn chips(&self, ctx: &mut RenderContext<'_>, frame: &Frame, hover: Hit) {
@@ -249,7 +321,7 @@ impl MapEditor {
 
     fn strip(
         &self,
-        framebuffer: &mut Framebuffer,
+        ctx: &mut RenderContext<'_>,
         frame: &Frame,
         source: &SpriteSource<'_>,
         hover: Hit,
@@ -257,6 +329,7 @@ impl MapEditor {
         let (Some(strip), Some(framed)) = (frame.strip, frame.strip_frame()) else {
             return;
         };
+        let framebuffer = &mut *ctx.framebuffer;
         outline(framebuffer, framed, DIM);
         checker(framebuffer, strip, 4);
         let bank = self.edit.brush.bank();
@@ -298,6 +371,17 @@ impl MapEditor {
         if let Some(rect) = cell_of(usize::from(self.edit.brush.tile())) {
             outline(framebuffer, rect, ACCENT);
         }
+        let tiles = source.bg.tiles();
+        if let Some(rect) = first_free(tiles).and_then(cell_of) {
+            new_tile_slot(framebuffer, rect);
+            if first_drawn(tiles).is_none() {
+                let label = ui_text::get("maps-new-tile-tag");
+                let x = rect.right() + 4;
+                fill_rect(framebuffer, x, rect.y, self.cells(&label) + 4, 9, BAR);
+                draw_text(framebuffer, ctx.font, &label, x + 2, rect.y - 1, ACCENT);
+            }
+        }
+        let framebuffer = &mut *ctx.framebuffer;
 
         let track = Rect {
             x: framed.right() + 1,
@@ -419,6 +503,39 @@ impl MapEditor {
             );
         }
     }
+}
+
+fn new_tile_slot(framebuffer: &mut Framebuffer, rect: Rect) {
+    fill_rect(
+        framebuffer,
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        BACKGROUND,
+    );
+    for step in (0..rect.width).step_by(2) {
+        fill_rect(framebuffer, rect.x + step, rect.y, 1, 1, ACCENT);
+        fill_rect(
+            framebuffer,
+            rect.x + step + 1,
+            rect.bottom() - 1,
+            1,
+            1,
+            ACCENT,
+        );
+        fill_rect(framebuffer, rect.x, rect.y + step, 1, 1, ACCENT);
+        fill_rect(
+            framebuffer,
+            rect.right() - 1,
+            rect.y + step + 1,
+            1,
+            1,
+            ACCENT,
+        );
+    }
+    fill_rect(framebuffer, rect.x + 2, rect.y + 3, 4, 1, ACCENT);
+    fill_rect(framebuffer, rect.x + 3, rect.y + 2, 1, 4, ACCENT);
 }
 
 #[cfg(test)]

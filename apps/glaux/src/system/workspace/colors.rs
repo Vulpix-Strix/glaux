@@ -8,6 +8,7 @@ use glaux_machine::bg::BgPalettes;
 use glaux_machine::obj_palette::ObjPalettes;
 use glaux_machine::palette::Palette;
 use glaux_video::preview::ObjPreviewPalette;
+use std::ops::RangeInclusive;
 
 /// How the workspace shows the cartridge's colors: where the frame palette
 /// holds each master color the palettes of the tiles on show use, or why
@@ -35,7 +36,22 @@ pub(super) struct PreparedVideo {
     /// The palette banks the preview was built from, which are the object
     /// ones or the background ones according to `set`.
     banks: Banks,
-    set: TileSet,
+    shown: Shown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Shown {
+    Tiles(TileSet),
+    Masters(RangeInclusive<u8>),
+}
+
+impl Shown {
+    fn tiles(&self) -> TileSet {
+        match self {
+            Self::Tiles(set) => *set,
+            Self::Masters(_) => TileSet::Bg,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -86,16 +102,18 @@ impl WorkspaceVideo {
             master: &document.video().palette,
             preview: &video.preview,
             modified: document.is_modified(),
+            can_undo: document.can_undo(),
+            can_redo: document.can_redo(),
         })
     }
 
-    /// Whether the frame palette was built from `document`'s palettes of
-    /// the tiles `set` shows, as they are now.
-    fn matches(&self, document: &SpriteDocument, set: TileSet) -> bool {
+    /// Whether the frame palette was built for `shown` from `document`'s
+    /// palettes as they are now.
+    fn matches(&self, document: &SpriteDocument, shown: &Shown) -> bool {
         self.0.as_ref().is_ok_and(|video| {
-            video.set == set
+            video.shown == *shown
                 && video.master == document.video().palette
-                && video.banks == Banks::of(document, set)
+                && video.banks == Banks::of(document, shown.tiles())
         })
     }
 }
@@ -106,29 +124,39 @@ impl Workspace {
     /// palettes change or the editor switches tiles. See
     /// [`refresh_video`](Self::refresh_video).
     pub fn prepare_video(&self, document: &SpriteDocument) -> WorkspaceVideo {
-        self.prepare_video_for(document, self.shown_tiles())
+        self.prepare_video_for(document, self.shown(document))
     }
 
-    /// The tiles the open view draws: the background ones in the Map view
-    /// and the sprite editor's own choice anywhere else.
-    fn shown_tiles(&self) -> TileSet {
-        if self.tab == Tab::Map {
-            TileSet::Bg
-        } else {
-            self.sprites.tileset()
+    /// What the open view draws: the background tiles in the Map view, with
+    /// the master colors its picker shows, and the sprite editor's own
+    /// choice of tiles anywhere else.
+    fn shown(&self, document: &SpriteDocument) -> Shown {
+        if self.tab != Tab::Map {
+            return Shown::Tiles(self.sprites.tileset());
+        }
+        match self.maps.shown_masters(document) {
+            Some(masters) => Shown::Masters(masters),
+            None => Shown::Tiles(TileSet::Bg),
         }
     }
 
-    fn prepare_video_for(&self, document: &SpriteDocument, set: TileSet) -> WorkspaceVideo {
+    fn prepare_video_for(&self, document: &SpriteDocument, shown: Shown) -> WorkspaceVideo {
         let video = document.video();
-        let preview = match set {
-            TileSet::Obj => ObjPreviewPalette::new(
+        let preview = match &shown {
+            Shown::Masters(masters) => ObjPreviewPalette::for_background_and(
+                &self.system_palette,
+                SYSTEM_COLORS,
+                &video.palette,
+                video.bg.palettes(),
+                masters.clone(),
+            ),
+            Shown::Tiles(TileSet::Obj) => ObjPreviewPalette::new(
                 &self.system_palette,
                 SYSTEM_COLORS,
                 &video.palette,
                 video.obj.palettes(),
             ),
-            TileSet::Bg => ObjPreviewPalette::for_background(
+            Shown::Tiles(TileSet::Bg) => ObjPreviewPalette::for_background(
                 &self.system_palette,
                 SYSTEM_COLORS,
                 &video.palette,
@@ -140,8 +168,8 @@ impl Workspace {
                 frame: preview.palette().clone(),
                 preview,
                 master: video.palette.clone(),
-                banks: Banks::of(document, set),
-                set,
+                banks: Banks::of(document, shown.tiles()),
+                shown,
             }))),
             Err(err) => {
                 WorkspaceVideo::unavailable(super::super::ui_errors::video::preview_palette(&err))
@@ -155,7 +183,7 @@ impl Workspace {
     /// the frame palette the colors of the sprite editor's open dialog.
     /// Video that could not be prepared stays as it is.
     pub fn refresh_video(&self, video: &mut WorkspaceVideo, document: &SpriteDocument) {
-        if video.is_ready() && !video.matches(document, self.shown_tiles()) {
+        if video.is_ready() && !video.matches(document, &self.shown(document)) {
             *video = self.prepare_video(document);
         }
         if let Ok(prepared) = &mut video.0 {
@@ -164,7 +192,12 @@ impl Workspace {
                 return;
             }
             let mut frame = prepared.preview.palette().clone();
-            if let Some(colors) = self.sprites.scratch_colors() {
+            let scratch = if self.tab == Tab::Map {
+                self.maps.scratch_colors()
+            } else {
+                self.sprites.scratch_colors().map(Vec::from)
+            };
+            if let Some(colors) = scratch {
                 for (offset, color) in colors.into_iter().enumerate() {
                     // Scratch entries end at the palette's end, so fit u8.
                     frame.set((super::sprites::SCRATCH_BASE + offset) as u8, color);

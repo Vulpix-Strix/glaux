@@ -12,7 +12,11 @@ fn id(text: &str) -> MapId {
 
 fn editor() -> MapEditor {
     let layout = super::super::tab::Layout::new(FontMetrics::SYSTEM);
-    MapEditor::new(layout.map_metrics(), BitmapFont::new(FontMetrics::SYSTEM))
+    MapEditor::new(
+        layout.map_metrics(),
+        BitmapFont::new(FontMetrics::SYSTEM),
+        glaux_machine::palette::Palette::default(),
+    )
 }
 
 fn summary(text: &str, name: &str) -> MapSummary {
@@ -158,15 +162,31 @@ fn saving_a_clean_map_only_says_there_is_nothing_to_save() {
     let editor = editor();
     let mut open = document("a");
     assert_eq!(
-        editor.save(Some(&open)),
+        editor.save(Some(&open), None),
         Some(MapOut::Notice("Nothing to save.".into()))
     );
     open.set_name("Edited");
     assert_eq!(
-        editor.save(Some(&open)),
+        editor.save(Some(&open), None),
         Some(MapOut::Request(MapRequest::Save))
     );
-    assert_eq!(editor.save(None), None);
+
+    let mut sprites = super::fixture::sprites();
+    assert_eq!(
+        editor.save(Some(&open), Some(&sprites)),
+        Some(MapOut::Request(MapRequest::Save)),
+        "unchanged graphics are not written"
+    );
+    sprites.set_bg_pixel(1, 0, 0, 1);
+    assert_eq!(
+        editor.save(Some(&open), Some(&sprites)),
+        Some(MapOut::SaveBoth)
+    );
+    assert_eq!(
+        editor.save(Some(&document("a")), Some(&sprites)),
+        Some(MapOut::SaveGraphics)
+    );
+    assert_eq!(editor.save(None, None), None);
 }
 
 #[test]
@@ -208,16 +228,16 @@ fn rename_asks_for_a_name_and_ignores_a_blank_one() {
 
     // The current name starts selected, so typing replaces it.
     for ch in "  ".chars() {
-        editor.handle_input(InputEvent::Text(ch), None);
+        editor.handle_input(InputEvent::Text(ch), None, None);
     }
-    assert_eq!(editor.handle_input(InputEvent::Enter, None), None);
+    assert_eq!(editor.handle_input(InputEvent::Enter, None, None), None);
     assert!(editor.has_overlay(), "a blank name keeps the window open");
 
     for ch in "New".chars() {
-        editor.handle_input(InputEvent::Text(ch), None);
+        editor.handle_input(InputEvent::Text(ch), None, None);
     }
     assert_eq!(
-        editor.handle_input(InputEvent::Enter, None),
+        editor.handle_input(InputEvent::Enter, None, None),
         Some(MapOut::Request(MapRequest::Rename { name: "New".into() }))
     );
     assert!(!editor.has_overlay());
@@ -247,7 +267,10 @@ fn the_menu_hangs_from_the_selector_and_stays_above_the_status_bar() {
     assert!(layout.window.x <= frame.selector.x);
     assert!(layout.window.bottom() <= frame.status.y);
     assert!(layout.rows.len() < 40 + 4, "a long list scrolls");
-    assert!(layout.first <= 3 && 3 < layout.first + layout.rows.len(), "the open map shows");
+    assert!(
+        layout.first <= 3 && 3 < layout.first + layout.rows.len(),
+        "the open map shows"
+    );
 }
 
 #[test]

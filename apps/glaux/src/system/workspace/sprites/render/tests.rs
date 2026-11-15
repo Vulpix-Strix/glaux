@@ -74,6 +74,8 @@ impl Fixture {
             master: &self.master,
             preview: &self.preview,
             modified: false,
+            can_undo: false,
+            can_redo: false,
         }
     }
 }

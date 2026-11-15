@@ -6,7 +6,11 @@ use pretty_assertions::assert_eq;
 
 fn editor() -> MapEditor {
     let layout = super::super::super::tab::Layout::new(FontMetrics::SYSTEM);
-    MapEditor::new(layout.map_metrics(), BitmapFont::new(FontMetrics::SYSTEM))
+    MapEditor::new(
+        layout.map_metrics(),
+        BitmapFont::new(FontMetrics::SYSTEM),
+        glaux_machine::palette::Palette::default(),
+    )
 }
 
 fn document(width: usize, height: usize) -> MapDocument {
@@ -41,7 +45,7 @@ fn cell_point(editor: &MapEditor, document: &MapDocument, cell: (i32, i32)) -> P
 }
 
 fn input(editor: &mut MapEditor, document: &mut MapDocument, event: InputEvent) -> Option<MapOut> {
-    editor.handle_input(event, Some(document))
+    editor.handle_input(event, Some(document), None)
 }
 
 fn press(editor: &mut MapEditor, document: &mut MapDocument, at: Point) -> Option<MapOut> {
@@ -1009,9 +1013,9 @@ fn leaving_the_view_drops_the_drag_and_leaves_the_edit_to_close_later() {
 #[test]
 fn nothing_reaches_the_editor_without_a_map() {
     let mut editor = editor();
-    assert_eq!(editor.handle_input(InputEvent::Text('f'), None), None);
+    assert_eq!(editor.handle_input(InputEvent::Text('f'), None, None), None);
     assert_eq!(
-        editor.handle_input(InputEvent::Tab { reverse: false }, None),
+        editor.handle_input(InputEvent::Tab { reverse: false }, None, None),
         None
     );
     assert_eq!(editor.edit, Edit::default());
@@ -1229,7 +1233,14 @@ fn a_pattern_brush_stamps_the_sheets_rectangle_cut_at_the_maps_edge_as_one_edit(
     assert_eq!(filled(&document, BgLayer::Bg1), 0);
 
     click_cell(&mut editor, &mut document, (2, 3));
-    for (dx, dy, tile) in [(0, 0, 20), (1, 0, 21), (2, 0, 22), (0, 1, 36), (1, 1, 37), (2, 1, 38)] {
+    for (dx, dy, tile) in [
+        (0, 0, 20),
+        (1, 0, 21),
+        (2, 0, 22),
+        (0, 1, 36),
+        (1, 1, 37),
+        (2, 1, 38),
+    ] {
         assert_eq!(cell(&document, BgLayer::Bg1, 2 + dx, 3 + dy), entry(tile));
     }
 }
@@ -1243,7 +1254,11 @@ fn a_pattern_brush_does_not_touch_a_locked_layer_and_the_eraser_clears_single_ce
     click_cell(&mut editor, &mut document, (1, 1));
     editor.edit.tool = Tool::Eraser;
     click_cell(&mut editor, &mut document, (1, 1));
-    assert_eq!(filled(&document, BgLayer::Bg1), 3, "the eraser takes one cell");
+    assert_eq!(
+        filled(&document, BgLayer::Bg1),
+        3,
+        "the eraser takes one cell"
+    );
 
     editor.edit.tool = Tool::Pencil;
     editor.edit.locked[1] = true;

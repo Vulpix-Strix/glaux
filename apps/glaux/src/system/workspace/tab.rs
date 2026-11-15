@@ -112,7 +112,6 @@ impl Rect {
         (self.x..self.right()).contains(&x) && (self.y..self.bottom()).contains(&y)
     }
 
-    #[cfg(test)]
     pub(super) fn overlaps(self, other: Self) -> bool {
         self.x < other.right()
             && other.x < self.right()

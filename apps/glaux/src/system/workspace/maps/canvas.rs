@@ -8,15 +8,18 @@ use glaux_machine::system_rom::SystemIcon;
 use glaux_machine::tilemap::BgLayer;
 use glaux_video::draw::{draw_ink_image, draw_text, fill_rect};
 
-use super::{MapEditor, Overlay};
 use super::compose::{Cell, Composer};
 use super::editing::map_size;
+use super::first_tile::{is_blank, map_is_blank};
 use super::frame::{Frame, Hit};
+use super::tile_editor::uses_text;
 use super::tools::Tool;
+use super::usage::{Census, MapUsage};
 use super::view::{TILE, Viewport};
+use super::{MapEditor, Overlay};
 use crate::rom::ICON_SIZE;
 use crate::system::map_document::MapDocument;
-use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT};
+use crate::system::screen::{ACCENT, BACKGROUND, DIM, ERROR, PALE, TEXT, WARN};
 use crate::system::workspace::dialog::text_cells;
 use crate::system::workspace::sprites::{SpriteSource, checker, outline};
 use crate::system::workspace::{
@@ -101,6 +104,42 @@ pub(super) fn draw_cell(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PlateState {
+    Active,
+    Hover,
+    Idle,
+    Off,
+}
+
+pub(super) fn plate(ctx: &mut RenderContext<'_>, rect: Rect, icon: SystemIcon, state: PlateState) {
+    let (face, inks) = match state {
+        PlateState::Active => (BACKGROUND, ACTIVE_TOOL_INKS),
+        PlateState::Hover => (BAR, HOVER_TOOL_INKS),
+        PlateState::Idle => (BAR, IDLE_TOOL_INKS),
+        PlateState::Off => (BAR, [OUTLINE, IDLE_SHADE, IDLE_SHADE]),
+    };
+    fill_rect(
+        ctx.framebuffer,
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        face,
+    );
+    if state == PlateState::Active {
+        outline(ctx.framebuffer, rect, ACCENT);
+    }
+    let pad = (rect.width - ICON_SIZE as i32) / 2;
+    draw_ink_image(
+        ctx.framebuffer,
+        ctx.ui.icon(icon),
+        rect.x + pad,
+        rect.y + pad,
+        &inks,
+    );
+}
+
 fn ruler_step(tile: i32, needed: i32) -> i32 {
     RULER_STEPS
         .into_iter()
@@ -118,17 +157,40 @@ impl MapEditor {
         hover: Hit,
     ) {
         let frame = self.frame();
-        self.toolbar(ctx, &frame, document, hover);
+        // Undo and redo act on the tiles and palettes while one of their
+        // windows is open, and on the map otherwise.
+        let history = match &source {
+            Ok(source) if self.has_panel() => (source.can_undo, source.can_redo),
+            _ => (document.can_undo(), document.can_redo()),
+        };
+        self.toolbar(ctx, &frame, history, hover);
         match source {
             Ok(source) => {
-                self.canvas(ctx.framebuffer, &frame, document, &source, pointer, hover);
+                let census = self.has_panel().then(|| Census {
+                    open: MapUsage::of(document),
+                    others: &self.others,
+                });
+                self.canvas(
+                    ctx,
+                    &frame,
+                    document,
+                    &source,
+                    (pointer, hover),
+                    census.as_ref(),
+                );
                 self.rulers(ctx, &frame, document, pointer);
                 self.drawer(ctx, &frame, document, &source, hover);
+                if self.shows_guide(document, source.bg.tiles()) {
+                    self.render_guide(ctx, &frame, document, pointer);
+                }
                 if let Some(picker) = self.edit.picker {
                     self.render_picker(ctx, &frame, &source, &picker);
                 }
                 if let Some(panel) = self.edit.attrs {
                     self.render_attr(ctx, &frame, document, pointer, panel);
+                }
+                if let Some(census) = &census {
+                    self.render_panel(ctx, &source, census, pointer);
                 }
             }
             Err(message) => self.unavailable(ctx, &frame, message),
@@ -150,9 +212,10 @@ impl MapEditor {
         ctx: &mut RenderContext<'_>,
         frame: &Frame,
         document: Option<&MapDocument>,
-        editing: bool,
+        graphics_modified: bool,
         hover: Hit,
     ) {
+        let editing = document.is_some();
         let (framebuffer, font) = (&mut *ctx.framebuffer, ctx.font);
         let bar = frame.options;
         fill_rect(framebuffer, bar.x, bar.bottom() - 1, bar.width, 1, BAR);
@@ -173,7 +236,7 @@ impl MapEditor {
         let columns = usize::try_from(selector.width / self.metrics.cell_w).unwrap_or(0);
         match document {
             Some(document) => {
-                let modified = document.is_modified();
+                let modified = document.is_modified() || graphics_modified;
                 let name = take_cells(
                     font,
                     &document.meta().name,
@@ -270,31 +333,17 @@ impl MapEditor {
         &self,
         ctx: &mut RenderContext<'_>,
         frame: &Frame,
-        document: &MapDocument,
+        (can_undo, can_redo): (bool, bool),
         hover: Hit,
     ) {
-        let (framebuffer, ui) = (&mut *ctx.framebuffer, ctx.ui);
         for (tool, rect) in frame.tools {
-            let inks = if tool == self.edit.tool {
-                fill_rect(
-                    framebuffer,
-                    rect.x,
-                    rect.y,
-                    rect.width,
-                    rect.height,
-                    BACKGROUND,
-                );
-                outline(framebuffer, rect, ACCENT);
-                ACTIVE_TOOL_INKS
+            let state = if tool == self.edit.tool {
+                PlateState::Active
             } else if hover == Hit::Tool(tool) {
-                fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, BAR);
-                HOVER_TOOL_INKS
+                PlateState::Hover
             } else {
-                fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, BAR);
-                IDLE_TOOL_INKS
+                PlateState::Idle
             };
-            let pad = (rect.width - ICON_SIZE as i32) / 2;
-            let at = (rect.x + pad, rect.y + pad);
             let icon = match tool {
                 Tool::Pencil => SystemIcon::Sprites,
                 Tool::Eraser => SystemIcon::Eraser,
@@ -303,38 +352,31 @@ impl MapEditor {
                 Tool::Eyedropper => SystemIcon::Eyedropper,
                 Tool::Hand => SystemIcon::Hand,
             };
-            draw_ink_image(framebuffer, ui.icon(icon), at.0, at.1, &inks);
+            plate(ctx, rect, icon, state);
         }
         for (rect, icon, which, enabled) in [
-            (frame.undo, SystemIcon::Undo, Hit::Undo, document.can_undo()),
-            (frame.redo, SystemIcon::Redo, Hit::Redo, document.can_redo()),
+            (frame.undo, SystemIcon::Undo, Hit::Undo, can_undo),
+            (frame.redo, SystemIcon::Redo, Hit::Redo, can_redo),
         ] {
-            fill_rect(framebuffer, rect.x, rect.y, rect.width, rect.height, BAR);
-            let inks = match (enabled, hover == which) {
-                (false, _) => [OUTLINE, IDLE_SHADE, IDLE_SHADE],
-                (true, true) => HOVER_TOOL_INKS,
-                (true, false) => IDLE_TOOL_INKS,
+            let state = match (enabled, hover == which) {
+                (false, _) => PlateState::Off,
+                (true, true) => PlateState::Hover,
+                (true, false) => PlateState::Idle,
             };
-            let pad = (rect.width - ICON_SIZE as i32) / 2;
-            draw_ink_image(
-                framebuffer,
-                ui.icon(icon),
-                rect.x + pad,
-                rect.y + pad,
-                &inks,
-            );
+            plate(ctx, rect, icon, state);
         }
     }
 
     fn canvas(
         &self,
-        framebuffer: &mut Framebuffer,
+        ctx: &mut RenderContext<'_>,
         frame: &Frame,
         document: &MapDocument,
         source: &SpriteSource<'_>,
-        pointer: Option<Point>,
-        hover: Hit,
+        (pointer, hover): (Option<Point>, Hit),
+        census: Option<&Census<'_>>,
     ) {
+        let framebuffer = &mut *ctx.framebuffer;
         let canvas = frame.canvas;
         outline(framebuffer, frame.canvas_frame, FRAME);
         fill_rect(
@@ -400,14 +442,22 @@ impl MapEditor {
             };
             outline_clipped(framebuffer, rect, canvas, ACCENT);
         }
+        self.scroll_indicators(framebuffer, frame, view, size);
+        if let Some(census) = census {
+            self.tile_uses(ctx, frame, document, census);
+        }
         if hover == Hit::Canvas
             && self.edit.tool != Tool::Hand
+            && !self.has_panel()
             && let Some(at) = pointer
         {
+            let framebuffer = &mut *ctx.framebuffer;
             let cell = view.cell_at(canvas, (i32::from(at.x), i32::from(at.y)));
             if in_map(cell, size) {
                 let rect = view.cell_rect(canvas, cell);
-                if self.edit.tool == Tool::Pencil && !self.edit.locked[self.edit.layer.index()] {
+                let paints =
+                    self.edit.tool == Tool::Pencil && !self.edit.locked[self.edit.layer.index()];
+                if paints {
                     draw_cell(
                         framebuffer,
                         source.bg,
@@ -419,9 +469,62 @@ impl MapEditor {
                     );
                 }
                 outline_clipped(framebuffer, rect.inset(-1), canvas, ACCENT);
+                let brush = usize::from(self.edit.brush.tile());
+                if paints && !is_blank(source.bg.tiles(), brush) {
+                    self.render_tip(ctx, rect.inset(-1), canvas, map_is_blank(document));
+                }
             }
         }
-        self.scroll_indicators(framebuffer, frame, view, size);
+    }
+
+    fn tile_uses(
+        &self,
+        ctx: &mut RenderContext<'_>,
+        frame: &Frame,
+        document: &MapDocument,
+        census: &Census<'_>,
+    ) {
+        let Some(editor) = self.shows_tile_editor().filter(|editor| !editor.created) else {
+            return;
+        };
+        let canvas = frame.canvas;
+        let view = self.viewport(frame, document);
+        let (first, count) = view.visible_cells(map_size(document), (canvas.width, canvas.height));
+        let window = self.top_panel_window();
+        let text = uses_text("maps-tile-same", census.tile(editor.tile));
+        let mut label = None;
+        for cy in first.1..first.1 + count.1 {
+            for cx in first.0..first.0 + count.0 {
+                let used = BgLayer::ALL.into_iter().any(|layer| {
+                    self.edit.visible[layer.index()]
+                        && document
+                            .layer(layer)
+                            .get(cx, cy)
+                            .is_some_and(|entry| entry.tile() == editor.tile)
+                });
+                if !used {
+                    continue;
+                }
+                let rect = view.cell_rect(canvas, (cx as i32, cy as i32)).inset(-1);
+                outline_clipped(ctx.framebuffer, rect, canvas, WARN);
+                let tag = Rect {
+                    x: rect.right() + 2,
+                    y: rect.y + 4,
+                    width: self.cells(&text) + 4,
+                    height: 9,
+                };
+                let free = tag.right() <= canvas.right()
+                    && tag.bottom() <= canvas.bottom()
+                    && window.is_none_or(|window| !window.inset(-2).overlaps(tag));
+                if free && label.is_none() {
+                    label = Some(tag);
+                }
+            }
+        }
+        if let Some(tag) = label {
+            fill_rect(ctx.framebuffer, tag.x, tag.y, tag.width, tag.height, BAR);
+            draw_text(ctx.framebuffer, ctx.font, &text, tag.x + 2, tag.y - 1, WARN);
+        }
     }
 
     fn grid(

@@ -22,12 +22,14 @@ use glaux_machine::system_rom::SystemCursor;
 use glaux_machine::tilemap::{BG_PALETTE_BANKS, BgBank};
 use glaux_video::preview::ObjPreviewPalette;
 
+pub(in crate::system::workspace) use color_editor::hsv::{format_hex, parse_hex};
 use color_editor::{ColorEditor, ColorEditorLayout, ColorOutcome};
 pub use color_editor::{SCRATCH_BASE, SCRATCH_COLORS};
 pub use import_preview::ImportPreview;
 use import_preview::{ImportLayout, ImportOutcome};
 pub use layout::Metrics;
-use layout::{Hit, SpriteLayout, ToolSlot};
+pub(in crate::system::workspace) use layout::ToolSlot;
+use layout::{Hit, SpriteLayout};
 use palette_picker::{PalettePicker, PickerLayout, PickerOutcome};
 pub(in crate::system::workspace) use render::{checker, outline};
 use sheet::{SheetView, grid_position};
@@ -51,6 +53,8 @@ pub struct SpriteSource<'a> {
     pub preview: &'a ObjPreviewPalette,
     /// Whether the tiles differ from the cartridge's files.
     pub modified: bool,
+    pub can_undo: bool,
+    pub can_redo: bool,
 }
 
 /// What the editor asks of the workspace after an input.
@@ -701,22 +705,9 @@ impl SpriteEditor {
         let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) else {
             return;
         };
-        let tile = self.selected;
-        match self.tool {
-            ToolSlot::Pencil => {
-                document.set_pixel_in(self.tileset, tile, x, y, self.color());
-            }
-            ToolSlot::Eraser => {
-                document.set_pixel_in(self.tileset, tile, x, y, 0);
-            }
-            ToolSlot::Eyedropper => {
-                if let Some(local) = document.pixel_in(self.tileset, tile, x, y) {
-                    self.color = local;
-                }
-            }
-            ToolSlot::Fill => {
-                document.fill_in(self.tileset, tile, x, y, self.color());
-            }
+        let target = (self.tileset, self.selected);
+        if let Some(picked) = use_tool(document, target, self.tool, self.color(), (x, y)) {
+            self.color = picked;
         }
     }
 
@@ -775,6 +766,30 @@ impl SpriteEditor {
         debug_assert!(usize::from(self.color) < OBJ_PALETTE_COLORS);
         self.color
     }
+}
+
+/// Uses `tool` with local color `color` on pixel `(x, y)` of a tile of a
+/// set. Returns the color the eyedropper picked.
+pub(in crate::system::workspace) fn use_tool(
+    document: &mut SpriteDocument,
+    (set, tile): (TileSet, usize),
+    tool: ToolSlot,
+    color: u8,
+    (x, y): (usize, usize),
+) -> Option<u8> {
+    match tool {
+        ToolSlot::Pencil => {
+            document.set_pixel_in(set, tile, x, y, color);
+        }
+        ToolSlot::Eraser => {
+            document.set_pixel_in(set, tile, x, y, 0);
+        }
+        ToolSlot::Eyedropper => return document.pixel_in(set, tile, x, y),
+        ToolSlot::Fill => {
+            document.fill_in(set, tile, x, y, color);
+        }
+    }
+    None
 }
 
 fn next_bg_bank(bank: BgBank) -> BgBank {

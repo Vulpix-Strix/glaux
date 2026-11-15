@@ -5,8 +5,10 @@ use crate::cartridge::map::{MapDeleteError, MapError, MapFiles, MapId, MapSummar
 use crate::cartridge_fs::FsError;
 use crate::system::map_document::{Reopened, SaveError, SaveFailure, Saved, file_list};
 use crate::system::screen::{ERROR, OK, PALE};
+use crate::system::sprite_document::{SaveError as AssetsSaveError, Saved as AssetsSaved};
 use crate::system::ui_errors;
 use crate::system::workspace::answers::saved_before_stopping;
+use crate::system::workspace::maps::usage::MapUsage;
 use crate::system::workspace::modal::{
     Modal, map_conflict_dialog, map_delete_dialog, message_dialog,
 };
@@ -40,6 +42,30 @@ impl Workspace {
 
     pub fn maps_listed(&mut self, listing: Result<Vec<MapSummary>, FsError>) {
         self.maps.listed(listing.map_err(|err| ui_errors::fs(&err)));
+    }
+
+    pub fn maps_surveyed(&mut self, others: Vec<MapUsage>) {
+        self.maps.surveyed(others);
+    }
+
+    /// Reports a save of the open map followed by one of the video assets.
+    /// The assets are not written when the map could not be.
+    pub fn map_and_graphics_saved(
+        &mut self,
+        map: Option<Result<Saved, SaveError>>,
+        graphics: Option<Result<AssetsSaved, AssetsSaveError>>,
+    ) {
+        let both = matches!(map, Some(Ok(Saved::Written(_))))
+            && matches!(graphics, Some(Ok(AssetsSaved::Written(_))));
+        if let Some(map) = map {
+            self.map_saved(map);
+        }
+        if let Some(graphics) = graphics {
+            self.saved(graphics);
+        }
+        if both {
+            self.notify(ui_text::get("maps-saved-with-graphics"), OK);
+        }
     }
 
     /// Reports what checking the open map against its files found.

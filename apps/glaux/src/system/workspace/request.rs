@@ -37,6 +37,10 @@ pub enum WorkspaceRequest {
     Scripts(ScriptRequest),
     /// File work on the cartridge's maps and the open map document.
     Maps(MapRequest),
+    /// Write the open map and then the video assets, which the Map view
+    /// edits together. Answer with
+    /// [`Workspace::map_and_graphics_saved`](super::Workspace::map_and_graphics_saved).
+    SaveMapAndGraphics,
     /// Moving between places in the scripts.
     Navigate(NavigationRequest),
     /// Links and the clipboard.
@@ -149,6 +153,10 @@ pub enum MapRequest {
     /// Delete this map, provided its files still hold `seen`. Answer with
     /// [`Workspace::map_deleted`](super::Workspace::map_deleted).
     Delete { id: MapId, seen: MapFiles },
+    /// Count how the cartridge's other maps use the background tiles and
+    /// palette banks. Answer with
+    /// [`Workspace::maps_surveyed`](super::Workspace::maps_surveyed).
+    Survey,
     /// Give the open map this name. It is saved at once when the map had no
     /// other unsaved edits. Answer with
     /// [`Workspace::map_renamed`](super::Workspace::map_renamed).

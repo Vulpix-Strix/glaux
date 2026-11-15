@@ -8,21 +8,28 @@
 
 mod actions;
 mod attributes;
+mod bank_picker;
+mod bank_slots;
 mod canvas;
 mod compose;
 mod drawer;
 mod editing;
+mod first_tile;
 #[cfg(test)]
 mod fixture;
 mod form;
 mod frame;
 mod layout;
+mod master_color;
+mod panels;
 mod pattern;
 mod picker;
 mod render;
 #[cfg(test)]
 mod tests;
+mod tile_editor;
 mod tools;
+pub(super) mod usage;
 mod view;
 
 use glaux_input::{InputEvent, Point, PointerButton};
@@ -32,6 +39,7 @@ use glaux_machine::tilemap::{BgBank, BgLayer};
 use self::editing::{Edit, LayerAction, TileAction};
 use self::form::{CreateForm, FormInput};
 use self::layout::{Action, Hit, Layout};
+use self::usage::MapUsage;
 use super::Rect;
 use super::code::prompt::{Prompt, PromptInput};
 use super::context_menu::{ContextMenu, ItemStyle, MenuEntry, MenuOutcome};
@@ -40,9 +48,11 @@ use super::request::MapRequest;
 use super::text_field::TextField;
 use crate::cartridge::map::{MapId, MapSummary};
 use crate::system::map_document::MapDocument;
+use crate::system::sprite_document::SpriteDocument;
 use crate::ui_text;
 use glaux_i18n::Arg;
 use glaux_machine::framebuffer::{HEIGHT, WIDTH};
+use glaux_machine::palette::Palette;
 
 pub(super) mod answers;
 
@@ -82,6 +92,26 @@ impl MapEditor {
         self.frame().selector
     }
 
+    pub(in crate::system::workspace) fn tile_pixel(&self, x: i32, y: i32) -> Point {
+        tile_editor::pixel_middle(self.metrics.top, x, y)
+    }
+
+    pub(in crate::system::workspace) fn counted_tile_uses(
+        &self,
+        open: &MapDocument,
+    ) -> (usize, usize) {
+        let census = usage::Census {
+            open: MapUsage::of(open),
+            others: &self.others,
+        };
+        let tile = self
+            .shows_tile_editor()
+            .expect("the tile editor is open")
+            .tile;
+        let uses = census.tile(tile);
+        (uses.cells, uses.maps)
+    }
+
     pub(in crate::system::workspace) fn canvas_rect(&self) -> Rect {
         self.frame().canvas
     }
@@ -98,7 +128,12 @@ impl MapEditor {
         let Some(Overlay::Maps(menu)) = &self.overlay else {
             panic!("the map menu is open");
         };
-        let layout = menu.layout(&self.font, self.metrics.area(), self.metrics.cell_w, self.metrics.cell_h);
+        let layout = menu.layout(
+            &self.font,
+            self.metrics.area(),
+            self.metrics.cell_w,
+            self.metrics.cell_h,
+        );
         layout.rows[slot - layout.first]
     }
 
@@ -128,6 +163,8 @@ pub(super) enum MapOut {
     /// Open this map. The open map has unsaved edits, so the user is asked
     /// first.
     ConfirmSwitch(MapId),
+    SaveGraphics,
+    SaveBoth,
     Notice(String),
     Copy(String),
     Paste,
@@ -169,11 +206,16 @@ pub(super) struct MapEditor {
     remembered: Option<MapId>,
     overlay: Option<Overlay>,
     font: BitmapFont,
+    /// The palette whose first entries the UI is drawn with.
+    system: Palette,
+    /// How the cartridge's other maps use the tiles and palette banks, as
+    /// last counted.
+    others: Vec<MapUsage>,
     edit: Edit,
 }
 
 impl MapEditor {
-    pub(super) fn new(metrics: Metrics, font: BitmapFont) -> Self {
+    pub(super) fn new(metrics: Metrics, font: BitmapFont, system: Palette) -> Self {
         Self {
             metrics,
             summaries: None,
@@ -181,8 +223,14 @@ impl MapEditor {
             remembered: None,
             overlay: None,
             font,
+            system,
+            others: Vec::new(),
             edit: Edit::default(),
         }
+    }
+
+    pub(super) fn surveyed(&mut self, others: Vec<MapUsage>) {
+        self.others = others;
     }
 
     fn layout(&self) -> Layout {
@@ -240,20 +288,23 @@ impl MapEditor {
 
     /// Forgets everything of the cartridge that was replaced or unloaded.
     pub(super) fn forget(&mut self) {
-        *self = Self::new(self.metrics, self.font.clone());
+        *self = Self::new(self.metrics, self.font.clone(), self.system.clone());
     }
 
     /// Whether a window is over the view. The selector's menu is not one, so
     /// the tab bar and the shortcuts keep working while it is open.
     pub(super) fn has_overlay(&self) -> bool {
-        self.overlay
-            .as_ref()
-            .is_some_and(|overlay| !matches!(overlay, Overlay::Maps(_)))
+        self.has_provisional_panel()
+            || self
+                .overlay
+                .as_ref()
+                .is_some_and(|overlay| !matches!(overlay, Overlay::Maps(_)))
     }
 
     /// Whether Escape closes something in the view.
     pub(super) fn claims_break(&self) -> bool {
         self.overlay.is_some()
+            || self.has_panel()
             || self.edit.picker.is_some()
             || self.edit.attrs.is_some()
             || self.has_selection()
@@ -262,6 +313,7 @@ impl MapEditor {
     /// Closes the windows and the list, as when the view is left.
     pub(super) fn close_overlays(&mut self) {
         self.overlay = None;
+        self.edit.panels.clear();
         self.close_picker();
         self.edit.attrs = None;
         // A drag must not outlive the visit it started in. Its edit, if
@@ -320,18 +372,20 @@ impl MapEditor {
         )));
     }
 
-    /// Applies `event`, letting undo and redo change `document`.
+    /// Applies `event`, letting it change the map `document` and the
+    /// tiles and palettes in `sprites`.
     pub(super) fn handle_input(
         &mut self,
         event: InputEvent,
         mut document: Option<&mut MapDocument>,
+        mut sprites: Option<&mut SpriteDocument>,
     ) -> Option<MapOut> {
         if self.overlay.is_some() {
-            return self.overlay_input(event, document);
+            return self.overlay_input(event, document, sprites.as_deref());
         }
         let layout = self.layout();
         if let Some(document) = document.as_deref_mut()
-            && let Some(out) = self.editor_input(event, document)
+            && let Some(out) = self.editor_input(event, document, sprites.as_deref_mut())
         {
             return out;
         }
@@ -350,7 +404,7 @@ impl MapEditor {
             }
             InputEvent::Enter | InputEvent::Down { .. } => self.open_list(document.as_deref()),
             InputEvent::NewFile => self.open_create(),
-            InputEvent::Save => return self.save(document.as_deref()),
+            InputEvent::Save => return self.save(document.as_deref(), sprites.as_deref()),
             InputEvent::Undo => {
                 if let Some(document) = document {
                     document.undo();
@@ -401,7 +455,12 @@ impl MapEditor {
         for (position, action) in Action::ALL.into_iter().enumerate() {
             let enabled = action == Action::New || document.is_some();
             let label = ui_text::get(action.message_id());
-            entries.push(MenuEntry::when(enabled, &label, None, maps.len() + position));
+            entries.push(MenuEntry::when(
+                enabled,
+                &label,
+                None,
+                maps.len() + position,
+            ));
         }
         let current = open
             .and_then(|id| maps.iter().position(|summary| &summary.id == id))
@@ -430,12 +489,20 @@ impl MapEditor {
         }
     }
 
-    fn save(&self, document: Option<&MapDocument>) -> Option<MapOut> {
+    /// Saving from the Map view writes the map and the tiles and palettes
+    /// it was painted with.
+    fn save(
+        &self,
+        document: Option<&MapDocument>,
+        sprites: Option<&SpriteDocument>,
+    ) -> Option<MapOut> {
         let document = document?;
-        Some(if document.is_modified() {
-            MapOut::Request(MapRequest::Save)
-        } else {
-            MapOut::Notice(ui_text::get("maps-nothing-to-save"))
+        let graphics = sprites.is_some_and(SpriteDocument::is_modified);
+        Some(match (document.is_modified(), graphics) {
+            (true, true) => MapOut::SaveBoth,
+            (true, false) => MapOut::Request(MapRequest::Save),
+            (false, true) => MapOut::SaveGraphics,
+            (false, false) => MapOut::Notice(ui_text::get("maps-nothing-to-save")),
         })
     }
 
@@ -467,6 +534,7 @@ impl MapEditor {
         &mut self,
         event: InputEvent,
         document: Option<&mut MapDocument>,
+        sprites: Option<&SpriteDocument>,
     ) -> Option<MapOut> {
         let area = self.metrics.area();
         let (cell_w, cell_h) = (self.metrics.cell_w, self.metrics.cell_h);
@@ -475,7 +543,7 @@ impl MapEditor {
                 let layout = menu.layout(&self.font, area, cell_w, cell_h);
                 if event == InputEvent::Save {
                     self.overlay = None;
-                    return self.save(document.as_deref());
+                    return self.save(document.as_deref(), sprites);
                 }
                 match menu.handle_input(event, &layout) {
                     MenuOutcome::Stay => None,
@@ -604,7 +672,14 @@ fn row_label(
                 meta.width,
                 meta.height
             );
-            (label, if current { ItemStyle::Current } else { ItemStyle::Plain })
+            (
+                label,
+                if current {
+                    ItemStyle::Current
+                } else {
+                    ItemStyle::Plain
+                },
+            )
         }
         Err(_) => (
             format!("{}  ({})", summary.id, ui_text::get("maps-broken")),

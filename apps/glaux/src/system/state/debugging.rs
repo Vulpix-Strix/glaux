@@ -135,7 +135,7 @@ pub(in crate::system) fn debugging_tick(
                     }
                     // The maps are read-only while the cartridge is debugged,
                     // like its scripts.
-                    Some(WorkspaceRequest::Maps(_)) => {
+                    Some(WorkspaceRequest::Maps(_) | WorkspaceRequest::SaveMapAndGraphics) => {
                         ctx.workspace
                             .report(ui_text::get("code-read-only-while-debugging"));
                         continue;

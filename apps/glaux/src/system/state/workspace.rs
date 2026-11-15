@@ -15,7 +15,7 @@ use crate::system::shell::{Shell, cartridge_identity};
 use crate::system::sprite_document::SpriteDocument;
 use crate::system::video::CartridgeVideoDefaults;
 use crate::system::workspace::{
-    AssetRequest, HostWork, MapRequest, NavigationRequest, ScriptRequest, Tab, Workspace,
+    AssetRequest, HostWork, MapRequest, MapUsage, NavigationRequest, ScriptRequest, Tab, Workspace,
     WorkspaceRequest, WorkspaceVideo,
 };
 use crate::system::{HostRequest, SystemState};
@@ -133,6 +133,15 @@ pub(in crate::system) fn workspace_tick(
             WorkspaceRequest::Maps(request) => {
                 measure_rom = true;
                 serve_maps(request, workspace, maps, &cartridge);
+            }
+            WorkspaceRequest::SaveMapAndGraphics => {
+                measure_rom = true;
+                let map = maps.as_mut().map(|document| document.save(&cartridge));
+                let graphics = sprites
+                    .as_mut()
+                    .filter(|_| video.is_ready() && !matches!(map, Some(Err(_))))
+                    .map(|document| document.save(&cartridge));
+                workspace.map_and_graphics_saved(map, graphics);
             }
             WorkspaceRequest::Navigate(request) => {
                 serve_navigation(request, workspace, code, &cartridge);
@@ -330,6 +339,18 @@ pub(super) fn serve_maps(
                 *maps = None;
             }
             workspace.map_deleted(&id, result);
+        }
+        MapRequest::Survey => {
+            let open = maps.as_ref().map(MapDocument::id);
+            let others = cartridge
+                .list_maps()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|id| Some(id) != open)
+                .filter_map(|id| MapDocument::load(cartridge, &id).ok())
+                .map(|document| MapUsage::of(&document))
+                .collect();
+            workspace.maps_surveyed(others);
         }
         MapRequest::Rename { name } => {
             let Some(document) = maps.as_mut() else {

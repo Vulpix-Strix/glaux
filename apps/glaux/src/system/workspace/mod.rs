@@ -54,6 +54,7 @@ use docs::{DocsBrowser, Source};
 pub use docs_apart::{DocsApart, DocsStart};
 use input::Route;
 use maps::MapEditor;
+pub use maps::usage::MapUsage;
 use modal::Modal;
 pub(super) use modal::{
     Choice, Target, asset_conflict_dialog, map_conflict_dialog, message_dialog,
@@ -214,7 +215,7 @@ impl Workspace {
                 EditorSettings::default(),
             ),
             sprites: SpriteEditor::new(layout.sprite_metrics()),
-            maps: MapEditor::new(layout.map_metrics(), font.clone()),
+            maps: MapEditor::new(layout.map_metrics(), font.clone(), system_palette.clone()),
             docs: DocsBrowser::new(layout.docs_metrics(), font.clone()),
             docs_open: false,
             modal: None,

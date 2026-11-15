@@ -41,16 +41,27 @@ impl MapEditor {
         let frame = self.frame();
         let pointer = pointer.filter(|_| self.overlay.is_none());
         let hover = pointer.map_or(Hit::Nothing, |at| self.hit(&layout, at, document));
-        let frame_hover = pointer.map_or(EditorHit::Nothing, |at| {
-            self.frame_hit(&frame, at, document)
-        });
-        self.options_bar(ctx, &frame, document, document.is_some(), frame_hover);
+        // Nothing under a tile or palette window reacts to the pointer.
+        let covered = |at: &Point| {
+            self.has_provisional_panel()
+                || self
+                    .top_panel_window()
+                    .is_some_and(|window| window.contains(*at))
+        };
+        let frame_hover = pointer
+            .filter(|at| !covered(at))
+            .map_or(EditorHit::Nothing, |at| {
+                self.frame_hit(&frame, at, document)
+            });
+        let graphics_modified = source.as_ref().is_ok_and(|source| source.modified);
+        self.options_bar(ctx, &frame, document, graphics_modified, frame_hover);
         if let Some(document) = document {
             self.render_editor(ctx, source, document, pointer, frame_hover);
         } else {
             self.body(ctx, &layout, hover);
         }
-        let left = document.map(|document| self.status_line(document, pointer));
+        let left =
+            document.map(|document| self.status_line(document, source.as_ref().ok(), pointer));
         let hint = self.status_hint(document.is_some());
         self.status_bar(
             ctx,
@@ -107,7 +118,18 @@ impl MapEditor {
         }
     }
 
-    fn status_line(&self, document: &MapDocument, pointer: Option<Point>) -> String {
+    fn status_line(
+        &self,
+        document: &MapDocument,
+        source: Option<&SpriteSource<'_>>,
+        pointer: Option<Point>,
+    ) -> String {
+        if self.overlay.is_none() {
+            let empty = source.and_then(|source| self.empty_status(document, source.bg.tiles()));
+            if let Some(text) = self.panel_status(source).or(empty) {
+                return text;
+            }
+        }
         match (&self.overlay, &self.edit.picker, &self.edit.attrs) {
             (Some(Overlay::TileMenu(tile, _)), ..) => {
                 let layer = self.edit.layer;
@@ -115,7 +137,10 @@ impl MapEditor {
                     "maps-status-tile-used",
                     &[
                         ("tile", Arg::Text(&format!("{tile:04}"))),
-                        ("count", Arg::Number(uses(document.layer(layer), *tile) as f64)),
+                        (
+                            "count",
+                            Arg::Number(uses(document.layer(layer), *tile) as f64),
+                        ),
                         ("layer", Arg::Text(&layer.to_string())),
                     ],
                 )
@@ -141,6 +166,13 @@ impl MapEditor {
     }
 
     fn status_hint(&self, editing: bool) -> String {
+        if let Some(id) = self.panel_hint().filter(|_| self.overlay.is_none()) {
+            return if id.is_empty() {
+                String::new()
+            } else {
+                ui_text::get(id)
+            };
+        }
         let id = match (&self.overlay, &self.edit.picker, &self.edit.attrs) {
             (Some(Overlay::Maps(_)), ..) => return menu_hint(),
             (Some(Overlay::LayerMenu(..)), ..) => "maps-hint-layer-menu",

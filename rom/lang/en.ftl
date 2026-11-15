@@ -456,6 +456,93 @@ maps-conflict-reload-instructions = { $count ->
    *[other] OVERWRITE DISK replaces these files with your edits. DISCARD & RELOAD throws away all your unsaved edits to this map.
     }
 maps-tile-0-transparent = Tile 0 is always transparent
+maps-banks-key-close = Esc close
+maps-banks-key-pick = 0-3 pick
+maps-banks-key-use = Enter use
+maps-banks-pick = Pick: brush paints with it
+maps-banks-recolor = Edit: recolors all its cells
+maps-banks-title = Palette for brush
+maps-banks-unused = Not used yet
+maps-banks-used = { $cells ->
+    [one] Used on 1 cell
+   *[other] Used on { $cells } cells
+    }
+maps-draw-a-tile-first = Draw a tile first: press N
+maps-empty-about = Maps are made of 8x8 tiles.
+maps-empty-key = or press N
+maps-empty-new = + New tile
+maps-empty-step-1 = Draw a tile
+maps-empty-step-2 = Choose its colors
+maps-empty-step-3 = Click to place it
+maps-empty-title = { $name } is empty
+maps-hint-banks = 0-3: pick  Esc: close
+maps-master-apply = Apply to { $master }
+maps-master-cancel = Cancel
+maps-master-cart = Whole cart
+maps-master-everywhere = Changes this color everywhere
+maps-master-hex = Hex
+maps-master-note-1 = Not a slot change:
+maps-master-note-2 = every BGP and OBP slot set to
+maps-master-note-3 = { $master } shows the new RGB.
+maps-master-now = Now
+maps-master-title = Master color
+maps-master-undo = undo
+maps-master-undo-key = C-Z
+maps-master-unused = no palette
+maps-master-used = { $maps ->
+    [one] 1 map
+   *[other] { $maps } maps
+    }, { $sprites ->
+    [one] 1 sprite
+   *[other] { $sprites } sprites
+    }
+maps-master-was = Was
+maps-new-tile-tag = New tile  N
+maps-no-free-tile = Every tile is in use
+maps-saved-with-graphics = Saved the map and its graphics
+maps-slots-apply = Apply to { $bank }
+maps-slots-clear = 00: always clear
+maps-slots-count = 16 slots
+maps-slots-edit-rgb = Edit { $master } RGB
+maps-slots-hint = Click a master color to use it
+maps-slots-live = Live on map
+maps-slots-masters = Master colors
+maps-slots-masters-all = 256  BG + OBJ
+maps-slots-revert = Revert
+maps-slots-scope = Slot change: only { $bank } cells ({ $cells })
+maps-slots-title = Bank slots
+maps-slots-uses = Slot { $slot } uses
+maps-status-edit = Edit { $tile }
+maps-status-empty-new = { $name } empty  N: new tile
+maps-status-empty-ready = { $name } empty  Tile { $tile } ready
+maps-status-master = Master { $master }  { $kinds }
+maps-status-new = New tile { $tile }
+maps-status-pixel = X { $x } Y { $y }
+maps-status-slot = { $bank } slot { $slot } = { $master }
+maps-tile-color = Color { $color }
+maps-tile-created = Tile created: { $tile }
+maps-tile-done = Done
+maps-tile-edit-title = Edit tile
+maps-tile-new-title = New tile
+maps-tile-place = Place on map
+maps-tile-same = Same tile: { $uses ->
+    [one] 1 use
+   *[other] { $uses } uses
+    } in { $maps ->
+    [one] 1 map
+   *[other] { $maps } maps
+    }
+maps-tile-unused = Not used on any map
+maps-tile-uses = { $uses ->
+    [one] 1 use
+   *[other] { $uses } uses
+    } in { $maps ->
+    [one] 1 map
+   *[other] { $maps } maps
+    } will change
+maps-tip-edit = edit tile
+maps-tip-paint = Click or drag to paint
+maps-tip-picker = picker
 maps-tool-eraser = Eraser
 maps-tool-eyedropper = Eyedropper
 maps-tool-fill = Fill

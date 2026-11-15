@@ -8,13 +8,16 @@ use glaux_input::{InputEvent, Point, PointerButton};
 use glaux_machine::tilemap::{BG_LAYERS, BgBank, BgLayer, TileEntry};
 
 use super::attributes::AttrPanel;
+use super::first_tile::{first_drawn, first_free, is_blank, map_is_blank};
 use super::frame::{DrawerSize, Frame, Hit, Shape};
+use super::panels::Panel;
 use super::pattern::{Clip, stamp};
 use super::picker::Picker;
 use super::tools::{Selection, Tool, connected, line, would_change};
 use super::view::Viewport;
 use super::{MapEditor, MapOut, Overlay};
 use crate::system::map_document::MapDocument;
+use crate::system::sprite_document::SpriteDocument;
 use crate::system::workspace::dialog::text_cells;
 use crate::ui_text;
 
@@ -59,6 +62,11 @@ pub(super) struct Edit {
     pub(super) pattern: (usize, usize),
     pub(super) picker: Option<Picker>,
     pub(super) attrs: Option<AttrPanel>,
+    /// The last one is on top.
+    pub(super) panels: Vec<Panel>,
+    /// Whether the last stroke began on a blank map, which keeps the hint
+    /// beside the brush until the next one.
+    pub(super) coach: bool,
     pub(super) clipboard: Option<Clip>,
     pub(super) drawer: DrawerSize,
     pub(super) strip_top: usize,
@@ -83,6 +91,8 @@ impl Default for Edit {
             pattern: (1, 1),
             picker: None,
             attrs: None,
+            panels: Vec::new(),
+            coach: false,
             clipboard: None,
             drawer: DrawerSize::default(),
             strip_top: 0,
@@ -99,6 +109,8 @@ impl Edit {
     /// Keeps the tool, the brush and the layer states.
     pub(super) fn reset_for_new_map(&mut self) {
         self.view = Viewport::default();
+        self.panels.clear();
+        self.coach = false;
         self.stroke = None;
         self.selection = None;
         self.pointer = None;
@@ -120,7 +132,12 @@ fn changes_what_a_stroke_draws_on(event: &InputEvent) -> bool {
         | InputEvent::PageDown { .. }
         | InputEvent::Tab { .. }
         | InputEvent::Function(2) => true,
-        InputEvent::Text(key) => matches!(key, 'x' | 'X' | '+' | '=' | '-' | '_' | '0'..='2'),
+        InputEvent::Text(key) => {
+            matches!(
+                key,
+                'x' | 'X' | '+' | '=' | '-' | '_' | '0'..='2' | 'd' | 'D' | 'n' | 'N'
+            )
+        }
         _ => false,
     }
 }
@@ -172,7 +189,12 @@ impl MapEditor {
     }
 
     /// Locked layers, cells off the map and unchanged entries return `false`.
-    pub(super) fn write(&self, document: &mut MapDocument, cell: (i32, i32), entry: TileEntry) -> bool {
+    pub(super) fn write(
+        &self,
+        document: &mut MapDocument,
+        cell: (i32, i32),
+        entry: TileEntry,
+    ) -> bool {
         let layer = self.edit.layer;
         if self.edit.locked[layer.index()] {
             return false;
@@ -196,12 +218,19 @@ impl MapEditor {
         &mut self,
         event: InputEvent,
         document: &mut MapDocument,
+        mut sprites: Option<&mut SpriteDocument>,
     ) -> Option<Option<MapOut>> {
         self.fit(document);
+        if let Some(sprites) = sprites.as_deref() {
+            self.arm_brush(sprites.bg_tiles());
+        }
         if changes_what_a_stroke_draws_on(&event) {
             self.end_stroke(Some(&mut *document));
         }
         let frame = self.frame();
+        if let Some(handled) = self.panel_input(event, &frame, sprites.as_deref_mut()) {
+            return Some(handled);
+        }
         if let Some(handled) = self.picker_input(event, &frame, document) {
             self.fit(document);
             return Some(handled);
@@ -224,10 +253,20 @@ impl MapEditor {
             } => {
                 // A press while a drag is open means its release was lost.
                 self.end_stroke(Some(&mut *document));
+                if let Some(sprites) = sprites.as_deref_mut()
+                    && self.shows_guide(document, sprites.bg_tiles())
+                    && Self::guide_card(&frame).contains(at)
+                {
+                    let out = Self::guide_button(&frame)
+                        .contains(at)
+                        .then(|| self.new_tile(sprites))
+                        .flatten();
+                    return Some(out);
+                }
                 if frame.hit(at, self.edit.strip_top) == Hit::Nothing {
                     return None;
                 }
-                self.press(&frame, document, at)
+                self.press(&frame, document, sprites, at)
             }
             InputEvent::PointerDown {
                 button: PointerButton::Secondary,
@@ -283,12 +322,13 @@ impl MapEditor {
                 None
             }
             InputEvent::Function(2) => {
-                let over_tile = self.edit.pointer.and_then(|at| {
-                    match frame.hit(at, self.edit.strip_top) {
-                        Hit::Tile(tile) => Some(tile),
-                        _ => None,
-                    }
-                });
+                let over_tile =
+                    self.edit
+                        .pointer
+                        .and_then(|at| match frame.hit(at, self.edit.strip_top) {
+                            Hit::Tile(tile) => Some(tile),
+                            _ => None,
+                        });
                 match over_tile {
                     Some(tile) => self.edit_tile_out(tile),
                     None => {
@@ -308,7 +348,7 @@ impl MapEditor {
                 self.edit.selection = None;
                 None
             }
-            InputEvent::Text(key) => self.key(&frame, document, key)?,
+            InputEvent::Text(key) => self.key(&frame, document, sprites, key)?,
             // A drag in progress must end first so that it counts as a finished edit.
             InputEvent::Undo | InputEvent::Redo | InputEvent::Save => {
                 self.end_stroke(Some(&mut *document));
@@ -324,6 +364,7 @@ impl MapEditor {
         &mut self,
         frame: &Frame,
         document: &mut MapDocument,
+        sprites: Option<&mut SpriteDocument>,
         key: char,
     ) -> Option<Option<MapOut>> {
         if let Some(tool) = Tool::from_key(key) {
@@ -331,6 +372,8 @@ impl MapEditor {
             return Some(None);
         }
         match key {
+            'd' | 'D' => return Some(sprites.and_then(|sprites| self.open_tile_editor(sprites))),
+            'n' | 'N' => return Some(sprites.and_then(|sprites| self.new_tile(sprites))),
             'g' | 'G' => self.edit.grid = !self.edit.grid,
             'a' | 'A' => self.toggle_attr(),
             't' | 'T' => self.toggle_picker(),
@@ -357,9 +400,33 @@ impl MapEditor {
         self.edit.tool = tool;
     }
 
-    fn press(&mut self, frame: &Frame, document: &mut MapDocument, at: Point) -> Option<MapOut> {
+    fn press(
+        &mut self,
+        frame: &Frame,
+        document: &mut MapDocument,
+        sprites: Option<&mut SpriteDocument>,
+        at: Point,
+    ) -> Option<MapOut> {
+        let tiles = sprites.as_deref().map(SpriteDocument::bg_tiles);
+        let undrawn = tiles.is_some_and(|tiles| first_drawn(tiles).is_none());
         match frame.hit(at, self.edit.strip_top) {
-            Hit::Canvas => return self.press_canvas(frame, document, at),
+            Hit::Canvas => {
+                let brush = usize::from(self.edit.brush.tile());
+                if self.edit.tool == Tool::Pencil
+                    && tiles.is_some_and(|tiles| is_blank(tiles, brush))
+                {
+                    return Some(MapOut::Notice(ui_text::get("maps-draw-a-tile-first")));
+                }
+                return self.press_canvas(frame, document, at);
+            }
+            Hit::Brush => return sprites.and_then(|sprites| self.open_tile_editor(sprites)),
+            Hit::Bank => return sprites.and_then(|sprites| self.open_palettes(sprites)),
+            Hit::Picker if undrawn => {
+                return Some(MapOut::Notice(ui_text::get("maps-draw-a-tile-first")));
+            }
+            Hit::Tile(tile) if tiles.and_then(first_free) == Some(tile) => {
+                return sprites.and_then(|sprites| self.new_tile(sprites));
+            }
             Hit::Tool(tool) => self.set_tool(tool, document),
             Hit::Grid => self.edit.grid = !self.edit.grid,
             Hit::Attr => self.toggle_attr(),
@@ -388,7 +455,7 @@ impl MapEditor {
                 self.end_stroke(Some(&mut *document));
                 document.redo();
             }
-            Hit::Brush | Hit::Nothing => {}
+            Hit::Nothing => {}
         }
         None
     }
@@ -434,6 +501,7 @@ impl MapEditor {
                 return Some(self.locked_notice());
             }
             Tool::Pencil | Tool::Eraser => {
+                self.edit.coach = map_is_blank(document);
                 document.begin_edit();
                 self.paint(document, cell);
                 self.edit.stroke = Some(Stroke::Paint { last: cell });

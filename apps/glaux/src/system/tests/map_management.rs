@@ -571,7 +571,10 @@ fn each_state_of_the_view_is_drawn() {
     let row = workspace::tests_support::map_row(&system.workspace, 0);
     let listed = render(&system);
     assert!(inked(&listed, row) > 0, "the menu shows its rows");
-    assert!(inked(&listed, canvas) > 0, "the canvas stays behind the menu");
+    assert!(
+        inked(&listed, canvas) > 0,
+        "the canvas stays behind the menu"
+    );
     assert!(inked(&listed, drawer) > 0, "so does the drawer");
 }
 
@@ -643,4 +646,66 @@ fn edit_in_sprites_opens_the_brushs_tile_in_the_background_sprite_editor() {
     let sprites = system.workspace.sprites();
     assert_eq!(sprites.tileset(), TileSet::Bg);
     assert_eq!(sprites.selected(), 1, "the brush starts on tile 1");
+}
+
+#[test]
+fn a_tile_drawn_from_the_map_view_is_saved_together_with_the_map() {
+    let fixture = Fixture::new("sys-maps-first-tile");
+    write_map(&fixture, "a", "A");
+    let system = open_maps(loaded_with(&fixture, &[]));
+
+    let system = system.update(&[InputEvent::Text('n')]);
+    let pixel = workspace::tests_support::map_tile_pixel(&system.workspace, 2, 5);
+    let system = system.update(&click(pixel)).update(&[InputEvent::Enter]);
+    let canvas = workspace::tests_support::map_canvas(&system.workspace);
+    let cell = Point::new((canvas.x + 1) as u16, (canvas.y + 1) as u16);
+    let system = system.update(&click(cell));
+    let sprites = system.sprites.as_ref().unwrap();
+    assert_eq!(sprites.bg_pixel(1, 2, 5), Some(1));
+    let painted = system.maps.as_ref().unwrap().layer(BgLayer::Bg1).get(0, 0);
+    assert_eq!(painted.map(TileEntry::tile), Some(1));
+    let cartridge = fixture.root().join("pong");
+    assert!(
+        !cartridge.join("bgtiles.bin").exists(),
+        "nothing is written before saving"
+    );
+
+    let system = system.update(&[InputEvent::Save]);
+    assert_eq!(
+        workspace::tests_support::notice(&system.workspace),
+        Some("Saved the map and its graphics")
+    );
+    assert!(!system.sprites.as_ref().unwrap().is_modified());
+    assert!(!system.maps.as_ref().unwrap().is_modified());
+    let layer = std::fs::read(map_dir(&fixture, "a").join("bg1.bin")).unwrap();
+    assert_eq!(layer, [1, 0, 0, 0], "tile 1 in the first of the two cells");
+    let tiles = std::fs::read(cartridge.join("bgtiles.bin")).unwrap();
+    assert!(
+        tiles[32..64].iter().any(|&byte| byte != 0),
+        "tile 1 has its pixel"
+    );
+}
+
+#[test]
+fn the_tile_editor_counts_the_uses_in_the_maps_that_are_not_open() {
+    let fixture = Fixture::new("sys-maps-survey");
+    write_map(&fixture, "a", "A");
+    write_map(&fixture, "b", "B");
+    let entry = TileEntry::from_raw(1).unwrap().raw().to_le_bytes();
+    std::fs::write(
+        map_dir(&fixture, "b").join("bg0.bin"),
+        [entry, entry].concat(),
+    )
+    .unwrap();
+    let mut system = open_maps(loaded_with(&fixture, &[]));
+    system.sprites.as_mut().unwrap().set_bg_pixel(1, 0, 0, 1);
+
+    let system = system.update(&[InputEvent::Text('d')]);
+    let mut fb = Framebuffer::new();
+    system.render(&mut fb, &fake_rom(), None);
+    assert_eq!(
+        workspace::tests_support::map_tile_uses(&system.workspace, system.maps.as_ref().unwrap()),
+        (2, 1),
+        "two cells of map b, none of the open map"
+    );
 }

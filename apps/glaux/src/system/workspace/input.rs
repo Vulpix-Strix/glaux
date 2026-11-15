@@ -343,11 +343,16 @@ impl Workspace {
         &mut self,
         event: InputEvent,
         maps: Option<&mut MapDocument>,
-        sprites: Option<&mut SpriteDocument>,
+        mut sprites: Option<&mut SpriteDocument>,
     ) -> Option<WorkspaceRequest> {
         let open = maps.as_deref().map(|document| document.id().clone());
-        match self.maps.handle_input(event, maps)? {
+        match self
+            .maps
+            .handle_input(event, maps, sprites.as_deref_mut())?
+        {
             MapOut::Request(request) => Some(WorkspaceRequest::Maps(request)),
+            MapOut::SaveGraphics => Some(WorkspaceRequest::Assets(AssetRequest::Save)),
+            MapOut::SaveBoth => Some(WorkspaceRequest::SaveMapAndGraphics),
             MapOut::ConfirmSwitch(to) => {
                 let open = open?;
                 let (dialog, target) = switch_dialog(&open, to);

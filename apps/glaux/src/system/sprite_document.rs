@@ -526,7 +526,6 @@ impl OpenEdit {
         }
     }
 
-    #[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
     fn changes_anything(&self) -> bool {
         self.edit.0.iter().any(|c| !c.is_noop())
     }
@@ -709,7 +708,6 @@ impl SpriteDocument {
     }
 
     /// Whether there is an edit to undo.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn can_undo(&self) -> bool {
         !self.history.undo.is_empty()
             || self
@@ -720,7 +718,6 @@ impl SpriteDocument {
     }
 
     /// Whether there is an undone edit to redo.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn can_redo(&self) -> bool {
         !self.history.redo.is_empty()
     }
