@@ -22,7 +22,10 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES_DIR = REPOSITORY_ROOT / "examples"
-ROOT_ASSETS = frozenset({"sprites.bin", "objattr.bin", "obp.bin", "palette.bin"})
+ROOT_ASSETS = frozenset(
+    {"sprites.bin", "objattr.bin", "obp.bin", "palette.bin", "bgtiles.bin", "bgp.bin"}
+)
+MAP_FILES = frozenset({"map.ron", "bg0.bin", "bg1.bin", "bg2.bin"})
 SCRIPT_SUFFIXES = frozenset({".luau"})
 
 
@@ -138,8 +141,14 @@ def runtime_files(root: Path) -> tuple[Path, ...]:
                 relative = path.relative_to(root)
                 if relative == Path("cartridge.ron"):
                     continue
-                is_runtime = path.suffix in SCRIPT_SUFFIXES or (
-                    relative.parent == Path() and name in ROOT_ASSETS
+                is_runtime = (
+                    path.suffix in SCRIPT_SUFFIXES
+                    or (relative.parent == Path() and name in ROOT_ASSETS)
+                    or (
+                        len(relative.parts) == 3
+                        and relative.parts[0] == "maps"
+                        and name in MAP_FILES
+                    )
                 )
                 if is_runtime and not path.is_file():
                     raise SyncError(f"source path is not a regular file: {path}")
