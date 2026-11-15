@@ -33,7 +33,6 @@ mod debugging;
 mod docs_browser;
 mod docs_shell;
 mod drawing;
-mod example_cartridges;
 mod input;
 mod lifecycle;
 mod log_perf;

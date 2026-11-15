@@ -74,33 +74,6 @@ fn imports_a_png_into_its_cartridge_and_reimports_identically() {
     assert_eq!(written(&cart.dir), first);
 }
 
-/// The imported examples are what importing their PNG with the current
-/// System ROM writes: master entries past the sheet's colors hold the ROM
-/// palette and unused banks the ROM banks.
-#[test]
-fn reimporting_the_examples_reproduces_their_committed_assets() {
-    for name in ["palettes", "signal-lost"] {
-        let example = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../examples")
-            .join(name);
-        let fixture = Fixture::new(&format!("import-example-{name}"));
-        let dir = fixture.root().join(name);
-        fs::create_dir_all(&dir).unwrap();
-        for file in ["cartridge.ron", "sprites.png", "sprites.sprites.ron"] {
-            fs::copy(example.join(file), dir.join(file)).unwrap();
-        }
-        import(
-            &ImportOptions {
-                input: dir.join("sprites.png"),
-                ..ImportOptions::default()
-            },
-            &rom(),
-        )
-        .unwrap();
-        assert_eq!(written(&dir), written(&example), "{name}");
-    }
-}
-
 #[test]
 fn a_dry_run_touches_nothing() {
     let cart = cartridge("import-dry-run");

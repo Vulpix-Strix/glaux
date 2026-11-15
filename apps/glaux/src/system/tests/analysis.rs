@@ -154,26 +154,34 @@ fn an_edit_hides_the_old_findings_until_the_new_ones_arrive() {
     assert!(!summary.stale, "{summary:?}");
 }
 
+/// A field added to a table after its constructor is reported where it is
+/// read, and the lifecycle callbacks are never reported as unused.
 #[test]
-fn loot_rain_reports_game_run_and_not_its_own_callbacks() {
+fn a_late_field_is_reported_and_the_callbacks_are_not() {
     if analyzer().is_none() {
         return;
     }
-    let fixture = Fixture::new("sys-lsp-loot");
-    let cache = ScratchDir::new("lsp-loot-cache");
+    let fixture = Fixture::new("sys-lsp-late-field");
+    let cache = ScratchDir::new("lsp-late-field-cache");
     let mut analysis = Analysis::new(Some(cache.to_path_buf()), None);
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/loot-rain/code");
-    let system = code_view(&fixture, "", |fixture| {
-        for entry in std::fs::read_dir(&source).unwrap() {
-            let entry = entry.unwrap();
-            let name = entry.file_name();
-            write(
-                fixture,
-                &format!("code/{}", name.to_string_lossy()),
-                &std::fs::read_to_string(entry.path()).unwrap(),
-            );
-        }
-    });
+    let source = r#"local game = { state = "title" }
+
+local function play()
+    local run = game.run
+    return run
+end
+
+function boot()
+    game.run = {}
+end
+
+function tick()
+    play()
+end
+
+function draw() end
+"#;
+    let system = code_view(&fixture, source, |_| {});
     let system = settle(system, &mut analysis, has_findings);
     let all = active_findings(&system);
     let run: Vec<_> = errors(&system)
@@ -181,7 +189,7 @@ fn loot_rain_reports_game_run_and_not_its_own_callbacks() {
         .filter(|(_, message)| message.contains("Key 'run' not found in table 'game'"))
         .collect();
     assert_eq!(run.len(), 1, "{all:?}");
-    assert_eq!(run[0].0, 66);
+    assert_eq!(run[0].0, 4);
     for callback in ["boot", "tick", "draw"] {
         assert!(
             all.iter()

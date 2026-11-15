@@ -217,14 +217,15 @@ fn importing_is_one_unsaved_edit_that_undoes_and_redoes() {
     assert_ne!(disk(&fixture), files);
 }
 
-/// Importing an example's PNG in the editor and saving writes the assets
-/// `glaux import sprites` committed for it, as the cartridge reads them.
+/// Importing a PNG in the editor and saving writes the assets the shared
+/// fitting pipeline of `glaux import sprites` produces for it.
 #[test]
 fn saving_an_import_gives_the_assets_the_cli_import_gives() {
     let fixture = Fixture::new("sys-import-like-cli");
     let dir = fixture.root().join("pong");
     write_cartridge(&dir, "Pong");
-    let defaults = CartridgeVideoDefaults::from_rom(&crate::rom::load().unwrap());
+    let rom = crate::rom::load().unwrap();
+    let defaults = CartridgeVideoDefaults::from_rom(&rom);
     let mut system = System::new(
         info(),
         sounds(),
@@ -238,22 +239,33 @@ fn saving_an_import_gives_the_assets_the_cli_import_gives() {
     }
     let system = open_sprites(enter(system, "load pong"));
     let (system, _) = press_import(system);
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/palettes");
-    let system = chosen(system, example.join("sprites.png"));
+    let sheet = magenta_sheet(&fixture.root());
+    let system = chosen(system, sheet.clone());
     assert!(preview(&system).can_import());
     system.update(&[InputEvent::Enter, InputEvent::Save]);
 
-    let decoded = |dir: &Path| {
-        let read = |name: &str| std::fs::read(dir.join(name)).ok();
-        let files = VideoFiles {
-            obj_tiles: read("sprites.bin"),
-            obj_attributes: read("objattr.bin"),
-            obj_palettes: read("obp.bin"),
-            master_palette: read("palette.bin"),
-            bg_tiles: read("bgtiles.bin"),
-            bg_palettes: read("bgp.bin"),
-        };
-        CartridgeVideo::decode(&files, &defaults).unwrap()
+    let fitted = crate::sprite_import::SheetSource::read(&sheet, None)
+        .unwrap()
+        .fit(None, rom.palette(), rom.palette(), rom.obj_palettes())
+        .unwrap();
+    let expected = VideoFiles {
+        obj_tiles: Some(fitted.tiles),
+        obj_attributes: Some(fitted.attributes),
+        obj_palettes: Some(fitted.obj_palettes.as_bytes().to_vec()),
+        master_palette: Some(fitted.palette.to_rgb888().to_vec()),
+        ..VideoFiles::default()
     };
-    assert_eq!(decoded(&dir), decoded(&example));
+    let read = |name: &str| std::fs::read(dir.join(name)).ok();
+    let saved = VideoFiles {
+        obj_tiles: read("sprites.bin"),
+        obj_attributes: read("objattr.bin"),
+        obj_palettes: read("obp.bin"),
+        master_palette: read("palette.bin"),
+        bg_tiles: read("bgtiles.bin"),
+        bg_palettes: read("bgp.bin"),
+    };
+    assert_eq!(
+        CartridgeVideo::decode(&saved, &defaults).unwrap(),
+        CartridgeVideo::decode(&expected, &defaults).unwrap()
+    );
 }

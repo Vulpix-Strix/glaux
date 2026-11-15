@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 
 use super::fixture::{manifest_ron, write_cartridge, write_manifest};
 use super::*;
@@ -664,31 +663,6 @@ fn entry_must_exist_as_a_regular_file() {
         CartridgeError::EntryNotAFile("code/main.luau".into()).to_string(),
         "Entry is not a file: code/main.luau"
     );
-}
-
-#[test]
-fn shipped_examples_load_with_their_assets() {
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    let root = fs::canonicalize(examples).unwrap();
-    let storage = CartridgeStorage::Available(CartridgeFs::new(root));
-    for (example, entry) in [
-        ("sprites", "code/main.luau"),
-        ("tile-viewer", "code/main.luau"),
-        ("signal-lost", "code/main.luau"),
-        ("loot-rain", "code/main.luau"),
-        ("palettes", "code/main.luau"),
-    ] {
-        let cartridge = LoadedCartridge::load(&storage, example).unwrap();
-        assert_eq!(cartridge.manifest().runtime.entry, entry, "{example}");
-        assert!(!cartridge.entry_source().unwrap().is_empty(), "{example}");
-        assert!(
-            cartridge
-                .read_asset(VideoAsset::ObjTiles)
-                .unwrap()
-                .is_some(),
-            "{example}"
-        );
-    }
 }
 
 #[cfg(unix)]

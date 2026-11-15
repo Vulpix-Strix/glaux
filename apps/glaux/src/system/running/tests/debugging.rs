@@ -226,39 +226,63 @@ fn dropping_a_stopped_run_ends_its_thread() {
     drop(running.stop());
 }
 
+/// Every cartridge in `examples/` loads and runs, with and without the
+/// debugger, while every button is pressed in turn.
 #[test]
-fn the_examples_play_the_same_under_the_debugger() {
+fn every_example_runs_the_same_with_and_without_the_debugger() {
     let examples =
         fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")).unwrap();
-    let name = "signal-lost";
-    let load = || {
-        let storage = CartridgeStorage::Available(CartridgeFs::new(examples.clone()));
-        LoadedCartridge::load(&storage, name).unwrap()
-    };
-    let mut normal =
-        RunningCartridge::start(load(), &defaults(), VideoOverrides::default(), &font()).unwrap();
-    let (mut debugged, _) = start_debug(load(), Vec::new());
-    let inputs = [
-        vec![],
-        vec![InputEvent::ButtonDown(Button::A)],
-        vec![InputEvent::ButtonUp(Button::A)],
-        vec![InputEvent::ButtonDown(Button::Right)],
+    let mut names: Vec<String> = fs::read_dir(&examples)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.join("cartridge.ron").is_file())
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert!(!names.is_empty());
+
+    let buttons = [
+        Button::A,
+        Button::B,
+        Button::Left,
+        Button::Right,
+        Button::Up,
+        Button::Down,
     ];
-    for step in 0..120 {
-        let input = &inputs[step % inputs.len()];
-        normal.tick(input).unwrap();
-        assert_eq!(
-            debugged.advance(input),
-            Ok(Tick::Done),
-            "{name} tick {step}"
-        );
-        assert!(debugged.published == normal.published, "{name} tick {step}");
+    for name in &names {
+        let load = || {
+            let storage = CartridgeStorage::Available(CartridgeFs::new(examples.clone()));
+            LoadedCartridge::load(&storage, name).unwrap()
+        };
+        let mut normal =
+            RunningCartridge::start(load(), &defaults(), VideoOverrides::default(), &font())
+                .unwrap_or_else(|err| panic!("{name} does not start: {err:?}"));
+        let (mut debugged, _) = start_debug(load(), Vec::new());
+        for step in 0..240 {
+            let button = buttons[step / 10 % buttons.len()];
+            let input = match step % 10 {
+                0 => vec![InputEvent::ButtonDown(button)],
+                5 => vec![InputEvent::ButtonUp(button)],
+                _ => vec![],
+            };
+            normal
+                .tick(&input)
+                .unwrap_or_else(|err| panic!("{name} tick {step}: {err:?}"));
+            normal.runtime.audio_mut().commit();
+            assert_eq!(
+                debugged.advance(&input),
+                Ok(Tick::Done),
+                "{name} tick {step}"
+            );
+            debugged.runtime.audio_mut().commit();
+            assert!(debugged.published == normal.published, "{name} tick {step}");
+            assert_eq!(
+                texts(debugged.take_output()),
+                texts(normal.take_output()),
+                "{name} tick {step}"
+            );
+        }
     }
-    assert_eq!(
-        texts(debugged.take_output()),
-        texts(normal.take_output()),
-        "{name}"
-    );
 }
 
 type Cartridge = fn(&Fixture, &str) -> LoadedCartridge;
