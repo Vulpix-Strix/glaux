@@ -103,11 +103,13 @@ pub enum SystemIcon {
     Undo,
     Redo,
     Check,
+    Warning,
+    Close,
 }
 
 impl SystemIcon {
     /// Number of icons, the length of [`SystemUi::new`]'s `icons`.
-    pub const COUNT: usize = 19;
+    pub const COUNT: usize = 21;
 }
 
 /// The images the system UI draws with. The default has every image

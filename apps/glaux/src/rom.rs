@@ -106,6 +106,8 @@ const ICON_PNGS: [(&str, &[u8]); SystemIcon::COUNT] = [
     embed!("ui/icons/undo.png"),
     embed!("ui/icons/redo.png"),
     embed!("ui/icons/check.png"),
+    embed!("ui/icons/warning.png"),
+    embed!("ui/icons/close.png"),
 ];
 
 /// Side of a view icon, in pixels.

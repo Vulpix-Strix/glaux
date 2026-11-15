@@ -57,6 +57,8 @@ copied unmodified and renamed. Each is 16×16 with a black outline
 | `icons/undo.png`       | `Arrows_Reload_Refresh_Rotate_Counterclockwise.png`                          |
 | `icons/redo.png`       | `Arrows_Reload_Refresh_Rotate_Clockwise.png`                                 |
 | `icons/check.png`      | `Software_Signs_Checkmark_Checkbox_Ticked_Todo.png`                          |
+| `icons/warning.png`    | `Software_Warning_Sign_Triangle_Exclaimation_Mark_Error.png`                 |
+| `icons/close.png`      | `Software_Signs_Maths_Multiplication_X_Crossout_Checkmark_Cancel.png`        |
 
 The sprite editor's pencil tool reuses `icons/sprites.png`, and the Map
 editor's pencil, eraser, fill and eyedropper tools reuse the sprite editor's. The settings

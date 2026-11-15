@@ -46,6 +46,8 @@ fn ui_images_are_empty_unless_injected_and_found_by_icon() {
         solid(0),
         solid(2),
         solid(1),
+        solid(3),
+        solid(2),
     ];
     let rom = rom.with_ui(SystemUi::new(cursors, icons));
     assert_eq!(rom.ui().cursor(SystemCursor::Text), &cursor(2));
