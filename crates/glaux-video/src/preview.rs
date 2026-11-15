@@ -12,6 +12,7 @@ use glaux_machine::bg::{BG_PALETTE_COLORS, BgPalettes};
 use glaux_machine::obj_palette::{OBJ_PALETTE_BANKS, OBJ_PALETTE_COLORS, ObjBank, ObjPalettes};
 use glaux_machine::palette::{PALETTE_LEN, Palette};
 use glaux_machine::tilemap::{BG_PALETTE_BANKS, BgBank};
+use std::ops::RangeInclusive;
 
 /// More master colors are referenced than fit after the reserved entries.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -33,7 +34,8 @@ pub struct ObjPreviewPaletteError {
 /// them, holding exactly that master color. Entries are allocated in
 /// bank order, then local order, on a master index's first appearance, so
 /// the same palettes always produce the same layout. Masters are never
-/// merged by color: two master indices with equal RGB keep separate entries.
+/// merged by color, except by [`for_background_and`](Self::for_background_and):
+/// two master indices with equal RGB keep separate entries.
 ///
 /// The palette is derived data for one frame's presentation. It owns its
 /// copies and never changes the palettes it was built from.
@@ -61,7 +63,7 @@ impl ObjPreviewPalette {
             .filter_map(ObjBank::new)
             .flat_map(|bank| (1..OBJ_PALETTE_COLORS as u8).map(move |local| (bank, local)))
             .filter_map(|(bank, local)| obj.resolve(bank, local));
-        Self::build(system, reserved, master, masters)
+        Self::build(system, reserved, master, masters, false)
     }
 
     /// Builds the palette for background tiles: every master color the
@@ -74,11 +76,24 @@ impl ObjPreviewPalette {
         master: &Palette,
         bg: &BgPalettes,
     ) -> Result<Self, ObjPreviewPaletteError> {
-        let masters = (0..BG_PALETTE_BANKS as u8)
-            .filter_map(BgBank::new)
-            .flat_map(|bank| (1..BG_PALETTE_COLORS as u8).map(move |local| (bank, local)))
-            .filter_map(|(bank, local)| bg.resolve(bank, local));
-        Self::build(system, reserved, master, masters)
+        Self::build(system, reserved, master, background_masters(bg), false)
+    }
+
+    /// Builds the palette for background tiles and for the master colors
+    /// `shown`, as a picker of master colors needs.
+    ///
+    /// Unlike the other constructors, a master takes an entry that already
+    /// holds its color, a reserved one included. A master palette that
+    /// repeats the system's colors can then be shown whole.
+    pub fn for_background_and(
+        system: &Palette,
+        reserved: usize,
+        master: &Palette,
+        bg: &BgPalettes,
+        shown: RangeInclusive<u8>,
+    ) -> Result<Self, ObjPreviewPaletteError> {
+        let masters = background_masters(bg).chain(shown);
+        Self::build(system, reserved, master, masters, true)
     }
 
     fn build(
@@ -86,6 +101,7 @@ impl ObjPreviewPalette {
         reserved: usize,
         master: &Palette,
         masters: impl Iterator<Item = u8>,
+        share: bool,
     ) -> Result<Self, ObjPreviewPaletteError> {
         let reserved = reserved.min(PALETTE_LEN);
         let mut entries = *system.entries();
@@ -94,13 +110,22 @@ impl ObjPreviewPalette {
         let mut needed = 0;
 
         for index in masters {
+            if slots[usize::from(index)].is_some() {
+                continue;
+            }
+            let color = master.get(index);
+            let held = share
+                .then(|| entries[..next].iter().position(|entry| *entry == color))
+                .flatten();
             let slot = &mut slots[usize::from(index)];
-            if slot.is_some() {
+            if let Some(held) = held {
+                // `held` is below PALETTE_LEN, so it fits in u8.
+                *slot = Some(held as u8);
                 continue;
             }
             needed += 1;
             if next < PALETTE_LEN {
-                entries[next] = master.get(index);
+                entries[next] = color;
                 // `next` is below PALETTE_LEN, so it fits in u8.
                 *slot = Some(next as u8);
                 next += 1;
@@ -138,6 +163,13 @@ impl ObjPreviewPalette {
     pub fn slots(&self) -> &[u8; PALETTE_LEN] {
         &self.table
     }
+}
+
+fn background_masters(bg: &BgPalettes) -> impl Iterator<Item = u8> + '_ {
+    (0..BG_PALETTE_BANKS as u8)
+        .filter_map(BgBank::new)
+        .flat_map(|bank| (1..BG_PALETTE_COLORS as u8).map(move |local| (bank, local)))
+        .filter_map(|(bank, local)| bg.resolve(bank, local))
 }
 
 #[cfg(test)]

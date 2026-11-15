@@ -170,3 +170,63 @@ fn a_full_set_of_banks_of_either_kind_leaves_room_for_the_dialog_colors() {
         assert!(usize::from(highest) < PALETTE_LEN - 97, "{highest}");
     }
 }
+
+#[test]
+fn a_master_palette_repeating_the_system_colors_shows_whole() {
+    // As the default master palette does, entries 0 to 31 repeat the
+    // reserved colors and the other 224 are distinct.
+    let mut entries = *master().entries();
+    entries[..RESERVED].copy_from_slice(&system().entries()[..RESERVED]);
+    let master = Palette::new(entries);
+    let preview = ObjPreviewPalette::for_background_and(
+        &system(),
+        RESERVED,
+        &master,
+        &BgPalettes::linear(),
+        0..=255,
+    )
+    .unwrap();
+    for index in 0..=255u8 {
+        let slot = preview.slot(index).expect("every master has a slot");
+        assert_eq!(preview.palette().get(slot), master.get(index), "{index}");
+    }
+    assert_eq!(preview.slot(5), Some(5), "a reserved entry is shared");
+    assert_eq!(
+        preview.palette().entries()[..RESERVED],
+        system().entries()[..RESERVED]
+    );
+}
+
+#[test]
+fn masters_that_do_not_fit_whole_fit_by_halves() {
+    // 256 distinct colors, none of them a reserved one.
+    let whole = ObjPreviewPalette::for_background_and(
+        &system(),
+        RESERVED,
+        &master(),
+        &BgPalettes::linear(),
+        0..=255,
+    );
+    assert_eq!(
+        whole,
+        Err(ObjPreviewPaletteError {
+            reserved: RESERVED,
+            needed: 256,
+            available: 224,
+        })
+    );
+    for half in [0..=127u8, 128..=255] {
+        let preview = ObjPreviewPalette::for_background_and(
+            &system(),
+            RESERVED,
+            &master(),
+            &background_banks(),
+            half.clone(),
+        )
+        .unwrap();
+        for index in half.chain(200..=214) {
+            let slot = preview.slot(index).expect("a shown master has a slot");
+            assert_eq!(preview.palette().get(slot), master().get(index), "{index}");
+        }
+    }
+}
