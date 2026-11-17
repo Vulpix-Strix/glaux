@@ -1,0 +1,45 @@
+name: Website deploy
+
+# Rebuilds glauxconsole.dev, which reads every published release and the docs/ of main, through
+# the Cloudflare Workers Builds deploy hook of the glaux-website Worker. Cloudflare only replaces
+# the published site when the build succeeds.
+#
+# Releases published from another workflow with GITHUB_TOKEN do not emit the `release` event here.
+# Such a workflow should call this one as its last job, after the release is published:
+#
+#   website:
+#     needs: publish
+#     uses: ./.github/workflows/website-deploy.yml
+#     secrets: inherit
+on:
+  release:
+    types: [published, edited, unpublished, deleted]
+  push:
+    branches: [main]
+    paths: [docs/**]
+  workflow_call:
+    secrets:
+      WEBSITE_DEPLOY_HOOK:
+        required: false
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: website-deploy
+  # Workers Builds already merges hooks that arrive while a build is queued.
+  cancel-in-progress: false
+
+jobs:
+  deploy-hook:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the website build
+        env:
+          WEBSITE_DEPLOY_HOOK: ${{ secrets.WEBSITE_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$WEBSITE_DEPLOY_HOOK" ]; then
+            echo "::error::The WEBSITE_DEPLOY_HOOK secret is not set. Create a deploy hook for the main branch in Cloudflare (Workers & Pages > glaux-website > Settings > Builds > Deploy Hooks) and store its URL as this secret."
+            exit 1
+          fi
+          curl --fail --silent --show-error --retry 3 --retry-all-errors -X POST "$WEBSITE_DEPLOY_HOOK" > /dev/null
